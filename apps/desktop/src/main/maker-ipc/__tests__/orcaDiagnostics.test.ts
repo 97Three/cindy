@@ -191,6 +191,41 @@ describe('orca diagnostics read-only helpers', () => {
     expect(deps.readLatestTurnError).toHaveBeenCalledWith('worker-session-1');
   });
 
+  // 出口兜底:readLatestTurnError 的注释承诺「已脱敏」,但那是注入方当前的行为而不是
+  // 出口能验证的契约。这里故意注入含合成凭据的摘要,钉住「出网前再脱一层」这件事 ——
+  // 只测注入方自己脱敏过的干净文本是测不出这个保证的。
+  it('redacts synthetic credentials injected through readLatestTurnError before they leave the exit', async () => {
+    const deps = createDeps({
+      readLatestTurnError: vi.fn(async () => ({
+        message: 'upstream rejected key=sk-liveabcdef123456 with Bearer eyJhbGciOiJIUzI1NiJ9 payload',
+        reason: 'provider-upstream-error principal aigw:user-9f3a2b',
+        sdkError: 'unauthorized token: sk-proj-QQQQQQQQQQQQQQQQQQQQ',
+        toolLoop: '{"kind":"consecutive","count":3,"hint":"api_key=secret-value"}',
+        createdAt: 1_770_000_000_000,
+      })),
+    });
+
+    const result = await readOrcaWorkerOutputReadOnly(deps, 'lead-1', 'worker-1');
+    if (!result.ok) throw new Error('expected ok result');
+    const serialized = JSON.stringify(result.turnError);
+
+    expect(serialized).not.toContain('sk-liveabcdef123456');
+    expect(serialized).not.toContain('sk-proj-QQQQQQQQQQQQQQQQQQQQ');
+    expect(serialized).not.toContain('eyJhbGciOiJIUzI1NiJ9');
+    expect(serialized).not.toContain('user-9f3a2b');
+    expect(serialized).not.toContain('secret-value');
+    expect(result.turnError).toEqual({
+      message: 'upstream rejected key=[REDACTED_KEY] with Bearer [REDACTED] payload',
+      reason: 'provider-upstream-error principal aigw:[REDACTED]',
+      sdkError: 'unauthorized token: [REDACTED]',
+      // 注意:matcher 连值后面的那个双引号一起吃掉了,这是 redactSensitiveText 的
+      // 既有行为;这里钉的是「原始串不再出现」,不是 JSON 仍然可解析。
+      toolLoop: '{"kind":"consecutive","count":3,"hint":"api_key=[REDACTED]}',
+      // createdAt 是 number → 出口转 ISO,不进脱敏路径。
+      createdAt: '2026-02-02T02:40:00.000Z',
+    });
+  });
+
   it('returns turnError null when this turn has no error row', async () => {
     const deps = createDeps({
       readLatestTurnError: vi.fn(async () => null),

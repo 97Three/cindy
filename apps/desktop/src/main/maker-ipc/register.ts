@@ -164,7 +164,7 @@ import {
   DL_SESSION_REFERENCE_CAPABILITY_CHANNEL,
   readInputDeliveryClientIds,
 } from '@cindy/device-link';
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { applyScheduledModelSelection, ScheduledModelSelectionBusyError, type ScheduledModelSelection, type ScheduledModelSelectionLease } from './scheduledModelSelection';
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import {
@@ -831,10 +831,9 @@ import { OrcaWorkerPermissionConfirmBridge } from './orcaWorkerPermissionConfirm
 import {
   getOrcaWorkspaceInfoReadOnly,
   getOrcaWorkerDiagnosticStatusReadOnly,
-  projectOrcaTurnErrorSummary,
   readOrcaWorkerOutputReadOnly,
-  type OrcaTurnErrorSummary,
 } from './orcaDiagnostics.js';
+import { readLatestWorkerTurnError } from './orcaTurnErrorQuery.js';
 import { startOrcaTeamWithPermissionGate } from './orcaStartTeamPermissionGate.js';
 import { createWorkerCreationPrefsSyncHandler } from './workerCreationPrefsSyncHandler.js';
 import {
@@ -7344,60 +7343,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       .orderBy(desc(messages.createdAt), desc(messages.id))
       .limit(1);
     return visibleMessageTextForConversationSearch('assistant', row?.content ?? '');
-  }
-
-  /**
-   * Worker **本轮** turn 的 terminal error 摘要(read_worker 的 turnError 出口)。
-   *
-   * 「本轮」的判定口径沿用 sessionActiveTurn.listErrorTailPendingRows:error 行必须仍是
-   * 会话未被 rewind 的**尾行**。turn 一旦重新跑起来就会插入新的 user 行(进而产生
-   * assistant / tool 行),旧 error 行不再是尾行,查询自然不再命中 —— 这正是 bot 要求
-   * 的边界:不能把上一轮的失败跨轮当成这一轮的结果报给 Lead。
-   *
-   * 照搬 listErrorTailPendingRows 的三条硬约束:
-   *  1. 必须带 /clear 可见性边界(created_at > COALESCE(sessions.cleared_at, 0)):
-   *     /clear 不删行,只推进 cleared_at;漏掉会让已不可见的旧 error 行被当成告警。
-   *  2. 「尾行」用 (created_at, rowid) 双键严格大于,两侧都要 rewind_at IS NULL:
-   *     同毫秒靠插入序区分,漏掉 rewind 会把被截断的历史行当成尾行。
-   *  3. 必须走 builder 形态的 select().from():生产 worker 模式的 drizzleProxy 只路由
-   *     带 toSQL 的 builder,裸 .all(sql) 会被静默吞掉。
-   *
-   * 与 listErrorTailPendingRows 的唯一差异:不过滤 dismissed(用户点过「忽略」)。红点派生
-   * 关心的是「要不要再提醒」,而这里关心的是「这一轮为什么终止」—— 诊断出口不应把用户
-   * 的 UI 忽略动作变成信息缺失。
-   */
-  async function readLatestWorkerTurnError(workerSessionId: string): Promise<OrcaTurnErrorSummary | null> {
-    const db = getDbClient().drizzle;
-    const [row] = await db
-      .select({ content: messages.content, createdAt: messages.createdAt })
-      .from(messages)
-      .innerJoin(sessions, eq(sessions.id, messages.sessionId))
-      .where(
-        and(
-          eq(messages.sessionId, workerSessionId),
-          eq(messages.role, 'error'),
-          isNull(messages.rewindAt),
-          gt(messages.createdAt, sql`COALESCE(${sessions.clearedAt}, 0)`),
-          sql`NOT EXISTS (
-            SELECT 1 FROM messages m2
-            WHERE m2.session_id = ${messages.sessionId}
-              AND m2.rewind_at IS NULL
-              AND (m2.created_at > ${messages.createdAt}
-                OR (m2.created_at = ${messages.createdAt}
-                  AND m2.rowid > ${sql.raw('"messages"."rowid"')}))
-          )`,
-        ),
-      )
-      .limit(1);
-    if (!row) return null;
-    // content 是 TEXT 列,可能是非法 JSON;projectOrcaTurnErrorSummary 内部做窄取与脱敏。
-    let content: unknown = null;
-    try {
-      content = JSON.parse(row.content);
-    } catch {
-      return null;
-    }
-    return projectOrcaTurnErrorSummary(content, row.createdAt);
   }
 
   async function readActiveOrcaTeamByLeadReadOnly(leadSessionId: string) {

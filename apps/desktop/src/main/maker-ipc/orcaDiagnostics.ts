@@ -90,6 +90,29 @@ export function projectOrcaTurnErrorSummary(
   };
 }
 
+/**
+ * 出口兜底:对 turnError 摘要的每个出网字符串再过一层 redactSensitiveText。
+ *
+ * 为什么还要这一层(纵深防御):OrcaDiagnosticsDeps.readLatestTurnError 承诺的是
+ * 「已脱敏」,但那只是**注入方当前的行为**,不是本出口能验证的契约 —— 换一个注入点
+ * (测试替身、未来的远端 worker 读取路径)就有绕过脱敏的可能。read_worker 的返回会
+ * 跨进程进 Lead 上下文,脱敏必须是出口的固有属性。
+ *
+ * 只碰字符串字段:createdAt 是 unix ms number,不该进脱敏路径,所以逐字段处理而不是
+ * 整体走 redactSensitiveTextDeep(后者返回 unknown,在这里要靠断言关掉类型检查)。
+ * redactSensitiveText 幂等,已经是 [REDACTED] / [REDACTED_KEY] 的文本再过一次不会
+ * 被撑成 [REDACTED]]。
+ */
+function redactTurnErrorSummary(summary: OrcaTurnErrorSummary): OrcaTurnErrorSummary {
+  return {
+    ...summary,
+    message: redactSensitiveText(summary.message),
+    ...(summary.reason ? { reason: redactSensitiveText(summary.reason) } : {}),
+    ...(summary.sdkError ? { sdkError: redactSensitiveText(summary.sdkError) } : {}),
+    ...(summary.toolLoop ? { toolLoop: redactSensitiveText(summary.toolLoop) } : {}),
+  };
+}
+
 export interface OrcaDiagnosticsDeps {
   readActiveTeam(leadSessionId: string): Promise<OrcaDiagnosticTeamSnapshot | null>;
   listWorkersByLead(leadSessionId: string): Promise<OrcaDiagnosticWorkerSnapshot[]>;
@@ -102,10 +125,14 @@ export interface OrcaDiagnosticsDeps {
   }>;
   readLatestAssistantMessage(workerSessionId: string): Promise<string>;
   /**
-   * 本轮 turn 的 terminal error 摘要(已脱敏),没有则 null。
+   * 本轮 turn 的 terminal error 摘要,没有则 null。
    *
    * 「本轮」由注入方负责绑定:read_worker 只做搬运,不自行决定取哪一轮。
    * 可选:未注入时 read_worker 的 turnError 恒为 null,既有构造点不受影响。
+   *
+   * 生产注入方返回的是已脱敏摘要,但这只是注入方当前的行为,不是本出口能验证的
+   * 契约 —— 换一个注入点(测试替身、未来的远端 worker 读取路径)就有绕过脱敏的
+   * 可能。readOrcaWorkerOutputReadOnly 出网前会对每个字符串字段再兜一层。
    */
   readLatestTurnError?(workerSessionId: string): Promise<OrcaTurnErrorSummary | null>;
 }
@@ -267,6 +294,10 @@ export async function readOrcaWorkerOutputReadOnly(
   const summary = deps.readLatestTurnError
     ? await deps.readLatestTurnError(worker.session_id)
     : null;
+  // 出口兜底脱敏:「已脱敏」只是生产注入方的当前行为,不是本出口能验证的契约
+  // (见 OrcaDiagnosticsDeps.readLatestTurnError 注释),出网前每个字符串字段在这里
+  // 再过一层。createdAt 是 number,不进脱敏路径(见 redactTurnErrorSummary)。
+  const safe = summary ? redactTurnErrorSummary(summary) : null;
   return {
     ok: true,
     worker_id: worker.worker_id,
@@ -276,13 +307,13 @@ export async function readOrcaWorkerOutputReadOnly(
     idle_ms: worker.idle_ms,
     restored_from_storage: worker.restored_from_storage,
     result: await deps.readLatestAssistantMessage(worker.session_id),
-    turnError: summary
+    turnError: safe
       ? {
-          message: summary.message,
-          ...(summary.reason ? { reason: summary.reason } : {}),
-          ...(summary.sdkError ? { sdkError: summary.sdkError } : {}),
-          ...(summary.toolLoop ? { toolLoop: summary.toolLoop } : {}),
-          createdAt: new Date(summary.createdAt).toISOString(),
+          message: safe.message,
+          ...(safe.reason ? { reason: safe.reason } : {}),
+          ...(safe.sdkError ? { sdkError: safe.sdkError } : {}),
+          ...(safe.toolLoop ? { toolLoop: safe.toolLoop } : {}),
+          createdAt: new Date(safe.createdAt).toISOString(),
         }
       : null,
   };
