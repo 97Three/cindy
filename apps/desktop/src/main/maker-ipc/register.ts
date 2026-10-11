@@ -2443,6 +2443,14 @@ interface OrcaCollabService {
         status: string;
         session_status: string;
         result: string;
+        /** Worker 本轮 turn 的 terminal error 摘要(已脱敏);本轮没失败时为 null。 */
+        turnError: {
+          message: string;
+          reason?: string;
+          sdkError?: string;
+          toolLoop?: string;
+          createdAt: string;
+        } | null;
       }
     | { ok: false; errorCode: string; message: string }
   >;
