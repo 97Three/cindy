@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   getOrcaWorkspaceInfoReadOnly,
   getOrcaWorkerDiagnosticStatusReadOnly,
+  projectOrcaTurnErrorSummary,
   readOrcaWorkerOutputReadOnly,
   type OrcaDiagnosticsDeps,
 } from '../orcaDiagnostics';
@@ -161,5 +162,109 @@ describe('orca diagnostics read-only helpers', () => {
       result: 'latest assistant output',
     });
     expect(deps.readLatestAssistantMessage).toHaveBeenCalledWith('worker-session-1');
+  });
+
+  it('reports this turn error for read_worker without changing result', async () => {
+    const deps = createDeps({
+      readLatestTurnError: vi.fn(async () => ({
+        message: 'upstream rejected the request',
+        reason: 'provider-upstream-error',
+        sdkError: 'HTTP 401',
+        createdAt: 1_770_000_000_000,
+      })),
+    });
+
+    const result = await readOrcaWorkerOutputReadOnly(deps, 'lead-1', 'worker-1');
+
+    expect(result).toMatchObject({
+      ok: true,
+      result: 'latest assistant output',
+      turnError: {
+        message: 'upstream rejected the request',
+        reason: 'provider-upstream-error',
+        sdkError: 'HTTP 401',
+        createdAt: '2026-02-02T02:40:00.000Z',
+      },
+    });
+    if (!result.ok) throw new Error('expected ok result');
+    expect(result.turnError).not.toHaveProperty('toolLoop');
+    expect(deps.readLatestTurnError).toHaveBeenCalledWith('worker-session-1');
+  });
+
+  it('returns turnError null when this turn has no error row', async () => {
+    const deps = createDeps({
+      readLatestTurnError: vi.fn(async () => null),
+    });
+
+    await expect(readOrcaWorkerOutputReadOnly(deps, 'lead-1', 'worker-1')).resolves.toMatchObject({
+      ok: true,
+      result: 'latest assistant output',
+      turnError: null,
+    });
+  });
+
+  it('keeps turnError null when readLatestTurnError is not injected', async () => {
+    const deps = createDeps();
+    expect(deps.readLatestTurnError).toBeUndefined();
+
+    await expect(readOrcaWorkerOutputReadOnly(deps, 'lead-1', 'worker-1')).resolves.toMatchObject({
+      ok: true,
+      result: 'latest assistant output',
+      turnError: null,
+    });
+  });
+
+  it('does not leak turnError when the worker itself is missing', async () => {
+    const deps = createDeps({
+      listWorkersByLead: vi.fn(async () => []),
+      readLatestTurnError: vi.fn(async () => ({ message: 'stale', createdAt: 0 })),
+    });
+
+    await expect(
+      readOrcaWorkerOutputReadOnly(deps, 'lead-1', 'missing-worker'),
+    ).resolves.toMatchObject({ ok: false, errorCode: 'WORKER_NOT_FOUND' });
+    expect(deps.readLatestTurnError).not.toHaveBeenCalled();
+  });
+});
+
+describe('projectOrcaTurnErrorSummary', () => {
+  it('redacts credentials in every outbound field', () => {
+    const summary = projectOrcaTurnErrorSummary(
+      {
+        message: 'provider refused key=sk-liveabcdef123456 with Bearer eyJhbGciOiJIUzI1NiJ9 payload',
+        reason: 'provider-upstream-error',
+        sdkError: 'unauthorized token: sk-proj-QQQQQQQQQQQQQQQQQQQQ',
+        toolLoop: { kind: 'consecutive', count: 3 },
+      },
+      1_770_000_000_000,
+    );
+
+    expect(summary).toEqual({
+      message: 'provider refused key=[REDACTED_KEY] with Bearer [REDACTED] payload',
+      reason: 'provider-upstream-error',
+      // 「token:」规则排在裸 sk- 规则之前,故这里是 [REDACTED] 而不是 [REDACTED_KEY]。
+      sdkError: 'unauthorized token: [REDACTED]',
+      toolLoop: '{"kind":"consecutive","count":3}',
+      createdAt: 1_770_000_000_000,
+    });
+    const serialized = JSON.stringify(summary);
+    expect(serialized).not.toContain('sk-liveabcdef123456');
+    expect(serialized).not.toContain('sk-proj-QQQQQQQQQQQQQQQQQQQQ');
+    expect(serialized).not.toContain('eyJhbGciOiJIUzI1NiJ9');
+  });
+
+  it('returns null for content without a usable message', () => {
+    expect(projectOrcaTurnErrorSummary({ reason: 'x' }, 1)).toBeNull();
+    expect(projectOrcaTurnErrorSummary({ message: '' }, 1)).toBeNull();
+    expect(projectOrcaTurnErrorSummary(null, 1)).toBeNull();
+    expect(projectOrcaTurnErrorSummary('not-an-object', 1)).toBeNull();
+  });
+
+  it('drops non-string optional fields instead of stringifying them', () => {
+    const summary = projectOrcaTurnErrorSummary(
+      { message: 'boom', reason: 42, sdkError: undefined, toolLoop: null },
+      7,
+    );
+    expect(summary).toEqual({ message: 'boom', createdAt: 7 });
   });
 });

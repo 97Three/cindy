@@ -1,4 +1,5 @@
 import type { AgentKind } from '@cindy/maker-core';
+import { redactSensitiveText } from '@cindy/maker-shared/error-redaction';
 
 export interface OrcaDiagnosticTeamSnapshot {
   id: string;
@@ -30,6 +31,65 @@ export interface OrcaDiagnosticWorkerSnapshot {
   };
 }
 
+/**
+ * Worker 本轮 turn 的 terminal error 摘要。
+ *
+ * createdAt 是 unix ms(messages.createdAt 同单位);对外出口统一转成 ISO 8601。
+ */
+export interface OrcaTurnErrorSummary {
+  message: string;
+  reason?: string;
+  sdkError?: string;
+  toolLoop?: string;
+  createdAt: number;
+}
+
+/**
+ * error 行 content → 脱敏摘要的统一投影。
+ *
+ * 为什么放在这里而不是调用方:read_worker 是新的对外出口(跨进程、会进 Lead 上下文),
+ * 脱敏必须是出口的固有属性而不是调用方的自律 —— 换一个注入点也不该有绕过脱敏的可能。
+ * 持久化侧(messagePersistBroadcaster)写库时已用同一个 redactSensitiveText 处理过
+ * message / sdkError,这里再过一层是纵深防御:脱敏规则变更或规则上线前写入的历史行,
+ * 出网前仍然被兜住。
+ *
+ * content 是 TEXT 列,可能是非法 JSON 或任意形态(历史数据),故全字段做窄取:只接受
+ * string,其余形态一律丢弃而不是强转。
+ *
+ * @returns 摘要;message 缺失/为空时返回 null(写侧保证非空 message 才落 error 行,
+ *          读侧遇到该形态按「无摘要」处理,不返回空对象)。
+ */
+export function projectOrcaTurnErrorSummary(
+  content: unknown,
+  createdAt: number,
+): OrcaTurnErrorSummary | null {
+  if (!content || typeof content !== 'object') return null;
+  const row = content as Record<string, unknown>;
+  const message = typeof row.message === 'string' && row.message
+    ? redactSensitiveText(row.message)
+    : '';
+  if (!message) return null;
+  // toolLoop 在库里是被 parseToolLoopErrorDetails 校验过的对象({ kind, count }),
+  // 出口契约是 string,统一压成 JSON;非对象/非字符串形态直接丢弃。
+  const toolLoop =
+    typeof row.toolLoop === 'string'
+      ? row.toolLoop
+      : row.toolLoop && typeof row.toolLoop === 'object'
+        ? JSON.stringify(row.toolLoop)
+        : '';
+  return {
+    message,
+    ...(typeof row.reason === 'string' && row.reason
+      ? { reason: redactSensitiveText(row.reason) }
+      : {}),
+    ...(typeof row.sdkError === 'string' && row.sdkError
+      ? { sdkError: redactSensitiveText(row.sdkError) }
+      : {}),
+    ...(toolLoop ? { toolLoop: redactSensitiveText(toolLoop) } : {}),
+    createdAt,
+  };
+}
+
 export interface OrcaDiagnosticsDeps {
   readActiveTeam(leadSessionId: string): Promise<OrcaDiagnosticTeamSnapshot | null>;
   listWorkersByLead(leadSessionId: string): Promise<OrcaDiagnosticWorkerSnapshot[]>;
@@ -41,6 +101,13 @@ export interface OrcaDiagnosticsDeps {
     queuePaused: boolean;
   }>;
   readLatestAssistantMessage(workerSessionId: string): Promise<string>;
+  /**
+   * 本轮 turn 的 terminal error 摘要(已脱敏),没有则 null。
+   *
+   * 「本轮」由注入方负责绑定:read_worker 只做搬运,不自行决定取哪一轮。
+   * 可选:未注入时 read_worker 的 turnError 恒为 null,既有构造点不受影响。
+   */
+  readLatestTurnError?(workerSessionId: string): Promise<OrcaTurnErrorSummary | null>;
 }
 
 export type OrcaDiagnosticResult<T extends object> =
@@ -185,11 +252,21 @@ export async function readOrcaWorkerOutputReadOnly(
   idle_ms: number | null;
   restored_from_storage: boolean;
   result: string;
+  turnError: {
+    message: string;
+    reason?: string;
+    sdkError?: string;
+    toolLoop?: string;
+    createdAt: string;
+  } | null;
 }>> {
   const worker = await findDiagnosticWorker(deps, leadSessionId, workerId);
   if (!worker) {
     return { ok: false, errorCode: 'WORKER_NOT_FOUND', message: `worker ${workerId} not found` };
   }
+  const summary = deps.readLatestTurnError
+    ? await deps.readLatestTurnError(worker.session_id)
+    : null;
   return {
     ok: true,
     worker_id: worker.worker_id,
@@ -199,5 +276,14 @@ export async function readOrcaWorkerOutputReadOnly(
     idle_ms: worker.idle_ms,
     restored_from_storage: worker.restored_from_storage,
     result: await deps.readLatestAssistantMessage(worker.session_id),
+    turnError: summary
+      ? {
+          message: summary.message,
+          ...(summary.reason ? { reason: summary.reason } : {}),
+          ...(summary.sdkError ? { sdkError: summary.sdkError } : {}),
+          ...(summary.toolLoop ? { toolLoop: summary.toolLoop } : {}),
+          createdAt: new Date(summary.createdAt).toISOString(),
+        }
+      : null,
   };
 }
