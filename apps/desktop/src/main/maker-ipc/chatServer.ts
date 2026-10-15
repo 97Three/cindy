@@ -164,6 +164,7 @@ export function withChatServer(local: BotGroupChatService, deps: BotGroupChatSer
     retryPlan: (...args) => service().retryPlan(...args),
     editPlanStep: (...args) => service().editPlanStep(...args),
     settleLaneTurn: (...args) => service().settleLaneTurn(...args),
+    refreshPendingInteraction: local.refreshPendingInteraction,
     dispose: () => { active.dispose(); local.dispose(); },
   };
 }
@@ -1496,6 +1497,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
   const sendReceipts = new Map<string, Awaited<ReturnType<BotGroupChatService['sendMessage']>>>();
   return {
     chatServer,
+    refreshPendingInteraction: local.refreshPendingInteraction,
     listGroups: () => safe(async () => {
       await register(); beginUpgrade();
       const groups: BotGroupDetail[] = [];
