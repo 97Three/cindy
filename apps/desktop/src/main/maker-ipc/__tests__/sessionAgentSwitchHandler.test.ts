@@ -1446,7 +1446,27 @@ describe('远程 Agent:选模型时换 Agent 所在电脑', () => {
     expect(local.deps.insertBoundaryMessage).not.toHaveBeenCalled();
   });
 
-  it('协同任务:只接受供应商组内部的立即换位置(同引擎同模型)', async () => {
+  it.each(['lead', 'worker'])('协同任务 %s:用户换电脑与普通任务一样登记意图,发送时落地', async (orcaRole) => {
+    const h = relocationHarness({ orcaRole, agentDeviceId: null, providerId: 'xd' });
+    await performSessionAgentSwitch(h.deps, {
+      ...backToTaskComputer,
+      model: 'claude-opus-5-5',
+      providerId: 'anthropic',
+      agentDeviceId: 'share:alice-share',
+    });
+    expect(h.selectSameAgentModel).not.toHaveBeenCalled();
+    expect(h.assertAgentDeviceRouteUsable).toHaveBeenCalledWith('share:alice-share', 'claude-code', 'claude-opus-5-5', 'anthropic');
+    expect(h.pending.get('s1')).toMatchObject({ targetAgentDeviceId: 'share:alice-share' });
+
+    await applyPendingAgentSwitchIfIdle(h.deps, 's1');
+    expect(h.deps.applyAgentSwitchToDb).toHaveBeenCalledWith('s1', expect.objectContaining({
+      agentDeviceId: 'share:alice-share',
+      sdkSessionId: null,
+    }));
+    expect(h.pending.get('s1')).toBeUndefined();
+  });
+
+  it('协同任务:供应商组内部的立即换位置照常可用(同引擎同模型)', async () => {
     const lead = relocationHarness({ orcaRole: 'lead', model: 'anthropic/claude-opus-5-5[1m]' });
     const result = await performSessionAgentSwitch(lead.deps, {
       ...backToTaskComputer,
@@ -1472,10 +1492,9 @@ describe('远程 Agent:选模型时换 Agent 所在电脑', () => {
   });
 
   it.each([
-    { orcaRole: 'worker' },
     { orcaRole: null, orcaRemoteLead: JSON.stringify({ leadDeviceId: 'lead-device', leadSessionId: 'lead-1', workerLabel: 'worker' }) },
     { orcaRole: null, orcaRemoteLead: JSON.stringify({ leadDeviceId: 'lead-device', leadSessionId: 'lead-1', workerLabel: 'worker', releasedAt: 1 }) },
-  ])('rejects user relocation while preserving harness/model selection: %j', async (identity) => {
+  ])('execution-device Worker rejects user relocation while preserving harness/model selection: %j', async (identity) => {
     const row = { ...identity, model: 'anthropic/claude-opus-5-5[1m]' };
     const { agentDeviceId: _omit, ...withoutLocation } = backToTaskComputer;
     const userMove = relocationHarness(row);
@@ -1698,6 +1717,57 @@ describe('换到供应商组那一项：由组选一台能用的电脑(provider-
     );
     expect(row.model).toBe('claude-opus-5-5');
     expect(pending.get('s1')).toBeUndefined();
+  });
+
+  it.each(['lead', 'worker'])('协同任务 %s:组选回当前位置时按交接重建,不走需要点选窗口确认的原地换模型', async (orcaRole) => {
+    const pending = createPendingAgentSwitchRegistry();
+    const row = makeRow({ agentKind: 'cc', model: 'claude-fable-5', providerId: 'xd', agentDeviceId: null, orcaRole });
+    const selectSameAgentModel = vi.fn(async () => ({ deferred: false }));
+    const commitBinding = vi.fn(async () => undefined);
+    const { deps } = makeDeps({
+      pendingSwitches: pending,
+      getSessionRow: vi.fn(async () => row),
+      assertAgentDeviceRouteUsable: vi.fn(async () => undefined),
+      resolveProviderGroupTarget: vi.fn(async () => ({ agentDeviceId: null, providerId: 'xd', commitBinding })),
+      selectSameAgentModel,
+    });
+    await performSessionAgentSwitch(deps, { ...toGroup, model: 'claude-haiku-5-5' });
+    await applyPendingAgentSwitchIfIdle(deps, 's1');
+
+    expect(selectSameAgentModel).not.toHaveBeenCalled();
+    expect(deps.applyAgentSwitchToDb).toHaveBeenCalledWith('s1', expect.objectContaining({
+      model: 'claude-haiku-5-5',
+      providerId: 'xd',
+      sdkSessionId: null,
+    }));
+    expect(deps.applyAgentSwitchToDb).not.toHaveBeenCalledWith('s1', expect.objectContaining({ agentDeviceId: expect.anything() }));
+    expect(deps.insertBoundaryMessage).toHaveBeenCalledWith('s1', expect.objectContaining({
+      fromModel: 'claude-fable-5',
+      toModel: 'claude-haiku-5-5',
+      resumed: false,
+    }));
+    expect(deps.setPendingHandoff).toHaveBeenCalledTimes(1);
+    expect(commitBinding).toHaveBeenCalledTimes(1);
+    expect(pending.get('s1')).toBeUndefined();
+  });
+
+  it('协同任务已在另一台电脑:组选回那台时提交带上位置,窗口按那台的目录判断', async () => {
+    const pending = createPendingAgentSwitchRegistry();
+    const row = makeRow({ agentKind: 'cc', model: 'claude-fable-5', providerId: 'xd', agentDeviceId: 'studio-mac', orcaRole: 'lead' });
+    const { deps } = makeDeps({
+      pendingSwitches: pending,
+      getSessionRow: vi.fn(async () => row),
+      assertAgentDeviceRouteUsable: vi.fn(async () => undefined),
+      resolveProviderGroupTarget: vi.fn(async () => ({ agentDeviceId: 'studio-mac', providerId: 'xd' })),
+      selectSameAgentModel: vi.fn(async () => ({ deferred: false })),
+    });
+    await performSessionAgentSwitch(deps, { ...toGroup, model: 'claude-haiku-5-5' });
+    await applyPendingAgentSwitchIfIdle(deps, 's1');
+    expect(deps.applyAgentSwitchToDb).toHaveBeenCalledWith('s1', expect.objectContaining({
+      model: 'claude-haiku-5-5',
+      agentDeviceId: 'studio-mac',
+      sdkSessionId: null,
+    }));
   });
 });
 

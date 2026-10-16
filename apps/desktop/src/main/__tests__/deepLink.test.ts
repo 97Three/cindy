@@ -221,6 +221,14 @@ describe('parseDeepLink', () => {
     });
   });
 
+  // islandEntryId 只由主进程的灵动岛点击写入;外部链接不能冒充一次点击去处置提醒。
+  it('never derives an Agent Island click id from an external link', () => {
+    expect(parseDeepLink('cindy://session/abc-123?islandEntryId=1')).toEqual({
+      type: 'session',
+      id: 'abc-123',
+    });
+  });
+
   it('parses project payload with URL-encoded workingDir', () => {
     const encoded = encodeURIComponent('C:\\Some Path\\proj');
     expect(parseDeepLink(`xdt-maker://project/${encoded}`)).toEqual({

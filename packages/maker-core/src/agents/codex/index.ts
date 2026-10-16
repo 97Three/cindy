@@ -2330,10 +2330,26 @@ export class CodexAgent extends BaseAgent {
     }
   }
 
+  /** Current local consumers, including unresolved startup which may freeze this credential. */
+  getLocalHostKeysForCredentialMode(credentialMode?: AgentCredentialMode): string[] {
+    return [...new Set([
+      ...this.hosts.keys(), ...this.hostPromises.keys(),
+      ...this.hostSessionBindingLeases.keys(), ...this.retiringHosts.keys(),
+    ])].filter((candidate) => {
+      if (candidate.startsWith('remote:')) return false;
+      if (!credentialMode) return true;
+      const mode = this.hostEffectiveCredentialModes.get(candidate)
+        ?? this.hostCredentialModes.get(candidate)
+        ?? this.hostPromises.get(candidate)?.credentialMode;
+      return mode === undefined || mode === credentialMode;
+    });
+  }
+
   async beginLocalHostCredentialChange(
     reason = 'CodexAgent local credential state changed',
-    options: { allLocalHosts?: boolean; forceRetire?: boolean; busyError?: () => Error } = {},
+    options: { allLocalHosts?: boolean; credentialMode?: AgentCredentialMode; targetHostKey?: string; forceRetire?: boolean; busyError?: () => Error } = {},
   ): Promise<{
+    affectedHostKeys: readonly string[];
     assertIdle(): void;
     retireActiveHost(): Promise<void>;
     finalize(): Promise<void>;
@@ -2370,10 +2386,8 @@ export class CodexAgent extends BaseAgent {
     };
 
     const affectedKeys = (): string[] => options.allLocalHosts
-      ? [...new Set([
-          ...this.hosts.keys(), ...this.hostPromises.keys(),
-          ...this.hostSessionBindingLeases.keys(), ...this.retiringHosts.keys(),
-        ])].filter((candidate) => !candidate.startsWith('remote:'))
+      ? this.getLocalHostKeysForCredentialMode(options.credentialMode)
+        .filter((candidate) => options.targetHostKey === undefined || candidate === options.targetHostKey)
       : [key];
     const activeUseCount = (): number => affectedKeys().reduce((count, candidate) => {
       const host = this.hosts.get(candidate);
@@ -2393,6 +2407,7 @@ export class CodexAgent extends BaseAgent {
     };
 
     return {
+      affectedHostKeys: affectedKeys(),
       assertIdle: () => {
         const count = activeUseCount();
         if (count > 0) {

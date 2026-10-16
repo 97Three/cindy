@@ -91,7 +91,9 @@ describe('ChatInput:换位置进切换事务', () => {
 
   it('只对本机任务、或支持远程 Agent 的被控端任务开放,且要能走切换事务', () => {
     expect(chatInputSource).toContain(
-      'if (!sessionId || !agentLocationAware || remoteHostId || !sessionEngineFilter ||\n        sessionOrcaRole !== null || sessionOrcaRemoteWorker) return undefined;',
+      'if (!sessionId || !agentLocationAware || remoteHostId || !sessionEngineFilter ||\n' +
+        '        sessionOrcaRole === undefined || (sessionOrcaRole !== null && deviceLinkDeviceId) ||\n' +
+        '        sessionOrcaRemoteWorker) return undefined;',
     );
     expect(chatInputSource).toContain('agentDeviceId: selection.agentDevice?.deviceId ?? null,');
   });
@@ -123,9 +125,10 @@ describe('被控电脑上的任务:换 Agent 所在电脑', () => {
   });
 
   it('换位置带给被控端的前提与面板入口同一个判定', () => {
-    const start = chatInputSource.indexOf('const relocateTo =');
+    const start = chatInputSource.indexOf('const resolveRelocateTo = () => {');
     expect(start).toBeGreaterThan(0);
-    expect(chatInputSource.slice(start, start + 200)).toContain('agentLocationAware &&');
+    expect(chatInputSource.slice(start, start + 400)).toContain('return agentLocationAware &&');
+    expect(chatInputSource).toContain('const relocateTo = resolveRelocateTo();');
   });
 
   it('面板不浏览其他电脑时列被控电脑的目录与它的镜像记忆', () => {

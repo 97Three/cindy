@@ -719,7 +719,7 @@ describe('botGroupChatService active running budget', () => {
 
     it('keeps the existing default limit without an interaction', async () => {
       const harness = await start(kind);
-      const limit = kind === 'member' ? 5 * 60_000 : 2 * 60 * 60_000;
+      const limit = 2 * 60 * 60_000;
       await vi.advanceTimersByTimeAsync(limit - 1);
       expect(harness.abortLane).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1);

@@ -41,6 +41,7 @@ export async function markImSessionManualRouteOverride(sessionId: string): Promi
       agentKind: sessions.agentKind,
       model: sessions.model,
       providerId: sessions.providerId,
+      agentDeviceId: sessions.agentDeviceId,
       effort: sessions.effort,
       feishuBotAppId: sessions.feishuBotAppId,
       imBotContextId: sessions.imBotContextId,
@@ -57,6 +58,7 @@ export async function markImSessionManualRouteOverride(sessionId: string): Promi
     agentKind: dbToMakerAgentKind(row.agentKind),
     model: row.model,
     providerId: row.providerId?.trim() || null,
+    agentDeviceId: row.agentDeviceId ?? null,
     effort: row.effort ?? null,
   };
   if (isAppSessionBoundaryPending() || activeOwnerScopeKey() !== ownerScopeKey) {

@@ -106,9 +106,10 @@ describeMigrationReplay('migration replay', () => {
   it.each(['missing', 'legacy', 'partial'])('replays remote report persistence with %s Worker schema', (shape) => {
     const { db, cleanup } = createTempDb();
     try {
-      // Later migrations (0126 sessions.hidden_at) need the sessions table this fixture predates.
+      // Later migrations need the sessions and task tables these Worker fixtures omit.
       db.exec("CREATE TABLE migration_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE migration_history (seq INTEGER PRIMARY KEY, file_name TEXT NOT NULL, content_hash TEXT NOT NULL, applied_at INTEGER NOT NULL); CREATE TABLE sessions (id TEXT PRIMARY KEY)");
       if (shape !== 'missing') db.exec(`CREATE TABLE orca_workers (id TEXT PRIMARY KEY${shape === 'partial' ? ', pending_remote_report TEXT' : ''}); INSERT INTO orca_workers (id) VALUES ('worker-1');`);
+      db.exec("CREATE TABLE bot_delegations (id TEXT PRIMARY KEY)");
       const result = runMigrationReplay(db, { drizzleDir: drizzleDir(), currentVersion: 124 });
       expect(result.applied.map((migration) => migration.seq)[0]).toBe(125);
       expect(tableExists(db, 'orca_remote_opens')).toBe(true);
@@ -123,6 +124,7 @@ describeMigrationReplay('migration replay', () => {
     try {
       db.exec("CREATE TABLE migration_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE migration_history (seq INTEGER PRIMARY KEY, file_name TEXT NOT NULL, content_hash TEXT NOT NULL, applied_at INTEGER NOT NULL)");
       db.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL, pinned_at INTEGER, updated_at INTEGER NOT NULL); INSERT INTO sessions VALUES ('a', 'Visible', 'active', NULL, 1), ('b', 'Pinned', 'archived', 5, 2);");
+      db.exec("CREATE TABLE bot_delegations (id TEXT PRIMARY KEY)");
       const result = runMigrationReplay(db, { drizzleDir: drizzleDir(), currentVersion: 125 });
       expect(result.applied.map((migration) => migration.seq)[0]).toBe(126);
       expect(columnNames(db, 'sessions')).toContain('hidden_at');

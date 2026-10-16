@@ -85,6 +85,12 @@ export function BotGroupSidebarRow({
       const key = botGroupNoticeKey(last.noticeCode ?? null, false);
       return key ? t(key, { name: last.authorName }) : botGroupPreviewLine(last.preview);
     }
+    // A share names who posted it; the card's own text is never quoted here.
+    if (last.threadShare) {
+      return last.authorKind === 'user' && last.isSelf !== false
+        ? t('bots.groupChat.sidebar.sharedReplyYou')
+        : t('bots.groupChat.sidebar.sharedReply', { name: last.authorName.trim() });
+    }
     const text = botGroupPreviewLine(last.preview);
     if (last.authorKind === 'user' && last.isSelf !== false) return t('bots.groupChat.sidebar.previewYou', { text });
     if (last.authorName.trim()) {

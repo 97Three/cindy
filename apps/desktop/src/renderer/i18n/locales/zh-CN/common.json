@@ -161,8 +161,8 @@
     "runsOnThisDevice": "运行在这台电脑",
     "inviteNotice": "持有邀请链接的用户登录后即可加入，拥有与房主相同的 Agent 使用权限。",
     "offlineAutoClose": "房主电脑持续离线后，共享会自动结束。",
-    "inviteBoxHint": "将链接发送给伙伴，对方点击即可加入。手机端也可复制链接后打开 Cindy。",
-    "invitationMessage": "邀请你加入「{{title}}」\n{{link}}\n点击链接加入；手机端也可复制链接后打开 Cindy，确认加入。",
+    "inviteBoxHint": "将链接发送给伙伴，对方点击即可加入，也可在 Cindy 中点「加入共享任务」粘贴链接。",
+    "invitationMessage": "邀请你加入「{{title}}」\n{{link}}\n点击链接加入；如果没能打开 Cindy，可在 Cindy 中点「加入共享任务」并粘贴这条链接。",
     "membersWithLimit": "成员 · {{count}} 人（最多 2 位访客）",
     "me": "我",
     "thisDevice": "这台电脑",
@@ -197,8 +197,6 @@
     "invitationDifferentServer": "此邀请属于其他 Cindy 服务，请用对应的客户端打开链接",
     "managementIntro": "管理你发起和加入的共享。",
     "returnToTasks": "返回任务列表",
-    "invitationDetected": "发现共享任务邀请",
-    "notNow": "暂不加入",
     "closeAllLabel": "取消全部共享",
     "closeAllDescription": "所有访客将无法继续访问，任务记录保留。"
   },
@@ -519,6 +517,8 @@
       "sourceShare": "来自 {{name}} 的分享",
       "shareComputer": "{{name}} 的电脑",
       "shareComputerUnknown": "分享来的电脑",
+      "accountCount_other": "{{count}} 个账号",
+      "accountFallback": "账号 {{index}}",
       "quota": {
         "loading": "正在读取配额…",
         "unavailable": "暂时读不到这台电脑的配额",
@@ -597,6 +597,7 @@
     },
     "toast": {
       "added_other": "已把 {{count}} 台电脑加入 {{provider}} 的供应商组",
+      "addedAccounts_other": "已把 {{count}} 个账号加入 {{provider}} 的供应商组",
       "removed": "已把 {{name}} 移出供应商组",
       "deleted": "已删除 {{provider}} 的供应商组"
     }
@@ -9067,6 +9068,8 @@
         "empty": "还没有消息",
         "preview": "{{name}}：{{text}}",
         "previewYou": "你：{{text}}",
+        "sharedReplyYou": "你贴回了一条话题回复",
+        "sharedReply": "{{name}} 贴回了一条话题回复",
         "waiting": "在等你确认",
         "planProposed": "{{name}}：安排好了，等你开始",
         "planProposedAnonymous": "安排好了，等你开始",
@@ -9120,6 +9123,12 @@
         "tooManyAttachments": "附件太多了，一条消息最多 {{max}} 个",
         "attachmentsFailed": "附件没能发出去，请检查文件是否还在，或移除后重试",
         "folderNotSupported": "文件夹不能作为附件，请选择其中的文件"
+      },
+      "outbox": {
+        "sending": "发送中…",
+        "failed": "没发出去",
+        "edit": "编辑",
+        "editBlocked": "输入框里还有内容，先发出或清空，再编辑这条消息"
       },
       "quote": {
         "replyingTo": "引用 {{name}}",
@@ -9228,7 +9237,10 @@
         "permissionDenied": "你没有执行此操作的群管理权限。",
         "serviceError": "群聊服务处理失败，请稍后重试。",
         "groupArchived": "本群已归档，不能执行此操作。",
-        "quoteUnavailable": "引用的消息已删除或不可见，已取消引用，请再发送一次"
+        "quoteUnavailable": "引用的消息已删除或不可见，已取消引用，请再发送一次",
+        "lifecycleUnavailable": "当前服务器或电脑暂不支持此操作。",
+        "groupDissolved": "群聊已解散，仍可查看有权访问的历史消息。",
+        "lastOwner": "请先转让群主或解散群聊，再退出。"
       },
       "organizer": "负责人",
       "plan": {
@@ -9256,8 +9268,22 @@
       "speaking": {
         "planning": "正在安排…"
       },
+      "task": {
+        "label": "任务",
+        "state": {
+          "started": "进行中",
+          "waiting": "等你确认",
+          "completed": "已完成",
+          "failed": "失败了",
+          "cancelled": "已取消",
+          "timed-out": "已超时"
+        }
+      },
       "files": {
-        "openFailed": "文件没能打开，可能已被移动或删除"
+        "openFailed": "文件没能打开，可能已被移动或删除",
+        "untitled": "附件",
+        "loading": "加载中…",
+        "unavailable": "暂时无法加载"
       },
       "addFromChat": {
         "triggerFor": "将 {{name}} 添加到群聊",
@@ -9274,6 +9300,35 @@
         "openTopic": "查看话题 · {{count}} 条回复",
         "topic": "话题",
         "replies": "回复",
+        "replyCount_one": "{{count}} 条回复",
+        "replyCount_other": "{{count}} 条回复",
+        "thread": {
+          "open_one": "打开话题，{{count}} 条回复",
+          "open_other": "打开话题，{{count}} 条回复",
+          "lastReply": "最后回复 {{time}}",
+          "emptyReply": "没有文字内容",
+          "image": "图片",
+          "file": "文件",
+          "attachmentsSummary": "{{label}} · {{name}} 等 {{count}} 个附件",
+          "alsoSent": "回复了话题，也发到了群聊",
+          "sharedReplyFrom": "贴回了 {{name}} 的话题回复",
+          "sharedReply": "贴回了一条话题回复",
+          "edited": "已编辑",
+          "sourceUnavailable": "原回复已删除，或你无权查看。",
+          "viewThread": "查看话题",
+          "viewInMain": "在群聊中查看",
+          "postToMain": "贴回群聊",
+          "postedBySelf": "你已贴到群聊",
+          "postedToMain": "已贴到群聊",
+          "alsoSend": "同时发到群聊",
+          "alsoSendFailed_one": "回复已发到话题，但没能同时发到群聊。",
+          "alsoSendFailed_other": "有 {{count}} 条回复已发到话题，但没能同时发到群聊。",
+          "loadingSource": "正在读取原回复…",
+          "shareNotLoaded": "这条贴回在更早的群聊记录里，往上加载后可以看到。",
+          "retryPost": "重新发到群聊",
+          "alreadyPosted": "你已经把这条回复贴到群聊了",
+          "shareUnavailable": "这条回复已删除或无法查看，不能贴到群聊。"
+        },
         "replyPlaceholder": "回复这条消息，可用 @ 点名伙伴…",
         "sendReply": "发送回复",
         "addReaction": "添加表情回应",
@@ -9345,7 +9400,7 @@
           "removeHint": "该成员将无法继续查看或发消息；如果是伙伴的主人，其伙伴也会退出。",
           "addCompanion": "邀请我的伙伴",
           "leave": "退出群",
-          "leaveHint": "你和你带来的伙伴将退出群。群主需要先转让身份。",
+          "leaveHint": "你和你的伙伴将退出此群聊，不再接收新消息，也无法查看群历史。",
           "soleOwnerHint": "群里只剩你。可以归档群，保留历史记录，以后再恢复使用。",
           "archive": "归档群",
           "archiveHint": "归档会对所有成员停用本群，停止新消息和伙伴执行。历史记录保留，之后可通过搜索找到本群、查看历史并取消归档。",
@@ -9365,6 +9420,18 @@
           "companionPermissions": "伙伴权限",
           "configureCapabilities": "工具与授权设置"
         }
+      },
+      "lifecycle": {
+        "dissolve": "解散群聊",
+        "dissolveNote": "解散后无法恢复。所有成员将无法发送消息，进行中的工作会停止，邀请会失效。成员仍可查看原本有权访问的历史消息。",
+        "hide": "从我的列表移除",
+        "hideNote": "从你所有设备的列表中移除此群聊。不改变成员关系，不删除历史消息、不停止进行中的工作，也不影响其他成员。",
+        "leave": "退出群聊",
+        "leaveNote": "你和你的伙伴将退出此群聊，不再接收新消息，也无法查看群历史。",
+        "unavailable": "当前服务器或电脑暂不支持此操作。",
+        "dissolved": "群聊已解散，仍可查看有权访问的历史消息。",
+        "failed": "操作未完成，请重试。",
+        "lastOwner": "请先转让群主或解散群聊，再退出。"
       }
     },
     "joined": {

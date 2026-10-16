@@ -38,6 +38,7 @@ import {
   desktopCodexAuthAdapter,
   readOwnerScopedXdGatewayKey,
 } from '../maker-host/auth-adapters.js';
+import { reportCindyGatewayKeyRejected } from '../model-access/gatewayKeyRejection.js';
 import {
   activeOwnerScopeKey,
   getActiveAppSession,
@@ -1760,12 +1761,16 @@ async function createVoiceInputProvider(
       }
       const { proxyApiKey, proxyBaseUrl } = readLiteLlmProxyConfig();
       if (!proxyApiKey || !proxyBaseUrl) throw new Error(profile.missingCredentialMessage);
-      return new RealtimeAsrWebSocketProvider(buildRealtimeAsrProviderOptions(
-        profile,
-        sourceLanguage,
-        () => Promise.resolve(proxyApiKey),
-        proxyBaseUrl,
-      ));
+      return new RealtimeAsrWebSocketProvider({
+        ...buildRealtimeAsrProviderOptions(
+          profile,
+          sourceLanguage,
+          () => Promise.resolve(proxyApiKey),
+          proxyBaseUrl,
+        ),
+        // 这条直连网关的 WebSocket 携带 Cindy AI Key;握手 401 时上报 Key 失效。
+        onAuthorizationRejected: reportCindyGatewayKeyRejected,
+      });
     }
     throw new Error(`Unsupported realtime ASR provider ${provider}.`);
   }
@@ -1798,6 +1803,8 @@ async function createVoiceInputProvider(
         sourceLanguage,
         missingCredentialMessage: profile.missingCredentialMessage,
         errorFallbackMessage: profile.errorFallbackMessage,
+        // 这条直连网关的 WebSocket 携带 Cindy AI Key;握手 401 时上报 Key 失效。
+        onAuthorizationRejected: reportCindyGatewayKeyRejected,
       });
     }
     throw new Error(`Unsupported native ASR protocol ${nativeConfig.protocolProfile}.`);

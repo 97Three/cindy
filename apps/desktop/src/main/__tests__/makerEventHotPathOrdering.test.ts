@@ -32,6 +32,7 @@ describe('maker:event hot path ordering', () => {
     const cleared = vi.fn();
     const deps = {
       pendingCredentialSwitchHolder: null, deferredCodexRestartHolder: null,
+      gatewayCodexRestartHolder: { onSessionSettled: vi.fn() },
       agentInputCoordinatorHolder: null,
       refreshRemoteCodexMcpOnTurnSettledHolder: () => { throw new Error('App session is switching'); },
       gitSnapshotCoordinator: { onSessionClosed: vi.fn() },
@@ -45,6 +46,7 @@ describe('maker:event hot path ordering', () => {
     };
     const cleanup = new Function(...Object.keys(deps), `${js}; return cleanupClosedSessionRuntime;`)(...Object.values(deps));
     expect(() => cleanup({ id: 'departing-task' })).not.toThrow();
+    expect(deps.gatewayCodexRestartHolder.onSessionSettled).toHaveBeenCalledOnce();
     expect(cleared).toHaveBeenCalledWith('departing-task');
     expect(deps.clearSessionPersistState).toHaveBeenCalledWith('departing-task');
     expect(deps.handleAgentIslandSessionClosedAfterCleanup).toHaveBeenCalledWith('departing-task', 'process-closed');

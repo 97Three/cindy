@@ -73,7 +73,11 @@ export type DeepLinkPayload =
   | { type: 'shared-task-join'; invitation: string; server: string }
   /** 供应商分享链接：原样交给 Renderer 的申请弹窗，由主进程命令再解析与核对区域。 */
   | { type: 'provider-share-join'; link: string }
-  | { type: 'session'; id: string; messageClientId?: string }
+  /**
+   * islandEntryId 只由主进程的灵动岛点击写入(URL 解析从不产生它),标识这一次点击,
+   * 供 renderer 在导航落地后申请处置被点的那张卡。
+   */
+  | { type: 'session'; id: string; messageClientId?: string; islandEntryId?: string }
   | { type: 'project'; workingDir: string }
   /**
    * 由 --open-folder argv 触发的 "新建对话 + 预填工作目录"。
@@ -410,8 +414,16 @@ export function openMainWindowBillingTopUp(): void {
  * 主进程内部发起的会话聚焦(workspace 槽 focus:true)。复用 deep link 的
  * 前台 + renderer dispatch 通道,行为与用户点 cindy://session/<id> 一致。
  */
-export function openMainWindowSession(sessionId: string, options?: { focus?: boolean }): void {
-  dispatchDeepLink({ type: 'session', id: sessionId }, options?.focus !== false);
+export function openMainWindowSession(
+  sessionId: string,
+  options?: { focus?: boolean; islandEntryId?: string },
+): void {
+  dispatchDeepLink(
+    options?.islandEntryId
+      ? { type: 'session', id: sessionId, islandEntryId: options.islandEntryId }
+      : { type: 'session', id: sessionId },
+    options?.focus !== false,
+  );
 }
 
 /** Sends a typed internal event to the primary renderer without broadcasting to utility windows. */

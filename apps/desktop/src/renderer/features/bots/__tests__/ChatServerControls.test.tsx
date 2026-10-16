@@ -2,19 +2,22 @@
 import { StrictMode, type ReactNode } from 'react';
 import { act, cleanup, createEvent, fireEvent, render as renderUI, screen, waitFor, within } from '@testing-library/react';
 import { Tooltip } from '@/components/ui/tooltip';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ChatInviteButton, ChatMessageActions } from '../ChatServerControls';
 import { ChatInviteDialog } from '../ChatInviteDialog';
 import { ChatThreadPanel } from '../ChatThreadPanel';
+import { flashThreadTarget } from '../BotGroupThreadViews';
+import { chatErrorKey } from '../chatError';
 import type { BotGroupDetail, BotGroupMessageView } from '../../../../shared/botGroupChat';
 import { shareSelectionStore } from '@/components/chat/shareSelectionStore';
 import { queryShareableMessageIds, stripInteractiveElements } from '@/lib/shareConversationImage';
 
 const mocks = vi.hoisted(() => ({
   status: vi.fn(), react: vi.fn(), reactors: vi.fn(), thread: vi.fn(), reply: vi.fn(), createInvite: vi.fn(), previewInvite: vi.fn(), acceptInvite: vi.fn(),
-  refresh: vi.fn(), ownerCurrent: true,
+  refresh: vi.fn(), shareToMain: vi.fn(), ownerCurrent: true,
 }));
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }));
+vi.mock('react-i18next', async (original) => ({ ...(await original<typeof import('react-i18next')>()),
+  useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }));
 vi.mock('@/components/chat/MarkdownRenderer', () => ({ MarkdownRenderer: ({ content }: { content: string }) => <div>{content}</div> }));
 vi.mock('../BotAvatar', () => ({ BotAvatar: () => null }));
 vi.mock('../botGroupStore', () => ({ refreshBotGroups: mocks.refresh }));
@@ -23,7 +26,7 @@ vi.mock('@/contexts/dataOwnerGeneration', () => ({
   getDataOwnerGeneration: () => 1, isDataOwnerGenerationCurrent: () => mocks.ownerCurrent, isDataOwnerPushCurrent: () => true,
 }));
 const k = (name: string) => `bots.groupChat.server.${name}`;
-const message = { id: 'root', authorName: 'Human', content: 'Root message', reactions: [{ emoji: '👍', count: 2, me: true }] } as BotGroupMessageView;
+const message = { id: 'root', authorName: 'Human', content: 'Root message', reactions: [{ emoji: '👍', count: 2, me: true }], attachments: [] } as unknown as BotGroupMessageView;
 const group = { id: 'room', members: [], messages: [message] } as unknown as BotGroupDetail;
 const render = (ui: ReactNode) => renderUI(<Tooltip.Provider>{ui}</Tooltip.Provider>);
 beforeEach(() => {
@@ -44,10 +47,42 @@ beforeEach(() => {
 afterEach(() => { cleanup(); shareSelectionStore.reset(); vi.unstubAllGlobals(); });
 
 describe('chat interaction controls', () => {
-  it('focuses the close button when the archived thread reply input is disabled', () => {
-    render(<ChatThreadPanel group={{ ...group, archived: true }} rootId="root" onClose={vi.fn()} />);
+  it.each([{ archived: true }, { archived: false, dissolvedAt: '2026-10-15T00:00:00.000Z' }])('keeps terminal thread replies read-only and focuses close (%j)', async state => {
+    render(<ChatThreadPanel group={{ ...group, ...state }} rootId="root" onClose={vi.fn()} />);
+    await screen.findByText('Root message');
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).disabled).toBe(true);
+    expect((screen.getByRole('checkbox', { name: k('thread.alsoSend') }) as HTMLButtonElement).disabled).toBe(true);
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'bots.close' }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Unsent reply' } });
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+    expect((screen.getByRole('button', { name: k('sendReply') }) as HTMLButtonElement).disabled).toBe(true);
+    expect(mocks.reply).not.toHaveBeenCalled();
+  });
+
+  it.each(['GROUP_DISSOLVED', 'CONVERSATION_DISSOLVED'])('maps dissolution error %s to its explanation', code => {
+    expect(chatErrorKey(code)).toBe('bots.groupChat.lifecycle.dissolved');
+  });
+
+  it.each([{ archived: true }, { dissolvedAt: '2026-10-15T00:00:00.000Z' }])('stops sharing and retrying thread copies after the group becomes read-only (%j)', async state => {
+    const room = { ...group, id: `terminal-${JSON.stringify(state)}` };
+    mocks.thread.mockResolvedValue({ ok: true, root: message, replies: [{ ...message, id: 'reply', kind: 'message', content: 'Existing reply' }], hasMore: false });
+    mocks.reply.mockResolvedValue({ ok: true, messageId: 'reply' });
+    mocks.shareToMain.mockResolvedValue({ ok: false, errorCode: 'SERVICE_ERROR' });
+    const view = render(<ChatThreadPanel group={room} rootId="root" onClose={vi.fn()} />);
+    await screen.findByText('Existing reply');
+    fireEvent.click(screen.getByRole('checkbox', { name: k('thread.alsoSend') }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Send to both' } });
+    fireEvent.click(screen.getByRole('button', { name: k('sendReply') }));
+    await screen.findByRole('button', { name: k('thread.retryPost') });
+    view.rerender(<Tooltip.Provider><ChatThreadPanel group={{ ...room, ...state }} rootId="root" onClose={vi.fn()} /></Tooltip.Provider>);
+    const retry = screen.getByRole('button', { name: k('thread.retryPost') }) as HTMLButtonElement;
+    expect(retry.disabled).toBe(true);
+    fireEvent.click(retry);
+    const reply = screen.getByText('Existing reply').closest('article')!;
+    const more = within(reply).queryByRole('button', { name: 'chat.messageActionBar.moreActions' });
+    if (more) fireEvent.pointerDown(more, { button: 0, ctrlKey: false });
+    expect(screen.queryByRole('menuitem', { name: k('thread.postToMain') })).toBeNull();
+    expect(mocks.shareToMain).toHaveBeenCalledOnce();
   });
 
   it('refits a typed thread reply when the panel width changes, not when only its height does', () => {
@@ -157,6 +192,70 @@ describe('chat interaction controls', () => {
     expect(mocks.thread.mock.calls.at(-1)?.[0]).toMatchObject({ sourceMessageIds: [older.id, latest.id] });
   });
 
+  it('stops a bulk retry of main-chat copies once the account is switched', async () => {
+    mocks.reply.mockResolvedValueOnce({ ok: true, messageId: 'first' }).mockResolvedValueOnce({ ok: true, messageId: 'second' });
+    mocks.shareToMain.mockResolvedValue({ ok: false, errorCode: 'SERVICE_ERROR' });
+    render(<ChatThreadPanel group={group} rootId="retry-root" onClose={vi.fn()} />);
+    const input = screen.getByRole('textbox', { name: k('replyPlaceholder') });
+    for (const [count, text] of [[1, 'one'], [2, 'two']] as const) {
+      fireEvent.click(screen.getByRole('checkbox', { name: k('thread.alsoSend') }));
+      fireEvent.change(input, { target: { value: text } });
+      fireEvent.click(screen.getByRole('button', { name: k('sendReply') }));
+      await waitFor(() => expect(mocks.shareToMain).toHaveBeenCalledTimes(count));
+    }
+    const retry = await screen.findByRole('button', { name: k('thread.retryPost') });
+    let finish!: (value: unknown) => void;
+    mocks.shareToMain.mockClear().mockReturnValueOnce(new Promise(resolve => { finish = resolve; }))
+      .mockResolvedValue({ ok: true, messageId: 'share', alreadyShared: false });
+    fireEvent.click(retry);
+    await waitFor(() => expect(mocks.shareToMain).toHaveBeenCalledTimes(1));
+    // The account changes while the first copy is in flight: the second must not go out.
+    mocks.ownerCurrent = false;
+    finish({ ok: true, messageId: 'share', alreadyShared: false });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(mocks.shareToMain).toHaveBeenCalledTimes(1);
+  });
+
+  it('names an unavailable share only for posting; a missing message elsewhere stays generic', () => {
+    expect(chatErrorKey('SHARE_UNAVAILABLE')).toBe(k('thread.shareUnavailable'));
+    expect(chatErrorKey('MESSAGE_NOT_FOUND')).toBe(k('requestFailed'));
+  });
+
+  it.each([[true, 'auto'], [false, 'smooth']] as const)('jumps to a shared reply without smooth scrolling when reduced motion is %s', (reduced, behavior) => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: reduced && query === '(prefers-reduced-motion: reduce)' }));
+    const target = document.createElement('article');
+    target.scrollIntoView = vi.fn();
+    flashThreadTarget(target);
+    expect(target.scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior });
+  });
+
+  it('keeps looking for a shared reply when group pushes overtake its older-page reads', async () => {
+    const latest = { ...message, id: 'latest', sequence: 100, content: 'Latest reply' };
+    const target = { ...message, id: 'target', sequence: 4, content: 'Target reply' };
+    const olderReads: Array<(value: unknown) => void> = [];
+    mocks.thread.mockImplementation(({ before }: { before?: number }) => before
+      ? new Promise(resolve => { olderReads.push(resolve); })
+      : Promise.resolve({ ok: true, root: message, replies: [latest], hasMore: true }));
+    let push!: (event: { groupId: string }, stamp: unknown) => void;
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: { maker: {
+      chatServer: mocks, onBotGroupChanged: (listener: typeof push) => { push = listener; return () => {}; },
+    } } });
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    onTestFinished(() => { delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView; });
+    render(<ChatThreadPanel group={group} rootId="root" focus={{ messageId: target.id, nonce: 1 }} onClose={vi.fn()} />);
+    await waitFor(() => expect(olderReads).toHaveLength(1));
+    // Each push refresh lands while an older page is in flight, so that page is discarded.
+    for (let overtaken = 1; overtaken <= 6; overtaken += 1) {
+      push({ groupId: 'room' }, null);
+      await waitFor(() => expect(olderReads).toHaveLength(overtaken + 1));
+      olderReads[overtaken - 1]!({ ok: true, root: message, replies: [], hasMore: true });
+    }
+    olderReads.at(-1)!({ ok: true, root: message, replies: [target], hasMore: false });
+    expect(await screen.findByText('Target reply')).toBeTruthy();
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+  });
+
   it('preserves copy and image sharing beside thread replies and reactions in one toolbar', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined), reply = vi.fn();
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
@@ -171,6 +270,46 @@ describe('chat interaction controls', () => {
     fireEvent.click(screen.getByRole('button', { name: k('addReaction') }));
     fireEvent.click(screen.getByRole('button', { name: '🎉' }));
     await waitFor(() => expect(mocks.react).toHaveBeenCalledWith({ groupId: 'room', messageId: 'root', emoji: '🎉', present: true }));
+  });
+
+  it('shows the Thread root and reply attachments as pictures, chips and honest states, never as body text', async () => {
+    const image = { id: 'img', name: 'clipboard-1791877522388.png', category: 'image', mimeType: 'image/png', size: 1, url: 'cindy-media://blobs/img.png', path: null };
+    const loading = { id: 'late', name: 'late.png', category: 'file', mimeType: '', size: 0, url: null, path: null, state: 'loading' };
+    const lost = { id: 'lost', name: 'spec.pdf', category: 'file', mimeType: '', size: 0, url: null, path: null, state: 'unavailable' };
+    const file = { id: 'doc', name: 'notes.md', category: 'text', mimeType: 'text/markdown', size: 1, url: null, path: '/tmp/notes.md' };
+    mocks.thread.mockResolvedValue({ ok: true, root: { ...message, content: '只要伙伴能管理session', attachments: [image, loading] },
+      replies: [{ ...message, id: 'reply', sequence: 2, content: '', attachments: [file, lost] }], hasMore: false });
+    render(<ChatThreadPanel group={group} rootId="root" onClose={vi.fn()} />);
+    const root = (await screen.findByText('只要伙伴能管理session')).closest('article')!;
+    expect(within(root).getByAltText('clipboard-1791877522388.png')).toBeTruthy();
+    expect(within(root).getByText('chat.imageMissing.loading')).toBeTruthy();
+    expect(within(root).getByText('late.png')).toBeTruthy();
+    const reply = screen.getByText('notes.md').closest('article')!;
+    expect(within(reply).getByRole('button', { name: 'notes.md' })).toBeTruthy();
+    expect(within(reply).getByRole('status', { name: 'spec.pdf, bots.groupChat.files.unavailable' })).toBeTruthy();
+    expect(within(reply).queryByRole('button', { name: /spec\.pdf/ })).toBeNull();
+    expect(document.body.textContent).not.toContain('[附件:');
+  });
+
+  it('updates an attachment on an earlier Thread page when its download finishes', async () => {
+    let push: ((event: { groupId: string }, stamp?: unknown) => void) | undefined;
+    (window.electronAPI.maker as unknown as { onBotGroupChanged: unknown }).onBotGroupChanged = (callback: typeof push) => { push = callback; return () => {}; };
+    let arrived = false;
+    const latest = { ...message, id: 'latest', sequence: 60, content: 'Latest reply' };
+    const older = (ready: boolean) => ({ ...message, id: 'older', sequence: 5, content: 'Earlier reply', attachments: [ready
+      ? { id: 'old', name: 'old.png', category: 'image', mimeType: 'image/png', size: 1, url: 'cindy-media://blobs/old.png', path: null }
+      : { id: 'old', name: 'old.png', category: 'file', mimeType: '', size: 0, url: null, path: null, state: 'loading' }] });
+    mocks.thread.mockImplementation(async ({ before }: { before?: number }) => before === undefined
+      ? { ok: true, root: message, replies: [latest], hasMore: true }
+      : { ok: true, root: message, replies: [older(arrived)], hasMore: false });
+    render(<ChatThreadPanel group={group} rootId="root" onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'bots.groupChat.timeline.loadEarlier' }));
+    expect(await screen.findByText('chat.imageMissing.loading')).toBeTruthy();
+    arrived = true;
+    push?.({ groupId: 'room' });
+    expect(await screen.findByAltText('old.png')).toBeTruthy();
+    expect(screen.queryByText('chat.imageMissing.loading')).toBeNull();
+    expect(mocks.thread.mock.calls.map(([input]) => (input as { before?: number }).before)).toEqual([undefined, 60, undefined, 6]);
   });
 
   it('shares thread messages separately from the main timeline and excludes controls from the image', async () => {

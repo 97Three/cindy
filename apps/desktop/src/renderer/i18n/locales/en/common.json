@@ -161,8 +161,8 @@
     "runsOnThisDevice": "Runs on this device",
     "inviteNotice": "Anyone holding the invitation link can join after signing in, with the same Agent access as the host.",
     "offlineAutoClose": "Sharing ends automatically if the host computer stays offline.",
-    "inviteBoxHint": "Send the link to your teammate to join. On mobile, they can also copy the link and open Cindy.",
-    "invitationMessage": "You’re invited to join “{{title}}”\n{{link}}\nOpen the link to join. On mobile, you can also copy the link, open Cindy, and confirm to join.",
+    "inviteBoxHint": "Send the link to your teammate. They can open it to join, or paste it into Join Shared Task in Cindy.",
+    "invitationMessage": "You’re invited to join “{{title}}”\n{{link}}\nOpen the link to join. If Cindy doesn’t open, choose Join Shared Task in Cindy and paste this link.",
     "membersWithLimit": "Members · {{count}} (up to 2 guests)",
     "me": "Me",
     "thisDevice": "This device",
@@ -197,8 +197,6 @@
     "invitationDifferentServer": "This invitation belongs to another Cindy service. Open the link in the matching app.",
     "managementIntro": "Manage the tasks you share and join.",
     "returnToTasks": "Back to Tasks",
-    "invitationDetected": "Shared task invitation found",
-    "notNow": "Not Now",
     "closeAllLabel": "Stop All Sharing",
     "closeAllDescription": "Guests will lose access. Task history is kept."
   },
@@ -522,6 +520,9 @@
       "sourceShare": "Shared by {{name}}",
       "shareComputer": "{{name}}'s computer",
       "shareComputerUnknown": "Shared computer",
+      "accountCount_one": "{{count}} account",
+      "accountCount_other": "{{count}} accounts",
+      "accountFallback": "Account {{index}}",
       "quota": {
         "loading": "Reading quota…",
         "unavailable": "Can’t read this computer’s quota right now",
@@ -605,6 +606,8 @@
     "toast": {
       "added_one": "Added {{count}} computer to the {{provider}} provider group",
       "added_other": "Added {{count}} computers to the {{provider}} provider group",
+      "addedAccounts_one": "Added {{count}} account to the {{provider}} provider group",
+      "addedAccounts_other": "Added {{count}} accounts to the {{provider}} provider group",
       "removed": "Removed {{name}} from the provider group",
       "deleted": "Deleted the {{provider}} provider group"
     }
@@ -9106,6 +9109,8 @@
         "empty": "No messages yet",
         "preview": "{{name}}: {{text}}",
         "previewYou": "You: {{text}}",
+        "sharedReplyYou": "You shared a thread reply",
+        "sharedReply": "{{name}} shared a thread reply",
         "waiting": "Waiting for your go-ahead",
         "planProposed": "{{name}}: plan ready, waiting for you to start",
         "planProposedAnonymous": "Plan ready, waiting for you to start",
@@ -9159,6 +9164,12 @@
         "tooManyAttachments": "Too many attachments. The limit is {{max}} per message.",
         "attachmentsFailed": "Attachments not sent. Check that the files still exist, or remove them and try again.",
         "folderNotSupported": "Folders can’t be attached. Choose the files inside instead."
+      },
+      "outbox": {
+        "sending": "Sending…",
+        "failed": "Not sent",
+        "edit": "Edit",
+        "editBlocked": "Send or clear what’s in the input first, then edit this message."
       },
       "quote": {
         "replyingTo": "Quoting {{name}}",
@@ -9267,7 +9278,10 @@
         "permissionDenied": "You do not have permission to manage this group.",
         "serviceError": "The chat service could not complete the request. Try again later.",
         "groupArchived": "This group is archived. This action is unavailable.",
-        "quoteUnavailable": "The quoted message was deleted or is no longer visible. The quote was removed. Send again."
+        "quoteUnavailable": "The quoted message was deleted or is no longer visible. The quote was removed. Send again.",
+        "lifecycleUnavailable": "The current server or computer does not support this action yet.",
+        "groupDissolved": "This group has been dissolved. You can still read the available history.",
+        "lastOwner": "Transfer ownership or dissolve this group before leaving."
       },
       "organizer": "Organizer",
       "plan": {
@@ -9295,8 +9309,22 @@
       "speaking": {
         "planning": "Splitting the work…"
       },
+      "task": {
+        "label": "Task",
+        "state": {
+          "started": "In progress",
+          "waiting": "Waiting for your confirmation",
+          "completed": "Done",
+          "failed": "Failed",
+          "cancelled": "Cancelled",
+          "timed-out": "Timed out"
+        }
+      },
       "files": {
-        "openFailed": "Couldn’t open the file. It may have been moved or deleted."
+        "openFailed": "Couldn’t open the file. It may have been moved or deleted.",
+        "untitled": "Attachment",
+        "loading": "Loading…",
+        "unavailable": "Unavailable right now"
       },
       "addFromChat": {
         "triggerFor": "Add {{name}} to a Group Chat",
@@ -9313,6 +9341,35 @@
         "openTopic": "View thread · {{count}} replies",
         "topic": "Thread",
         "replies": "Replies",
+        "replyCount_one": "{{count}} reply",
+        "replyCount_other": "{{count}} replies",
+        "thread": {
+          "open_one": "Open thread, {{count}} reply",
+          "open_other": "Open thread, {{count}} replies",
+          "lastReply": "Last reply {{time}}",
+          "emptyReply": "No text",
+          "image": "Image",
+          "file": "File",
+          "attachmentsSummary": "{{label}} · {{name}} · {{count}} attachments",
+          "alsoSent": "Replied in a thread and also sent here",
+          "sharedReplyFrom": "Shared a thread reply from {{name}}",
+          "sharedReply": "Shared a thread reply",
+          "edited": "Edited",
+          "sourceUnavailable": "The original reply was deleted or isn't available to you.",
+          "viewThread": "View thread",
+          "viewInMain": "View in main chat",
+          "postToMain": "Post to main chat",
+          "postedBySelf": "You posted this to the main chat",
+          "postedToMain": "Posted to the main chat",
+          "alsoSend": "Also send to main chat",
+          "alsoSendFailed_one": "Your reply is in the thread, but it couldn't be sent to the main chat.",
+          "alsoSendFailed_other": "{{count}} replies are in the thread, but they couldn't be sent to the main chat.",
+          "loadingSource": "Loading the original reply…",
+          "shareNotLoaded": "This share is further back in the main chat. Load earlier messages to see it.",
+          "retryPost": "Send to main chat again",
+          "alreadyPosted": "You've already posted this reply to the main chat.",
+          "shareUnavailable": "This reply was deleted or isn't available, so it can't be posted to the main chat."
+        },
         "replyPlaceholder": "Reply to this message; use @ to mention a companion…",
         "sendReply": "Send reply",
         "addReaction": "Add reaction",
@@ -9384,7 +9441,7 @@
           "removeHint": "They will lose access to messages. Their companions will also leave.",
           "addCompanion": "Invite my companion",
           "leave": "Leave group",
-          "leaveHint": "You and your companions will leave. Transfer ownership first if you own the group.",
+          "leaveHint": "You and your companions will leave this group. You will no longer receive new messages or have access to its history.",
           "soleOwnerHint": "You’re the only member left. Archive this group to keep its history and restore it later.",
           "archive": "Archive Group",
           "archiveHint": "Archiving disables this group for all members, stopping new messages and teammate runs. History is kept. Search for the group to view its history or unarchive it.",
@@ -9404,6 +9461,18 @@
           "companionPermissions": "Companion permissions",
           "configureCapabilities": "Tools and access settings"
         }
+      },
+      "lifecycle": {
+        "dissolve": "Dissolve group",
+        "dissolveNote": "This cannot be undone. Messaging will stop for everyone, active work will stop, and invitations will expire. Members keep access to the history they can already read.",
+        "hide": "Remove from my list",
+        "hideNote": "Remove this chat from your list on all your devices. This does not change membership, delete history, stop ongoing work, or affect other members.",
+        "leave": "Leave group",
+        "leaveNote": "You and your companions will leave this group. You will no longer receive new messages or have access to its history.",
+        "unavailable": "The current server or computer does not support this action yet.",
+        "dissolved": "This group has been dissolved. You can still read the available history.",
+        "failed": "Could not complete this action. Try again.",
+        "lastOwner": "Transfer ownership or dissolve this group before leaving."
       }
     },
     "joined": {

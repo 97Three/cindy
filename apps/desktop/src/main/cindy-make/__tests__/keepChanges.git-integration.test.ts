@@ -422,8 +422,11 @@ it.each(['lines', 'hunks'] as const)('rejects reordered added %s while accepting
     await expect(applyUpstreamMerge(h.userData, state, h.git)).rejects.toMatchObject({
       code: 'checksFailed', missing: { count: 1, commits: [reordered] },
     });
+    expect(await h.git(['rev-parse', 'HEAD'], h.source)).toBe(reordered);
+    expect(await readFile(path.join(h.source, 'feature.txt'), 'utf8')).toBe(text(original));
     await h.write(worktree, 'feature.txt', original);
     await expect(applyUpstreamMerge(h.userData, state, h.git)).resolves.toMatchObject({ status: 'merged' });
+    expect(await readFile(path.join(h.source, 'feature.txt'), 'utf8')).toBe(text(original));
   } finally {
     await h.clean();
   }

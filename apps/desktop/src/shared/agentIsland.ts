@@ -742,6 +742,12 @@ export function computeAgentIslandContentHeight(input: {
 /** main → renderer:per-session 活动快照(侧栏卡片用)。 */
 export const AGENT_ISLAND_SESSION_SNAPSHOTS_CHANNEL = 'agent-island:session-snapshots';
 export const AGENT_ISLAND_SET_VISIBLE_SESSION_CHANNEL = 'agent-island:set-visible-session';
+/**
+ * renderer(主窗)→ main:灵动岛点击的目标地址已提交,且目标没有处置控件(群专线所在的群、
+ * 只读历史、不可用的委派任务),请求处置被点的那张卡。参数为 sessionId 与这次点击的
+ * islandEntryId;main 只认最近一次点击、且卡片身份未变。
+ */
+export const AGENT_ISLAND_CONSUME_ENTRY_ALERT_CHANNEL = 'agent-island:consume-entry-alert';
 export const AGENT_ISLAND_SET_ENABLED_CHANNEL = 'agent-island:set-enabled';
 export const AGENT_ISLAND_SET_SOUND_SETTINGS_CHANNEL = 'agent-island:set-sound-settings';
 export const AGENT_ISLAND_SET_MASCOT_SKIN_CHANNEL = 'agent-island:set-mascot-skin';

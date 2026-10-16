@@ -2328,6 +2328,35 @@ describe('Agent Island error read semantics (已读以 App 内真实展示为准
     expect(state.sessions.get('err')?.unread).toBe(false);
   });
 
+  // 伙伴群专线 / 只读历史没有报错横幅:灵动岛点击落地后,main 的
+  // consumeIslandEntryAlert 在卡片身份未变时按 explicit 处置这一张卡。
+  it('disposes only the clicked error card; replayed marks cannot revive it, a new failure still alerts', () => {
+    const state = createAgentIslandState();
+    const lane = { sessionId: 'lane', title: 'Cindy开发' };
+    applyAgentIslandEvent(state, lane, terminalErrorEvent('400 invalid_request_error'), 2_000);
+    applyAgentIslandEvent(state, { sessionId: 'other-err', title: 'Other' }, terminalErrorEvent('boom'), 2_100);
+    applyAgentIslandEvent(state, { sessionId: 'done', title: 'Done' }, doneEvent(), 2_200);
+    applyAgentIslandInteractionRequest(state, { sessionId: 'ask', title: 'Ask' }, permissionRequest('r1'), 2_300);
+
+    expect(acknowledgeAgentIslandSessionRead(state, 'lane', 3_000, { source: 'explicit' })).toBe('cleared');
+    expect(state.sessions.has('lane')).toBe(false);
+    expect(state.remoteUnreadTerminals.has('lane')).toBe(false);
+    // Repeat clicks and the pending-alert reconcile re-marking the same persisted
+    // error tail leave the disposed card gone.
+    expect(acknowledgeAgentIslandSessionRead(state, 'lane', 3_100, { source: 'explicit' })).toBe('not-found');
+    expect(markAgentIslandSessionAttention(state, 'lane')).toBe(false);
+    const afterAck = buildAgentIslandDisplayState(state, 3_200).sessions.map((session) => session.sessionId);
+    expect(afterAck).not.toContain('lane');
+    expect(afterAck).toEqual(expect.arrayContaining(['other-err', 'done', 'ask']));
+    expect(state.sessions.get('other-err')).toMatchObject({ phase: 'error', unread: true });
+    expect(state.sessions.get('ask')?.pendingInteractionIds.has('r1')).toBe(true);
+
+    applyAgentIslandUserPrompt(state, lane, 'try again', 4_000);
+    applyAgentIslandEvent(state, lane, terminalErrorEvent('400 again'), 5_000);
+    expect(state.sessions.get('lane')).toMatchObject({ phase: 'error', unread: true });
+    expect(buildAgentIslandDisplayState(state, 5_100).sessions.map((session) => session.sessionId)).toContain('lane');
+  });
+
   it('preserves error unread when a pending interaction is dismissed after the terminal error', () => {
     const state = createAgentIslandState();
     applyAgentIslandInteractionRequest(state, { sessionId: 'err', title: 'Err' }, permissionRequest('r1'), 1_000);

@@ -48,6 +48,21 @@ describe('anonymous shared group status', () => {
     expect(await createGuestSupportReader(env.readCaps)(member)).toBe('needs-update');
   });
 
+  it('coalesces shared accounts that point to one physical computer', async () => {
+    const env = setup(['available', 'available']);
+    const base = env.view.config!.members[1]!;
+    const members = [
+      { ...base, kind: 'share' as const, agentDeviceId: 'share:s1', hostDeviceId: 'kai-pc' },
+      { ...base, kind: 'share' as const, agentDeviceId: 'share:s2', hostDeviceId: 'kai-pc' },
+    ];
+    env.readCaps.mockResolvedValue({ virtualWorkspace: true, reshareConsent: true } as RemoteAgentCaps);
+    const read = createGuestSupportReader(env.readCaps);
+
+    expect(await Promise.all(members.map((member) => read(member)))).toEqual(['supported', 'supported']);
+    expect(env.readCaps).toHaveBeenCalledTimes(1);
+    expect(env.readCaps).toHaveBeenCalledWith(members[0]);
+  });
+
   it('projects coarse states without identities, sources, limits, or usage', async () => {
     const env = setup();
     expect(await readSharedGroupStatus(env.deps, 'anthropic')).toEqual([
@@ -217,6 +232,18 @@ describe('anonymous shared group status', () => {
     env.readCaps.mockResolvedValue({ virtualWorkspace: true, reshareConsent: true } as RemoteAgentCaps);
     // 同意后照常显示(这台在跑任务，显示忙碌)。
     expect(await readSharedGroupStatus({ ...env.deps, reshareState }, 'anthropic')).toEqual(['available', 'busy', 'offline']);
+  });
+
+  // 受邀者看到的是电脑不是账号(provider-groups.md §10，2026-10-15)：同一台电脑的几个账号合成一项，取最能接任务的状态。
+  it('lists one state per computer, taking the most usable account of each computer', async () => {
+    const env = setup(['available', 'cooling', 'full', 'offline', 'cooling', 'paused']);
+    const members = env.view.config!.members;
+    members[2].agentDeviceId = members[1].agentDeviceId;
+    for (const index of [3, 4]) {
+      Object.assign(members[index], { kind: 'share', agentDeviceId: `share:s${index}`, hostDeviceId: 'kai-pc' });
+    }
+    // 本机；同一台(冷却 + 满载仍能接 → 忙碌)；Kai 的那台(离线 + 冷却 → 冷却)；暂停的那台。
+    expect(await readSharedGroupStatus(env.deps, 'anthropic')).toEqual(['available', 'busy', 'cooling', 'paused']);
   });
 
   it('reflects the same temporary exclusion as the guest router without probing or changing it', async () => {

@@ -20,7 +20,8 @@ function visit(node: ts.Node) {
 visit(source);
 
 function setup(options: { agent?: string; role?: string; used?: number; current?: number;
-  target?: number; remote?: boolean; hostGuard?: boolean; displayedAgent?: string } = {}) {
+  target?: number; remote?: boolean; hostGuard?: boolean; displayedAgent?: string;
+  agentLocationAware?: boolean } = {}) {
   const agent = options.agent ?? 'codex';
   const switchSessionAgent = vi.fn(async () => ({ deferred: true, switched: false }));
   const release = vi.fn();
@@ -33,7 +34,7 @@ function setup(options: { agent?: string; role?: string; used?: number; current?
     activeModel: 'old-model', effectiveSourceId: 'old-provider', activeEffort: 'high',
     deviceLinkDeviceId: options.remote ? 'remote' : undefined, remoteHostId: null,
     currentSessionIdRef: { current: 's1' },
-    agentLocationAware: false, agentDeviceId: null, effectiveAgentDeviceId: null,
+    agentLocationAware: options.agentLocationAware ?? false, agentDeviceId: null, effectiveAgentDeviceId: null,
     providers: [], remoteProviders: { providers: [] }, modelMemory: null,
     ccCaps: { capabilities: {} }, codexCaps: { capabilities: {} },
     piCaps: { capabilities: { supportsModelWindowSwitchGuard: options.hostGuard !== false } },
@@ -51,7 +52,7 @@ function setup(options: { agent?: string; role?: string; used?: number; current?
     resolveRequestedEffort: () => 'high', getRememberedEffort: () => undefined, resolveFastSupported: () => false,
     makerApiFor: () => ({ switchSessionAgent }), makerApiForDevice: () => ({ switchSessionAgent }),
     resolveAgentSwitchAckAction: () => 'apply-intent', isAgentSwitchEchoConfigConsistent: () => true,
-    syncSessionDraftModelPrefs: vi.fn(), mapIpcErrorToI18nKey: (error: unknown) => { throw error; },
+    syncSessionDraftModelPrefs: vi.fn(), rememberCatalogModelPrefs: vi.fn(), taskComputerModelMemory: null, mapIpcErrorToI18nKey: (error: unknown) => { throw error; },
   };
   const compiled = ts.transpileModule(`const confirmModelSwitchContextGuard = ${callbacks.get('confirmModelSwitchContextGuard')};
     return ${callbacks.get('performAgentSwitch')};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -122,6 +123,17 @@ describe('Orca same-Agent window preflight', () => {
     expect(h.switchSessionAgent).not.toHaveBeenCalled();
     expect(await h.pick('codex', 'small', 'provider')).toBe(true);
     expect(h.confirmDialog).not.toHaveBeenCalled();
+  });
+
+  it('skips the window preflight when the pick moves the Agent to another computer', async () => {
+    for (const role of ['lead', 'worker']) {
+      const h = setup({ role, agentLocationAware: true });
+      expect(await h.pick('codex', 'small', 'provider', { agentDeviceId: 'share:alice-share' })).toBe(true);
+      expect(h.confirmDialog).not.toHaveBeenCalled();
+      expect(h.bindings.resolveProviderModelContextWindow).not.toHaveBeenCalled();
+      expect(h.switchSessionAgent).toHaveBeenCalledWith('s1', 'codex', 'small', 'provider', 'high', false,
+        { agentDeviceId: 'share:alice-share' });
+    }
   });
 
   it('does not register a choice if the user leaves the session during confirmation', async () => {

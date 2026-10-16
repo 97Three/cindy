@@ -595,6 +595,53 @@ export function setBeforeLocalCodexSessionStartHook(hook: (() => Promise<void>) 
   _beforeLocalCodexSessionStartHook = hook;
 }
 
+/** IPC owns the existing idle retry and input queue wake lifecycle. */
+let _scheduleCodexGatewayKeyRefresh: (() => void) | null = null;
+export function setCodexGatewayKeyRefreshHook(hook: () => void): void {
+  _scheduleCodexGatewayKeyRefresh = hook;
+  // Credential sync can precede IPC registration while utility hosts already
+  // exist. Reconcile those consumers once when the idle retry service attaches.
+  hook();
+}
+
+export function scheduleCodexGatewayKeyRefresh(): void {
+  _scheduleCodexGatewayKeyRefresh?.();
+}
+
+export function listCodexGatewayHostKeys(): string[] {
+  return _codexAgent?.getLocalHostKeysForCredentialMode('gateway-key') ?? [];
+}
+
+/** Refresh one gateway consumer after persistence, without changing OAuth state or other hosts. */
+export async function refreshCodexGatewayHost(
+  targetHostKey: string,
+  stillValid: () => Promise<boolean>,
+): Promise<void> {
+  if (_codexCredentialChangeGuard) throw new CodexCredentialModeSwitchBusyError([]);
+  const maker = _maker;
+  const agent = _codexAgent;
+  if (!maker || !agent) return;
+  const guard = await agent.beginLocalHostCredentialChange('Cindy AI key changed', {
+    allLocalHosts: true,
+    credentialMode: 'gateway-key',
+    targetHostKey,
+    busyError: () => new CodexCredentialModeSwitchBusyError([]),
+  });
+  try {
+    if (!await stillValid() || _maker !== maker || _codexAgent !== agent) return;
+    await prepareLocalCodexCredentialModeSwitch({
+      maker,
+      isSessionInTurn,
+      hostKeys: guard.affectedHostKeys.filter(key => agent.getLocalHostKeysForCredentialMode('gateway-key').includes(key)),
+    });
+    if (_maker !== maker || _codexAgent !== agent) return;
+    guard.assertIdle();
+    await guard.finalize();
+  } finally {
+    guard.release();
+  }
+}
+
 // Process-lifetime IPC binding: its reconciler reads the dynamic Maker facade and
 // clears owner-scoped bookkeeping by epoch. Keep it across resetMaker; IPC is not
 // registered again after an account switch. MCP factories bind before it is ready.

@@ -161,8 +161,8 @@
     "runsOnThisDevice": "執行在這台電腦",
     "inviteNotice": "持有邀請連結的使用者登入後即可加入，擁有與房主相同的 Agent 使用權限。",
     "offlineAutoClose": "房主電腦持續離線後，共享會自動結束。",
-    "inviteBoxHint": "將連結傳送給夥伴，對方點擊即可加入。手機端也可複製連結後開啟 Cindy。",
-    "invitationMessage": "邀請你加入「{{title}}」\n{{link}}\n點擊連結加入；手機端也可複製連結後開啟 Cindy，確認加入。",
+    "inviteBoxHint": "將連結傳送給夥伴，對方點擊即可加入，也可在 Cindy 中點「加入共享任務」貼上連結。",
+    "invitationMessage": "邀請你加入「{{title}}」\n{{link}}\n點擊連結加入；如果沒能開啟 Cindy，可在 Cindy 中點「加入共享任務」並貼上這條連結。",
     "membersWithLimit": "成員 · {{count}} 人（最多 2 位訪客）",
     "me": "我",
     "thisDevice": "這台電腦",
@@ -197,8 +197,6 @@
     "invitationDifferentServer": "此邀請屬於其他 Cindy 服務，請用對應的用戶端開啟連結",
     "managementIntro": "管理你發起和加入的共享。",
     "returnToTasks": "返回任務清單",
-    "invitationDetected": "發現共享任務邀請",
-    "notNow": "暫不加入",
     "closeAllLabel": "取消全部共享",
     "closeAllDescription": "所有訪客將無法繼續存取，任務記錄保留。"
   },
@@ -519,6 +517,8 @@
       "sourceShare": "來自 {{name}} 的分享",
       "shareComputer": "{{name}} 的電腦",
       "shareComputerUnknown": "分享來的電腦",
+      "accountCount_other": "{{count}} 個帳號",
+      "accountFallback": "帳號 {{index}}",
       "quota": {
         "loading": "正在讀取配額…",
         "unavailable": "暫時讀不到這台電腦的配額",
@@ -597,6 +597,7 @@
     },
     "toast": {
       "added_other": "已把 {{count}} 臺電腦加入 {{provider}} 的供應商組",
+      "addedAccounts_other": "已把 {{count}} 個帳號加入 {{provider}} 的供應商組",
       "removed": "已把 {{name}} 移出供應商組",
       "deleted": "已刪除 {{provider}} 的供應商組"
     }
@@ -9067,6 +9068,8 @@
         "empty": "還沒有訊息",
         "preview": "{{name}}：{{text}}",
         "previewYou": "你：{{text}}",
+        "sharedReplyYou": "你貼回了一則話題回覆",
+        "sharedReply": "{{name}} 貼回了一則話題回覆",
         "waiting": "在等你確認",
         "planProposed": "{{name}}：安排好了，等你開始",
         "planProposedAnonymous": "安排好了，等你開始",
@@ -9120,6 +9123,12 @@
         "tooManyAttachments": "附件太多了，一則訊息最多 {{max}} 個",
         "attachmentsFailed": "附件沒能送出，請檢查檔案是否還在，或移除後重試",
         "folderNotSupported": "資料夾不能作為附件，請選擇其中的檔案"
+      },
+      "outbox": {
+        "sending": "傳送中…",
+        "failed": "沒有送出",
+        "edit": "編輯",
+        "editBlocked": "輸入框裡還有內容，先送出或清空，再編輯這則訊息"
       },
       "quote": {
         "replyingTo": "引用 {{name}}",
@@ -9228,7 +9237,10 @@
         "permissionDenied": "你沒有執行此操作的群管理權限。",
         "serviceError": "群聊服務處理失敗，請稍後重試。",
         "groupArchived": "本群已封存，無法執行此操作。",
-        "quoteUnavailable": "引用的訊息已刪除或無法查看，已取消引用，請再傳送一次"
+        "quoteUnavailable": "引用的訊息已刪除或無法查看，已取消引用，請再傳送一次",
+        "lifecycleUnavailable": "目前伺服器或電腦尚不支援此操作。",
+        "groupDissolved": "群聊已解散，仍可查看有權存取的歷史訊息。",
+        "lastOwner": "請先轉讓群主或解散群聊，再退出。"
       },
       "organizer": "負責人",
       "plan": {
@@ -9256,8 +9268,22 @@
       "speaking": {
         "planning": "正在安排…"
       },
+      "task": {
+        "label": "任務",
+        "state": {
+          "started": "進行中",
+          "waiting": "等你確認",
+          "completed": "已完成",
+          "failed": "失敗了",
+          "cancelled": "已取消",
+          "timed-out": "已逾時"
+        }
+      },
       "files": {
-        "openFailed": "檔案沒能開啟，可能已被移動或刪除"
+        "openFailed": "檔案沒能開啟，可能已被移動或刪除",
+        "untitled": "附件",
+        "loading": "載入中…",
+        "unavailable": "暫時無法載入"
       },
       "addFromChat": {
         "triggerFor": "將 {{name}} 新增至群聊",
@@ -9274,6 +9300,35 @@
         "openTopic": "查看話題 · {{count}} 則回覆",
         "topic": "話題",
         "replies": "回覆",
+        "replyCount_one": "{{count}} 則回覆",
+        "replyCount_other": "{{count}} 則回覆",
+        "thread": {
+          "open_one": "開啟話題，{{count}} 則回覆",
+          "open_other": "開啟話題，{{count}} 則回覆",
+          "lastReply": "最後回覆 {{time}}",
+          "emptyReply": "沒有文字內容",
+          "image": "圖片",
+          "file": "檔案",
+          "attachmentsSummary": "{{label}} · {{name}} 等 {{count}} 個附件",
+          "alsoSent": "回覆了話題，也發到了群聊",
+          "sharedReplyFrom": "貼回了 {{name}} 的話題回覆",
+          "sharedReply": "貼回了一則話題回覆",
+          "edited": "已編輯",
+          "sourceUnavailable": "原回覆已刪除，或你無權查看。",
+          "viewThread": "查看話題",
+          "viewInMain": "在群聊中查看",
+          "postToMain": "貼回群聊",
+          "postedBySelf": "你已貼到群聊",
+          "postedToMain": "已貼到群聊",
+          "alsoSend": "同時發到群聊",
+          "alsoSendFailed_one": "回覆已發到話題，但沒能同時發到群聊。",
+          "alsoSendFailed_other": "有 {{count}} 則回覆已發到話題，但沒能同時發到群聊。",
+          "loadingSource": "正在讀取原回覆…",
+          "shareNotLoaded": "這則貼回在更早的群聊記錄裡，往上載入後可以看到。",
+          "retryPost": "重新發到群聊",
+          "alreadyPosted": "你已經把這則回覆貼到群聊了",
+          "shareUnavailable": "這則回覆已刪除或無法查看，不能貼到群聊。"
+        },
         "replyPlaceholder": "回覆這則訊息，可用 @ 點名夥伴…",
         "sendReply": "傳送回覆",
         "addReaction": "新增表情回應",
@@ -9345,7 +9400,7 @@
           "removeHint": "該成員將無法繼續查看或傳送訊息；其夥伴也會退出。",
           "addCompanion": "邀請我的夥伴",
           "leave": "退出群組",
-          "leaveHint": "你和你帶來的夥伴將退出群組。群主需要先轉讓身分。",
+          "leaveHint": "你和你的伙伴將退出此群聊，不再接收新訊息，也無法查看群歷史。",
           "soleOwnerHint": "群組裡只剩你。可以封存群組，保留歷史記錄，以後再恢復使用。",
           "archive": "封存群組",
           "archiveHint": "封存會對所有成員停用本群組，停止新訊息與夥伴執行。歷史記錄保留，之後可透過搜尋找到本群組、查看歷史並取消封存。",
@@ -9365,6 +9420,18 @@
           "companionPermissions": "夥伴權限",
           "configureCapabilities": "工具與授權設定"
         }
+      },
+      "lifecycle": {
+        "dissolve": "解散群聊",
+        "dissolveNote": "解散後無法恢復。所有成員將無法傳送訊息，進行中的工作會停止，邀請會失效。成員仍可查看原本有權存取的歷史訊息。",
+        "hide": "從我的列表移除",
+        "hideNote": "從你所有裝置的列表中移除此群聊。不改變成員關係，不刪除歷史訊息、不停止進行中的工作，也不影響其他成員。",
+        "leave": "退出群聊",
+        "leaveNote": "你和你的伙伴將退出此群聊，不再接收新訊息，也無法查看群歷史。",
+        "unavailable": "目前伺服器或電腦尚不支援此操作。",
+        "dissolved": "群聊已解散，仍可查看有權存取的歷史訊息。",
+        "failed": "操作未完成，請重試。",
+        "lastOwner": "請先轉讓群主或解散群聊，再退出。"
       }
     },
     "joined": {

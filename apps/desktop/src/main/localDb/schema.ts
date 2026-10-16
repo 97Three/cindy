@@ -471,6 +471,8 @@ export const botDelegations = sqliteTable(
     contextRefsJson: text('context_refs_json').notNull().default('[]'),
     artifactRefsJson: text('artifact_refs_json').notNull().default('[]'),
     permissionSnapshotJson: text('permission_snapshot_json').notNull().default('{}'),
+    // Immutable wire payloads per group delivery; independent of mutable execution state.
+    groupTaskPostsJson: text('group_task_posts_json').notNull().default('{}'),
     lineageJson: text('lineage_json').notNull().default('[]'),
     targetProfileVersion: integer('target_profile_version'),
     depth: integer('depth').notNull().default(1),

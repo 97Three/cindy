@@ -67,7 +67,10 @@ const h = vi.hoisted(() => {
     listProviders: vi.fn(async (): Promise<unknown[]> => []),
     getModelVisibilityOverride: vi.fn(() => undefined),
     readImDefaultSettings: vi.fn(),
-    getWorkspaceProviderSource: vi.fn((): string | null => null),
+    getWorkspaceProviderSource: vi.fn((..._args: unknown[]): string | null => null),
+    agentDeviceId: null as string | null,
+    readRemoteRoute: vi.fn(),
+    readRemotePermissionModes: vi.fn(async () => ['ask', 'bypassPermissions']),
     getWorkspacePref: vi.fn((): unknown => null),
     isWorkspacePrefsMigrated: vi.fn(() => true),
     useActualDefaults: false,
@@ -229,6 +232,14 @@ vi.mock('../../im/defaultSettingsStore.js', () => ({
 }));
 vi.mock('../workspaceProviderSourceStore.js', () => ({
   getWorkspaceProviderSource: h.getWorkspaceProviderSource,
+  getWorkspaceProviderRoute: (...args: unknown[]) => {
+    const providerId = h.getWorkspaceProviderSource(...args);
+    return providerId ? { providerId, agentDeviceId: h.agentDeviceId } : null;
+  },
+}));
+vi.mock('../../im/remoteProviderRoute.js', () => ({
+  readImRemoteProviderRoute: h.readRemoteRoute,
+  readImRemotePermissionModes: h.readRemotePermissionModes,
 }));
 vi.mock('../workspacePrefsStore.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../workspacePrefsStore.js')>()),
@@ -348,6 +359,7 @@ const fakeMaker = {
     sdkSessionId: 'sdk-1',
     agentKind: 'claude-code' as const,
     permissionMode: undefined as 'ask' | 'bypassPermissions' | undefined,
+    agentDeviceId: undefined as string | undefined,
   })),
   getSession: vi.fn(),
   closeSession: vi.fn(async () => undefined),
@@ -449,6 +461,15 @@ beforeEach(() => {
   h.resolvedConfig.permissionMode = 'bypassPermissions';
   h.resolvedConfig.providerId = null;
   h.getWorkspaceProviderSource.mockReturnValue(null);
+  h.agentDeviceId = null;
+  h.readRemoteRoute.mockReset();
+  h.readRemotePermissionModes.mockReset();
+  h.readRemotePermissionModes.mockResolvedValue(['ask', 'bypassPermissions']);
+  h.readImDefaultSettings.mockReturnValue({ agentKind: 'claude-code', agents: {
+    'claude-code': { providerId: null, model: 'test-model', effort: 'high' },
+    codex: { providerId: null, model: 'gpt-5.5', effort: 'high' },
+    pi: { providerId: null, model: 'test-model', effort: 'high' },
+  } });
   h.getWorkspacePref.mockReturnValue(null);
   h.isWorkspacePrefsMigrated.mockReturnValue(true);
   h.peekPendingHandoff.mockResolvedValue(null);
@@ -3129,6 +3150,7 @@ describe('permissionMode 落 createSession', () => {
       sdkSessionId: 'sdk-1',
       agentKind: 'claude-code' as const,
       permissionMode: 'ask' as const,
+      agentDeviceId: undefined,
     }));
     const runner = createMakerHookSessionRunner({ log });
     // options 带 bypass 也不覆盖 meta 的 ask
@@ -3166,6 +3188,116 @@ describe('permissionMode 落 createSession', () => {
 });
 
 describe('providerId(来源/供应商)贯通 —— issue #854 回归', () => {
+  it.each([false, true])('rejects peer permission fallback before creating a task (createOnly=%s)', async (createOnly) => {
+    h.useActualDefaults = true;
+    h.getWorkspaceProviderSource.mockReturnValue('owner-provider');
+    h.agentDeviceId = 'share:owner';
+    h.readRemoteRoute.mockResolvedValue({ model: catalogModel('test-model') });
+    h.readRemotePermissionModes.mockResolvedValue(['bypassPermissions', 'unknown-mode']);
+    h.getWorkspacePref.mockReturnValue({
+      workspace: 'chat', agentKind: 'claude-code', model: 'test-model', effort: null, permissionMode: 'ask',
+    });
+    await expect(createMakerHookSessionRunner({ log }).run(baseReq({
+      workspaceAlias: 'chat', source: { im: 'telegram' }, createOnly,
+    }))).rejects.toThrow('Selected permission mode is unavailable');
+    expect(fakeMaker.createSession).not.toHaveBeenCalled();
+    expect(h.createSessionRow).not.toHaveBeenCalled();
+  });
+
+  it.each(['ask', 'plan', 'auto', 'acceptEdits', 'default', 'bypassPermissions'])('preserves explicit %s despite peer ordering', async (permissionMode) => {
+    h.useActualDefaults = true;
+    h.getWorkspaceProviderSource.mockReturnValue('owner-provider');
+    h.agentDeviceId = 'share:owner';
+    h.readRemoteRoute.mockResolvedValue({ model: catalogModel('test-model') });
+    h.readRemotePermissionModes.mockResolvedValue(['bypassPermissions', permissionMode]);
+    h.isWorkspacePrefsMigrated.mockReturnValue(false);
+    const outcome = await createMakerHookSessionRunner({ log }).run(baseReq({
+      workspaceAlias: 'chat', source: { im: 'slack' }, permissionMode,
+    }));
+    expect(outcome.status).toBe('ok');
+    expect(fakeMaker.createSession).toHaveBeenCalledWith(expect.objectContaining({ permissionMode }));
+  });
+
+  it('rejects an unknown explicit mode even if the peer advertises it', async () => {
+    h.useActualDefaults = true;
+    h.getWorkspaceProviderSource.mockReturnValue('owner-provider');
+    h.agentDeviceId = 'share:owner';
+    h.readRemoteRoute.mockResolvedValue({ model: catalogModel('test-model') });
+    h.readRemotePermissionModes.mockResolvedValue(['peer-full-mode']);
+    h.isWorkspacePrefsMigrated.mockReturnValue(false);
+    await expect(createMakerHookSessionRunner({ log }).run(baseReq({
+      workspaceAlias: 'chat', source: { im: 'x' }, permissionMode: 'peer-full-mode',
+    }))).rejects.toThrow('Selected permission mode is unavailable');
+    expect(fakeMaker.createSession).not.toHaveBeenCalled();
+    expect(h.createSessionRow).not.toHaveBeenCalled();
+  });
+
+  it('uses the execution host permission modes when the local engine is unavailable', async () => {
+    h.useActualDefaults = true;
+    h.getWorkspaceProviderSource.mockReturnValue('owner-provider');
+    h.agentDeviceId = 'share:owner';
+    h.readRemoteRoute.mockResolvedValue({ model: catalogModel('test-model') });
+    h.isWorkspacePrefsMigrated.mockReturnValue(false);
+    const outcome = await createMakerHookSessionRunner({ log }).run(baseReq({
+      workspaceAlias: 'chat', source: { im: 'telegram' }, permissionMode: 'ask',
+    }));
+    expect(outcome.status).toBe('ok');
+    expect(h.readRemotePermissionModes).toHaveBeenCalledWith('share:owner', 'claude-code');
+    expect(fakeMaker.getCapabilities).not.toHaveBeenCalled();
+    expect(fakeMaker.createSession).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: 'ask' }));
+  });
+
+  it('persists the shared execution location for /new without starting an agent', async () => {
+    h.getWorkspaceProviderSource.mockReturnValue('owner-provider');
+    h.agentDeviceId = 'share:owner';
+    h.readRemoteRoute.mockResolvedValue({ model: catalogModel('test-model') });
+    const outcome = await createMakerHookSessionRunner({ log }).run(baseReq({
+      workspaceAlias: 'chat', source: { im: 'telegram' }, createOnly: true,
+    }));
+    expect(outcome.status).toBe('ok');
+    expect(h.createSessionRow).toHaveBeenCalledWith(expect.objectContaining({
+      agentDeviceId: 'share:owner', model: 'test-model',
+    }));
+    expect(h.setSessionProviderIdInDb).toHaveBeenCalledWith('sess-new', 'owner-provider');
+    expect(fakeMaker.createSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unavailable shared workspace route without trying a local provider', async () => {
+    h.getWorkspaceProviderSource.mockReturnValue('owner-provider');
+    h.agentDeviceId = 'share:owner';
+    h.readRemoteRoute.mockRejectedValue(new Error('Share paused'));
+    await expect(createMakerHookSessionRunner({ log }).run(baseReq({
+      workspaceAlias: 'chat', source: { im: 'telegram' },
+    }))).rejects.toThrow('Share paused');
+    expect(fakeMaker.createSession).not.toHaveBeenCalled();
+    expect(h.createSessionRow).not.toHaveBeenCalled();
+  });
+
+  it('restores the shared execution location from a cold task', async () => {
+    fakeMaker.getSessionMeta.mockResolvedValueOnce({
+      workDir: 'D:/repo', model: 'test-model', sdkSessionId: 'sdk-1',
+      agentKind: 'claude-code', agentDeviceId: 'share:owner',
+      permissionMode: undefined,
+    });
+    const outcome = await createMakerHookSessionRunner({ log }).run(baseReq({
+      sessionId: 'sess-old', isNew: false,
+    }));
+    expect(outcome.status).toBe('ok');
+    expect(fakeMaker.createSession).toHaveBeenCalledWith(expect.objectContaining({
+      agentDeviceId: 'share:owner', resumeSessionId: 'sdk-1',
+    }));
+  });
+
+  it('starts a workspace task on its shared provider, without a local provider', async () => {
+    h.getWorkspaceProviderSource.mockReturnValue('owner-provider');
+    h.agentDeviceId = 'share:owner';
+    h.readRemoteRoute.mockResolvedValue({ model: catalogModel('test-model') });
+    const outcome = await createMakerHookSessionRunner({ log }).run(baseReq({ workspaceAlias: 'chat', source: { im: 'telegram' } }));
+    expect(outcome.status).toBe('ok');
+    expect(fakeMaker.createSession).toHaveBeenCalledWith(expect.objectContaining({
+      agentDeviceId: 'share:owner', providerId: 'owner-provider', model: 'test-model',
+    }));
+  });
   it('新建: 草稿默认来源经校验后传 createSession + 注入运行时 store + 广播前落库', async () => {
     h.resolvedConfig.providerId = 'xd';
     h.listProviders.mockResolvedValueOnce([connectedProvider('xd', [catalogModel('test-model')])]);

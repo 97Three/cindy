@@ -59,7 +59,7 @@ describe('Chat Server invitation contract', () => {
     members = [{ id: selfId, ownerActorId: selfId, state: 'joined', role: 'owner' }];
     fixture.handle.mockImplementation(route => {
       if (route === '/me') return { body: { actor: { id: selfId } } };
-      if (route.endsWith('/snapshot')) return { body: { members } };
+      if (route.endsWith('/snapshot')) return { body: { room: { id: groupId, kind: 'group', dissolved_at: null }, members, cursor: '0' } };
       if (route === `/conversations/${groupId}/invite-links`) return { body: { token, expiresAt, ...(reusable !== undefined ? { reusable } : {}) } };
       if (route === '/invite-links/preview') return { body: { groupId, name: 'Group', inviterName: 'Host', expiresAt, ...(reusable !== undefined ? { reusable } : {}), joined: false } };
       if (route.endsWith('/invite-links/revoke')) return { body: { revoked: true } };

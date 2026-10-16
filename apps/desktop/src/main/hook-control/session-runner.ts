@@ -101,7 +101,9 @@ import { resolveSafe as resolveCindyMediaUrl } from '../cindy-media/blobStore.js
 import { ingestMedia, supportedMime as isCindyMediaMime } from '../cindy-media/ingest.js';
 import { worktreeStore, WorktreeManager } from '../worktree/index.js';
 import { readImDefaultSettings } from '../im/defaultSettingsStore.js';
-import { getWorkspaceProviderSource } from './workspaceProviderSourceStore.js';
+import { isImDefaultPermissionMode } from '../../shared/imDefaultSettings.js';
+import { readImRemotePermissionModes, readImRemoteProviderRoute } from '../im/remoteProviderRoute.js';
+import { getWorkspaceProviderRoute } from './workspaceProviderSourceStore.js';
 import {
   getWorkspacePref,
   isWorkspacePrefsMigrated,
@@ -206,6 +208,37 @@ async function resolveNewSessionConfig(
     prefsChannel !== null && workspaceAlias !== undefined && isWorkspacePrefsMigrated(prefsChannel),
   );
 
+  const workdirRoute = prefsChannel && workspaceAlias
+    ? getWorkspaceProviderRoute(prefsChannel, workspaceCtx.teamId, workspaceAlias) : null;
+  const defaults = readImDefaultSettings(sourceIm === 'slack' ? 'slack' : undefined);
+  const requestedAgent = mergedOverrides.agentKind === 'claude-code' || mergedOverrides.agentKind === 'codex' || mergedOverrides.agentKind === 'pi'
+    ? mergedOverrides.agentKind : defaults.agentKind;
+  const defaultRoute = defaults.agents[requestedAgent];
+  const agentDeviceId = workdirRoute ? workdirRoute.agentDeviceId : defaultRoute.agentDeviceId;
+  if (agentDeviceId) {
+    const providerId = workdirRoute?.providerId ?? defaultRoute.providerId;
+    const requestedModel = mergedOverrides.model ?? defaultRoute.model;
+    const { model } = await readImRemoteProviderRoute({ agentDeviceId, agentKind: requestedAgent, providerId, model: requestedModel });
+    const permissionModes = mergedOverrides.permissionMode !== null
+      ? await readImRemotePermissionModes(agentDeviceId, requestedAgent) : [];
+    // 远端能力只用于确认支持，不是权限强弱的权威。不能把对方的首项当作“最严档”，
+    // 也不能让未知档位进入本机执行器；显式选择必须原样保留，否则拒绝启动。
+    const requestedPermissionMode = mergedOverrides.permissionMode;
+    if (requestedPermissionMode !== null && (
+      !isImDefaultPermissionMode(requestedPermissionMode) ||
+      !permissionModes.includes(requestedPermissionMode)
+    )) {
+      throw new Error('Selected permission mode is unavailable for the remote agent' + ROUTE_RESELECT_HINT);
+    }
+    const remote = resolveHookSessionConfig({
+      readDefaults: () => defaults,
+      getModels: () => [model],
+      getPermissionModes: () => requestedPermissionMode === null ? [] : [requestedPermissionMode],
+      log,
+    }, { ...mergedOverrides, agentKind: requestedAgent, model: requestedModel });
+    return { ...remote, agentDeviceId, providerId };
+  }
+
   const resolved = resolveHookSessionConfig(
     {
       readDefaults: () =>
@@ -241,7 +274,7 @@ async function resolveNewSessionConfig(
           : null;
   const workdirProviderId =
     channel !== null && workspaceCtx?.alias
-      ? getWorkspaceProviderSource(channel, workspaceCtx.teamId, workspaceCtx.alias)
+      ? workdirRoute?.providerId ?? null
       : null;
   // 目录来源是和目录模型一起选的(issue #5912)。目录模型为空、改为继承 IM 默认时,
   // 残留来源若账号仍可用、只是目录里根本没有这个继承来的模型,它已不再描述用户可见的
@@ -597,6 +630,7 @@ export function createMakerHookSessionRunner(deps: {
       // 复用/接管路径的持久化来源(sessions.provider_id, 用户在聊天里切过的
       // 来源以它为权威); 新建路径恒 null, 由下方草稿默认解析
       let rowProviderId: string | null = null;
+      let agentDeviceId = resolved?.agentDeviceId ?? null;
       if (!req.isNew) {
         // 复用/接管: session 自己的 meta 是权威(workDir/model/agentKind/
         // permissionMode), sdkSessionId 用于冷 resume; effort 不覆盖、权限档
@@ -614,6 +648,7 @@ export function createMakerHookSessionRunner(deps: {
         effort = undefined;
         permissionMode = meta?.permissionMode ?? 'bypassPermissions';
         rowProviderId = row?.providerId ?? null;
+        agentDeviceId = row?.agentDeviceId ?? meta?.agentDeviceId ?? null;
       }
 
       const fail = (msg: string, finalText = ''): HookRunOutcome => ({
@@ -690,6 +725,7 @@ export function createMakerHookSessionRunner(deps: {
         agentKind: effectiveAgentKind,
         workingDir,
         model: effectiveModel,
+        ...(agentDeviceId ? { agentDeviceId } : {}),
         ...(providerId !== null ? { providerId } : {}),
         ...(effort !== undefined ? { effort } : {}),
         permissionMode,
@@ -726,6 +762,7 @@ export function createMakerHookSessionRunner(deps: {
       // 校验, docs/dev-rules/im-turn-flow.md 批次 2); 建行本身仍是下面各自既有的路径。
       // 准入可能规范化来源 / 推理强度, 新任务用准入后的路由。复用 / 接管不经过这里。
       const newSessionRoute: ChannelSessionRoute = {
+        agentDeviceId,
         agentKind: effectiveAgentKind,
         model: effectiveModel,
         providerId,
@@ -755,6 +792,7 @@ export function createMakerHookSessionRunner(deps: {
                 workDir: workingDir,
                 title: req.title ?? 'New task',
                 model: admitted.model,
+                ...(agentDeviceId ? { agentDeviceId } : {}),
                 ...(req.workspaceKind !== undefined ? { workspaceKind: req.workspaceKind } : {}),
                 ...(admitted.effort !== undefined ? { effort: admitted.effort } : {}),
                 permissionMode,

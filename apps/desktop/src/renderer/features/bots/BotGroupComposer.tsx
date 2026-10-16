@@ -7,6 +7,11 @@
  * 中输入框为空时，发送按钮变成停止；有文字时照常发送——插话本身就会作废当前一轮
  * （docs/product-rules/bot-group-chat.md §4.4）。
  *
+ * 发送即交给群聊发件箱（botGroupOutbox.ts）：消息立即出现在时间线上，输入框与托盘马上
+ * 空出来，可以接着写下一条；提交按发出顺序在后台进行。没发出去时，输入框空着就把正文、
+ * 点名、「分工」标签和附件原样放回，再按发送沿用同一个 clientId；输入框已有新内容时
+ * 消息留在时间线上，可以重试或编辑。
+ *
  * 「+」菜单里的「安排分工」（§7.2）给输入框加上「分工」标签：带标签发出的消息一定交给
  * 负责人出安排（`division: true`），发出后标签清掉。安排进行中或等继续时不能再安排新的，
  * 菜单项置灰并说明原因。占位文字跟随未结束的安排，告诉用户这时说的话会交给谁。
@@ -17,8 +22,8 @@
  *
  * 附件（§3.1）与普通聊天同一套：托盘状态来自页面持有的 `useAttachments`（整页拖入也能
  * 加），缩略图与拒收提示复用 ComposerAttachments；「+」→「添加文件、图片或视频…」、粘贴
- * 文件或截图都进托盘。有附件时可以不写字。发送前烧录图片标注，发出去之后才从托盘移走
- * 这一批；没发出去就原样留着。
+ * 文件或截图都进托盘。有附件时可以不写字。发送时这一批随消息离开托盘
+ * （不删除文件），发件箱提交前烧录图片标注；没发出去就随消息放回。
  */
 import {
   useEffect,
@@ -41,10 +46,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Tip } from '@/components/ui/tooltip';
-import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts/dataOwnerGeneration';
 import { MENU_ITEM_CLASS } from '@/features/cc-agent/sidebar/menuStyles';
 import type { UseAttachmentsReturn } from '@/hooks/useAttachments';
-import { isAnnotationBurnInError, materializeAnnotatedAttachmentsForSend } from '@/lib/annotationBurnIn';
 import type { AttachedFile } from '@/lib/fileTypes';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
@@ -67,9 +70,9 @@ import {
   keepBotGroupComposerInputFocus,
   useRefitBotGroupComposerInputOnResize,
 } from './botGroupComposerChrome';
-import { botGroupAttachmentSignature, toBotGroupAttachmentInputs } from './botGroupAttachments';
+import { botGroupAttachmentSignature } from './botGroupAttachments';
+import { botGroupSendSignature, enqueueBotGroupSend, registerBotGroupComposer } from './botGroupOutbox';
 import {
-  botGroupErrorKey,
   isActiveBotGroupMember,
   isBotGroupDivisionBlocked,
   type BotGroupComposerPlanState,
@@ -114,7 +117,7 @@ export function BotGroupComposer({
   dragOver = false,
   quote = null,
   onQuoteChange,
-  onSent,
+  onSending,
 }: {
   groupId: string;
   members: readonly BotGroupMemberView[];
@@ -129,14 +132,12 @@ export function BotGroupComposer({
   /** 引用回复 waiting to go with the next message, and how its original reads right now. */
   quote?: { view: BotGroupQuoteView; display: BotGroupQuoteDisplay } | null;
   onQuoteChange?: (quote: BotGroupQuoteView | null) => void;
-  /** Called after main accepted the message, so the view can re-read at once. */
-  onSent: () => void;
+  /** Called when a message enters the outbox, so the view can follow it to the bottom. */
+  onSending: () => void;
 }) {
   const { t } = useTranslation();
   const [text, setText] = useState('');
   const [stopping, setStopping] = useState(false);
-  /** A send is in flight: its attachments stay in the tray but cannot change. */
-  const [sending, setSending] = useState(false);
   /** 「分工」 tag from 「+」→「安排分工」: this message goes to the organizer for a plan. */
   const [division, setDivision] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -151,17 +152,11 @@ export function BotGroupComposer({
   quoteRef.current = quote?.view ?? null;
   const quotedMessageId = quote?.view.messageId ?? null;
   const focusInputOnMenuCloseRef = useRef(false);
-  const sendingRef = useRef(false);
   const stoppingRef = useRef(false);
-  /** Idempotency key for the text, targets and attachments currently being (re)sent. */
-  const attemptRef = useRef<{
-    text: string;
-    clientId: string;
-    division: boolean;
-    attachments: string;
-    mentionSignature: string;
-    quoteId: string | null;
-  } | null>(null);
+  const divisionRef = useRef(division);
+  divisionRef.current = division;
+  /** The failed send last put back into the input: an unchanged resend reuses its clientId. */
+  const attemptRef = useRef<{ clientId: string; signature: string } | null>(null);
 
   const activeMembers = useMemo(() => members.filter(isActiveBotGroupMember), [members]);
 
@@ -188,99 +183,90 @@ export function BotGroupComposer({
   }, [text]);
   useRefitBotGroupComposerInputOnResize(textareaRef);
 
-  const send = async () => {
-    if (!canSend || sendingRef.current) return;
-    const api = botGroupApi();
-    if (!api) {
+  // A message that did not go out comes back only into an empty input: never over new
+  // text, a new tag or files added meanwhile. Pressing send again reuses its clientId.
+  // Registered once per group (mount / group change): re-registering on every render would
+  // pull a failed message back in the moment the user clears the input.
+  const restoreAttachmentsRef = useRef(attachmentState.restoreFiles);
+  restoreAttachmentsRef.current = attachmentState.restoreFiles;
+  const tRef = useRef(t);
+  tRef.current = t;
+  const onQuoteChangeRef = useRef(onQuoteChange);
+  onQuoteChangeRef.current = onQuoteChange;
+  useEffect(
+    () =>
+      registerBotGroupComposer(groupId, {
+        restore: (entry) => {
+          if (textRef.current || attachmentsRef.current.length > 0 || divisionRef.current) return false;
+          attemptRef.current = { clientId: entry.input.clientId, signature: entry.signature };
+          textRef.current = entry.draft;
+          setText(entry.draft);
+          mention.setTracked([...entry.tracked]);
+          const restoredDivision = entry.input.division === true;
+          divisionRef.current = restoredDivision;
+          if (restoredDivision) setDivision(true);
+          // A quote picked meanwhile wins.
+          if (entry.quote && !quoteRef.current) {
+            quoteRef.current = entry.quote;
+            onQuoteChangeRef.current?.(entry.quote);
+          }
+          if (entry.files.length > 0) attachmentsRef.current = restoreAttachmentsRef.current(entry.files);
+          return true;
+        },
+        notifyFailed: (errorKey) => toast.error(tRef.current(errorKey)),
+      }),
+    [groupId],
+  );
+
+  const send = () => {
+    // A second Enter before the cleared input has rendered must not send the same draft twice.
+    if (!canSend || textRef.current !== text || attachmentsRef.current !== attachmentState.attachments) return;
+    if (!botGroupApi()) {
       toast.error(t('bots.groupChat.composer.sendFailed'));
       return;
     }
     const files: readonly AttachedFile[] = attachmentState.attachments;
-    const signature = botGroupAttachmentSignature(files);
-    // The tag changes what main does with the text, so it is part of the idempotency key;
-    // so are the attachments that go with it.
     const mentions = mention.resolve(text);
     const tracked = mention.tracked;
-    const mentionSignature = JSON.stringify([mentions.all, mentions.botIds]);
+    // Every field main gets is part of the attempt's identity (the tag changes what main does
+    // with the text, the quote is part of the message), and so are the attachments that go with it.
     const sentQuote = quoteRef.current;
-    const quoteId = sentQuote?.messageId ?? null;
-    const attempt =
-      attemptRef.current?.text === trimmed &&
-      attemptRef.current.division === division &&
-      attemptRef.current.attachments === signature &&
-      attemptRef.current.mentionSignature === mentionSignature &&
-      attemptRef.current.quoteId === quoteId
-        ? attemptRef.current
-        : { text: trimmed, clientId: crypto.randomUUID(), division, attachments: signature, mentionSignature, quoteId };
-    attemptRef.current = attempt;
-    const draft = text;
-    sendingRef.current = true;
-    setSending(true);
-    // Clear at once like any chat; a failed send puts the draft back if the
-    // user has not started typing something else meanwhile. Attachments stay in
-    // the tray until main has them.
+    const fields = {
+      groupId,
+      text: trimmed,
+      mentions,
+      ...(division ? { division: true } : {}),
+      ...(sentQuote ? { quote: { messageId: sentQuote.messageId } } : {}),
+    };
+    const signature = botGroupSendSignature({ ...fields, clientId: '' }, botGroupAttachmentSignature(files));
+    const clientId = attemptRef.current?.signature === signature ? attemptRef.current.clientId : crypto.randomUUID();
+    // The outbox owns this attempt now; a failure hands it back through `restore`.
+    attemptRef.current = null;
+    enqueueBotGroupSend({
+      input: { ...fields, clientId },
+      signature,
+      draft: text,
+      tracked,
+      quote: sentQuote,
+      files,
+      attachmentScope,
+    });
+    // Clear at once like any chat, so the next message can be written while this one
+    // goes out. The batch leaves the tray without deleting its files: the message has them.
+    textRef.current = '';
     setText('');
     mention.reset();
     setDivision(false);
-    if (sentQuote) onQuoteChange?.(null);
-    const owner = getDataOwnerGeneration();
-    const restore = (keepQuote = true) => {
-      // The tag and the quote come back only with their own draft, never onto newly typed
-      // text; a quote picked meanwhile wins, and an unavailable original is not put back.
-      if (!textRef.current) {
-        if (attempt.division) setDivision(true);
-        mention.setTracked(tracked);
-        if (keepQuote && sentQuote && !quoteRef.current) onQuoteChange?.(sentQuote);
-      }
-      setText((current) => (current ? current : draft));
-    };
-    try {
-      // Drawn annotations are burned in first, as in a task; a failure keeps everything for a retry.
-      const prepared =
-        files.length > 0
-          ? ((await materializeAnnotatedAttachmentsForSend(files, attachmentScope, { burnFailure: 'abort' })) ?? [])
-          : [];
-      const result = await api.sendBotGroupMessage({
-        groupId,
-        text: attempt.text,
-        mentions,
-        clientId: attempt.clientId,
-        ...(attempt.division ? { division: true } : {}),
-        ...(sentQuote ? { quote: { messageId: sentQuote.messageId } } : {}),
-        ...(prepared.length > 0 ? { attachments: toBotGroupAttachmentInputs(prepared) } : {}),
-      });
-      if (!isDataOwnerGenerationCurrent(owner)) return;
-      if (!result.ok) {
-        restore(result.errorCode !== 'QUOTE_UNAVAILABLE');
-        toast.error(
-          t(
-            result.errorCode === 'INVALID_PARAMS' && prepared.length > 0
-              ? 'bots.groupChat.composer.attachmentsFailed'
-              : botGroupErrorKey(result.errorCode, 'bots.groupChat.composer.sendFailed'),
-          ),
-        );
-        return;
-      }
-      attemptRef.current = null;
-      if (files.length > 0) {
-        // Main now holds these files; take only this batch out of the tray (never delete
-        // them) and keep anything added while the message was on its way.
-        const sentIds = new Set(files.map((file) => file.id));
-        const remaining = attachmentsRef.current.filter((file) => !sentIds.has(file.id));
-        attachmentState.clearFiles();
-        attachmentState.restoreFiles(remaining);
-      }
-      onSent();
-    } catch (error) {
-      if (!isDataOwnerGenerationCurrent(owner)) return;
-      restore();
-      toast.error(
-        t(isAnnotationBurnInError(error) ? 'chat.media.annotateBurnFailedNotSent' : 'bots.groupChat.composer.sendFailed'),
-      );
-    } finally {
-      sendingRef.current = false;
-      setSending(false);
+    divisionRef.current = false;
+    if (sentQuote) {
+      quoteRef.current = null;
+      onQuoteChange?.(null);
     }
+    if (files.length > 0) {
+      attachmentState.clearFiles();
+      attachmentsRef.current = [];
+    }
+    onSending();
   };
 
   /** Files copied in a file manager attach by path; a screenshot or copied image attaches as an image. */
@@ -347,8 +333,6 @@ export function BotGroupComposer({
             ? t('bots.groupChat.composer.placeholderPlanWaiting', { name: planState.botName })
             : t('bots.groupChat.composer.placeholder');
 
-  const noop = () => undefined;
-
   return (
     <div className={BOT_GROUP_COMPOSER_DOCK}>
       <div className={BOT_GROUP_COMPOSER_COLUMN}>
@@ -409,8 +393,8 @@ export function BotGroupComposer({
           {attachmentCount > 0 ? (
             <ThumbnailStrip
               attachments={attachmentState.attachments}
-              onRemove={sending ? noop : attachmentState.removeFile}
-              onUpdate={sending ? noop : attachmentState.updateFile}
+              onRemove={attachmentState.removeFile}
+              onUpdate={attachmentState.updateFile}
             />
           ) : null}
           <textarea
@@ -433,7 +417,7 @@ export function BotGroupComposer({
               }
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
-                void send();
+                send();
                 return;
               }
               // Backspace at the very start of an empty input takes the 「分工」 tag off.
@@ -530,7 +514,7 @@ export function BotGroupComposer({
                   disabled={showStop ? stopping : !canSend}
                   isStreaming={showStop}
                   ariaLabel={actionLabel}
-                  onClick={() => void (showStop ? stop() : send())}
+                  onClick={() => (showStop ? void stop() : send())}
                 />
               </Tip>
             </span>

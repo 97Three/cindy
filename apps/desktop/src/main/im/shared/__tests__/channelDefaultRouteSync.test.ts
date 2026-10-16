@@ -148,6 +148,7 @@ async function insertTask(
     agentKind: dbAgentKind(route.agentKind),
     model: route.model,
     providerId: route.providerId,
+    agentDeviceId: route.agentDeviceId ?? null,
     effort: route.effort,
     fastMode: opts.fastMode === true,
     permissionMode: 'auto',
@@ -175,6 +176,7 @@ async function setRoute(id: string, route: ImDefaultRoute): Promise<void> {
       agentKind: dbAgentKind(route.agentKind),
       model: route.model,
       providerId: route.providerId,
+      agentDeviceId: route.agentDeviceId ?? null,
       effort: route.effort as typeof sessions.$inferInsert.effort,
     })
     .where(eq(sessions.id, id));
@@ -208,11 +210,24 @@ beforeEach(() => {
 });
 
 describe('syncUnderLock', () => {
+  it('moves a following task to a share and back even when provider and model are identical', async () => {
+    await insertTask('t1', OLD);
+    const shared = { ...OLD, agentDeviceId: 'share:owner' };
+    mocks.resolveDefaults.mockResolvedValue({ ...shared, fingerprint: 'fp-new' });
+    await sync().syncUnderLock('t1');
+    expect((await rowOf('t1')).agentDeviceId).toBe('share:owner');
+    expect(parseImDefaultRouteRecord((await rowOf('t1')).imDefaultRoute)?.route).toEqual(shared);
+    mocks.fingerprint.mockReturnValue('fp-back');
+    mocks.resolveDefaults.mockResolvedValue({ ...OLD, fingerprint: 'fp-back' });
+    await sync().syncUnderLock('t1');
+    expect((await rowOf('t1')).agentDeviceId).toBeNull();
+    expect(mocks.applyRoute).toHaveBeenLastCalledWith('t1', { ...OLD, agentDeviceId: null, fastMode: false }, 'claude-code');
+  });
   it('switches a following task and records the read-back route under the new fingerprint', async () => {
     await insertTask('t1', OLD);
     await expect(sync().syncUnderLock('t1')).resolves.toBe(false);
 
-    expect(mocks.applyRoute).toHaveBeenCalledWith('t1', { ...NEW, fastMode: false }, 'claude-code');
+    expect(mocks.applyRoute).toHaveBeenCalledWith('t1', { ...NEW, agentDeviceId: null, fastMode: false }, 'claude-code');
     const record = parseImDefaultRouteRecord((await rowOf('t1')).imDefaultRoute);
     expect(record).toEqual({ v: 1, fp: 'fp-new', route: NEW });
   });
@@ -245,7 +260,7 @@ describe('syncUnderLock', () => {
     await insertTask('t1', OLD, { fastMode: true });
     await sync().syncUnderLock('t1');
 
-    expect(mocks.applyRoute).toHaveBeenCalledWith('t1', { ...NEW, fastMode: true }, 'claude-code');
+    expect(mocks.applyRoute).toHaveBeenCalledWith('t1', { ...NEW, agentDeviceId: null, fastMode: true }, 'claude-code');
   });
 
   it('still defers the generic apply when the staged claim write fails', async () => {

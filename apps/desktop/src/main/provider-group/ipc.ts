@@ -182,20 +182,34 @@ export async function executeProviderGroupCommand(deps: ProviderGroupCommandDeps
       const next = normalizeProviderGroupConfig(command.config, providerId);
       if (next) {
         // 新加入的电脑必须是这台电脑已经能用的同一个供应商(§3)，不能凭渲染端点名加入。
-        const previous = new Set(deps.readGroup(providerId)?.members.map((m) => m.key) ?? []);
+        const stored = new Map(deps.readGroup(providerId)?.members.map((m) => [m.key, m]) ?? []);
+        const previous = new Set(stored.keys());
+        // 设置页拿着对账补记之前的组来保存时，不丢掉已经记下的分享者那台电脑(removedShares.ts)。
+        for (const member of next.members) {
+          const host = stored.get(member.key)?.hostDeviceId;
+          if (member.kind === 'share' && !member.hostDeviceId && host) member.hostDeviceId = host;
+        }
         const added = next.members.filter((m) => m.kind !== 'local' && !previous.has(m.key));
-        if (added.length > 0) {
+        // 分享成员的 hostDeviceId 由 Main 端收到的分享目录持有。即使只是修改已有成员，
+        // 也不能接受渲染端快照自报的物理电脑键(协议兼容规则中的供应商组聚合条目)。
+        if (added.length > 0 || next.members.some((m) => m.kind === 'share')) {
           const candidates = await deps.directory.listCandidates(providerId, deps.readGroup(providerId));
+          const byKey = new Map(candidates.map((c) => [c.key, c]));
           const allowed = new Set(candidates.filter((c) => !c.blocked).map((c) => c.key));
           const rejected = added.filter((m) => !allowed.has(m.key));
           if (rejected.length > 0) {
             throwIpcError('PRECONDITION_FAILED', 'Only the same provider that this computer can already use can join the group');
           }
-          // 显示名以目录为准，渲染端给的只是快照。
-          const labels = new Map(candidates.map((c) => [c.key, c.label]));
+          // 显示名(电脑名与供应商名)以目录为准，渲染端给的只是快照。
           for (const member of next.members) {
-            const label = labels.get(member.key);
-            if (label) member.label = label;
+            const candidate = byKey.get(member.key);
+            if (candidate?.label) member.label = candidate.label;
+            if (candidate?.providerName) member.providerName = candidate.providerName;
+            if (member.kind === 'share') {
+              if (candidate?.hostDeviceId) member.hostDeviceId = candidate.hostDeviceId;
+              else if (stored.get(member.key)?.hostDeviceId) member.hostDeviceId = stored.get(member.key)?.hostDeviceId;
+              else delete member.hostDeviceId;
+            }
           }
         }
       }

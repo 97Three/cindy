@@ -110,7 +110,6 @@ vi.mock('@/session/agentCapabilitiesCache', () => ({ resetAgentCapabilitiesCache
 vi.mock('@/session/composerPaletteCache', () => ({ resetComposerPaletteCache: async () => {} }));
 vi.mock('@/device-link/remoteResourceCache', () => ({ clearRemoteResourceCache: async () => {} }));
 vi.mock('@/session/mobileHomeListCache', () => ({ clearCachedHomeListSnapshot: async () => {} }));
-vi.mock('@/device-link/clipboardInvitationHistory', () => ({ clearClipboardInvitationHistory: async () => {} }));
 vi.mock('@/remote-desktop/credentialIdentity', () => ({ updateCredentialAccessToken() {} }));
 vi.mock('@/session/mobileSessionMessageCache', () => ({ clearCachedSessionMessages: async () => {} }));
 vi.mock('@/session/remoteHistoryDiskCache', () => ({ clearHistoryDisk: async () => {} }));

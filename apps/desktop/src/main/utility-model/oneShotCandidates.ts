@@ -27,6 +27,7 @@ import { isModelDisabled, isProviderDisabled } from '@cindy/model-providers';
 import { isProviderRouteMutationInProgress } from '../maker-host/provider-route.js';
 import { withOpenCodeGoSessionHeader } from '../maker-host/opencode-go-session.js';
 import { effectiveXdGatewayBaseUrl } from '../model-access/effectiveEndpoint.js';
+import { reportCindyGatewayKeyRejected } from '../model-access/gatewayKeyRejection.js';
 import { readCustomProviderKey } from '../secrets/providerSecretStore.js';
 import { MANAGED_OLLAMA_PROVIDER_ID, isManagedSidecarProviderId } from '../../shared/localModelRuntime.js';
 import { ensureManagedOllamaReadyForSession } from '../local-model-runtime/preflight.js';
@@ -471,6 +472,7 @@ export async function requestDedicatedAutoReviewCandidateText(
         maxTokens: DEDICATED_AUTO_REVIEW_MAX_TOKENS,
         timeoutMs: requestOpts?.timeoutMs ?? opts.timeoutMs,
         signal: requestOpts?.signal ?? opts.signal,
+        onUnauthorized: () => reportCindyGatewayKeyRejected(apiKey),
       }),
     }], evidence, [], {
       maxTokens: DEDICATED_AUTO_REVIEW_MAX_TOKENS,
@@ -1128,6 +1130,7 @@ async function requestBuiltinProviderText(
           ? () => readClaudeApiKey() === apiKey && effectiveXdGatewayBaseUrl().trim() === baseUrl
           : undefined,
         routeStillCurrent: requestOpts?.beforeDispatch ? input.routeStillCurrent : undefined,
+        onUnauthorized: () => reportCindyGatewayKeyRejected(apiKey),
       }),
     }], prompt, [], input);
   }
@@ -1451,6 +1454,8 @@ async function requestLiteLlmText(input: {
     };
     let response = await send();
     if (!response.ok) {
+      // This path always carries the Cindy AI key to the Cindy gateway.
+      if (response.status === 401) reportCindyGatewayKeyRejected(input.apiKey);
       // Do not retain or log upstream response bodies: gateways may echo request
       // metadata, while the HTTP status is sufficient for user recovery.
       await response.body?.cancel().catch(() => undefined);
@@ -1474,6 +1479,7 @@ async function requestLiteLlmText(input: {
         parsed = await budgeted.json() as ChatCompletionBody;
         text = chatCompletionChoicesText(parsed);
       } else {
+        if (budgeted.status === 401) reportCindyGatewayKeyRejected(input.apiKey);
         await budgeted.body?.cancel().catch(() => undefined);
       }
     }
@@ -1589,6 +1595,11 @@ async function requestProviderHttpText(input: {
   credentialStillCurrent?: () => boolean | Promise<boolean>;
   /** Synchronous catalog/override snapshot guard. */
   routeStillCurrent?: () => boolean;
+  /**
+   * Called when the final response is HTTP 401. Only the Cindy AI (xd) gateway branches
+   * pass it, so a stale Cindy AI key can be re-synced; other providers keep plain 401s.
+   */
+  onUnauthorized?: () => void;
 }): Promise<string> {
   const controller = new AbortController();
   const timeoutMs = input.timeoutMs ?? 90_000;
@@ -1705,6 +1716,7 @@ async function requestProviderHttpText(input: {
       minimalBody = true;
     }
     if (!response.ok) {
+      if (response.status === 401) input.onUnauthorized?.();
       await response.body?.cancel().catch(() => undefined);
       throw new UtilityTextExecutionError({ reason: 'http_error', httpStatus: response.status });
     }
@@ -1735,6 +1747,7 @@ async function requestProviderHttpText(input: {
         raw = await budgeted.text();
         text = wireResponseText(input.wire, raw);
       } else {
+        if (budgeted.status === 401) input.onUnauthorized?.();
         await budgeted.body?.cancel().catch(() => undefined);
       }
     }

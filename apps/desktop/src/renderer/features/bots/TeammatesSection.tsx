@@ -201,7 +201,7 @@ export function TeammatesSection() {
   };
 
   const changeGroupArchive = async (group: BotGroupSummary) => {
-    if (archiveBusyRef.current) return;
+    if (archiveBusyRef.current || group.dissolvedAt) return;
     archiveBusyRef.current = true;
     setArchiveBusy(true);
     setArchiveError('');
@@ -454,7 +454,7 @@ export function TeammatesSection() {
         <DropdownMenuItem onSelect={() => navigate('/bots/groups/' + encodeURIComponent(group.id) + '?' + BOT_GROUP_SETTINGS_PARAM + '=1')}>
           <Settings size={14} className="mr-2" />{t('bots.groupChat.settings.title')}
         </DropdownMenuItem>
-        {group.serverBacked && group.members.some(member => member.isOwned && (member.role === 'owner' || member.role === 'admin')) && <>
+        {group.serverBacked && !group.dissolvedAt && group.members.some(member => member.isOwned && (member.role === 'owner' || member.role === 'admin')) && <>
           <DropdownMenuSeparator />
           <DropdownMenuItem disabled={archiveBusy} onSelect={() => void changeGroupArchive(group)}>
             {group.archived ? <ArchiveRestore size={14} className="mr-2" /> : <Archive size={14} className="mr-2" />}

@@ -77,6 +77,17 @@ describe('teammates in the sidebar-wide search', () => {
     expect(names('周报')).toEqual([]);
   });
 
+  it('finds dissolved history by group or member name and opens its read-only chat route', () => {
+    mocks.groups = [{ id: 'dissolved', name: '周末出游', archived: true,
+      dissolvedAt: '2026-10-15T12:00:00Z', members: [{ botId: 'lead', name: 'Trip Planner' }] }];
+    expect(names('planner')).toEqual(['周末出游']);
+    const matches = renderHook(() => useTeammateSearchMatches('出游')).result.current;
+    render(<TeammateSearchResults matches={matches} />);
+    fireEvent.click(screen.getByRole('button', { name: /周末出游/ }));
+    expect(mocks.navigate).toHaveBeenCalledWith('/bots/groups/dissolved');
+    expect(screen.queryByRole('menuitem')).toBeNull();
+  });
+
   it('finds remote teammates by their computer and group chats by member names', () => {
     expect(names('mac mini')).toEqual(['Cloud helper']);
     expect(names('出游')).toEqual(['周末出游']);

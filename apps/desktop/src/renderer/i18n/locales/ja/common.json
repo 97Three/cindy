@@ -161,8 +161,8 @@
     "runsOnThisDevice": "このパソコンで実行中",
     "inviteNotice": "招待リンクを持つユーザーはログイン後に参加でき、所有者と同じ Agent 権限を持ちます。",
     "offlineAutoClose": "ホストのパソコンがオフラインのままだと、共有は自動的に終了します。",
-    "inviteBoxHint": "リンクを送ると、相手はクリックして参加できます。モバイルではリンクをコピーして Cindy を開くこともできます。",
-    "invitationMessage": "「{{title}}」への招待です\n{{link}}\nリンクを開いて参加してください。モバイルではリンクをコピーして Cindy を開き、参加を確認することもできます。",
+    "inviteBoxHint": "リンクを送ると、相手はクリックして参加できます。Cindy の「共有セッションに参加」にリンクを貼り付けて参加することもできます。",
+    "invitationMessage": "「{{title}}」への招待です\n{{link}}\nリンクを開いて参加してください。Cindy が開かない場合は、Cindy の「共有セッションに参加」からこのリンクを貼り付けてください。",
     "membersWithLimit": "メンバー · {{count}} 人（ゲストは最大 2 人）",
     "me": "自分",
     "thisDevice": "このパソコン",
@@ -197,8 +197,6 @@
     "invitationDifferentServer": "この招待は別の Cindy サービスのものです。対応するアプリでリンクを開いてください。",
     "managementIntro": "開始した共有と参加した共有を管理します。",
     "returnToTasks": "タスク一覧に戻る",
-    "invitationDetected": "共有タスクへの招待が見つかりました",
-    "notNow": "今は参加しない",
     "closeAllLabel": "すべての共有を停止",
     "closeAllDescription": "すべてのゲストがアクセスできなくなります。タスクの履歴は保持されます。"
   },
@@ -519,6 +517,8 @@
       "sourceShare": "{{name}} からの共有",
       "shareComputer": "{{name}} のパソコン",
       "shareComputerUnknown": "共有されたパソコン",
+      "accountCount_other": "{{count}} 個のアカウント",
+      "accountFallback": "アカウント {{index}}",
       "quota": {
         "loading": "クォータを読み込み中…",
         "unavailable": "このパソコンのクォータを今は読み取れません",
@@ -597,6 +597,7 @@
     },
     "toast": {
       "added_other": "{{count}} 台のパソコンを {{provider}} のプロバイダーグループに追加しました",
+      "addedAccounts_other": "{{count}} 個のアカウントを {{provider}} のプロバイダーグループに追加しました",
       "removed": "{{name}} をプロバイダーグループから外しました",
       "deleted": "{{provider}} のプロバイダーグループを削除しました"
     }
@@ -9067,6 +9068,8 @@
         "empty": "メッセージはまだありません",
         "preview": "{{name}}: {{text}}",
         "previewYou": "あなた: {{text}}",
+        "sharedReplyYou": "スレッドの返信を共有しました",
+        "sharedReply": "{{name}} がスレッドの返信を共有しました",
         "waiting": "確認待ち",
         "planProposed": "{{name}}: 計画ができました。開始を待っています",
         "planProposedAnonymous": "計画ができました。開始を待っています",
@@ -9120,6 +9123,12 @@
         "tooManyAttachments": "添付ファイルが多すぎます。1 件のメッセージにつき最大 {{max}} 個です",
         "attachmentsFailed": "添付ファイルを送信できませんでした。ファイルが残っているか確認するか、削除してから再試行してください",
         "folderNotSupported": "フォルダーは添付できません。中のファイルを選んでください"
+      },
+      "outbox": {
+        "sending": "送信中…",
+        "failed": "送信できませんでした",
+        "edit": "編集",
+        "editBlocked": "入力欄に内容があります。送信するか消してから、このメッセージを編集してください"
       },
       "quote": {
         "replyingTo": "{{name}} を引用",
@@ -9228,7 +9237,10 @@
         "permissionDenied": "このグループを管理する権限がありません。",
         "serviceError": "チャットサービスで処理を完了できません。しばらくしてから再試行してください。",
         "groupArchived": "このグループはアーカイブ済みのため操作できません。",
-        "quoteUnavailable": "引用したメッセージは削除されたか、表示できなくなりました。引用を外したので、もう一度送信してください。"
+        "quoteUnavailable": "引用したメッセージは削除されたか、表示できなくなりました。引用を外したので、もう一度送信してください。",
+        "lifecycleUnavailable": "現在のサーバーまたはコンピューターは、この操作にまだ対応していません。",
+        "groupDissolved": "このグループは解散しました。閲覧権限のある履歴は引き続き確認できます。",
+        "lastOwner": "退出する前にオーナーを譲渡するか、グループを解散してください。"
       },
       "organizer": "まとめ役",
       "plan": {
@@ -9256,8 +9268,22 @@
       "speaking": {
         "planning": "役割分担を考えています…"
       },
+      "task": {
+        "label": "タスク",
+        "state": {
+          "started": "進行中",
+          "waiting": "確認待ち",
+          "completed": "完了",
+          "failed": "失敗",
+          "cancelled": "キャンセル済み",
+          "timed-out": "タイムアウト"
+        }
+      },
       "files": {
-        "openFailed": "ファイルを開けませんでした。移動または削除された可能性があります"
+        "openFailed": "ファイルを開けませんでした。移動または削除された可能性があります",
+        "untitled": "添付ファイル",
+        "loading": "読み込み中…",
+        "unavailable": "読み込めません"
       },
       "addFromChat": {
         "triggerFor": "{{name}} をグループチャットに追加",
@@ -9274,6 +9300,35 @@
         "openTopic": "スレッドを表示 · {{count}} 件の返信",
         "topic": "スレッド",
         "replies": "返信",
+        "replyCount_one": "{{count}} 件の返信",
+        "replyCount_other": "{{count}} 件の返信",
+        "thread": {
+          "open_one": "スレッドを開く（返信 {{count}} 件）",
+          "open_other": "スレッドを開く（返信 {{count}} 件）",
+          "lastReply": "最終返信 {{time}}",
+          "emptyReply": "テキストなし",
+          "image": "画像",
+          "file": "ファイル",
+          "attachmentsSummary": "{{label}} · {{name}} など添付 {{count}} 件",
+          "alsoSent": "スレッドで返信し、メインチャットにも送信しました",
+          "sharedReplyFrom": "{{name}} のスレッド返信を共有しました",
+          "sharedReply": "スレッドの返信を共有しました",
+          "edited": "編集済み",
+          "sourceUnavailable": "元の返信は削除されたか、表示する権限がありません。",
+          "viewThread": "スレッドを見る",
+          "viewInMain": "メインチャットで見る",
+          "postToMain": "メインチャットに投稿",
+          "postedBySelf": "あなたがメインチャットに投稿済み",
+          "postedToMain": "メインチャットに投稿済み",
+          "alsoSend": "メインチャットにも送信",
+          "alsoSendFailed_one": "返信はスレッドに送信されましたが、メインチャットには送信できませんでした。",
+          "alsoSendFailed_other": "{{count}} 件の返信はスレッドに送信されましたが、メインチャットには送信できませんでした。",
+          "loadingSource": "元の返信を読み込んでいます…",
+          "shareNotLoaded": "この共有はメインチャットの以前のメッセージにあります。さらに読み込むと表示されます。",
+          "retryPost": "メインチャットに再送信",
+          "alreadyPosted": "この返信はすでにメインチャットに投稿しています。",
+          "shareUnavailable": "この返信は削除されたか表示できないため、メインチャットに投稿できません。"
+        },
         "replyPlaceholder": "このメッセージに返信。@ でパートナーを指定できます…",
         "sendReply": "返信を送信",
         "addReaction": "リアクションを追加",
@@ -9345,7 +9400,7 @@
           "removeHint": "メッセージの閲覧と送信ができなくなります。そのメンバーのパートナーも退出します。",
           "addCompanion": "自分のパートナーを招待",
           "leave": "グループを退出",
-          "leaveHint": "あなたとあなたのパートナーが退出します。オーナーは先に所有権を譲渡してください。",
+          "leaveHint": "あなたとあなたの仲間がグループから退出します。新しいメッセージは届かなくなり、グループの履歴を閲覧できなくなります。",
           "soleOwnerHint": "メンバーはあなただけです。グループをアーカイブすると履歴が残り、後で再開できます。",
           "archive": "グループをアーカイブ",
           "archiveHint": "アーカイブすると、すべてのメンバーに対して新しいメッセージとパートナーの実行が停止します。履歴は保持されます。グループを検索して履歴を閲覧したり、アーカイブを解除したりできます。",
@@ -9365,6 +9420,18 @@
           "companionPermissions": "仲間の権限",
           "configureCapabilities": "ツールと利用権限の設定"
         }
+      },
+      "lifecycle": {
+        "dissolve": "グループを解散",
+        "dissolveNote": "この操作は取り消せません。全員がメッセージを送信できなくなり、進行中の作業は停止し、招待は無効になります。メンバーはこれまで閲覧できた履歴を引き続き確認できます。",
+        "hide": "自分のリストから削除",
+        "hideNote": "すべての自分のデバイスでリストからこのチャットを削除します。メンバーの状態、履歴、進行中の作業、他のメンバーには影響しません。",
+        "leave": "グループを退出",
+        "leaveNote": "あなたとあなたの仲間がグループから退出します。新しいメッセージは届かなくなり、グループの履歴を閲覧できなくなります。",
+        "unavailable": "現在のサーバーまたはコンピューターは、この操作にまだ対応していません。",
+        "dissolved": "このグループは解散しました。閲覧権限のある履歴は引き続き確認できます。",
+        "failed": "操作を完了できませんでした。もう一度お試しください。",
+        "lastOwner": "退出する前にオーナーを譲渡するか、グループを解散してください。"
       }
     },
     "joined": {

@@ -67,3 +67,14 @@ export function homeDeviceName(cloud: CompanionCloudSnapshot, botId: string, fal
   const actor = cloud.actors.find((candidate) => candidate.externalId === botId);
   return actor?.homeDevice?.name?.trim() || fallback;
 }
+
+/**
+ * Whether this computer runs `botId`: it holds the profile, the copy is not shadowed, and the
+ * companion's known home (when the feature is on) is this computer. Sessions and tasks of a
+ * companion live only on its home computer, so only there can they be looked up locally.
+ */
+export function companionRunsHere(cloud: CompanionCloudSnapshot, localBotIds: readonly string[], botId: string): boolean {
+  if (!localBotIds.includes(botId) || cloud.demotedBotIds.includes(botId)) return false;
+  const home = cloud.enabled ? cloud.actors.find((actor) => actor.externalId === botId)?.homeDeviceId : undefined;
+  return !home || home === cloud.selfDeviceId;
+}

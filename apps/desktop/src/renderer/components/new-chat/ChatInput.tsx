@@ -6768,10 +6768,28 @@ export function ChatInput({
       try {
         await exclusiveTurn.ready;
         let confirmedContextWindow: number | undefined;
+        // 远程 Agent:这次选择落在哪台电脑。左侧栏点了另一台电脑的目录就用那台;否则沿用已登记
+        // 的换位置意图 —— 意图期内在同一份目录里改选,不能被当成原来那台的选择。与任务当前
+        // 所在电脑相同 = 位置不变,不带给 main(旧被控端 / 内部调用同样不带)。被控电脑上的任务
+        // 只在那台支持远程 Agent 时才带(null = 改回被控电脑)。
+        const resolveRelocateTo = () => {
+          const pendingAgentDeviceId =
+            makerChatStore.getAgentSwitchIntent(sourceSessionId)?.agentDeviceId;
+          const requestedAgentDeviceId =
+            overrides?.agentDeviceId !== undefined ? overrides.agentDeviceId : pendingAgentDeviceId;
+          return agentLocationAware &&
+            requestedAgentDeviceId !== undefined &&
+            requestedAgentDeviceId !== agentDeviceId
+            ? requestedAgentDeviceId
+            : undefined;
+        };
         // Same-Agent Orca picks stage instead of calling SET_MODEL. Keep its window
         // preflight before registration, including same-id provider changes. Effort/
         // Fast edits of an already selected route do not need another confirmation.
-        if (sessionOrcaRole && targetAgentKind === runtimeAgentKind && !overrides?.axesOnly &&
+        // Moving the Agent to another computer starts a fresh session with a handoff,
+        // so the current window does not carry over and needs no preflight.
+        if (sessionOrcaRole && resolveRelocateTo() === undefined && targetAgentKind === runtimeAgentKind &&
+            !overrides?.axesOnly &&
             (targetAgentKind !== currentModelAgentKind || newModelId !== activeModel ||
               providerId !== effectiveSourceId || makerChatStore.getAgentSwitchIntent(sourceSessionId))) {
           const proceed = await confirmModelSwitchContextGuard(
@@ -6782,20 +6800,7 @@ export function ChatInput({
               writeSeq !== getAgentSwitchWriteSeq(sourceSessionId)) return false;
           if (typeof proceed === 'number') confirmedContextWindow = proceed;
         }
-        // 远程 Agent:这次选择落在哪台电脑。左侧栏点了另一台电脑的目录就用那台;否则沿用已登记
-        // 的换位置意图 —— 意图期内在同一份目录里改选,不能被当成原来那台的选择。与任务当前
-        // 所在电脑相同 = 位置不变,不带给 main(旧被控端 / 内部调用同样不带)。被控电脑上的任务
-        // 只在那台支持远程 Agent 时才带(null = 改回被控电脑)。
-        const pendingAgentDeviceId =
-          makerChatStore.getAgentSwitchIntent(sourceSessionId)?.agentDeviceId;
-        const requestedAgentDeviceId =
-          overrides?.agentDeviceId !== undefined ? overrides.agentDeviceId : pendingAgentDeviceId;
-        const relocateTo =
-          agentLocationAware &&
-          requestedAgentDeviceId !== undefined &&
-          requestedAgentDeviceId !== agentDeviceId
-            ? requestedAgentDeviceId
-            : undefined;
+        const relocateTo = resolveRelocateTo();
         // 这一行来自当前没在显示的那份目录:档位与 Fast 已由面板按那份目录解析好,原样采用,
         // 不拿当前目录再解析一遍(同 id 模型两台电脑的档位 / Fast 能力可以不同)。
         const fromOtherCatalog =
@@ -7253,9 +7258,11 @@ export function ChatInput({
     [agentDeviceId, intentAgentDeviceId, deviceLinkDeviceId, deviceLinkDeviceName, confirmDialog, t],
   );
   const sessionRemoteAgentOptions = useMemo<RemoteAgentSelectorOptions | undefined>(() => {
-    // 本机或能力已确认的被控端任务可换电脑；SSH / Orca 不开放位置选择。
+    // 本机或能力已确认的被控端任务可换电脑；SSH 与运行设备 Worker 不开放位置选择。协同的 Lead / Worker
+    // 任务在本机，换 Agent 位置与普通任务同一套(2026-10-16)；被控电脑上的协同任务旧版会拒绝，先不开放。
     if (!sessionId || !agentLocationAware || remoteHostId || !sessionEngineFilter ||
-        sessionOrcaRole !== null || sessionOrcaRemoteWorker) return undefined;
+        sessionOrcaRole === undefined || (sessionOrcaRole !== null && deviceLinkDeviceId) ||
+        sessionOrcaRemoteWorker) return undefined;
     if (!remoteAgentDevices || (remoteAgentDevices.length === 0 && !effectiveAgentDeviceId)) {
       return undefined;
     }

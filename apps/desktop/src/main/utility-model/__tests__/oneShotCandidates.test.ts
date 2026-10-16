@@ -92,6 +92,10 @@ vi.mock('../../model-access/effectiveEndpoint.js', async () => {
   return { effectiveXdGatewayBaseUrl: () => TEST_XD_GATEWAY_BASE_URL };
 });
 
+vi.mock('../../model-access/gatewayKeyRejection.js', () => ({
+  reportCindyGatewayKeyRejected: vi.fn(),
+}));
+
 import type { Maker } from '@cindy/maker-core';
 import { DictationDictionaryAdvisor } from '@cindy/voice-input-core';
 import { DictionaryLearningTextModelClient } from '../../voice-input/DictionaryLearningTextModelClient.js';
@@ -109,6 +113,7 @@ import {
 import { readModelDisableOverrides } from '../../maker-host/model-disable-store.js';
 import { isProviderRouteMutationInProgress } from '../../maker-host/provider-route.js';
 import { readCustomProviderKey } from '../../secrets/providerSecretStore.js';
+import { reportCindyGatewayKeyRejected } from '../../model-access/gatewayKeyRejection.js';
 import { getUtilityModelChainProfiles } from '../UtilityModelSelection.js';
 import {
   DEDICATED_AUTO_REVIEW_CANDIDATES,
@@ -132,6 +137,7 @@ const xdPaymentRequiredRoute = vi.mocked(isXdGatewayPaymentRequiredRoute);
 const readDisableOverrides = vi.mocked(readModelDisableOverrides);
 const providerRouteMutationInProgress = vi.mocked(isProviderRouteMutationInProgress);
 const readCustomKey = vi.mocked(readCustomProviderKey);
+const reportKeyRejected = vi.mocked(reportCindyGatewayKeyRejected);
 
 function makerMock(authenticated: boolean): Maker {
   return {
@@ -2976,5 +2982,196 @@ describe('utility one-shot candidates', () => {
       reasoning_effort: 'low',
     });
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).not.toHaveProperty('thinking');
+  });
+
+  describe('Cindy AI key rejection reports', () => {
+    const xdCatalog = {
+      providers: [{
+        id: 'xd',
+        name: 'XD Gateway',
+        source: 'builtin',
+        agents: ['claude-code'],
+        auth: { method: 'managed' },
+        routing: {
+          'claude-code': { upstream: 'https://ignored.invalid', authStrategy: 'gateway-key' },
+        },
+        models: {
+          'claude-code': [{ id: 'gpt-5.5', name: 'GPT-5.5', contextWindow: 1_000_000 }],
+        },
+      }],
+    };
+    const unauthorized = () => ({
+      ok: false,
+      status: 401,
+      body: { cancel: vi.fn(async () => undefined) },
+    });
+
+    it('reports the exact key sent by an explicit XD request rejected with 401', async () => {
+      activeCatalog.mockReturnValue(xdCatalog as never);
+      readKey.mockReturnValue('xd-key-sent');
+      fetchMock.mockResolvedValueOnce(unauthorized() as never);
+
+      const result = await requestUtilityText(makerMock(false), 'generate', {
+        providerId: 'xd',
+        agentKind: 'claude-code',
+        model: 'gpt-5.5',
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        attempts: [expect.objectContaining({ providerId: 'xd', reason: 'http_error', httpStatus: 401 })],
+      });
+      expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({ Authorization: 'Bearer xd-key-sent' });
+      expect(reportKeyRejected).toHaveBeenCalledTimes(1);
+      expect(reportKeyRejected).toHaveBeenCalledWith('xd-key-sent');
+    });
+
+    it('does not report a successful XD request', async () => {
+      activeCatalog.mockReturnValue(xdCatalog as never);
+      readKey.mockReturnValue('xd-key-sent');
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        text: async () => JSON.stringify({ choices: [{ message: { content: 'script' } }] }),
+      } as never);
+
+      const result = await requestUtilityText(makerMock(false), 'generate', {
+        providerId: 'xd',
+        agentKind: 'claude-code',
+        model: 'gpt-5.5',
+      });
+
+      expect(result).toMatchObject({ ok: true });
+      expect(reportKeyRejected).not.toHaveBeenCalled();
+    });
+
+    it('does not report a non-401 XD failure', async () => {
+      activeCatalog.mockReturnValue(xdCatalog as never);
+      readKey.mockReturnValue('xd-key-sent');
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        body: { cancel: vi.fn(async () => undefined) },
+      } as never);
+
+      await requestUtilityText(makerMock(false), 'generate', {
+        providerId: 'xd',
+        agentKind: 'claude-code',
+        model: 'gpt-5.5',
+      });
+
+      expect(reportKeyRejected).not.toHaveBeenCalled();
+    });
+
+    it('does not report a 401 from another provider', async () => {
+      activeCatalog.mockReturnValue({
+        providers: [{
+          id: 'tapsvc',
+          name: 'Tap Service',
+          source: 'user',
+          agents: ['codex'],
+          auth: { method: 'apiKey' },
+          routing: { codex: { upstream: 'https://custom.example/v1', authStrategy: 'api-key-header' } },
+          models: { codex: [{ id: 'custom-mini', name: 'Custom Mini', contextWindow: 100_000 }] },
+        }],
+      } as never);
+      readCustomKey.mockReturnValue('custom-secret');
+      readKey.mockReturnValue('xd-key-stored');
+      fetchMock.mockResolvedValueOnce(unauthorized() as never);
+
+      await requestUtilityText(makerMock(false), 'generate', {
+        providerId: 'tapsvc',
+        agentKind: 'codex',
+        model: 'custom-mini',
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(reportKeyRejected).not.toHaveBeenCalled();
+    });
+
+    it('reports the key of an auxiliary-chain LiteLLM request rejected with 401', async () => {
+      chainState.refs = ['litellm-gpt-5.4-mini'];
+      readKey.mockReturnValue('proxy-key-sent');
+      fetchMock.mockResolvedValueOnce(unauthorized() as never);
+
+      const result = await requestUtilityText(makerMock(false), 'hello');
+
+      expect(result).toMatchObject({
+        ok: false,
+        attempts: expect.arrayContaining([
+          expect.objectContaining({ providerId: 'litellm-gpt-5.4-mini', httpStatus: 401 }),
+        ]),
+      });
+      expect(reportKeyRejected).toHaveBeenCalledTimes(1);
+      expect(reportKeyRejected).toHaveBeenCalledWith('proxy-key-sent');
+    });
+
+    it.each([
+      [401, 1],
+      [500, 0],
+    ] as const)('LiteLLM budget retry rejected with HTTP %s reports the sent key %s times', async (status, reports) => {
+      chainState.refs = ['litellm-gpt-5.4-mini'];
+      readKey.mockReturnValue('proxy-key-sent');
+      fetchMock
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            choices: [{ message: { content: '' }, finish_reason: 'length' }],
+            usage: { completion_tokens: 800 },
+          }),
+        } as never)
+        .mockResolvedValueOnce({ ok: false, status, body: { cancel: vi.fn(async () => undefined) } } as never);
+
+      const result = await requestUtilityText(makerMock(false), 'hello', { maxTokens: 800 });
+
+      expect(result).toMatchObject({ ok: false });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(reportKeyRejected).toHaveBeenCalledTimes(reports);
+      if (reports > 0) expect(reportKeyRejected).toHaveBeenCalledWith('proxy-key-sent');
+    });
+
+    it.each([
+      [401, 1],
+      [500, 0],
+    ] as const)('explicit XD budget retry rejected with HTTP %s reports the sent key %s times', async (status, reports) => {
+      activeCatalog.mockReturnValue(xdCatalog as never);
+      readKey.mockReturnValue('xd-key-sent');
+      fetchMock
+        .mockResolvedValueOnce({
+          ok: true,
+          text: async () => JSON.stringify({
+            choices: [{ message: { content: '' }, finish_reason: 'length' }],
+            usage: { completion_tokens: 800 },
+          }),
+        } as never)
+        .mockResolvedValueOnce({ ok: false, status, body: { cancel: vi.fn(async () => undefined) } } as never);
+
+      const result = await requestUtilityText(makerMock(false), 'generate', {
+        providerId: 'xd',
+        agentKind: 'claude-code',
+        model: 'gpt-5.5',
+        maxTokens: 800,
+      });
+
+      expect(result).toMatchObject({ ok: false });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(reportKeyRejected).toHaveBeenCalledTimes(reports);
+      if (reports > 0) expect(reportKeyRejected).toHaveBeenCalledWith('xd-key-sent');
+    });
+
+    it('reports the key of the cindy-gateway Auto-review candidate rejected with 401', async () => {
+      readKey.mockReturnValue('review-key-sent');
+      fetchMock.mockResolvedValueOnce(unauthorized() as never);
+
+      const result = await requestDedicatedAutoReviewCandidateText(
+        'classify',
+        DEDICATED_AUTO_REVIEW_CANDIDATES[0],
+        { timeoutMs: 8_000 },
+      );
+
+      expect(result).toMatchObject({ ok: false });
+      expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({ Authorization: 'Bearer review-key-sent' });
+      expect(reportKeyRejected).toHaveBeenCalledTimes(1);
+      expect(reportKeyRejected).toHaveBeenCalledWith('review-key-sent');
+    });
   });
 });
