@@ -121,6 +121,10 @@ Windows 暂不支持 askpass。
 该实例已有的凭据成功检查 GitHub 连接，才返回 `CINDY_AUTH_ALTERNATIVE_AVAILABLE`，本次 Git
 命令失败退出，Agent 得到明确的 `ghost_info` 路径后重新选择插件支持的操作；不弹凭据卡。
 
+- 预检与插件网络层共用宿主 GitHub 凭据资格检查：组织实例、身份标记为 `pending` 或
+  `unconfirmed` 的旧安装不读取凭据、不发连接探测，沿用原代输入。检查期间身份变化同样作废。
+- 跳过 Cindy 登录、使用本机资料的 local Profile 也可使用已有 GitHub 连接；未进入有效资料的
+  `signed-out` 状态及资料切换期间不探测。跨异步步骤复核现有 owner scope，防止混用资料。
 - 同时核对 Git transport 的远端 origin 和认证提示的 origin；其它站点、重定向后的其它 origin、
   GitHub Enterprise、远程 SSH 任务不进入此分支。探测失败、超时、实例歧义或不可用时沿用原有代输入。
 - 检查复用插件的本机 GitHub 登录 → 同实例备用 Token 顺序，只返回宿主固定指引；不把 Token、

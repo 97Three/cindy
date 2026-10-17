@@ -1,6 +1,6 @@
-import { getActiveAppSession, isAppSessionBoundaryPending } from '../../appSessionState.js';
+import { activeOwnerScopeKey, getActiveAppSession, isAppSessionBoundaryPending } from '../../appSessionState.js';
 import { getGhostManager, getGhostSetupAssessment, isGhostAvailableForActiveSession } from '../../cindy-brain/index.js';
-import { isCindyOfficialTrustInfo } from '../../cindy-brain/GhostManager.js';
+import { canUseGithubHostCredentials } from '../../cindy-brain/GhostManager.js';
 import { isGhostDisabledForWorkdir } from '../../cindy-brain/ghostWorkdirPrefs.js';
 import { installedGhostStoragePart } from '../../../shared/pluginIdentity.js';
 import { getSessionFsSnapshot } from '../../localDb/ipc/sessions.js';
@@ -14,14 +14,14 @@ import { createGithubAuthRecovery } from './githubRecovery.js';
 export const resolveGithubAuthRecovery = createGithubAuthRecovery({
   ownerKey: () => {
     const owner = getActiveAppSession();
-    return owner.mode === 'cloud' && owner.dataOwnerId && !isAppSessionBoundaryPending()
-      ? `${owner.dataOwnerId}:${owner.generation}` : null;
+    return owner.mode !== 'signed-out' && owner.dataOwnerId && !isAppSessionBoundaryPending()
+      ? activeOwnerScopeKey() : null;
   },
   sessionContext: getSessionFsSnapshot,
   listGhosts: () => getGhostManager().list(),
   isAvailableForActiveSession: isGhostAvailableForActiveSession,
   isDisabledForWorkdir: isGhostDisabledForWorkdir,
-  isTrusted: (ghost) => isCindyOfficialTrustInfo(ghost.trust),
+  isTrusted: canUseGithubHostCredentials,
   setupReady: (instanceId) => getGhostSetupAssessment(instanceId).state === 'ready',
   connected: async (ghost, isCurrent) => {
     const secrets = ghost.manifest.network?.secrets?.filter((secret) =>

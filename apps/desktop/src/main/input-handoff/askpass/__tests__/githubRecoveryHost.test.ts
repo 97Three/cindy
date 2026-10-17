@@ -1,16 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InstalledGhost } from '../../../../shared/ghost.js';
+import type { ActiveAppSession } from '../../../appSessionState.js';
+import { CINDY_OFFICIAL_GHOST_TRUST } from '../../../cindy-brain/GhostManager.js';
+import { LOCAL_PROFILE_DATA_OWNER_ID } from '../../../profile/profileRegistryModel.js';
 import { resolveGithubAuthRecovery } from '../githubRecoveryHost.js';
 import type { AuthRecoveryRequest } from '../host.js';
 
 // Unit: exercise the production wiring and real githubConnection with a synthetic
 // fetch. Policy tests alone cannot prove credential precedence or owner isolation.
 const h = vi.hoisted(() => ({
-  owner: 1, boundary: false, trusted: true, ghost: null as InstalledGhost | null,
+  owner: 1, mode: 'cloud' as ActiveAppSession['mode'], dataOwnerId: 'test-owner' as string | null,
+  boundary: false, ghost: null as InstalledGhost | null,
   readGh: vi.fn<() => Promise<string | null>>(), readSecret: vi.fn(), fetch: vi.fn(),
 }));
 vi.mock('../../../appSessionState.js', () => ({
-  getActiveAppSession: () => ({ mode: 'cloud', dataOwnerId: 'test-owner', generation: h.owner }),
+  getActiveAppSession: () => ({ mode: h.mode, dataOwnerId: h.dataOwnerId, generation: h.owner }),
+  activeOwnerScopeKey: () => JSON.stringify([h.mode, h.dataOwnerId, h.owner]),
   isAppSessionBoundaryPending: () => h.boundary,
 }));
 vi.mock('../../../cindy-brain/index.js', () => ({
@@ -18,7 +23,6 @@ vi.mock('../../../cindy-brain/index.js', () => ({
   getGhostSetupAssessment: () => ({ state: 'ready' }),
   isGhostAvailableForActiveSession: () => true,
 }));
-vi.mock('../../../cindy-brain/GhostManager.js', () => ({ isCindyOfficialTrustInfo: () => h.trusted }));
 vi.mock('../../../cindy-brain/ghostWorkdirPrefs.js', () => ({ isGhostDisabledForWorkdir: () => false }));
 vi.mock('../../../localDb/ipc/sessions.js', () => ({
   getSessionFsSnapshot: async () => ({ workingDir: '/project', remoteHostId: null }),
@@ -35,14 +39,15 @@ const request: AuthRecoveryRequest = {
 };
 beforeEach(() => {
   vi.clearAllMocks();
-  h.owner = 1; h.boundary = false; h.trusted = true;
+  h.owner = 1; h.mode = 'cloud'; h.dataOwnerId = 'test-owner'; h.boundary = false;
   h.ghost = {
     manifest: { schemaVersion: 3, id: 'cindy-github', name: 'GitHub', version: '1.0.0', kind: 'chip', entry: 'index.js',
       tools: [{ name: 'list_tools' }, { name: 'call_tool' }], network: { hosts: ['api.github.com'], secrets: [{
         key: 'test_gh_connection', source: 'gh-cli', label: 'GitHub',
         inject: { header: 'Authorization', format: 'Bearer {value}', hosts: ['api.github.com'] },
       }] } },
-    dir: '/tmp/cindy-github', namespace: null, enabled: true,
+    dir: '/tmp/cindy-github', namespace: null, namespaceState: 'confirmed', enabled: true,
+    trust: { ...CINDY_OFFICIAL_GHOST_TRUST },
     approval: { state: 'approved', revision: '00000000-0000-4000-8000-000000000001' },
   } as InstalledGhost;
   h.readGh.mockResolvedValue('synthetic-gh-token');
@@ -74,7 +79,7 @@ describe('GitHub recovery host wiring', () => {
   });
 
   it.each(['untrusted', 'unknown-contract', 'owner-boundary'])('does not read credentials for %s', async (reason) => {
-    if (reason === 'untrusted') h.trusted = false;
+    if (reason === 'untrusted') h.ghost!.trust = undefined;
     if (reason === 'unknown-contract') h.ghost!.manifest.network = undefined;
     if (reason === 'owner-boundary') h.boundary = true;
     expect(await resolveGithubAuthRecovery(request)).toBeNull();
@@ -93,5 +98,61 @@ describe('GitHub recovery host wiring', () => {
   it('retains the original authentication flow on rejection without exposing response bodies', async () => {
     h.fetch.mockImplementation(async () => new Response('synthetic private rejection', { status: 401 }));
     expect(await resolveGithubAuthRecovery(request)).toBeNull();
+  });
+
+  // PR #6349: a successful /user probe must not redirect to an instance that
+  // networkSlot rejects before reading either credential source.
+  it.each(['organization', 'pending', 'unconfirmed'] as const)('rejects %s instances before reading credentials', async (identity) => {
+    if (identity === 'organization') {
+      h.ghost!.namespace = 'acme';
+      h.ghost!.dir = '/tmp/_ns/acme/cindy-github';
+    } else {
+      h.ghost!.namespaceState = identity;
+      if (identity === 'pending') delete h.ghost!.namespace;
+    }
+    expect(await resolveGithubAuthRecovery(request)).toBeNull();
+    expect(h.readGh).not.toHaveBeenCalled();
+    expect(h.readSecret).not.toHaveBeenCalled();
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(['pending', 'unconfirmed'] as const)('drops a credential if namespace becomes %s during the read', async (state) => {
+    h.readGh.mockImplementation(async () => {
+      h.ghost!.namespaceState = state;
+      return 'synthetic-stale-token';
+    });
+    expect(await resolveGithubAuthRecovery(request)).toBeNull();
+    expect(h.fetch).not.toHaveBeenCalled();
+    expect(h.readSecret).not.toHaveBeenCalled();
+  });
+
+  // Direct/BYOK plugins are available to local profiles; signed-out startup is
+  // a different state and must never read a profile's credentials.
+  it('offers recovery for a local profile using its existing GitHub connection', async () => {
+    h.mode = 'local'; h.dataOwnerId = LOCAL_PROFILE_DATA_OWNER_ID;
+    const result = await resolveGithubAuthRecovery(request);
+    expect(result).toContain('CINDY_AUTH_ALTERNATIVE_AVAILABLE');
+    expect(result).not.toContain(LOCAL_PROFILE_DATA_OWNER_ID);
+    expect(result).not.toContain('synthetic-gh-token');
+  });
+
+  it('does not probe while signed out', async () => {
+    h.mode = 'signed-out'; h.dataOwnerId = null;
+    expect(await resolveGithubAuthRecovery(request)).toBeNull();
+    expect(h.readGh).not.toHaveBeenCalled();
+    expect(h.readSecret).not.toHaveBeenCalled();
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  it('discards a local-profile credential when a cloud profile becomes active', async () => {
+    h.mode = 'local'; h.dataOwnerId = LOCAL_PROFILE_DATA_OWNER_ID;
+    h.readGh.mockImplementation(async () => {
+      h.mode = 'cloud'; h.dataOwnerId = 'test-owner'; h.owner += 1;
+      return 'synthetic-local-token';
+    });
+    expect(await resolveGithubAuthRecovery(request)).toBeNull();
+    expect(h.readGh).toHaveBeenCalledOnce();
+    expect(h.readSecret).not.toHaveBeenCalled();
+    expect(h.fetch).not.toHaveBeenCalled();
   });
 });
