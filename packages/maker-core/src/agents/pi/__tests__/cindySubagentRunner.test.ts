@@ -642,8 +642,17 @@ describe('Cindy durable PI Subagent runner', () => {
       return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
     });
     try {
+      // PID publication precedes the fake child's prompt response. Wait until
+      // the real runner has consumed its last startup event before closing the
+      // pipes; otherwise the orphan can exit on EPIPE during the inventory scan.
+      await waitFor(async () => {
+        const [run] = await listPiSubagentRuns(fixture.root);
+        return run?.tasks[0]?.toolUses === 1 ? true : null;
+      }, undefined, 'the runner to observe the hanging child after its startup writes');
       fixture.child.kill('SIGTERM');
       await waitForClose(fixture.child, fixture.stderr);
+      await waitFor(async () => readFile(fixture.stdinEndedFile, 'utf8').catch(() => null),
+        undefined, 'the orphan to observe stdin closing and remain alive');
       const receipt = JSON.parse(await readFile(path.join(fixture.runDir, 'result.json'), 'utf8'));
       expect(receipt.state).toBe('stopped');
       expect(receipt.tasks[0].status).toBe('stopped');
