@@ -447,6 +447,34 @@ describe('getRunningSnapshot pending request identity', () => {
       makerChatStore.purgeSession(sessionId);
     }
   });
+
+  it('publishes a new handoff step without a pending-state transition', () => {
+    // #3259: the same request stays pending through multiple owner-input steps.
+    const sessionId = 'pending-handoff-step';
+    const handoff = (stepNumber: number, revision: number): void => {
+      makerChatStore.__applyInputHandoffRequestForTest(sessionId, {
+        kind: 'input_handoff', requestId: 'same-request', revision,
+        phase: 'ready', purpose: 'Sign in', source: { app: 'Test' },
+        stepNumber, controls: [],
+      });
+    };
+    try {
+      handoff(1, 1);
+      const first = makerChatStore.getRunningSnapshot();
+      expect(first.get(sessionId)?.pendingRequestKeys).toEqual(['handoff:same-request:1']);
+
+      handoff(1, 2);
+      expect(makerChatStore.getRunningSnapshot()).toBe(first);
+
+      handoff(2, 3);
+      const second = makerChatStore.getRunningSnapshot();
+      expect(second).not.toBe(first);
+      expect(second.get(sessionId)?.hasPendingInputHandoff).toBe(true);
+      expect(second.get(sessionId)?.pendingRequestKeys).toEqual(['handoff:same-request:2']);
+    } finally {
+      makerChatStore.purgeSession(sessionId);
+    }
+  });
 });
 
 describe('getRunningSnapshot 后台 subagent 折算(真 store)', () => {

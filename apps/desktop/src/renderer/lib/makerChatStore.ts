@@ -8637,13 +8637,7 @@ function initGlobalListeners(options: GlobalListenerOptions = {}): void {
     }
 
     if (request.kind === 'input_handoff') {
-      const parsed = parsePendingInputHandoff(request);
-      if (!parsed) return;
-      setState(sessionId, (s) => {
-        const current = s.pendingInputHandoff;
-        if (current?.requestId === parsed.requestId && parsed.revision < current.revision) return s;
-        return { ...s, pendingInputHandoff: parsed };
-      });
+      applyInputHandoffInteractionRequest(sessionId, request);
       return;
     }
 
@@ -10197,6 +10191,16 @@ function pendingRequestKeys(state: SessionChatState): string[] {
     keys.push(`handoff:${handoff.requestId}:${handoff.stepNumber}`);
   }
   return keys.sort();
+}
+
+function applyInputHandoffInteractionRequest(sessionId: string, raw: unknown): void {
+  const parsed = parsePendingInputHandoff(raw);
+  if (!parsed) return;
+  setState(sessionId, (state) => {
+    const current = state.pendingInputHandoff;
+    if (current?.requestId === parsed.requestId && parsed.revision < current.revision) return state;
+    return { ...state, pendingInputHandoff: parsed };
+  });
 }
 
 function samePendingRequestKeys(
@@ -18648,6 +18652,8 @@ export const makerChatStore = {
     setState(sessionId, (s) => handleStreamEvent(s, event));
     scheduleWakeBridgeReconciliation(sessionId);
   },
+  /** Exposed for tests only: use the same request path as the live interaction handler. */
+  __applyInputHandoffRequestForTest: applyInputHandoffInteractionRequest,
   /** Exposed for tests only: 把 status update 打进真实 store。 */
   __applyStatusUpdateForTest: (sessionId: string, update: CCAgentStatusUpdate): void => {
     if (!isTurnContinuationBoundaryEvent(update) && !update.skipTurnReset && !update.isRunning) {

@@ -662,6 +662,33 @@ describe('useSessionRunningStatus silenced completion handling', () => {
     expect(addSessionAttention).not.toHaveBeenCalledWith('s-remount', 'awaiting');
   });
 
+  it('alerts on the next handoff step after remount without repeating the current step', async () => {
+    // #3259: a new owner-input step needs a fresh reminder even while pending stays true.
+    setDataOwnerGeneration('handoff-owner');
+    const onSessionNeedsReply = vi.fn();
+    const first = renderHook(() => useSessionRunningStatus(undefined, { onSessionNeedsReply }));
+    const handoffStatus = (step: number): SessionStatusInfo => ({
+      ...status(false), hasPendingInputHandoff: true,
+      pendingRequestKeys: [`handoff:same-request:${step}`],
+    });
+
+    await emitSnapshot(new Map([['s-handoff', handoffStatus(1)]]));
+    expect(onSessionNeedsReply).toHaveBeenCalledExactlyOnceWith('s-handoff');
+    first.result.current.clearNotification('s-handoff');
+    first.unmount();
+    vi.mocked(addSessionAttention).mockClear();
+
+    renderHook(() => useSessionRunningStatus(undefined, { onSessionNeedsReply }));
+    expect(onSessionNeedsReply).toHaveBeenCalledTimes(1);
+    expect(addSessionAttention).not.toHaveBeenCalledWith('s-handoff', 'awaiting');
+
+    await emitSnapshot(new Map([['s-handoff', handoffStatus(2)]]));
+    expect(onSessionNeedsReply).toHaveBeenCalledTimes(2);
+    expect(addSessionAttention).toHaveBeenCalledWith('s-handoff', 'awaiting');
+    await emitSnapshot(new Map([['s-handoff', handoffStatus(2)]]));
+    expect(onSessionNeedsReply).toHaveBeenCalledTimes(2);
+  });
+
   it('alerts for a different request while the sidebar is hidden, then again for a new owner', async () => {
     setDataOwnerGeneration('first-owner');
     const onSessionNeedsReply = vi.fn();
