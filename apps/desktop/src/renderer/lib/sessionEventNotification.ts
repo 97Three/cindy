@@ -110,6 +110,8 @@ export function sendSessionEventNotification(
     remoteDeviceId?: string | null;
     /** Main owns the fixed-copy phone push for input-handoff steps. */
     mobile?: boolean;
+    /** Main owns the one-time Feishu/channel pointer for input handoffs. */
+    feishu?: boolean;
   } = {},
 ): void {
   // The user is already looking at Cindy. In-app attention remains available,
@@ -118,11 +120,11 @@ export function sendSessionEventNotification(
 
   if (kind === 'done' && options.remoteDeviceId) {
     sendRemoteCompletionNotification(sessionId, options.remoteDeviceId, () =>
-      deliverSessionEventNotification(sessionId, title, kind, true, options.mobile !== false));
+      deliverSessionEventNotification(sessionId, title, kind, true, options));
     return;
   }
 
-  deliverSessionEventNotification(sessionId, title, kind, options.remoteDevice === true, options.mobile !== false);
+  deliverSessionEventNotification(sessionId, title, kind, options.remoteDevice === true, options);
 }
 
 const pendingRemoteCompletions = new Map<string, () => void>();
@@ -160,7 +162,13 @@ function sendRemoteCompletionNotification(sessionId: string, deviceId: string, d
   pendingRemoteCompletions.set(key, cancel);
 }
 
-function deliverSessionEventNotification(sessionId: string, title: string, kind: SessionEventNotificationKind, remoteDevice: boolean, mobile: boolean): void {
+function deliverSessionEventNotification(
+  sessionId: string,
+  title: string,
+  kind: SessionEventNotificationKind,
+  remoteDevice: boolean,
+  options: { mobile?: boolean; feishu?: boolean },
+): void {
   // A handoff can finish after the user has opened Cindy or changed preferences.
   if (typeof document !== 'undefined' && document.hasFocus()) return;
 
@@ -173,10 +181,10 @@ function deliverSessionEventNotification(sessionId: string, title: string, kind:
     ...(remoteDevice ? { markAttention: false } : {}),
     channels: {
       desktop: !remoteDevice && getNotificationsEnabled() && !islandActive,
-      feishu: getFeishuNotificationsEnabled(),
+      feishu: options.feishu !== false && getFeishuNotificationsEnabled(),
       // Mobile owns registration/unregistration of its push token. There is
       // deliberately no second desktop setting for the same channel.
-      mobile,
+      mobile: options.mobile !== false,
     },
   });
 }

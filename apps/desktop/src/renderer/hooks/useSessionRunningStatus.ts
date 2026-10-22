@@ -103,7 +103,7 @@ interface UseSessionRunningStatusOptions {
    * edge fires for a new request (or new input-handoff step) in the session.
    * Like onSessionDone, no active-session filter; the consumer decides.
    */
-  onSessionNeedsReply?: (sessionId: string, options?: { mobile: false }) => void;
+  onSessionNeedsReply?: (sessionId: string, options?: { mobile: false; feishu: false }) => void;
 }
 
 /**
@@ -383,8 +383,9 @@ export function useSessionRunningStatus(
           addSessionAttention(id, 'awaiting');
         }
         if (!wasAlreadyPending) {
-          // Main already sends each actionable handoff step its fixed-copy phone
-          // push. Keep the desktop reminder without sending a second generic one.
+          // Main sends each actionable step its fixed-copy phone push and one
+          // Feishu/channel pointer per request (including desktop /ctr). Keep
+          // the desktop reminder without repeating those external notices.
           const handoffOnly = newKeys?.length
             ? newKeys.every((key) => key.startsWith('handoff:'))
             : info.hasActionableInputHandoff === true
@@ -392,7 +393,7 @@ export function useSessionRunningStatus(
               && !info.hasPendingPermission
               && !info.hasPendingPlanReview
               && !info.hasPendingPluginSetup;
-          if (handoffOnly) onSessionNeedsReplyRef.current?.(id, { mobile: false });
+          if (handoffOnly) onSessionNeedsReplyRef.current?.(id, { mobile: false, feishu: false });
           else onSessionNeedsReplyRef.current?.(id);
         }
         // Other hook consumers only read running status. They may add the

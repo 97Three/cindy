@@ -95,17 +95,17 @@ describe('shared session event notifications', () => {
     });
   });
 
-  it('keeps desktop and Feishu reminders but skips generic phone delivery for an input handoff', () => {
+  it('keeps the desktop reminder but skips duplicate phone and Feishu delivery for an input handoff', () => {
     gates.feishu = true;
 
-    sendSessionEventNotification('handoff-session', 'Task', 'needs-reply', { mobile: false });
+    sendSessionEventNotification('handoff-session', 'Task', 'needs-reply', { mobile: false, feishu: false });
 
     expect(markAttention).toHaveBeenCalledWith('handoff-session');
     expect(showSessionEvent).toHaveBeenCalledWith({
       sessionId: 'handoff-session',
       title: 'Task',
       kind: 'needs-reply',
-      channels: { desktop: true, feishu: true, mobile: false },
+      channels: { desktop: true, feishu: false, mobile: false },
     });
   });
 
