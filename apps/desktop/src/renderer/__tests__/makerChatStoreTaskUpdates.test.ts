@@ -451,26 +451,36 @@ describe('getRunningSnapshot pending request identity', () => {
   it('publishes a new handoff step without a pending-state transition', () => {
     // #3259: the same request stays pending through multiple owner-input steps.
     const sessionId = 'pending-handoff-step';
-    const handoff = (stepNumber: number, revision: number): void => {
+    const handoff = (stepNumber: number, revision: number, phase: 'ready' | 'finishing' = 'ready'): void => {
       makerChatStore.__applyInputHandoffRequestForTest(sessionId, {
         kind: 'input_handoff', requestId: 'same-request', revision,
-        phase: 'ready', purpose: 'Sign in', source: { app: 'Test' },
-        stepNumber, controls: [],
+        phase, purpose: 'Sign in', source: { app: 'Test' },
+        stepNumber, controls: phase === 'ready'
+          ? [{ id: 'email', kind: 'text', label: 'Email', contentType: 'email' }]
+          : [],
       });
     };
     try {
       handoff(1, 1);
       const first = makerChatStore.getRunningSnapshot();
       expect(first.get(sessionId)?.pendingRequestKeys).toEqual(['handoff:same-request:1']);
+      expect(first.get(sessionId)?.hasActionableInputHandoff).toBe(true);
 
       handoff(1, 2);
       expect(makerChatStore.getRunningSnapshot()).toBe(first);
 
-      handoff(2, 3);
+      handoff(2, 3, 'finishing');
       const second = makerChatStore.getRunningSnapshot();
       expect(second).not.toBe(first);
       expect(second.get(sessionId)?.hasPendingInputHandoff).toBe(true);
+      expect(second.get(sessionId)?.hasActionableInputHandoff).toBe(false);
       expect(second.get(sessionId)?.pendingRequestKeys).toEqual(['handoff:same-request:2']);
+
+      handoff(2, 4);
+      const third = makerChatStore.getRunningSnapshot();
+      expect(third).not.toBe(second);
+      expect(third.get(sessionId)?.hasActionableInputHandoff).toBe(true);
+      expect(third.get(sessionId)?.pendingRequestKeys).toEqual(['handoff:same-request:2']);
     } finally {
       makerChatStore.purgeSession(sessionId);
     }

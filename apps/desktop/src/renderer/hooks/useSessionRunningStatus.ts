@@ -363,11 +363,13 @@ export function useSessionRunningStatus(
         info.hasPendingPermission ||
         info.hasPendingPlanReview ||
         info.hasPendingPluginSetup ||
-        info.hasPendingInputHandoff === true
+        info.hasActionableInputHandoff === true
       ) {
         currentPendingSet.add(id);
         const isActive = id === activeSessionId;
-        const keys = info.pendingRequestKeys;
+        const keys = info.hasActionableInputHandoff
+          ? info.pendingRequestKeys
+          : info.pendingRequestKeys?.filter((key) => !key.startsWith('handoff:'));
         const wasAlreadyPending = keys?.length
           ? !keys.some((key) =>
             !notifiedPendingRequests.get(id)?.has(key)
@@ -385,7 +387,9 @@ export function useSessionRunningStatus(
         // Other hook consumers only read running status. They may add the
         // in-app dot, but must not consume the system notification owner's edge.
         if (keys?.length && onSessionNeedsReplyRef.current) {
-          notifiedPendingRequests.set(id, new Set(keys));
+          const seen = notifiedPendingRequests.get(id) ?? new Set<string>();
+          for (const key of keys) seen.add(key);
+          notifiedPendingRequests.set(id, seen);
         }
       }
     }
@@ -394,12 +398,9 @@ export function useSessionRunningStatus(
     // Sidebar was unmounted is removed on the next snapshot.
     for (const [id, seen] of notifiedPendingRequests) {
       const current = currentPendingKeys.get(id);
-      if (!current) {
-        notifiedPendingRequests.delete(id);
-        continue;
-      }
+      const stillPending = statusMap.get(id)?.pendingRequestKeys;
       for (const key of seen) {
-        if (!current.has(key)) seen.delete(key);
+        if (!current?.has(key) && !stillPending?.includes(key)) seen.delete(key);
       }
       if (seen.size === 0) notifiedPendingRequests.delete(id);
     }

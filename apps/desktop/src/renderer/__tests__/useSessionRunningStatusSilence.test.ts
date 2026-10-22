@@ -667,8 +667,8 @@ describe('useSessionRunningStatus silenced completion handling', () => {
     setDataOwnerGeneration('handoff-owner');
     const onSessionNeedsReply = vi.fn();
     const first = renderHook(() => useSessionRunningStatus(undefined, { onSessionNeedsReply }));
-    const handoffStatus = (step: number): SessionStatusInfo => ({
-      ...status(false), hasPendingInputHandoff: true,
+    const handoffStatus = (step: number, actionable = true): SessionStatusInfo => ({
+      ...status(false), hasPendingInputHandoff: true, hasActionableInputHandoff: actionable,
       pendingRequestKeys: [`handoff:same-request:${step}`],
     });
 
@@ -679,6 +679,15 @@ describe('useSessionRunningStatus silenced completion handling', () => {
     vi.mocked(addSessionAttention).mockClear();
 
     renderHook(() => useSessionRunningStatus(undefined, { onSessionNeedsReply }));
+    expect(onSessionNeedsReply).toHaveBeenCalledTimes(1);
+    expect(addSessionAttention).not.toHaveBeenCalledWith('s-handoff', 'awaiting');
+
+    await emitSnapshot(new Map([['s-handoff', handoffStatus(1, false)]]));
+    await emitSnapshot(new Map([['s-handoff', handoffStatus(1)]]));
+    expect(onSessionNeedsReply).toHaveBeenCalledTimes(1);
+
+    // The Host advances stepNumber before publishing a non-actionable finishing card.
+    await emitSnapshot(new Map([['s-handoff', handoffStatus(2, false)]]));
     expect(onSessionNeedsReply).toHaveBeenCalledTimes(1);
     expect(addSessionAttention).not.toHaveBeenCalledWith('s-handoff', 'awaiting');
 

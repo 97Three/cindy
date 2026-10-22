@@ -162,7 +162,7 @@ import {
   requestRemoteReseed,
 } from '@/features/device-link/remoteProjectsStore';
 import { getStickySessionDeviceId } from '@/features/device-link/stickySessionOrigin';
-import { isInputHandoffAwaitingOwner, parsePendingInputHandoff } from '@/features/input-handoff/inputHandoffModel';
+import { inputHandoffDialogHasContent, isInputHandoffAwaitingOwner, parsePendingInputHandoff } from '@/features/input-handoff/inputHandoffModel';
 import { clearCachedMessages, readCachedMessages, persistListMessage, sessionCacheInvalidationToken } from '@/features/device-link/mirrorCacheClient';
 import {
   noteRemoteSessionSyncCompleted,
@@ -10121,8 +10121,10 @@ export interface SessionStatusInfo {
   hasPendingPermission: boolean;
   hasPendingPlanReview: boolean;
   hasPendingPluginSetup: boolean;
-  /** 代输入: owner input requested for an on-screen step (survives the turn). */
+  /** A nonterminal input-handoff card exists, including reading/working/finishing phases. */
   hasPendingInputHandoff?: boolean;
+  /** The current handoff step actually needs an owner action and may trigger a reminder. */
+  hasActionableInputHandoff?: boolean;
   /** Stable identities for pending interactions; changes even when pending booleans stay true. */
   pendingRequestKeys?: readonly string[];
 }
@@ -10222,6 +10224,8 @@ function computeRunningSnapshot(): Map<string, SessionStatusInfo> {
       state.pendingPluginSetupQueue,
     );
     const hasPendingInputHandoff = isInputHandoffAwaitingOwner(state.pendingInputHandoff);
+    const hasActionableInputHandoff = !!state.pendingInputHandoff &&
+      inputHandoffDialogHasContent(state.pendingInputHandoff, false);
     const requestKeys = pendingRequestKeys(state);
 
     // 后台 subagent 折算:主 turn 已结束但 wake 型后台任务(local_agent /
@@ -10245,6 +10249,7 @@ function computeRunningSnapshot(): Map<string, SessionStatusInfo> {
         hasPendingPlanReview,
         hasPendingPluginSetup,
         hasPendingInputHandoff,
+        hasActionableInputHandoff,
         pendingRequestKeys: requestKeys,
       });
     } else if (
@@ -10264,6 +10269,7 @@ function computeRunningSnapshot(): Map<string, SessionStatusInfo> {
         hasPendingPlanReview,
         hasPendingPluginSetup,
         hasPendingInputHandoff,
+        hasActionableInputHandoff,
         pendingRequestKeys: requestKeys,
       });
     }
@@ -10289,6 +10295,8 @@ function computeRunningSnapshot(): Map<string, SessionStatusInfo> {
         state.pendingPluginSetupQueue,
       ),
       hasPendingInputHandoff: isInputHandoffAwaitingOwner(state.pendingInputHandoff),
+      hasActionableInputHandoff: !!state.pendingInputHandoff &&
+        inputHandoffDialogHasContent(state.pendingInputHandoff, false),
       pendingRequestKeys: pendingRequestKeys(state),
     });
   }
@@ -10329,6 +10337,7 @@ function getRunningSnapshot(): ReadonlyMap<string, SessionStatusInfo> {
         prev.hasPendingPlanReview !== info.hasPendingPlanReview ||
         prev.hasPendingPluginSetup !== info.hasPendingPluginSetup ||
         !!prev.hasPendingInputHandoff !== !!info.hasPendingInputHandoff ||
+        !!prev.hasActionableInputHandoff !== !!info.hasActionableInputHandoff ||
         !samePendingRequestKeys(prev.pendingRequestKeys, info.pendingRequestKeys)
       ) {
         same = false;
