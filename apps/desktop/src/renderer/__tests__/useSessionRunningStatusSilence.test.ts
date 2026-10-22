@@ -673,7 +673,7 @@ describe('useSessionRunningStatus silenced completion handling', () => {
     });
 
     await emitSnapshot(new Map([['s-handoff', handoffStatus(1)]]));
-    expect(onSessionNeedsReply).toHaveBeenCalledExactlyOnceWith('s-handoff');
+    expect(onSessionNeedsReply).toHaveBeenCalledExactlyOnceWith('s-handoff', { mobile: false });
     first.result.current.clearNotification('s-handoff');
     first.unmount();
     vi.mocked(addSessionAttention).mockClear();
@@ -693,8 +693,29 @@ describe('useSessionRunningStatus silenced completion handling', () => {
 
     await emitSnapshot(new Map([['s-handoff', handoffStatus(2)]]));
     expect(onSessionNeedsReply).toHaveBeenCalledTimes(2);
+    expect(onSessionNeedsReply).toHaveBeenLastCalledWith('s-handoff', { mobile: false });
     expect(addSessionAttention).toHaveBeenCalledWith('s-handoff', 'awaiting');
     await emitSnapshot(new Map([['s-handoff', handoffStatus(2)]]));
+    expect(onSessionNeedsReply).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps generic mobile delivery for a new permission alongside a handoff step', async () => {
+    setDataOwnerGeneration('mixed-handoff-owner');
+    const onSessionNeedsReply = vi.fn();
+    renderHook(() => useSessionRunningStatus(undefined, { onSessionNeedsReply }));
+
+    await emitSnapshot(new Map([['s-mixed', {
+      ...status(false), hasPendingInputHandoff: true, hasActionableInputHandoff: true,
+      pendingRequestKeys: ['handoff:same-request:1'],
+    }]]));
+    expect(onSessionNeedsReply).toHaveBeenLastCalledWith('s-mixed', { mobile: false });
+
+    await emitSnapshot(new Map([['s-mixed', {
+      ...status(false), hasPendingInputHandoff: true, hasActionableInputHandoff: true,
+      hasPendingPermission: true,
+      pendingRequestKeys: ['handoff:same-request:1', 'permission:new-request'],
+    }]]));
+    expect(onSessionNeedsReply).toHaveBeenLastCalledWith('s-mixed');
     expect(onSessionNeedsReply).toHaveBeenCalledTimes(2);
   });
 

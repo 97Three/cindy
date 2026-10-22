@@ -108,6 +108,8 @@ export function sendSessionEventNotification(
      */
     remoteDevice?: boolean;
     remoteDeviceId?: string | null;
+    /** Main owns the fixed-copy phone push for input-handoff steps. */
+    mobile?: boolean;
   } = {},
 ): void {
   // The user is already looking at Cindy. In-app attention remains available,
@@ -116,11 +118,11 @@ export function sendSessionEventNotification(
 
   if (kind === 'done' && options.remoteDeviceId) {
     sendRemoteCompletionNotification(sessionId, options.remoteDeviceId, () =>
-      deliverSessionEventNotification(sessionId, title, kind, true));
+      deliverSessionEventNotification(sessionId, title, kind, true, options.mobile !== false));
     return;
   }
 
-  deliverSessionEventNotification(sessionId, title, kind, options.remoteDevice === true);
+  deliverSessionEventNotification(sessionId, title, kind, options.remoteDevice === true, options.mobile !== false);
 }
 
 const pendingRemoteCompletions = new Map<string, () => void>();
@@ -158,7 +160,7 @@ function sendRemoteCompletionNotification(sessionId: string, deviceId: string, d
   pendingRemoteCompletions.set(key, cancel);
 }
 
-function deliverSessionEventNotification(sessionId: string, title: string, kind: SessionEventNotificationKind, remoteDevice: boolean): void {
+function deliverSessionEventNotification(sessionId: string, title: string, kind: SessionEventNotificationKind, remoteDevice: boolean, mobile: boolean): void {
   // A handoff can finish after the user has opened Cindy or changed preferences.
   if (typeof document !== 'undefined' && document.hasFocus()) return;
 
@@ -174,7 +176,7 @@ function deliverSessionEventNotification(sessionId: string, title: string, kind:
       feishu: getFeishuNotificationsEnabled(),
       // Mobile owns registration/unregistration of its push token. There is
       // deliberately no second desktop setting for the same channel.
-      mobile: true,
+      mobile,
     },
   });
 }

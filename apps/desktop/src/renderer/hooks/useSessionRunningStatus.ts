@@ -103,7 +103,7 @@ interface UseSessionRunningStatusOptions {
    * edge fires for a new request (or new input-handoff step) in the session.
    * Like onSessionDone, no active-session filter; the consumer decides.
    */
-  onSessionNeedsReply?: (sessionId: string) => void;
+  onSessionNeedsReply?: (sessionId: string, options?: { mobile: false }) => void;
 }
 
 /**
@@ -370,10 +370,11 @@ export function useSessionRunningStatus(
         const keys = info.hasActionableInputHandoff
           ? info.pendingRequestKeys
           : info.pendingRequestKeys?.filter((key) => !key.startsWith('handoff:'));
+        const newKeys = keys?.filter((key) =>
+          !notifiedPendingRequests.get(id)?.has(key)
+          && !prevPendingKeysRef.current.get(id)?.has(key));
         const wasAlreadyPending = keys?.length
-          ? !keys.some((key) =>
-            !notifiedPendingRequests.get(id)?.has(key)
-            && !prevPendingKeysRef.current.get(id)?.has(key))
+          ? newKeys?.length === 0
           : prevPendingRef.current.has(id);
         if (keys?.length) currentPendingKeys.set(id, new Set(keys));
         // A cleared dot stays cleared for the same request across status ticks
@@ -382,7 +383,17 @@ export function useSessionRunningStatus(
           addSessionAttention(id, 'awaiting');
         }
         if (!wasAlreadyPending) {
-          onSessionNeedsReplyRef.current?.(id);
+          // Main already sends each actionable handoff step its fixed-copy phone
+          // push. Keep the desktop reminder without sending a second generic one.
+          const handoffOnly = newKeys?.length
+            ? newKeys.every((key) => key.startsWith('handoff:'))
+            : info.hasActionableInputHandoff === true
+              && !info.hasPendingAskUser
+              && !info.hasPendingPermission
+              && !info.hasPendingPlanReview
+              && !info.hasPendingPluginSetup;
+          if (handoffOnly) onSessionNeedsReplyRef.current?.(id, { mobile: false });
+          else onSessionNeedsReplyRef.current?.(id);
         }
         // Other hook consumers only read running status. They may add the
         // in-app dot, but must not consume the system notification owner's edge.
