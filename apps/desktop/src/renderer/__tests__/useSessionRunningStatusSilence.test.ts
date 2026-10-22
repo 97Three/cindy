@@ -13,6 +13,7 @@ import {
 } from '@/lib/silencedSessionDoneStore';
 import { markSessionStarting, resetSessionStartingStoreForTests } from '@/lib/sessionStartingStore';
 import { useSessionRunningStatus } from '@/hooks/useSessionRunningStatus';
+import { setDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 import { noteSessionTurnStartedForAlerts, refreshPendingAlerts } from '@/hooks/usePendingAlertAttention';
 import {
   addSessionAttention,
@@ -104,6 +105,7 @@ describe('useSessionRunningStatus silenced completion handling', () => {
     storeMock.pausedQueueSessions.clear();
     resetSilencedSessionDoneStoreForTests();
     resetSessionStartingStoreForTests();
+    setDataOwnerGeneration(null);
     vi.clearAllMocks();
     vi.restoreAllMocks();
     vi.useRealTimers();
@@ -640,6 +642,60 @@ describe('useSessionRunningStatus silenced completion handling', () => {
 
     expect(vi.mocked(addSessionAttention)).toHaveBeenCalledWith('s-setup', 'awaiting');
     expect(onSessionNeedsReply).toHaveBeenCalledWith('s-setup');
+  });
+
+  it('does not repeat an already cleared pending reminder after the sidebar remounts', async () => {
+    setDataOwnerGeneration('remount-owner');
+    const onSessionNeedsReply = vi.fn();
+    const first = renderHook(() => useSessionRunningStatus(undefined, { onSessionNeedsReply }));
+    await emitSnapshot(new Map([['s-remount', {
+      ...status(false), hasPendingAskUser: true, pendingRequestKeys: ['ask:request-1'],
+    }]]));
+    expect(onSessionNeedsReply).toHaveBeenCalledTimes(1);
+    first.result.current.clearNotification('s-remount');
+    first.unmount();
+    vi.mocked(addSessionAttention).mockClear();
+
+    setDataOwnerGeneration('remount-owner', 2);
+    renderHook(() => useSessionRunningStatus(undefined, { onSessionNeedsReply }));
+    expect(onSessionNeedsReply).toHaveBeenCalledTimes(1);
+    expect(addSessionAttention).not.toHaveBeenCalledWith('s-remount', 'awaiting');
+  });
+
+  it('alerts for a different request while the sidebar is hidden, then again for a new owner', async () => {
+    setDataOwnerGeneration('first-owner');
+    const onSessionNeedsReply = vi.fn();
+    const first = renderHook(() => useSessionRunningStatus(undefined, { onSessionNeedsReply }));
+    await emitSnapshot(new Map([['s-pending', {
+      ...status(false), hasPendingPermission: true, pendingRequestKeys: ['permission:request-1'],
+    }]]));
+    first.unmount();
+    await emitSnapshot(new Map([['s-pending', {
+      ...status(false), hasPendingPermission: true, pendingRequestKeys: ['permission:request-2'],
+    }]]));
+    renderHook(() => useSessionRunningStatus(undefined, { onSessionNeedsReply }));
+    expect(onSessionNeedsReply).toHaveBeenCalledTimes(2);
+    await emitSnapshot(new Map([['s-pending', {
+      ...status(false), hasPendingPermission: true, pendingRequestKeys: ['permission:request-2'],
+    }]]));
+    expect(onSessionNeedsReply).toHaveBeenCalledTimes(2);
+    await emitSnapshot(new Map([['s-pending', {
+      ...status(false), hasPendingPermission: true, pendingRequestKeys: ['permission:request-3'],
+    }]]));
+    expect(onSessionNeedsReply).toHaveBeenCalledTimes(3);
+    await emitSnapshot(new Map([
+      ['s-pending', {
+        ...status(false), hasPendingPermission: true, pendingRequestKeys: ['permission:request-3'],
+      }],
+      ['new-task', {
+        ...status(false), hasPendingAskUser: true, pendingRequestKeys: ['ask:new-task-request'],
+      }],
+    ]));
+    expect(onSessionNeedsReply).toHaveBeenCalledTimes(4);
+
+    setDataOwnerGeneration('second-owner');
+    renderHook(() => useSessionRunningStatus(undefined, { onSessionNeedsReply }));
+    expect(onSessionNeedsReply).toHaveBeenCalledTimes(6);
   });
 
   it('clears awaiting attention when resolving a card immediately starts a continuation', async () => {

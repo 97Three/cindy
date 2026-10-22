@@ -10129,6 +10129,8 @@ export interface SessionStatusInfo {
   hasPendingPluginSetup: boolean;
   /** 代输入: owner input requested for an on-screen step (survives the turn). */
   hasPendingInputHandoff?: boolean;
+  /** Stable identities for pending interactions; changes even when pending booleans stay true. */
+  pendingRequestKeys?: readonly string[];
 }
 
 /**
@@ -10181,6 +10183,30 @@ function scheduleStopTransitionClear(): void {
   }, 0);
 }
 
+function pendingRequestKeys(state: SessionChatState): string[] {
+  const keys: string[] = [];
+  if (state.pendingAskUser) keys.push(`ask:${state.pendingAskUser.requestId}`);
+  if (state.pendingPermission) keys.push(`permission:${state.pendingPermission.requestId}`);
+  if (state.pendingPlanReview) keys.push(`plan:${state.pendingPlanReview.requestId}`);
+  const visibleSetup = state.pendingPluginSetup && !state.pendingPluginSetup.terminal
+    ? state.pendingPluginSetup
+    : state.pendingPluginSetupQueue.find((setup) => !setup.terminal);
+  if (visibleSetup) keys.push(`plugin:${visibleSetup.requestId}`);
+  if (isInputHandoffAwaitingOwner(state.pendingInputHandoff)) {
+    const handoff = state.pendingInputHandoff!;
+    keys.push(`handoff:${handoff.requestId}:${handoff.stepNumber}`);
+  }
+  return keys.sort();
+}
+
+function samePendingRequestKeys(
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
+): boolean {
+  if ((left?.length ?? 0) !== (right?.length ?? 0)) return false;
+  return !right?.some((key, index) => left?.[index] !== key);
+}
+
 function computeRunningSnapshot(): Map<string, SessionStatusInfo> {
   const next = new Map<string, SessionStatusInfo>();
   for (const [id, state] of sessions) {
@@ -10192,6 +10218,7 @@ function computeRunningSnapshot(): Map<string, SessionStatusInfo> {
       state.pendingPluginSetupQueue,
     );
     const hasPendingInputHandoff = isInputHandoffAwaitingOwner(state.pendingInputHandoff);
+    const requestKeys = pendingRequestKeys(state);
 
     // 后台 subagent 折算:主 turn 已结束但 wake 型后台任务(local_agent /
     // local_workflow)还在跑,或正处于「任务终态 → wake turn 启动」的桥接空窗
@@ -10214,6 +10241,7 @@ function computeRunningSnapshot(): Map<string, SessionStatusInfo> {
         hasPendingPlanReview,
         hasPendingPluginSetup,
         hasPendingInputHandoff,
+        pendingRequestKeys: requestKeys,
       });
     } else if (
       hasPendingAskUser ||
@@ -10232,6 +10260,7 @@ function computeRunningSnapshot(): Map<string, SessionStatusInfo> {
         hasPendingPlanReview,
         hasPendingPluginSetup,
         hasPendingInputHandoff,
+        pendingRequestKeys: requestKeys,
       });
     }
   }
@@ -10256,6 +10285,7 @@ function computeRunningSnapshot(): Map<string, SessionStatusInfo> {
         state.pendingPluginSetupQueue,
       ),
       hasPendingInputHandoff: isInputHandoffAwaitingOwner(state.pendingInputHandoff),
+      pendingRequestKeys: pendingRequestKeys(state),
     });
   }
 
@@ -10294,7 +10324,8 @@ function getRunningSnapshot(): ReadonlyMap<string, SessionStatusInfo> {
         prev.hasPendingPermission !== info.hasPendingPermission ||
         prev.hasPendingPlanReview !== info.hasPendingPlanReview ||
         prev.hasPendingPluginSetup !== info.hasPendingPluginSetup ||
-        !!prev.hasPendingInputHandoff !== !!info.hasPendingInputHandoff
+        !!prev.hasPendingInputHandoff !== !!info.hasPendingInputHandoff ||
+        !samePendingRequestKeys(prev.pendingRequestKeys, info.pendingRequestKeys)
       ) {
         same = false;
         break;

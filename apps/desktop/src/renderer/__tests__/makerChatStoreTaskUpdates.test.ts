@@ -421,6 +421,34 @@ describe('agent_task_update workflowProgress', () => {
   });
 });
 
+describe('getRunningSnapshot pending request identity', () => {
+  it('publishes a replacement request even while the session remains pending', () => {
+    const sessionId = 'pending-request-identity';
+    const ask = (requestId: string): void => {
+      makerChatStore.__applyStreamEventForTest(sessionId, {
+        sessionId,
+        type: 'ask_user_question',
+        source: 'codex',
+        data: { requestId, questions: [] },
+      } as CCAgentStreamEvent);
+    };
+    try {
+      ask('first');
+      const first = makerChatStore.getRunningSnapshot();
+      expect(first.get(sessionId)?.pendingRequestKeys).toEqual(['ask:first']);
+      expect(makerChatStore.getRunningSnapshot()).toBe(first);
+
+      ask('second');
+      const second = makerChatStore.getRunningSnapshot();
+      expect(second).not.toBe(first);
+      expect(second.get(sessionId)?.pendingRequestKeys).toEqual(['ask:second']);
+      expect(second.get(sessionId)?.hasPendingAskUser).toBe(true);
+    } finally {
+      makerChatStore.purgeSession(sessionId);
+    }
+  });
+});
+
 describe('getRunningSnapshot 后台 subagent 折算(真 store)', () => {
   const statusUpdate = (
     sessionId: string,
@@ -1060,7 +1088,6 @@ describe('getRunningSnapshot 后台 subagent 折算(真 store)', () => {
       window?: { electronAPI?: unknown };
     };
     const previousWindow = globalWindow.window;
-    const previousElectronApi = previousWindow?.electronAPI;
     try {
       setDataOwnerGeneration('account-a', 1);
       makerChatStore.__applyStatusUpdateForTest(sid, statusUpdate(sid, true));
