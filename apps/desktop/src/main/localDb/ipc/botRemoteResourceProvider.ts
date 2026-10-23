@@ -185,8 +185,7 @@ export function registerBotRemoteResourceProvider(management?: typeof botRemoteM
         const scope = captureDataOwnerBroadcastScope();
         if (!request.resourceRef?.id.startsWith('todos:')) throw new RemoteResourceRegistryError('NOT_FOUND', 'Todo resource required');
         const botId = request.resourceRef.id.slice(6);
-        const candidate = await getBotRemoteResourceSource(botId);
-        const [source] = candidate ? visibleBotRemoteResourceSources([candidate]) : [];
+        const source = await readVisibleBotSource(botId);
         if (!source || !isDataOwnerBroadcastScopeCurrent(scope)) throw new RemoteResourceRegistryError('NOT_FOUND', 'Teammate unavailable');
         if (typeof request.input?.enabled !== 'boolean') throw new RemoteResourceRegistryError('INVALID_PARAMS', 'enabled must be boolean');
         const dailyCheck = await routineTools.setTodoCheck(botId, request.input.enabled);

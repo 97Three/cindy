@@ -14,14 +14,34 @@ const AVATAR_FETCH_TIMEOUT_MS = 15_000;
 
 export type RestoredCloudAvatar = { portable: string } | { imageBase64: string };
 
+const TRANSIENT_FETCH = /^(fetch failed|network error|terminated)$/;
+
+/** Undici hides connect failures under `cause`, and happy-eyeballs lists one error per address family. */
+function walkDownloadErrors(error: unknown, visit: (error: unknown) => boolean, depth = 0): boolean {
+  if (depth > 4 || !(error instanceof Error)) return false;
+  if (visit(error) || walkDownloadErrors(error.cause, visit, depth + 1)) return true;
+  const nested = (error as { errors?: unknown }).errors;
+  return Array.isArray(nested) && nested.some((item) => walkDownloadErrors(item, visit, depth + 1));
+}
+
+function transportMaySucceedLater(error: Error): boolean {
+  if (error.name === 'AbortError' || error.name === 'TimeoutError' || error.message === 'OWNER_CHANGED') return true;
+  if (TRANSIENT_FETCH.test(error.message)) return true;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' && /^(ECONN|ENET|EAI_|ETIMEDOUT|EHOST|EPIPE|UND_ERR_)/.test(code);
+}
+
 /** Network, timeout and temporary server failures can still yield the image. A refused or invalid file cannot. */
 export function avatarDownloadMaySucceedLater(error: unknown, signal?: AbortSignal): boolean {
   if (signal?.aborted) return true;
+  // The guarded download reports HTTP status only on the top error. A 404 must not become
+  // retryable because a nested connect error happens to carry a status-like field.
   if (isUnreachable(error)) return true;
-  if (!(error instanceof Error)) return false;
-  if (error.name === 'AbortError' || error.name === 'TimeoutError' || error.message === 'OWNER_CHANGED') return true;
-  const status = Number(/^remote image request failed: HTTP (\d+)$/.exec(error.message)?.[1]);
-  return status >= 500 || status === 408 || status === 429;
+  if (error instanceof Error) {
+    const status = Number(/^remote image request failed: HTTP (\d+)$/.exec(error.message)?.[1]);
+    if (status) return status >= 500 || status === 408 || status === 429;
+  }
+  return walkDownloadErrors(error, (nested) => nested instanceof Error && transportMaySucceedLater(nested));
 }
 
 export async function restoreCloudAvatar(avatar: string | null, signal?: AbortSignal): Promise<RestoredCloudAvatar> {

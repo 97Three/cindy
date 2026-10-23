@@ -49,4 +49,17 @@ describe('avatarDownloadMaySucceedLater', () => {
     expect(avatarDownloadMaySucceedLater(new Error('remote image request failed: HTTP 403'))).toBe(false);
     expect(avatarDownloadMaySucceedLater(new Error('remote image exceeds the size limit'))).toBe(false);
   });
+
+  it('retries the network failure undici hides under fetch failed', async () => {
+    const offline = new TypeError('fetch failed');
+    offline.cause = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    fetchPublicImageBytes.mockRejectedValue(offline);
+    await expect(restoreCloudAvatar('https://cdn.example/avatar.png')).rejects.toThrow('AVATAR_UNAVAILABLE');
+    const both = new TypeError('fetch failed');
+    both.cause = new AggregateError([
+      Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+      Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }),
+    ], 'fetch failed');
+    expect(avatarDownloadMaySucceedLater(both)).toBe(true);
+  });
 });

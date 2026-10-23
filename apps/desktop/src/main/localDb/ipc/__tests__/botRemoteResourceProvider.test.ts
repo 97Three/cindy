@@ -176,4 +176,8 @@ it('reports a teammate this computer no longer has as not found, without failing
     actionId: 'send-message', resourceRef: { collectionId: 'teammates', kind: 'bot', id: 'gone' },
     input: { senderBotId: 'sender', messageId: 'delivery-1', message: 'hello' } }))
     .rejects.toMatchObject({ code: 'NOT_FOUND', message: 'remote resource does not exist' });
+  await expect(remoteResourceRegistry.invoke(context, { client, collectionId: 'teammates',
+    actionId: 'todo-daily-check', resourceRef: { collectionId: 'teammates', kind: 'bot', id: 'todos:gone' },
+    input: { enabled: true } }))
+    .rejects.toMatchObject({ code: 'NOT_FOUND', message: 'Teammate unavailable' });
 });
