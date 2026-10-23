@@ -35,6 +35,7 @@ import {
 } from '../schema';
 import { assertTrustedAppRendererEvent } from '../../security/trustedAppRenderer.js';
 import { isDeviceLinkInvoke } from '../../device-link/invoke-context.js';
+import { isIpcError } from '../../../shared/ipc-errors.js';
 import { requireObject, requireString, throwIpcError } from '../../utils/ipcValidate.js';
 import { isBotVisibleRemotely } from './botRemoteVisibility.js';
 import { readRemoteBotSessionAccess, readRemoteBotSessionAccessBatch } from './botRemoteSessionAccess.js';
@@ -1481,9 +1482,15 @@ export async function listBotRemoteResourceSources(): Promise<BotRemoteResourceS
   // or every historical task attached to a long-lived companion.
   const sources: BotRemoteResourceSource[] = [];
   // A large roster must not occupy one DB RPC slot per companion at once.
+  // One companion deleted between the id scan and its read is an ordinary absence.
+  // It must not fail the whole roster as INTERNAL for every other device.
   for (const { id } of profiles) {
     owner.assertCurrent();
-    sources.push(await readBotRemoteResourceSource(client, id));
+    try {
+      sources.push(await readBotRemoteResourceSource(client, id));
+    } catch (error) {
+      if (!isIpcError(error) || error.code !== 'NOT_FOUND') throw error;
+    }
   }
   owner.assertCurrent();
   return sources;
