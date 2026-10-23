@@ -27,9 +27,9 @@ describe('restoreCloudAvatar', () => {
 
   it('uses the default avatar when the address is permanently gone, so take-over can finish', async () => {
     fetchPublicImageBytes.mockRejectedValue(new Error('remote image request failed: HTTP 404'));
-    await expect(restoreCloudAvatar('https://cdn.example/missing.png')).resolves.toEqual({ portable: '🤖' });
+    await expect(restoreCloudAvatar('https://cdn.example/missing.png')).resolves.toEqual({ portable: '🤖', fallback: true });
     fetchPublicImageBytes.mockResolvedValue({ buffer: Uint8Array.from([1, 2, 3, 4]), mimeType: 'text/plain' });
-    await expect(restoreCloudAvatar('https://cdn.example/not-image')).resolves.toEqual({ portable: '🤖' });
+    await expect(restoreCloudAvatar('https://cdn.example/not-image')).resolves.toEqual({ portable: '🤖', fallback: true });
   });
 
   it('keeps a temporary download failure retryable', async () => {

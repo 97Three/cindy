@@ -149,6 +149,7 @@ function createMaterializer(input: {
       fence.assertCurrent();
       await createBotProfile({ id, name: name.slice(0, 200), description, identitySource, userContextSource,
         ...('portable' in restored ? { avatar: restored.portable } : { avatarImageBase64: restored.imageBase64 }) });
+      return { avatarFallback: 'fallback' in restored && restored.fallback === true };
     },
     updateProfile: async ({ id, name, description, identitySource, userContextSource, avatar }, fence) => {
       const restored = await restoreCloudAvatar(avatar, fence.signal);
@@ -163,6 +164,7 @@ function createMaterializer(input: {
         fence.assertCurrent();
         if (image) await setBotProfileAvatar(id, image);
       }
+      return { avatarFallback: 'fallback' in restored && restored.fallback === true };
     },
     writeSystemPrompt: async (botId, text, fence) => {
       const root = ownerScopedUserDataPath();

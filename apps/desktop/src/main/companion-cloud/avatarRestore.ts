@@ -12,7 +12,7 @@ import { isUnreachable } from './types.js';
 
 const AVATAR_FETCH_TIMEOUT_MS = 15_000;
 
-export type RestoredCloudAvatar = { portable: string } | { imageBase64: string };
+export type RestoredCloudAvatar = { portable: string; fallback?: boolean } | { imageBase64: string };
 
 const TRANSIENT_FETCH = /^(fetch failed|network error|terminated)$/;
 
@@ -52,6 +52,6 @@ export async function restoreCloudAvatar(avatar: string | null, signal?: AbortSi
     return { imageBase64: Buffer.from(buffer).toString('base64') };
   } catch (error) {
     if (avatarDownloadMaySucceedLater(error, signal)) throw new Error('AVATAR_UNAVAILABLE');
-    return { portable: portableBotAvatarOrFallback(null) };
+    return { portable: portableBotAvatarOrFallback(null), fallback: true };
   }
 }
