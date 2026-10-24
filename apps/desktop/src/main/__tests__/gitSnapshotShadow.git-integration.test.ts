@@ -34,6 +34,7 @@ import {
 } from '../git-snapshot/savepointRefs';
 import { parseSnapshotCommit } from '../git-snapshot/snapshotTrailers';
 import { gitExec } from '../worktree/gitExec';
+import * as gitExecModule from '../worktree/gitExec';
 
 const REAL_GIT_TEST_TIMEOUT_MS = process.platform === 'win32' ? 60_000 : 20_000;
 const SESSION = 'shadow-sess-1';
@@ -244,6 +245,53 @@ describe('createShadowSavepoint', () => {
     expect(await readSavepointTip(repoPath, SESSION)).toBeNull();
     expect(await captureUserVisibleState()).toEqual(before);
   }, REAL_GIT_TEST_TIMEOUT_MS);
+  // #6908 P2: 81 paths require a second label-diff chunk. Expiry after the
+  // first real diff must stop that chunk and must not publish a savepoint or
+  // call the model-backed labeler with a partial diff (git-integration tier).
+  it('shares the capture deadline with label diffs and waits for both readers before cleanup', async () => {
+    await commitSeed();
+    await Promise.all(Array.from({ length: 81 }, (_, i) => writeRepoFile(
+      'changed-' + i + '.txt', 'changed\n',
+    )));
+    const before = await captureUserVisibleState();
+    const actualGitExec = gitExecModule.gitExec;
+    const actualNow = performance.now.bind(performance);
+    const clock = vi.spyOn(performance, 'now');
+    let diffCalls = 0;
+    let activeDiffReaders = 0;
+    const deadlines: Array<number | undefined> = [];
+    const execSpy = vi.spyOn(gitExecModule, 'gitExec').mockImplementation(async (args, cwd, opts) => {
+      if (!args.includes('diff')) return actualGitExec(args, cwd, opts);
+      diffCalls += 1;
+      deadlines.push(opts?.deadlineAtMs);
+      activeDiffReaders += 1;
+      try {
+        return await actualGitExec(args, cwd, opts);
+      } finally {
+        activeDiffReaders -= 1;
+        clock.mockReturnValue(actualNow() + 60_000);
+      }
+    });
+    const label = vi.fn(() => 'must not label an expired capture');
+    try {
+      await expect(createShadowSavepoint(repoPath, {
+        sessionId: SESSION, label, meta: { kind: 'after-edit' },
+        captureBudget: { maxFiles: 100, maxTotalBytes: 1024, timeoutMs: 5_000 },
+      })).rejects.toMatchObject({ name: 'SnapshotCaptureBudgetExceededError', reason: 'deadline' });
+      expect(activeDiffReaders).toBe(0);
+      expect(diffCalls).toBeGreaterThan(0);
+      expect(diffCalls).toBeLessThanOrEqual(2);
+      expect(deadlines.every((deadline) => typeof deadline === 'number')).toBe(true);
+      expect(new Set(deadlines).size).toBe(1);
+      expect(label).not.toHaveBeenCalled();
+    } finally {
+      execSpy.mockRestore();
+      clock.mockRestore();
+    }
+    expect(await readSavepointTip(repoPath, SESSION)).toBeNull();
+    expect(await captureUserVisibleState()).toEqual(before);
+  });
+
   // #6901: advance the monotonic clock after allocating the temporary index.
   // The real Git executor must reject the expired deadline and the kernel
   // must remove that index, rather than granting staging a fresh timeout.

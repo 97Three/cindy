@@ -572,7 +572,7 @@ export async function createShadowSavepoint(
             // Diff against the turn baseline, not HEAD: the worktree stays
             // dirty across turns now, so a HEAD-based diff would describe the
             // cumulative session delta instead of this turn's changes.
-            await collectStagedDiff(repoPath, commitPathspecs, extraEnv, input.skipIfTreeEquals),
+            await collectStagedDiff(repoPath, commitPathspecs, extraEnv, input.skipIfTreeEquals, deadlineAtMs),
           ))
         : input.label;
     const [branch, baseHead, parent] = await Promise.all([
@@ -900,12 +900,21 @@ async function collectStagedDiff(
   pathspecs: readonly string[],
   extraEnv: Record<string, string>,
   diffBase?: string,
+  deadlineAtMs?: number,
 ): Promise<StagedDiff> {
   const baseArgs = diffBase ? ['diff', '--cached', diffBase] : ['diff', '--cached'];
-  const [diffStat, rawDiffText] = await Promise.all([
-    safeGitStdoutForPathspecs([...baseArgs, '--stat'], repoPath, pathspecs, extraEnv),
-    safeGitStdoutForPathspecs([...baseArgs], repoPath, pathspecs, extraEnv),
+  // Both readers share the temporary index. A deadline failure in one must
+  // not let withTemporaryIndex remove it while the other still runs Git.
+  const reads = await Promise.allSettled([
+    safeGitStdoutForPathspecs([...baseArgs, '--stat'], repoPath, pathspecs, extraEnv, deadlineAtMs),
+    safeGitStdoutForPathspecs([...baseArgs], repoPath, pathspecs, extraEnv, deadlineAtMs),
   ]);
+  checkSnapshotCaptureDeadline(deadlineAtMs);
+  const [stat, patch] = reads;
+  if (stat.status === 'rejected') throw stat.reason;
+  if (patch.status === 'rejected') throw patch.reason;
+  const diffStat = stat.value;
+  const rawDiffText = patch.value;
   const diffText =
     rawDiffText.length > STAGED_DIFF_TEXT_MAX_BYTES
       ? `${rawDiffText.slice(0, STAGED_DIFF_TEXT_MAX_BYTES)}\n...[diff truncated]`
@@ -917,11 +926,16 @@ async function safeGitStdout(
   args: readonly string[],
   repoPath: string,
   extraEnv: Record<string, string>,
+  deadlineAtMs?: number,
 ): Promise<string> {
+  checkSnapshotCaptureDeadline(deadlineAtMs);
   try {
-    const { stdout } = await isolatedGitExec(args, repoPath, { extraEnv });
+    const { stdout } = await isolatedGitExec(args, repoPath, { extraEnv, deadlineAtMs });
     return stdout;
   } catch (err) {
+    // Best-effort label reads may degrade on ordinary Git errors, but must
+    // not swallow expiry and start another pathspec chunk without a budget.
+    checkSnapshotCaptureDeadline(deadlineAtMs);
     log.debug('[createSnapshot] git read failed, degrade to empty', {
       args: args.join(' '),
       error: err instanceof Error ? err.message : String(err),
@@ -935,10 +949,11 @@ async function safeGitStdoutForPathspecs(
   repoPath: string,
   pathspecs: readonly string[],
   extraEnv: Record<string, string>,
+  deadlineAtMs?: number,
 ): Promise<string> {
   const parts: string[] = [];
   for (const chunk of chunkPathspecArgs(pathspecs)) {
-    const stdout = await safeGitStdout([...baseArgs, '--', ...chunk], repoPath, extraEnv);
+    const stdout = await safeGitStdout([...baseArgs, '--', ...chunk], repoPath, extraEnv, deadlineAtMs);
     if (stdout) parts.push(stdout);
   }
   return parts.join('\n');
