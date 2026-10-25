@@ -1360,7 +1360,7 @@ describe('Bot canonical Session lifecycle', () => {
     } finally { queued.mockRestore(); }
   });
 
-  // #6897 (DB tier): a disposable sync file cannot be the only guard against
+  // #6897 (existing SQLite integration fixture): sync bookkeeping cannot be the only guard against
   // publishing a fallback. Existing avatar tests never persisted this provenance.
   it('persists cloud fallback provenance with the avatar and only releases it for a real image', async () => {
     const created = await createBotProfile({ name: 'Restored fallback', avatar: '🤖' }, { avatarFallback: true });
