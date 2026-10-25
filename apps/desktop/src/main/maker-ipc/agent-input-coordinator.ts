@@ -1,4 +1,4 @@
-import { FORWARDED_REQUEST_RECEIPT, type ForwardedRequestSource } from '../../shared/forwardedRequest.js';
+import { FORWARDED_REQUEST_RECEIPT, verifiedOwnerRequestText, type ForwardedRequestSource } from '../../shared/forwardedRequest.js';
 import { AUTO_REVIEW_SOURCE_CONTENT, AUTO_REVIEW_USER_INTENT } from '@cindy/maker-core';
 import { getDeviceLinkInvokeContext } from '../device-link/invoke-context.js';
 import { assertSharedTaskQueueMutation } from './sharedTaskInput.js';
@@ -122,9 +122,11 @@ const REWIND_BOUNDARY_POLL_INTERVAL_MS = 100;
 
 type QueuedAttachment = NonNullable<AgentInputQueuedMessage['files']>[number];
 
-/** Typed Host continuations carry provenance, never user-authored permission text. */
+/** Typed Host continuations carry provenance, never user-authored permission text.
+ * A teammate relay the sending host verified as the owner's request carries the owner's words. */
 function queuedAutoReviewText(item: AgentInputQueuedMessage): string {
-  return typeof item.autoReviewUserText === 'string' ? item.autoReviewUserText : '';
+  return typeof item.autoReviewUserText === 'string' ? item.autoReviewUserText
+    : verifiedOwnerRequestText(item.autoReviewUserText) ?? '';
 }
 
 function isMakerImageAttachment(file: Pick<QueuedAttachment, 'category' | 'ext'>): boolean {
@@ -736,6 +738,8 @@ type AgentInputSendFailure = Extract<
 >;
 
 interface SessionInputState {
+  /** Runtime courtesy clock; never persisted or used for list ordering. */
+  lastUserActionAt: number | null;
   pendingQueue: AgentInputQueuedMessage[];
   pendingCompacts: PendingCompactRequest[];
   steeringQueueClientIds: string[];
@@ -883,6 +887,7 @@ function createInitialInputState(
   fencedStaleTerminal: { instanceId: string; generation: number } | null = null,
 ): SessionInputState {
   return {
+    lastUserActionAt: null,
     pendingQueue: [],
     pendingCompacts: [],
     steeringQueueClientIds: [],
@@ -1344,14 +1349,31 @@ export class AgentInputCoordinator {
    * other tasks, Orca, plugins, shared-task guests and automatic resumes never qualify.
    */
   isActiveInputOwnerAuthored(sessionId: string): boolean {
+    return this.activeInputHasOwnerAuthor(sessionId, false);
+  }
+
+  /**
+   * Teammate principal only: an automatic resume/retry of the owner's own accepted input
+   * still speaks for that owner request. It is never fresh owner input for owner-only
+   * Host actions such as app update.
+   */
+  isActiveInputOwnerContinuation(sessionId: string): boolean {
+    return this.activeInputHasOwnerAuthor(sessionId, true);
+  }
+
+  private activeInputHasOwnerAuthor(sessionId: string, allowContinuation: boolean): boolean {
     const item = this.states.get(sessionId)?.activeTurn?.item;
     // A trusted Desktop receipt (`origin.kind === 'desktop'`) is still owner input.
     const originKind = (item?.origin as { kind?: unknown } | undefined)?.kind;
     if (!item || (originKind !== undefined && originKind !== 'desktop')) return false;
     if (item.sourcePlugin || item.sharedTaskAuthor || item.botTaskCoordination) return false;
-    if (item.clientId.startsWith('plugin-task:') || item.originalSyntheticTrigger) return false;
+    // A continuation keeps its source's author only when it names that source; the
+    // host-generated "continue" text is never fresh owner input.
+    const continuation = allowContinuation && !!item.retrySourceClientId;
+    if (item.clientId.startsWith('plugin-task:')) return false;
+    if (item.originalSyntheticTrigger && !(continuation && item.originalSyntheticTrigger === 'continue')) return false;
     // Automatic continuations and zero-output retries are never fresh owner input.
-    if (item.autoResume) return false;
+    if (item.autoResume && !continuation) return false;
     const text = item.autoReviewUserText;
     return typeof text === 'string' && !!text.trim() && !text.startsWith('[UI_ACTION_TRIGGER]');
   }
@@ -1953,9 +1975,8 @@ export class AgentInputCoordinator {
           sessionId,
           clientId: abandonedClientId,
         });
-        // 手动「继续」是真人介入,与 retryLastError 同口径刷新 userSendAt(否则
-        // 会话活跃信号 / 列表排序不会反映这次人工动作)。
-        this.touchUserSend(sessionId, opts?.sendAtMs);
+        // 继续原消息仍是真人接手，但不是新消息，不推进列表排序时间。
+        this.noteUserAction(sessionId);
         this.emit(sessionId);
         this.scheduleDrain(sessionId, 'ui-continue-queue-head-unlock');
         return this.getProjection(sessionId);
@@ -2001,7 +2022,8 @@ export class AgentInputCoordinator {
     // 而静默顺延(PR #972 review P2)。侧栏排序的 bump 语义保留在派发时刻 ——
     // runner 的 accepted 回调按直发路径同款调 touchUserSendInDb(ctx.firedAt)。
     if (!automaticOrigin) {
-      this.touchUserSend(sessionId, opts?.sendAtMs);
+      if (isUiContinuationItem(item)) this.noteUserAction(sessionId);
+      else this.touchUserSend(sessionId, opts?.sendAtMs);
     }
     // 视觉连续性: 当这条入队后立即可派发(agent 空闲、队列此前为空、无暂停/锁/恢复
     // 阻塞)时, 跳过中间态 emit 并同步进入 drain —— drain 的同步前半段会先把队首
@@ -2689,6 +2711,13 @@ export class AgentInputCoordinator {
         // maker-core 权威判定无活跃 turn — 先让 host 校准可能 stale 的 busy
         // tracker, 否则下面 fallback / drain 仍会被假忙挡住 (见 deps 注释)。
         this.deps.reconcileTurnIdle?.(sessionId);
+        // A vendor can reject foreground steering while the product still owns
+        // a background continuation. Only confirmed idle permits synthetic done.
+        if (this.deps.isTurnRunning(sessionId)) {
+          this.clearDirectSteeringItem(latest, item.clientId);
+          this.emit(sessionId);
+          return finishSteerRequest(false);
+        }
         // 已派发的 activeTurn + 权威无活跃 turn ⇒ 那一轮其实已结束但 done
         // 事件丢失 (zombie turn)。合成 done 边界收掉它, 否则 fallback drain 会
         // 被这个尸体 activeTurn 永久挡住。pre-dispatch (send 还在飞) 的
@@ -3106,7 +3135,7 @@ export class AgentInputCoordinator {
         sessionId,
         clientId: pausedQueueHeadRecoveryClientId,
       });
-      this.touchUserSend(sessionId);
+      this.noteUserAction(sessionId);
     } else {
       this.clearErrorUnlessQueueHeadBlocked(state);
     }
@@ -3151,8 +3180,8 @@ export class AgentInputCoordinator {
    *    首次 admission / 网络失败可以自动穿过，而持续无产出时仍会在上限处停下。
    *  - 已 accept 的 stall / idle / reconnect-stalled timeout：即使 DB 里没有
    *    assistant 行，也只发 CONTINUE，绝不克隆原文（本 turn 可能已经跑过工具）。
-   *  - 不 `touchUserSend`：那个时间戳的语义是「人最近发过消息」（会话列表 / 陈旧判定
-   *    在读它），自动补发不该冒充人类动作。
+   *  - 不通知 `onUserAction`：自动补发不算真人接手。人工与自动恢复都保留原消息的
+   *    userSendAt，不因重试改变列表排序；真人接手与新消息发送分别记账。
    */
   private async performRetryLastError(
     sessionId: string,
@@ -3433,7 +3462,7 @@ export class AgentInputCoordinator {
         attemptToken ?? undefined,
       );
     }
-    if (!automatic) this.touchUserSend(sessionId);
+    if (!automatic) this.noteUserAction(sessionId);
     this.emit(sessionId);
     this.scheduleDrain(sessionId, 'retry');
     this.scheduleExternalTurnRetryIfNeeded(sessionId, state, 'retry');
@@ -6417,9 +6446,20 @@ export class AgentInputCoordinator {
     if (byClientId.size === 0) this.steerRequestLineages.delete(sessionId);
   }
 
+  getLastUserActionAt(sessionId: string): number | null {
+    return this.states.get(sessionId)?.lastUserActionAt ?? null;
+  }
+
+  private noteUserAction(sessionId: string): void {
+    // Use host time, not a remote sender's clock. State clear/owner teardown also
+    // clears this clock; an app restart has no running turn to yield to.
+    this.getState(sessionId).lastUserActionAt = Date.now();
+    this.deps.onUserAction?.(sessionId);
+  }
+
   private touchUserSend(sessionId: string, atMs?: number): void {
     // 真人接手在派发/落库失败时也成立；限额预算与渠道 turn 的认领分别通知。
-    this.deps.onUserAction?.(sessionId);
+    this.noteUserAction(sessionId);
     void touchUserSendInDb(sessionId, atMs).catch((err) => {
       log.warn('touchUserSend failed', { sessionId, error: errorMessage(err) });
     });

@@ -132,7 +132,8 @@ relay 以 close 1013 `inbound backpressure` 主动断连，此时任何「立即
 产品要求：Device Link 的设备间功能(含手机)在两端已授权、网络实际可达时优先直连，
 直连失败、超时或中途断开时自动改走 relay，不能让功能卡住，也不能重复执行命令。
 选路与兜底在 `packages/device-link` 统一实现(`directPath.ts` 与 `DeviceLinkClient`)，
-平台只负责建立通道并调用 `attachDirectPath`。
+`directNegotiation.ts` 在双方可靠链路确认后自动协商，平台提供数据专用 WebRTC runtime，
+由统一协商层调用 `attachDirectPath`，不要求用户手工建立通道。
 
 - **分工**：relay 仍是控制面——登录、在线状态、账号归属、link-open/accept/close、
   链路确认 ACK 都只走 relay。直连只承载已建立可靠链路上的 reliable-transport 帧
@@ -151,9 +152,22 @@ relay 以 close 1013 `inbound backpressure` 主动断连，此时任何「立即
   `packages/device-link/src/__tests__/client.test.ts`「直连优先、中继兜底」：两个控制端
   共用同一被控端，其中一个的直连静默，断言命令只执行一次、结果经 relay 送达，另一个
   控制端仍走直连、在途请求与 relay 连接不受影响。
-- **范围**：本阶段只有连接层选路与兜底，没有平台接入通道时行为与改动前完全相同，
-  也没有 wire 变更。relay 断线期间链路随之复位，直连暂不单独维持链路。Desktop 与
-  Mobile 经已授权信令建立 WebRTC 直连、手机局域网权限等平台接入另行实现。
+- **接入**：Desktop 复用 `DesktopCaptureWindow` 的隔离数据进程(`mode=direct`)，Mobile
+  使用 `DirectLinkTransport.tsx` 的隔离 WebView；二者共用 `directRtcRuntime.ts` 与
+  `directRuntimeBridge.ts`。只收集 host ICE candidates（不请求 STUN/TURN），局域网不可达
+  继续走现有 relay；协商不阻塞正在进行的业务请求。同账号远程供应商的控制、结果和推送
+  复用同一条数据路径。手机退后台、WebView 崩溃、账号/区域切换立即释放旧通道。
+- **兼容**：双方都声明 `direct-link-v1` 才尝试。信令以既有 relay push 承载，绑定两端
+  当前 stream；旧端、平台尚未就绪或协商失败均继续使用 relay。每对设备只有字典序较小的
+  deviceId 发起 offer，失败按 5–60 秒退避；最多 16 个 peer，单次协商 15 秒。
+  relay 断线仍复位链路，直连暂不独立维持；不新增服务端依赖或 Mobile 原生依赖/配置。
+- **验证**：`client.test.ts` 的自动协商矩阵覆盖新旧端、平台不可用、远程 Agent 调用和两个
+  控制端隔离回退；`directRuntimeBridge.test.ts` 覆盖桥接背压、迟到事件与流代次；
+  `scripts/direct-link-smoke.mjs <Chrome路径>` 运行真实 WebRTC 与手机静态 runtime，验证
+  UTF-8 大结果不经中继、断线回退只执行一次、另一控制端继续直连。该浏览器验证不能替代
+  iOS/Android 和两台真实电脑的跨设备验收。
+  `node scripts/direct-link-electron-smoke.mjs` 另外启动两个临时 Electron 进程，验证生产
+  Main/preload/隔离 renderer 的真实 IPC、WebRTC 与中继回退；账号和 userData 均为独立 fixture。
 
 ## 远程 Agent 的拉取与恢复(`maker:remote-agent:v1`)
 
@@ -177,6 +191,16 @@ relay 以 close 1013 `inbound backpressure` 主动断连，此时任何「立即
    `poll.test.ts` 用 130 / 1000 个空闲任务验证拉取间隔始终短于 3 分钟的回收期限，并复现上述新任务等待。
    被控端连续立即返回空结果时控制端放慢到 1s 一次，防止空转。2 台控制端共享被控端、
    其中一台静默的回归仍需在双实例实机验证中补测。
+
+账号边界关闭远程 Agent 句柄时，通知对方关闭与释放本机资源独立进行。关闭通知失败只记录日志，
+不能作为本机 PI 进程残留阻断换号；本机执行器、MCP 身份与执行环境中继的清理必须等待完成，
+失败仍向上传递，并让重复关闭共享同一清理结果。通知失败后，成功关闭本机句柄不代表远端进程已退出：
+运行端无人拉取超时使用 `navigation` 收尾父会话与隧道，PI 的此类关闭可能为持久子代理保留代理租约，
+不能作为子代理全部停止或模型用量已停止的保证。控制端换号不替换运行端的供应商凭证；运行端自身
+换号仍须执行其账号边界保护。本次不新增跨账号重试，也不重建 link 或 relay。
+普通关闭和连接池让出仍报告远端关闭失败；
+本机与 SSH PI 的账号边界保护不变。实现见 `remote-agent/controller/{proxyHandle,startRemote}.ts`，
+不改变 wire、授权检查或跨端版本要求（#6921）。
 
 **控制端连接池的让出与连回**(2026-10-17，协议见 [`protocol-compatibility.md`](protocol-compatibility.md)「控制端连接池」)：
 
@@ -375,6 +399,11 @@ Mobile 历史读取在 relay 已在线且目标 presence 不是明确不可用�
 历史控制器与页面同步；也不能为了放行读取伪造在线快照。明确离线／停用或 relay 未在线时
 仍只展示缓存，授权、撤权和旧代结果拦截继续由原链路处理。
 
+Mobile 项目标题的电脑图标同样使用共享连接状态、当前 presence、无响应与撤权证据，
+不从页面局部设备清单的缺失、旧快照或列表读取失败推导断连。首页、任务抽屉与宽屏常驻列表
+共用此判据；重建列表与普通同步不会重置连接图标，真实断连与恢复仍随共享状态更新。
+实现与回归见 `homeProjectMachineIdentity.ts`、`HomeSurface.tsx` 与 `homeProjectMachineIdentity.test.ts`。
+
 Mobile 返回任务或恢复网络时，历史视图只恢复展示，由页面既有同步协调器发起快照，
 不再由视图激活另读一页。已有缓存且订阅尚未确认时，最多等待 2 秒合并本次列表／详情
 订阅确认；以当前 ACK 表为准，不复用前一次聚焦／连接已完成的 Promise。等待期间只
@@ -510,6 +539,22 @@ Desktop 的同账号远程 Cindy Make 任务同样消费该投影：准备与测
 动作，重连与操作超时后只重读状态。旧主机不提供该 placement 时保留只读历史卡片。
 实现与回归见 Desktop Renderer 的 `features/device-link/useSessionResourceCards.ts`、
 `SessionResourceCards.tsx` 及同目录测试；SSH 工作区不由此获得 Make 执行能力。
+
+## 桌面远程控制的伙伴设置（`management:settings`，2026-10-22）
+
+产品规则见 [`../product-rules/cindy-bots-runtime.md`](../product-rules/cindy-bots-runtime.md)「伙伴设置」。落点：
+
+- **走 Remote Resource，不新增通道**：`teammates` 集合声明集合动作 `management:settings`，`input.op` 选固定操作，结果放在
+  `RemoteActionInvokeResponse.result`（`{ ok, value | code, message }`）。`allowlist.ts` 不变；伙伴 `settings-*` 等原始 IPC 仍不放行。
+- **主机沿用本机服务**：每个操作调用本机 IPC 同一份服务，凭证、本机路径、运行时快照不进结果；写入口白名单（`BOT_SETTINGS_PATCH_FIELDS`），
+  拒绝 `permissions`；消息平台操作只触达该伙伴自己的连接，没有接收凭证的操作。
+- **控制端兼容**：用集合动作 + `caps` 探测，主机不支持（旧版）整页回退到通用表单页；手机与旧桌面不变。
+- **故障半径三问**：① 故障层级：单个请求（读取 / 写入某个设置）；对方离线只标记页面状态，不判定设置失败。
+  ② 动作层级：仅该 peer 上该伙伴的请求，不重建 link、不断 relay、不重放写操作；写入失败沿用自动保存的回滚与重试，读取只在
+  推送 / 重连 / 聚焦后 400ms 合并重读，消息平台状态每 5 秒读取一次（仅页面打开且可见）。
+  ③ 多 peer：主机按请求内的控制端校验授权与撤权，一个控制端的写入不影响另一个的在途读取；回归见
+  `botRemoteSettingsHost.test.ts`（授权、可见性、owner 切换后丢弃结果、冲突形状、凭证 / 路径不出主机）与
+  `remoteBotSettingsTarget.test.ts`、`remoteTeammateSettings.test.tsx`。
 
 ## 本机与远程共用查询策略
 

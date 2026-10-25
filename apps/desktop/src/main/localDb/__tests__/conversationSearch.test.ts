@@ -145,6 +145,9 @@ function createSearchDb(): Database.Database {
     CREATE TABLE bot_session_links (
       session_id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, role TEXT NOT NULL
     );
+    CREATE TABLE project_aliases (
+      project_key TEXT PRIMARY KEY, alias TEXT NOT NULL, updated_at INTEGER NOT NULL
+    );
   `);
   return db;
 }
@@ -171,6 +174,53 @@ afterEach(() => {
   clearCurrentDbClient();
   vi.useRealTimers();
   mocks.searchChatHistoryHybrid.mockReset();
+});
+
+// #7026 / #6916: the mobile cache only contains the first 200 tasks. The existing
+// mobile test supplied the matching task in that cache, so it missed this case.
+// Unit tier: exercise production search against in-memory SQLite with an alias-only hit
+// behind 200 unrelated tasks; no mobile cache or copied matching implementation.
+describe('conversationSearch remote project aliases', () => {
+  it.each(['/repo', 'C:/Repo'])('finds uncached alias hits in %s before limiting results', async (root) => {
+    const db = createSearchDb();
+    const client = makeSearchDbClient(db);
+    setCurrentDbClient(client, 'test-user');
+    mocks.searchChatHistoryHybrid.mockResolvedValue({
+      hits: [], sessions: {}, vectorUsed: false, vectorSkipReason: null,
+      nextOffset: null, hasMore: false, poolSize: 0, poolCapped: false,
+    });
+    try {
+      for (let i = 0; i < 200; i += 1) insertSearchSession(db, `recent-${i}`, 1000 + i, null);
+      const worktree = `${root}/.cindy-worktrees/branch`;
+      for (const id of ['older', 'worktree', 'archived', 'hidden', 'worker', 'dialogue', 'ssh']) {
+        insertSearchSession(db, id, 10, null);
+        db.prepare('UPDATE sessions SET working_dir = ? WHERE id = ?').run(root, id);
+      }
+      db.prepare('UPDATE sessions SET working_dir = ? WHERE id = ?').run(worktree, 'worktree');
+      db.exec("UPDATE sessions SET status = 'archived' WHERE id = 'archived'");
+      db.exec("UPDATE sessions SET hidden_at = 1 WHERE id = 'hidden'");
+      db.exec("UPDATE sessions SET orca_role = 'worker' WHERE id = 'worker'");
+      db.exec("UPDATE sessions SET workspace_kind = 'dialogue' WHERE id = 'dialogue'");
+      db.exec("UPDATE sessions SET remote_host_id = 'ssh-host' WHERE id = 'ssh'");
+      db.prepare('INSERT INTO project_aliases VALUES (?, ?, ?)').run(`local:${root.toLowerCase()}`, 'Customer Portal', 10);
+      const request = { query: 'CUSTOMER', limit: 2, semanticMode: 'keyword' as const, filters: { status: 'active' as const } };
+      const result = await searchConversations(request, { remoteVisibleOnly: true });
+      expect(result.results.map(item => item.session.id).sort()).toEqual(['older', 'worktree']);
+      expect(result.results.every(item => item.titleMatchIndices.length === 0)).toBe(true);
+      expect(result.results.every(item => item.session.title.startsWith('needle '))).toBe(true);
+      expect((await searchConversations(request)).results).toEqual([]);
+      expect((await searchConversations({ ...request, filters: { workingDirs: ['/elsewhere'] } }, { remoteVisibleOnly: true })).results).toEqual([]);
+      expect((await searchConversations({ ...request, filters: { agentKind: 'pi' } }, { remoteVisibleOnly: true })).results).toEqual([]);
+      expect((await searchConversations({ ...request, filters: { status: 'archived' } }, { remoteVisibleOnly: true })).results.map(item => item.session.id)).toEqual(['archived']);
+      db.exec('DELETE FROM project_aliases');
+      db.prepare('INSERT INTO project_aliases VALUES (?, ?, ?)').run(`remote:ssh-host:${root}`, 'Customer Portal', 10);
+      db.prepare('INSERT INTO project_aliases VALUES (?, ?, ?)').run(`device:other:${root}`, 'Customer Portal', 10);
+      expect((await searchConversations(request, { remoteVisibleOnly: true })).results).toEqual([]);
+    } finally {
+      clearCurrentDbClient(client);
+      db.close();
+    }
+  });
 });
 
 describe('conversationSearch recent activity SQL filtering', () => {

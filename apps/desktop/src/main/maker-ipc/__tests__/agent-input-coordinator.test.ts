@@ -949,6 +949,7 @@ describe('AgentInputCoordinator Orca priority queue transactions', () => {
       restoreManualInterrupt: (_sessionId, snapshot) => {
         manualInterrupt.current = snapshot;
       },
+      updateWorkerIdentity: async () => ({ ok: true as const }),
       broadcastOrcaWorkerChanged: () => {},
       dispatchWorkerMessage: async (params) => {
         await params.onAccepted?.();
@@ -2403,7 +2404,7 @@ describe('AgentInputCoordinator send transaction', () => {
   });
 
   it.each(['policy', 'preparation', 'provider'] as const)(
-    'keeps coordination quiet when human steering fails at %s', async (failure) => {
+    'keeps coordination ownership when human steering fails at %s', async (failure) => {
       const h = createHarness(), sid = `coordination-steer-${failure}`;
       h.sendToAgent.mockImplementationOnce(async () => { h.setRunning(true); return sendSuccess(); });
       h.coordinator.enqueue(sid, makeItem('internal', '[UI_ACTION_TRIGGER]File agreement', {
@@ -2434,6 +2435,33 @@ describe('AgentInputCoordinator send transaction', () => {
       expect(h.coordinator.getAcceptedInputProvenance(sid)?.clientId).toBe('internal');
     },
   );
+
+  // The parent's reply ending releases its input lane even if the delegated
+  // child has not reported completion. No child terminal is needed to talk again.
+  it('dispatches owner input after a coordination turn ends and accepts another normal turn', async () => {
+    const h = createHarness(), sid = 'coordination-next-message';
+    h.coordinator.enqueue(sid, makeItem('report', '[UI_ACTION_TRIGGER]Build still running', {
+      botTaskCoordination: { delegationId: 'd', senderSessionId: 'child', runSequence: 1 },
+    }));
+    await flush();
+    h.coordinator.enqueue(sid, makeItem('owner', 'Check the other machine too'));
+    await flush();
+    expect(h.sendToAgent).toHaveBeenCalledOnce();
+    expect(h.coordinator.getProjection(sid).pendingQueue.map(item => item.clientId)).toEqual(['owner']);
+    h.setRunning(false);
+    h.coordinator.onTurnEvent(sid, 'done');
+    await flush();
+    expect(h.sendToAgent).toHaveBeenCalledTimes(2);
+    expect(h.sendToAgent.mock.calls[1]?.[1]).toEqual({ type: 'user', content: 'Check the other machine too' });
+    expect(h.coordinator.isActiveTaskCoordination(sid)).toBe(false);
+    h.setRunning(false);
+    h.coordinator.onTurnEvent(sid, 'done');
+    await flush();
+    h.coordinator.enqueue(sid, makeItem('next', 'What is the next step?'));
+    await flush();
+    expect(h.sendToAgent).toHaveBeenCalledTimes(3);
+    expect(h.coordinator.getProjection(sid).pendingQueue).toEqual([]);
+  });
 
   it.each(['projection', 'control', 'direct'] as const)(
     'keeps coordination queued instead of injecting it through %s steering', async (entry) => {
@@ -4663,15 +4691,21 @@ describe('AgentInputCoordinator send transaction', () => {
     // 于是那条续跑跑成了却不回流。
     const h = createHarness();
     const sid = 'enqueue-continue-exempt';
+    const now = Date.now();
     h.coordinator.enqueue(sid, makeItem('q-continue', CONTINUE_AFTER_APP_EXIT_PROMPT));
     await flush();
     expect(h.onUserEnqueue).not.toHaveBeenCalled();
     expect(h.onUiRetry).toHaveBeenCalledWith(sid, 'q-continue', 'manual');
+    // 排序回归：恢复已有消息保留发送时间，但仍通知真人接手（unit）。
+    expect(mocks.touchUserSendInDb).not.toHaveBeenCalled();
+    expect(h.onUserAction).toHaveBeenCalledWith(sid);
+    expect(h.coordinator.getLastUserActionAt(sid)).toBeGreaterThanOrEqual(now);
 
     // 普通消息照常上报。
     h.coordinator.enqueue(sid, makeItem('q-normal', '顺手问个别的'));
     await flush();
     expect(h.onUserEnqueue).toHaveBeenCalledWith(sid);
+    expect(mocks.touchUserSendInDb).toHaveBeenCalledOnce();
   });
 
   it('previews a user enqueue to Agent Island before sendToAgent starts', async () => {
@@ -4814,6 +4848,8 @@ describe('AgentInputCoordinator send transaction', () => {
     // queue-head 从不发 onUiRetry(与 retryLastError 语义一致)。
     expect(h.onUiRetry).not.toHaveBeenCalled();
     expect(h.previewQueuedUserTurn).not.toHaveBeenCalled();
+    expect(mocks.touchUserSendInDb).toHaveBeenCalledTimes(1);
+    expect(h.onUserAction).toHaveBeenCalledTimes(2);
   });
 
   it('queue-head retry never substitutes the continue prompt and redrains the original head', async () => {
@@ -4835,6 +4871,8 @@ describe('AgentInputCoordinator send transaction', () => {
     // 队首消息从未送达 agent,续跑语义不成立 —— 必须原样重发。
     expect(h.sendToAgent).toHaveBeenCalledTimes(2);
     expect(h.sendToAgent.mock.calls[1]?.[1]).toEqual({ type: 'user', content: 'never dispatched' });
+    expect(mocks.touchUserSendInDb).toHaveBeenCalledTimes(1);
+    expect(h.onUserAction).toHaveBeenCalledTimes(2);
   });
 
   it('enqueue after a terminal error abandons the active-turn retry and dispatches the new message', async () => {
@@ -6530,6 +6568,7 @@ describe('AgentInputCoordinator stop and drain boundaries', () => {
   });
 
   it('resumes a paused queue-head recovery from the original head without reordering the tail', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
     const h = createHarness();
     const sid = 'resume-paused-queue-head-recovery';
     const first = makeItem('q-1', 'first');
@@ -6544,6 +6583,7 @@ describe('AgentInputCoordinator stop and drain boundaries', () => {
     h.coordinator.enqueue(sid, second);
     await flush();
     mocks.touchUserSendInDb.mockClear();
+    clock.mockReturnValue(2_000_000);
 
     // A mechanical duplicate resume must not retry an unpaused recovery. Only
     // the visible paused-queue Continue action owns the recovery transition.
@@ -6553,6 +6593,7 @@ describe('AgentInputCoordinator stop and drain boundaries', () => {
     expect(h.sendToAgent).toHaveBeenCalledTimes(1);
     expect(mocks.touchUserSendInDb).not.toHaveBeenCalled();
     expect(projection.recovery).toEqual({ kind: 'queue-head', clientId: 'q-1' });
+    expect(h.coordinator.getLastUserActionAt(sid)).toBe(1_000_000);
 
     projection = h.coordinator.pausePendingQueueForRewind(sid);
     expect(projection).toMatchObject({
@@ -6582,8 +6623,9 @@ describe('AgentInputCoordinator stop and drain boundaries', () => {
     projection = latestProjection(h.projections);
     expect(h.sendToAgent).toHaveBeenCalledTimes(2);
     expect(h.sendToAgent.mock.calls[1]?.[1]).toEqual({ type: 'user', content: 'first' });
-    expect(mocks.touchUserSendInDb).toHaveBeenCalledOnce();
-    expect(mocks.touchUserSendInDb).toHaveBeenCalledWith(sid, undefined);
+    expect(mocks.touchUserSendInDb).not.toHaveBeenCalled();
+    expect(h.onUserAction).toHaveBeenCalledTimes(2);
+    expect(h.coordinator.getLastUserActionAt(sid)).toBe(2_000_000);
     expect(projection.recovery).toBeNull();
     expect(projection.error).toBeNull();
     expect(projection.pendingQueue.map((item) => item.clientId)).toEqual(['q-2']);
@@ -9947,6 +9989,30 @@ describe('AgentInputCoordinator steer transaction', () => {
     }
   });
 
+  // 2026-10-24 unit regression: an adapter steer rejection is not proof that
+  // the product ended. Existing zombie coverage only tests a confirmed idle probe.
+  it('preserves an active product when rejected steer still has a live continuation', async () => {
+    const h = createHarness();
+    const sid = 'steer-awaiting-background';
+    const first = makeItem('q-1', 'background work');
+    const second = makeItem('q-2', 'correction');
+    h.coordinator.enqueue(sid, first);
+    await flush();
+    h.coordinator.enqueue(sid, second);
+    h.steerToAgent.mockRejectedValueOnce(new Error('No active Claude turn to steer'));
+    h.reconcileTurnIdle.mockReturnValueOnce(false);
+    await expect(h.coordinator.steer(sid, second, { removeFromQueue: true })).resolves.toBe(false);
+    await flush();
+    expect(h.sendToAgent).toHaveBeenCalledTimes(1);
+    expect(latestProjection(h.projections).pendingQueue.map((item) => item.clientId)).toEqual(['q-2']);
+    // A genuine terminal, rather than the rejected steer, releases the next input.
+    h.setRunning(false);
+    h.coordinator.onTurnEvent(sid, 'done');
+    await flush();
+    expect(h.sendToAgent).toHaveBeenCalledTimes(2);
+    expect(latestProjection(h.projections).pendingQueue).toEqual([]);
+  });
+
   it('recovers from a zombie turn: NO_ACTIVE_TURN reconciles stale busy state and dispatches the fallback', async () => {
     // 场景: q-1 已派发但 turn 异常死亡 (done 事件丢失) —— coordinator 的
     // activeTurn 和 host busy tracker 双双 stale。修复前: 插话 → fallback →
@@ -12482,6 +12548,7 @@ describe('AgentInputCoordinator replaceQueuedMessage(Orca lead 排队消息修�
       send:vi.fn(async (_message,opts)=>{await opts?.onAccepted?.();return {accepted:true as const};}),
     };
     const transaction=createMakerSendTransaction({
+      statDirectory:async()=>({isDirectory:()=>true}),
       getSession:()=>session,closeSession:async()=>{},preflightBotRuntimeResources:async()=>{},
       getSessionMeta:async()=>({}),ensureRemoteReadyForSessionStart:async()=>{},checkWorkDirExists:async()=>true,
       isOrcaMcpHydrated:()=>true,buildCreateOptsWithStderr:x=>x,synthesizeOrcaVendorOptionsFromDb:async()=>false,
@@ -12651,6 +12718,24 @@ describe('AgentInputCoordinator 中断自动续跑', () => {
     }
     return { h, guard, fail };
   }
+
+  // PR #6936 review: the generated continuation carries originalSyntheticTrigger='continue'.
+  // It keeps the owner's authorship for teammate task actions, never as fresh owner input.
+  it.each([
+    ['owner', { autoReviewUserText: 'Relay the fix to the other task' }, true],
+    ['another task', { autoReviewUserText: 'Relay it', origin: { kind: 'session' as const, senderSessionId: 'other', displayText: 'relay' } }, false],
+  ] as const)('attributes a real automatic continuation of %s input', async (_label, patch, expected) => {
+    const { h, fail } = availabilityHarness();
+    const sid = `pi-availability-continuation-${expected}`;
+    h.coordinator.enqueue(sid, { ...availabilityInput(), ...patch } as AgentInputQueuedMessage);
+    await flush();
+    await fail(sid, { toolResult: true });
+    expect(await h.coordinator.autoRetryLastError(sid, 1)).toBe('resumed');
+    await flush();
+    expect(h.sendToAgent.mock.calls[1]?.[1]).toEqual({ type: 'user', content: CONTINUE_AFTER_ERROR_PROMPT });
+    expect(h.coordinator.isActiveInputOwnerContinuation(sid)).toBe(expected);
+    expect(h.coordinator.isActiveInputOwnerAuthored(sid)).toBe(false);
+  });
 
   it('continues after a completed tool and stops at the existing host retry budget', async () => {
     const { h, guard, fail } = availabilityHarness();
@@ -13297,18 +13382,25 @@ describe('AgentInputCoordinator 中断自动续跑', () => {
     });
   });
 
-  it('人工 retryLastError 不打 autoResume(否则会误跳过额度充值)', async () => {
+  it.each([false, true])('人工 retryLastError 保留排序时间与真人接手（已有产出=%s）', async (hasProgress) => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
     const h = createHarness();
     const sid = 'manual-retry-no-auto-flag';
-    h.setHasAssistantProgressAfter(async () => true);
+    h.setHasAssistantProgressAfter(async () => hasProgress);
     await failAfterDispatch(h, sid);
 
+    clock.mockReturnValue(2_000_000);
     await h.coordinator.retryLastError(sid);
     await flush();
 
     expect(h.sendToAgent).toHaveBeenCalledTimes(2);
     expect(h.sendToAgent.mock.calls[1]?.[3]?.persistUserMessage?.autoResume).toBeUndefined();
-    expect(mocks.touchUserSendInDb).toHaveBeenCalledTimes(2);
+    expect(mocks.touchUserSendInDb).toHaveBeenCalledTimes(1);
+    expect(h.onUserAction).toHaveBeenCalledTimes(2);
+    expect(h.coordinator.getLastUserActionAt(sid)).toBe(2_000_000);
+    expect(h.coordinator.getLastUserActionAt('unrelated-session')).toBeNull();
+    h.coordinator.clearSession(sid);
+    expect(h.coordinator.getLastUserActionAt(sid)).toBeNull();
   });
 
   it('自动续跑再次失败后,人工 Retry 会清掉上一轮隐藏标记并重置真人额度', async () => {
@@ -13340,7 +13432,8 @@ describe('AgentInputCoordinator 中断自动续跑', () => {
     const persist = h.sendToAgent.mock.calls[2]?.[3]?.persistUserMessage;
     expect(persist?.autoResume).toBeUndefined();
     expect(persist?.autoResumeInfo).toBeUndefined();
-    expect(mocks.touchUserSendInDb).toHaveBeenCalledTimes(2);
+    expect(mocks.touchUserSendInDb).toHaveBeenCalledTimes(1);
+    expect(h.onUserAction).toHaveBeenCalledTimes(2);
   });
 
   it('零产出时自动克隆重发原文,并沿用 autoResume 计数守卫', async () => {
@@ -14536,6 +14629,7 @@ describe('usage-limit wait (ordinary tasks)', () => {
       getSessionMeta: async () => ({}), ensureRemoteReadyForSessionStart: async () => {},
       checkWorkDirExists: async () => true, isOrcaMcpHydrated: () => !rehydrate,
       buildCreateOptsWithStderr: x => x, synthesizeOrcaVendorOptionsFromDb: async () => rehydrate,
+      statDirectory: async () => ({ isDirectory: () => true }),
       readSessionExtraDirsFromDb: async () => [], readSessionWorkingDirFromDb: async () => '/repo',
       readWorkingDirectoryRecoveryCreateOpts: async () => ({ agentKind: 'claude-code', workingDir: '/repo', model: 'claude-opus-4-7' }),
       withRehydrateCloseSuppressed: async (_id, fn) => fn(), bootstrapSession: bootstrap,
@@ -14581,6 +14675,7 @@ describe('usage-limit wait (ordinary tasks)', () => {
   // Drive both production owners with injected timers: three failed auto attempts,
   // then a human action must start a fresh budget without reopening a channel turn.
   it.each(['retry', 'continue', 'new-input'] as const)('starts a fresh quota episode on queue-head %s before persistence', async action => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
     const h = createHarness();
     const sid = 'quota-manual-episode';
     const timers: Array<() => void> = [];
@@ -14617,16 +14712,21 @@ describe('usage-limit wait (ordinary tasks)', () => {
       expect(timers).toHaveLength(0);
       expect(h.coordinator.getProjection(sid).usageLimitWait).toBeNull();
       expect(h.onUserMessagePersisted).not.toHaveBeenCalled();
+      expect(h.coordinator.getLastUserActionAt(sid)).toBe(1_000_000);
+      clock.mockReturnValue(2_000_000);
       if (action === 'retry') await h.coordinator.retryLastError(sid);
       else h.coordinator.enqueue(sid, makeItem('next', action === 'continue' ? CONTINUE_AFTER_ERROR_PROMPT : 'new task'));
       await flush();
       expect(timers).toHaveLength(1);
       expect(h.coordinator.getProjection(sid).usageLimitWait).not.toBeNull();
       expect(h.onUiRetry).not.toHaveBeenCalled();
+      expect(h.coordinator.getLastUserActionAt(sid)).toBe(2_000_000);
+      clock.mockReturnValue(3_000_000);
       timers.shift()!();
       await flush();
       await flush();
       expect(attempts).toEqual([1, 2, 3, 1]);
+      expect(h.coordinator.getLastUserActionAt(sid)).toBe(2_000_000);
       expect(h.sendToAgent.mock.calls.at(-1)?.[3].persistUserMessage?.clientId)
         .toBe(action === 'new-input' ? 'next' : 'original');
     } finally {
@@ -15519,4 +15619,21 @@ it('keeps remote Lead reporting pending through real coordinator recovery stages
     expect(calls, phase).toEqual([{ status: 'done', finalText: 'FINAL_AFTER_CAPACITY_RECOVERY' }]);
     runtime.stop();
   }
+});
+
+// Incident 2026-10-23: a teammate's verified relay of the owner's request reached the task
+// with an empty review intent. Only the sending host's verified mark carries the owner's words.
+describe('teammate relay review intent', () => {
+  it.each([[true, '可以提交 pr'], [false, '']] as const)('uses the owner words only when verified=%s', async (ownerVerified, expected) => {
+    const h = createHarness();
+    h.coordinator.enqueue('s1', {
+      ...makeItem('relay', 'envelope'),
+      autoReviewUserText: { kind: 'agent-request', request: {
+        userText: '可以提交 pr', sessionId: 'teammate', clientId: 'u1', ...(ownerVerified ? { ownerVerified: true as const } : {}),
+      } },
+    });
+    await flush();
+    expect(h.sendToAgent).toHaveBeenCalledTimes(1);
+    expect(h.sendToAgent.mock.calls[0][3][AUTO_REVIEW_SOURCE_CONTENT]).toBe(expected);
+  });
 });

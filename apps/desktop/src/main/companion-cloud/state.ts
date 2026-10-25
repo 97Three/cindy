@@ -46,6 +46,11 @@ const bot = z.object({
    * That default must not be published back over the cloud address.
    */
   avatarKept: z.boolean().optional(),
+  /**
+   * What the last take-over could not keep of the old setup (cloud-companions.md §2): shown once
+   * after the move, then cleared by the owner.
+   */
+  arrivalNotices: z.array(z.enum(['permissions', 'model'])).optional(),
   /** Deleted here while this computer was the home; disable the cloud actor until it succeeds. */
   retirePending: z.boolean().optional(),
 });

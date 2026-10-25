@@ -151,6 +151,23 @@ describe("history device discovery and queries", () => {
       expect.objectContaining({ device: "local", cursor: "remote-cursor" }),
     );
   });
+  // Optional filters survive forwarding; an old schema failure must never retry unscoped.
+  it("forwards teammate filters and reports an old schema rejection without dropping them", async () => {
+    const s = setup();
+    s.remoteQuery.mockResolvedValueOnce({ ok: false, errorCode: "INVALID_ARGS", message: "Unrecognized key: teammate_id" } as any);
+    const result = await s.call("list_sessions", {
+      device: "all", teammate_id: "bot-a", source: "bot", time_field: "activity",
+    });
+    expect(s.history.listSessions).toHaveBeenCalledWith(expect.objectContaining({ teammateId: "bot-a", source: "bot", timeField: "activity" }));
+    expect(s.remoteQuery).toHaveBeenCalledExactlyOnceWith("mac", "list_sessions", expect.objectContaining({
+      device: "local", teammate_id: "bot-a", source: "bot", time_field: "activity",
+    }));
+    expect(result).toMatchObject({ partial: true, groups: expect.arrayContaining([
+      expect.objectContaining({ deviceId: "mac", ok: false, errorCode: "INVALID_ARGS" }),
+    ]) });
+    await s.call("search_chat_history", { device: "mac", query: "topic", teammate_id: "bot-a", source: "bot" });
+    expect(s.remoteQuery).toHaveBeenLastCalledWith("mac", "search_chat_history", expect.objectContaining({ teammate_id: "bot-a", source: "bot" }));
+  });
   it("qualifies search hits, metadata and context and supports reading the returned identity", async () => {
     const s = setup();
     s.remoteQuery.mockResolvedValueOnce({

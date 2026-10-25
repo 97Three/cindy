@@ -9,6 +9,8 @@
 
 只为检查界面改动（样式、布局、文案、深浅色、多语言）时不必启动 Desktop，先用下文
 「单页 UI 快速验证」；需要真实 IPC、登录、数据库或跨设备行为时再按本节启动。
+需要完整主界面但不想登录或碰真实数据时，加 `--mock` 用免登录的模拟数据启动，见
+[UI 模拟数据](ui-mock-data.md)。
 
 Agent 启动 Desktop 只使用仓库根的安全包装命令，并显式选择目标区域。restart
 命令默认使用固定的 `dev` 命名隔离沙箱（等价于自动附加 `--isolated=dev`），
@@ -94,6 +96,9 @@ checkout 占用而中止，不要换命令绕过，应把 verdict 交给用户�
   若指向 CN / Global / Dev 任一正式目录（不限当前构建区域），启动器与主进程都 fail closed。isolated 会换独立 deviceId，
   正式目录里的 refresh token 属于正式版设备，叠在一起必然 `DEVICE_MISMATCH`，再删盘会
   把正式版踢下线（2026-08-16）。
+- `--mock`：免登录的 UI 模拟数据。未指定沙箱时使用独立的 `--isolated=ui-mock`，首次启动直接
+  进入「未登录」模式并写入两端共用的模拟任务；不能与 `--shared`、`--preserve-running` 组合。
+  细节见 [UI 模拟数据](ui-mock-data.md)。
 - `--passive`：定时任务被动模式，本实例不自动触发 schedule。多开导致定时任务重复、
   需要让位给 primary 时用。它可以和 `--isolated` 组合（隔离沙箱只看 UI、不跑定时任务
   是合法的）。**共库只读契约不是这个旗标本身**，而是解析后的正式 profile + passive
@@ -245,6 +250,7 @@ pnpm ui:check:selftest
 | 修已有界面 bug，需要改前／改后对照 | `pnpm ui:check --page <页面> --case <场景> --compare` | 修复依赖真实数据流时补定向 vitest |
 | 新组件或还没有页面覆盖的组件 | 写 `tmp/` 下的临时入口：`pnpm ui:check --entry tmp/<名>.tsx` | 会反复回归的组件在 `scripts/fixtures/` 下注册页面 |
 | renderer 逻辑、hook、store、数据转换 | 定向 vitest | 结果显示在界面上时再跑 `ui:check` |
+| 任务列表、任务页、侧栏等需要完整主界面的样式或交互 | `pnpm restart:desktop:remote -- --mock`（[UI 模拟数据](ui-mock-data.md)） | 依赖真实账号、发送或 Agent 运行时回到隔离 Desktop |
 | main、preload、IPC、数据库、登录、发送、跨设备、窗口生命周期 | 定向测试 + 隔离 Desktop（见「Agent 启动入口」） | `ui:check` 不覆盖这些行为，不能替代 |
 
 普通界面改动的 PR 截图直接用单页验证：检查通过后运行 `pnpm ui:check:publish`，它把最近一次

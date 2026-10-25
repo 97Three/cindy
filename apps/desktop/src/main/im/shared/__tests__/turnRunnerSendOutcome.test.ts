@@ -2556,7 +2556,7 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
       runner = createTurnRunner(
         {
           ...fakeAdapter,
-          processingEmoji: '👨‍💻',
+          processingEmoji: '👩🏻‍💻',
           queuedEmoji: '👀',
           terminalReactionEmoji: (kind) => (kind === 'error' ? '👎' : null),
         },
@@ -2580,14 +2580,14 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
       h.emit({ type: 'done', data: {} });
       await waitForAssertion(() => {
         expect(h.send).toHaveBeenCalledTimes(1);
-        expect(mocks.feishuIm.reactToMessage).toHaveBeenLastCalledWith('msg-user', '👨‍💻');
+        expect(mocks.feishuIm.reactToMessage).toHaveBeenLastCalledWith('msg-user', '👩🏻‍💻');
       });
       expect(mocks.feishuIm.removeMessageReaction).toHaveBeenCalledWith('msg-user', '👀');
 
       mocks.feishuIm.removeMessageReaction.mockClear();
       h.emit({ type: 'done', data: {} });
       await waitForAssertion(() => {
-        expect(mocks.feishuIm.removeMessageReaction).toHaveBeenCalledWith('msg-user', '👨‍💻');
+        expect(mocks.feishuIm.removeMessageReaction).toHaveBeenCalledWith('msg-user', '👩🏻‍💻');
       });
       expect(mocks.feishuIm.reactToMessage).not.toHaveBeenCalledWith('msg-user', '👍');
     });
@@ -2659,9 +2659,9 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
       await waitForAssertion(() => expect(h.send).toHaveBeenCalledTimes(1));
       h.emit({ type: 'done', data: {} });
       await waitForAssertion(() => expect(completed).toHaveBeenCalledTimes(1));
-      ack.resolve('👨‍💻');
+      ack.resolve('👩🏻‍💻');
       await waitForAssertion(() => {
-        expect(mocks.feishuIm.removeMessageReaction).toHaveBeenCalledWith('msg-user', '👨‍💻');
+        expect(mocks.feishuIm.removeMessageReaction).toHaveBeenCalledWith('msg-user', '👩🏻‍💻');
       });
       expect(mocks.feishuIm.reactToMessage).not.toHaveBeenCalledWith('msg-user', '👍');
       expect(mocks.feishuIm.reactToMessage).not.toHaveBeenCalledWith('msg-user', '👀');

@@ -165,6 +165,7 @@ import { useAnimatedNumber } from '@/hooks/useAnimatedNumber';
 import { useConfirmDialog } from '@/components/ui/confirm-dialog-provider';
 import { useSilentEncryptedRetry } from '@/hooks/useSilentEncryptedRetry';
 import { TodaySpendChip } from '@/components/status/TodaySpendChip';
+import { ContextWindowBudgetChip } from '@/components/status/ContextWindowBudgetChip';
 import { TopRightChipStack, TopRightChipStackProvider } from '@/components/chat/TopRightChipStack';
 import { ChatDisplaySnapshotProvider } from '@/components/chat/ChatDisplaySnapshotContext';
 import { useCCAgentChat } from '@/hooks/useCCAgentChat';
@@ -6045,6 +6046,7 @@ function CCAgentSessionContent({
                   // 让 ChatInput 暂不显示 Agent 身份，不能跟随 displayAgentKind 的 cc 回退。
                   runtimeAgentKind={session ? dbToMakerAgentKind(session.agentKind) : null}
                   runtimeEffective={session?.runtimeEffective}
+                  baselineEffort={session?.runtimeBaseline?.effort ?? null}
                   runtimePending={session?.runtimePending}
                   // session 未加载时保留 undefined 未知态；Orca 原地切换与换电脑分别门控。
                   sessionOrcaRole={session ? (session.orcaRole ?? null) : undefined}
@@ -6305,6 +6307,25 @@ function CCAgentSessionContent({
                       deviceLinkDeviceId={remoteDeviceId ?? null}
                       usageAccount={usageAccount}
                     />
+                    {/* device-link 远程任务的档位走 maker:set-context-window-budget 隧道命令，
+                        在偏好文件落盘并应用到活实例；老被控端不支持时由 chip 提示版本不支持。
+                        当前档位与可选档位一起来自权威边界查询（本地 main / 远程被控端）。 */}
+                    {sessionId && (
+                      <ContextWindowBudgetChip
+                        sessionId={sessionId}
+                        contextTokens={agentStatus.contextTokens}
+                        model={agentSwitchIntent?.model ?? session?.model ?? ''}
+                        providerId={
+                          agentSwitchIntent
+                            ? agentSwitchIntent.providerId
+                            : (session?.providerId ?? null)
+                        }
+                        agentKind={normalizeDbAgentKind(displayAgentKind)}
+                        providers={{ providers }}
+                        deviceId={remoteDeviceId}
+                        disabled={readOnly || !session}
+                      />
+                    )}
                     <ContextCapacityRing
                       isRunning={agentStatus.isRunning}
                       sessionId={sessionId}

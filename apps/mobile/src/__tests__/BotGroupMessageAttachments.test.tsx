@@ -12,6 +12,7 @@ vi.mock('@/platform/gestureHandler', () => {
 });
 vi.mock('react-native-webview', () => ({ WebView: () => null }));
 vi.mock('expo-modules-core', () => ({ requireOptionalNativeModule: () => null }));
+vi.mock('@/session/NativeVideoPlayer', () => ({ NativeVideoPlayer: () => null }));
 
 // Keep the real group attachment, AttachmentStrip, MediaPreview and LegendList hooks.
 // Only native surfaces and unrelated viewers are replaced for Node rendering.

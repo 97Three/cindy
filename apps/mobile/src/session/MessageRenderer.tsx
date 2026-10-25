@@ -1,4 +1,5 @@
 import { VideoSitePreview } from './VideoSitePreview';
+import { InlineVideoPlayer } from './InlineVideoPlayer';
 import { youtubeVideo } from '@cindy/maker-shared/rich-answer';
 import { richVisualStyle, splitRichAnswer, richAnswerText, richMediaSource, richMarkdown, richString, type RichNode } from '@cindy/maker-shared/rich-answer';
 import { RichAnswer } from './RichAnswer';
@@ -18,8 +19,6 @@ import { CompanionMessageActions } from './CompanionMessageActions';
 import { BotGroupQuote } from './BotGroupQuote';
 import { companionReplyQuoteDisplay, companionReplyQuoteFor } from './companionReplyQuote';
 import type { ChatReplyQuote } from '@cindy/maker-shared/chat-reply-quote';
-import type { NativePullDownAction } from '@/platform/chrome/NativePullDownMenu';
-import { Gesture, GestureDetector } from '@/platform/gestureHandler';
 import { useMessageHistoryActive, useMessageHistoryPositioning } from './messageHistoryActivity';
 import { usePaneViewport } from '@/platform/AdaptiveWindowContext';
 import { messageReadingPosition } from './messageReadingPosition';
@@ -261,7 +260,6 @@ import { ChatPathChipSpan } from '@/session/ChatPathChipSpan';
 import {
   useRemoteDeviceIdentity,
   useRemoteSessionMessages,
-  useRemoteSessions,
 } from '@/session/remoteSessionStore';
 import {
   isCrossDeviceSourceSessionId,
@@ -541,7 +539,7 @@ const stylesStatic = StyleSheet.create({
  */
 type MarkdownSelectableTextProps = Omit<ComponentProps<typeof Text>, 'selectionColor'> & {
   /**
-   * iOS 是否使用可部分选中的 UITextView。超长展开正文禁用它并回退 RN Text:
+   * iOS 是否使用可部分选中的 UITextView。普通任务的超长展开正文回退 RN Text:
    * UITextView 在折叠→展开时骤增为超高复用视图会偶发只留下巨高空白容器。
    */
   allowIosUITextView?: boolean;
@@ -664,8 +662,6 @@ export interface CompanionQuoteOptions {
   onQuote: (quote: ChatReplyQuote) => void;
   /** Scroll to and highlight a message of this chat, loading it first when needed. */
   onLocate: (clientId: string) => void;
-  /** 「选择文字」: the page shows this message's text where the system text selection works. */
-  onSelectText: (text: string) => void;
 }
 
 interface CompanionQuoteActions extends CompanionQuoteOptions {
@@ -3692,13 +3688,9 @@ function MessageBubble({
   const actionBusy = !!clientId && actions.busyClientId === clientId;
   const forkBusy = actionBusy && actions.busyAction === 'fork';
   const disabled = !!actions.busyClientId;
-  // 伙伴私聊：长按消息弹出系统菜单（对应桌面悬停时的「回复」等按钮），消息下方不再常驻图标。
-  // iOS 用系统操作表（MenuView 的长按预览在新架构下抬不起气泡，不改原生代码时不用它）；
-  // Android 用平台下拉菜单。都不可用时退回原来的操作行。长按交给菜单后正文不再就地选字，改由「选择文字」打开。
+  // 伙伴与普通任务都保留正文原生长按选字；消息操作由气泡下方按钮承接。
   const companionQuote = actions.companionQuoteActions;
-  const companionMenuEnabled = !!(actions.companion && hasActions
-    && (Platform.OS === 'ios' ? usesSystemActionMenu() : usesNativePullDownMenu()));
-  const bubbleTextSelectable = canSelectVisibleText && !companionMenuEnabled;
+  const bubbleTextSelectable = canSelectVisibleText;
   const replyQuote = companionQuote && item.message.kind === 'user' ? item.message.replyQuote : undefined;
   const replyTargetId = companionQuote?.showReplyTargets && item.message.kind === 'assistant' && clientId
     ? readReplyToClientId(item.message) : null;
@@ -3706,23 +3698,6 @@ function MessageBubble({
   const replyTarget = replyTargetId && isOwnerTypedMessage(replyTargetMessage)
     && companionQuote?.isLastReplyFor(clientId)
     ? companionReplyQuoteFor(replyTargetMessage) : null;
-  const companionMenuActions = useMemo<NativePullDownAction[]>(() => {
-    if (!companionMenuEnabled) return [];
-    const quick: NativePullDownAction[] = [
-      ...(companionQuote && canAddToChat ? [{ id: 'reply', title: t('message.renderer.reply'), image: 'bubble.left' }] : []),
-      ...(canCopy ? [{ id: 'copy', title: t('message.renderer.copyStateCopy'), image: 'doc.on.doc' }] : []),
-    ];
-    return [
-      // Reply and copy first, in their own group (Desktop's hover bar leads with Reply).
-      ...(quick.length ? [{ id: 'quick', title: '', displayInline: true, subactions: quick }] : []),
-      ...(canSelectVisibleText ? [{ id: 'select-text', title: t('message.renderer.selectText'), image: 'character.cursor.ibeam' }] : []),
-      ...(canShare ? [{ id: 'share', title: t('session.shareImage.shareMessage'), image: 'square.and.arrow.up' }] : []),
-      // Teammates own one timeline: no fork or per-turn cost here, the same as Desktop.
-      ...messageMenu.filter(entry => entry.id !== 'add-to-chat').map(entry => ({
-        id: entry.id, title: entry.label, image: entry.image, destructive: entry.destructive, disabled,
-      })),
-    ];
-  }, [disabled, canAddToChat, canCopy, canSelectVisibleText, canShare, companionMenuEnabled, companionQuote, messageMenu, t]);
 
   useEffect(() => {
     if (copyState === 'idle' || copyState === 'copying') return;
@@ -3790,28 +3765,6 @@ function MessageBubble({
     if (id === 'side-chat') return actions.onSideChatMessage?.(copyText);
     actions.onCopyMessageLink?.(clientId);
   }, [actions, clientId, copyText, selectControlAction]);
-  const selectCompanionMenuAction = useCallback((id: string) => {
-    if (id === 'reply') {
-      const quote = companionReplyQuoteFor(item.message);
-      if (quote) companionQuote?.onQuote(quote);
-    } else if (id === 'copy') copyMessage();
-    else if (id === 'select-text') companionQuote?.onSelectText(copyText);
-    else if (id === 'share') actions.onEnterShareSelection?.(clientId);
-    else if (messageMenu.some(entry => entry.id === id)) selectMenuAction(id as MobileMessageMenuActionId);
-  }, [actions, clientId, companionQuote, copyMessage, copyText, item.message, messageMenu, selectMenuAction]);
-  const openCompanionActionSheet = useCallback(() => {
-    const items = companionMenuActions.flatMap(entry => entry.subactions ?? [entry])
-      .map(entry => ({ key: entry.id, label: entry.title, destructive: entry.destructive, disabled: entry.disabled }));
-    void showActionMenu({
-      ...(absoluteTime ? { title: absoluteTime } : {}),
-      items,
-      cancelLabel: t('session.common.cancel'),
-      userInterfaceStyle: mode,
-    }).then(result => { if (result.kind === 'action') selectCompanionMenuAction(result.key); });
-  }, [absoluteTime, companionMenuActions, mode, selectCompanionMenuAction, t]);
-  // Long press fails as soon as the finger moves, so tables and code blocks keep scrolling sideways.
-  const companionMenuGesture = useMemo(() => Gesture.LongPress().minDuration(450).runOnJS(true)
-    .onStart(() => openCompanionActionSheet()), [openCompanionActionSheet]);
   const openMessageActionMenu = useCallback(() => {
     if (usesSystemActionMenu()) {
       const disabled = actionBusy
@@ -3886,10 +3839,8 @@ function MessageBubble({
     // A quote or reply target alone still needs the bubble, e.g. an attachment-only reply.
     || (companionQuote && (replyQuote || replyTarget))
   );
-  // The long-press menu lives on the bubble; without one (attachment-only, error) the action row stays.
   const bubbleShown = item.message.role !== 'error'
     && (hasBubbleContent || (!attachmentStripNode && messageQuotes.length === 0));
-  const companionMenuMounted = companionMenuEnabled && bubbleShown;
   // 气泡是纯 View,不承接任何手势:文本选择走正文原生 Text selectable(长按文字就地选择复制),
   // 气泡上不能挂 Pressable——它会参与触摸协商,干扰正文里表格/代码块横向 ScrollView 的拖动。
   const bubble = (
@@ -3899,7 +3850,6 @@ function MessageBubble({
         presentation.density === 'compact' && styles.bubbleCompact,
         presentation.density === 'rich' && styles.bubbleRich,
         isUser ? styles.userBubble : styles.agentBubble,
-        companionMenuEnabled && styles.companionMenuBubble,
         actions.companion && !isUser && !item.message.systemCardType && styles.companionAnswer,
         hookSource && styles.hookSourceBubble,
         isUser && !item.message.systemCardType && userBubbleColors
@@ -4007,7 +3957,8 @@ function MessageBubble({
           <MarkdownBody
             renderRichAnswers={item.message.kind === 'assistant'}
             richStateKey={item.message.source.clientId ?? item.message.key}
-            allowIosUITextView={!shouldCollapseLongMessage}
+            allowIosUITextView={!shouldCollapseLongMessage || actions.companion === true}
+            boundTextRuns={shouldCollapseLongMessage && actions.companion === true}
             markdownImageCacheKey={item.message.key}
             layout={contentLayout}
             onOpenPayload={actions.onOpenPayload}
@@ -4024,8 +3975,8 @@ function MessageBubble({
         // 纯文本,absolute 不占布局、opacity 0 不可见、pointerEvents none 不挡
         // 触摸。这里只需知道行数是否越过阈值,因此最多排到 threshold + 1 行:
         // 不让不可见节点为超长消息完整排版,避免 iOS 产生额外的超高原生
-        // 文本布局,Android 也不用承担无意义的完整排版开销。展开态的巨高
-        // 空白由上方 MarkdownBody 的 RN Text fallback 单独处理。
+        // 文本布局,Android 也不用承担无意义的完整排版开销。伙伴展开态复用有界
+        // 文本分组保留部分选字，普通任务继续使用 RN Text fallback。
         // 无障碍两端都要屏蔽:accessibilityElementsHidden 管 iOS VoiceOver
         // (opacity 0 不会让 VoiceOver 跳过,漏了会把正文重复朗读一遍),
         // importantForAccessibility 管 Android TalkBack。
@@ -4137,21 +4088,7 @@ function MessageBubble({
         <ErrorNotice message={displayBubbleBody}>
           {item.message.rawError ? <AgentErrorDetails key={item.message.key} message={item.message.rawError} /> : null}
         </ErrorNotice>
-      ) : bubbleShown ? (
-        companionMenuEnabled ? (Platform.OS === 'ios' ? (
-          <GestureDetector gesture={companionMenuGesture}>
-            <View style={isUser ? styles.companionMenuUser : styles.companionMenuAgent} testID="companion.messageMenu">
-              {bubble}
-            </View>
-          </GestureDetector>
-        ) : (
-          <NativePullDownMenu longPress actions={companionMenuActions}
-            onAction={selectCompanionMenuAction} style={isUser ? styles.companionMenuUser : styles.companionMenuAgent}
-            testID="companion.messageMenu">
-            {bubble}
-          </NativePullDownMenu>
-        )) : bubble
-      ) : null}
+      ) : bubbleShown ? bubble : null}
       {actions.companion && item.message.kind === 'assistant' && item.message.body.trim() ? (
         <CompanionLearningFooter receipts={item.message.source.agentMeta?.botLearning}
           onOpenSettings={actions.onOpenCompanionSettings} />
@@ -4175,17 +4112,20 @@ function MessageBubble({
           </Text>
         </View>
       ) : null}
-      {companionMenuMounted ? null : hasActions && actions.companion ? <CompanionMessageActions user={isUser} copied={copyState === 'copied'} copying={copyState === 'copying'} disabled={disabled}
+      {hasActions && actions.companion ? <CompanionMessageActions user={isUser} copied={copyState === 'copied'} copying={copyState === 'copying'} disabled={disabled}
         onCopy={canCopy ? copyMessage : undefined}
         actions={[
           ...(canCopy ? [{ id: 'copy', title: copyActionLabel(copyState), image: 'doc.on.doc', disabled: copyState === 'copying' }] : []),
           ...(canShare ? [{ id: 'share', title: t('session.shareImage.shareMessage'), image: 'square.and.arrow.up' }] : []),
           // Desktop's teammate action bar omits fork and per-turn cost/tokens: the Bot owns its one timeline.
           ...messageMenu.map(item => ({ id: item.id, title: item.label, image: item.image, destructive: item.destructive, disabled: actionBusy })),
-          ...(absoluteTime ? [{ id: 'time', title: t('message.renderer.sentTime', { time: absoluteTime }), disabled: true }] : []),
+          ...(absoluteTime ? [{ id: 'time', title: absoluteTime.slice(0, 16), disabled: true }] : []),
         ]}
         onAction={id => {
-          if (id === 'copy') selectControlAction(id);
+          // Reply quotes what can be quoted; other rows (errors, system cards) keep inserting their link.
+          const quote = id === 'add-to-chat' && companionQuote ? companionReplyQuoteFor(item.message) : null;
+          if (quote) companionQuote?.onQuote(quote);
+          else if (id === 'copy') selectControlAction(id);
           else if (id === 'share') actions.onEnterShareSelection?.(clientId);
           else if (messageMenu.some(item => item.id === id)) selectMenuAction(id as MobileMessageMenuActionId);
         }} /> : hasActions ? (
@@ -5843,6 +5783,7 @@ function CompanionCardMarkdown({ text, actions, messageKey }: { text: string; ac
 // 不跳转界面;整条复制走操作条按钮。选择按块进行(原生 Text 能力边界,跨段选择做不到)。
 function MarkdownBodyBase({
   allowIosUITextView = true,
+  boundTextRuns = false,
   markdownImageCacheKey,
   layout,
   onOpenPayload,
@@ -5852,11 +5793,13 @@ function MarkdownBodyBase({
   streaming,
   text,
 }: {
-  /** 超长展开正文在 iOS 回退 RN Text,避免超高 UITextView 空白;仍保留整块复制。 */
   renderRichAnswers?: boolean;
   /** Persisted row ids may replace stream ids; clientId stays stable across that handoff. */
   richStateKey?: string;
+  /** 普通任务的超长展开正文可禁用 UITextView，伙伴改用有界文本分组。 */
   allowIosUITextView?: boolean;
+  /** Reuse bounded native text runs for expanded companion messages on iOS. */
+  boundTextRuns?: boolean;
   /** 本地 Markdown 图片的稳定消息身份,避免后续消息复用同一路径的旧媒体缓存。 */
   markdownImageCacheKey?: string;
   layout: MessageContentLayout;
@@ -5981,8 +5924,7 @@ function MarkdownBodyBase({
   }, [layout, managedImagePreviewUrl, onOpenPayload, openMarkdownImage, resolveMarkdownMedia]);
   // Preserve the inline renderer while streaming or unrelated task metadata
   // changes; referenced task title changes still refresh every affected chip.
-  const remoteSessions = useRemoteSessions();
-  const sessionLinkTitles = useMarkdownSessionLinkTitles(text, remoteSessions);
+  const sessionLinkTitles = useMarkdownSessionLinkTitles(text);
   const renderInlines = useCallback(
     (
       inlines: readonly MobileMarkdownInline[],
@@ -6008,11 +5950,12 @@ function MarkdownBodyBase({
   );
   const textRunGroupingOptions = useMemo(() => ({
     ...(Platform.OS === 'android' ? ANDROID_SELECTABLE_TEXT_RUN_GROUPING_OPTIONS : {}),
+    ...(boundTextRuns ? ANDROID_SELECTABLE_TEXT_RUN_GROUPING_OPTIONS : {}),
     imageRendersPreview,
-  }), [imageRendersPreview]);
+  }), [boundTextRuns, imageRendersPreview]);
   // 连续纯文本块合并为 text_run，图片预览保持独立。
   // Android selectable Text 在超长原生文本视图里会偶发高度/滚动协商异常,长 run 分块
-  // 后仍保留块内跨段选择,同时避免单个 LegendList item 内出现巨型 selectable Text。
+  // 后仍保留块内跨段选择。伙伴的 iOS 长消息展开也复用同一分块，避免巨型 UITextView。
   const groups = useMemo(
     () => groupMobileMarkdownSelectableBlocks(blocks, textRunGroupingOptions),
     [blocks, textRunGroupingOptions],
@@ -6080,6 +6023,12 @@ function MarkdownBodyBase({
     );
   };
   const renderSingleBlock = useCallback((block: MobileMarkdownBlock): ReactNode => {
+    // Only text_run groups are bounded. Code, quotes and table cells retain
+    // the stable RN Text fallback in expanded long companion messages.
+    const singleBlockAllowsIosUITextView = allowIosUITextView && !boundTextRuns;
+    const singleBlockSpanFor = (blockSelectable: boolean) => singleBlockAllowsIosUITextView
+      ? spanFor(blockSelectable)
+      : undefined;
     if (block.type === 'mermaid') {
       // 内联图表按「图片」形态呈现:无卡片 chrome、无标签文字、无按钮,
       // 就是一块圆角图表;点击任意位置打开沉浸式全屏详情(透明 Pressable
@@ -6125,8 +6074,8 @@ function MarkdownBodyBase({
             ]}
           >
             <HighlightedCodeText
-              SpanComponent={spanFor(selectable === true) ?? Text}
-              allowIosUITextView={allowIosUITextView}
+              SpanComponent={spanFor(selectable === true && singleBlockAllowsIosUITextView) ?? Text}
+              allowIosUITextView={singleBlockAllowsIosUITextView}
               language={block.language}
               selectable={selectable === true}
               styles={styles}
@@ -6144,13 +6093,13 @@ function MarkdownBodyBase({
       const headingSelectable = inlinesSelectable(block.inlines);
       return (
         <MarkdownSelectableText
-          allowIosUITextView={allowIosUITextView}
+          allowIosUITextView={singleBlockAllowsIosUITextView}
           key={block.key}
           selectable={headingSelectable}
           style={headingStyle}
           testID="message.markdownHeading"
         >
-          {renderInlines(block.inlines, spanFor(headingSelectable))}
+          {renderInlines(block.inlines, singleBlockSpanFor(headingSelectable))}
         </MarkdownSelectableText>
       );
     }
@@ -6158,11 +6107,11 @@ function MarkdownBodyBase({
       return (
         <View key={block.key} style={styles.markdownQuote} testID="message.markdownQuote">
           <MarkdownSelectableText
-            allowIosUITextView={allowIosUITextView}
+            allowIosUITextView={singleBlockAllowsIosUITextView}
             selectable={inlinesSelectable(block.inlines)}
             style={[styles.messageText, styles.markdownQuoteText]}
           >
-            {renderInlines(block.inlines, spanFor(inlinesSelectable(block.inlines)))}
+            {renderInlines(block.inlines, singleBlockSpanFor(inlinesSelectable(block.inlines)))}
           </MarkdownSelectableText>
         </View>
       );
@@ -6183,11 +6132,11 @@ function MarkdownBodyBase({
             {task ? (block.checked ? '✓' : '') : block.ordered ? block.marker : '•'}
           </Text>
           <MarkdownSelectableText
-            allowIosUITextView={allowIosUITextView}
+            allowIosUITextView={singleBlockAllowsIosUITextView}
             selectable={inlinesSelectable(block.inlines)}
             style={[styles.messageText, styles.markdownListText]}
           >
-            {renderInlines(block.inlines, spanFor(inlinesSelectable(block.inlines)))}
+            {renderInlines(block.inlines, singleBlockSpanFor(inlinesSelectable(block.inlines)))}
           </MarkdownSelectableText>
         </View>
       );
@@ -6213,7 +6162,7 @@ function MarkdownBodyBase({
                 return (
                   <MarkdownSelectableText
                     adjustVerticalAlignment={false}
-                    allowIosUITextView={allowIosUITextView}
+                    allowIosUITextView={singleBlockAllowsIosUITextView}
                     key={`${block.key}:th:${index}`}
                     selectable={inlinesSelectable(cell)}
                     style={[
@@ -6222,7 +6171,7 @@ function MarkdownBodyBase({
                       styles.markdownTableHeaderCell,
                     ]}
                   >
-                    {renderInlines(cell, spanFor(inlinesSelectable(cell)))}
+                    {renderInlines(cell, singleBlockSpanFor(inlinesSelectable(cell)))}
                   </MarkdownSelectableText>
                 );
               })}
@@ -6234,12 +6183,12 @@ function MarkdownBodyBase({
                   return (
                     <MarkdownSelectableText
                       adjustVerticalAlignment={false}
-                      allowIosUITextView={allowIosUITextView}
+                      allowIosUITextView={singleBlockAllowsIosUITextView}
                       key={`${row.key}:td:${index}`}
                       selectable={inlinesSelectable(cell)}
                       style={[styles.markdownTableCell, { width: columnWidth }]}
                     >
-                      {renderInlines(cell, spanFor(inlinesSelectable(cell)))}
+                      {renderInlines(cell, singleBlockSpanFor(inlinesSelectable(cell)))}
                     </MarkdownSelectableText>
                   );
                 })}
@@ -6251,15 +6200,15 @@ function MarkdownBodyBase({
     }
     return (
       <MarkdownSelectableText
-        allowIosUITextView={allowIosUITextView}
+        allowIosUITextView={singleBlockAllowsIosUITextView}
         key={`${block.key}:${pinSettledWidth ? contentWidth : 'hug'}`}
         selectable={inlinesSelectable(block.inlines)}
         style={settledTextStyle}
       >
-        {renderInlines(block.inlines, spanFor(inlinesSelectable(block.inlines)))}
+        {renderInlines(block.inlines, singleBlockSpanFor(inlinesSelectable(block.inlines)))}
       </MarkdownSelectableText>
     );
-  }, [allowIosUITextView, contentWidth, inlinesSelectable, layout, onOpenPayload, pinSettledWidth, renderInlines, selectable, settledTextStyle, spanFor, styles, t]);
+  }, [allowIosUITextView, boundTextRuns, contentWidth, inlinesSelectable, layout, onOpenPayload, pinSettledWidth, renderInlines, selectable, settledTextStyle, spanFor, styles, t]);
   return (
     <View
       collapsable={false}
@@ -8864,11 +8813,6 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     gap: spacing.sm,
   },
   companionAnswer: { backgroundColor: colors.surface, borderWidth: 0, paddingHorizontal: 0 },
-  // The long-press menu wraps the bubble, so it takes the bubble's place in the row.
-  companionMenuUser: { alignSelf: 'flex-end', maxWidth: '86%', minWidth: 0 },
-  companionMenuAgent: { alignSelf: 'stretch' },
-  // The bubble fills its long-press wrapper, so the wrapper is exactly the bubble.
-  companionMenuBubble: { alignSelf: 'stretch', maxWidth: '100%' },
   companionQuote: { alignSelf: 'stretch', marginBottom: spacing.xs },
   // Desktop BotAvatar sm (28) + gap-2.5; the task card reuses the same inset.
   companionAvatarRow: { flexDirection: 'row', alignItems: 'flex-start', gap: COMPANION_AVATAR_GAP },
@@ -10003,13 +9947,15 @@ export function MarkdownBody(props: Parameters<typeof MarkdownBodyBase>[0]) {
 function RichAnswerMedia({ node, body }: { node: RichNode; body: Parameters<typeof MarkdownBodyBase>[0] }) {
   const origin = useContext(ChatFilePathContext);
   const resolver = useContext(MarkdownRemoteMediaContext);
+  const visible = useContext(MessageHeavyContentVisibilityContext);
   const [width, setWidth] = useState(0);
   const raw = richMediaSource(node);
   if (!raw || (node.kind !== 'image' && node.kind !== 'video' && node.kind !== 'audio')) return null;
   if (node.kind === 'video' && youtubeVideo(raw)) return <VideoSitePreview src={raw} title={richString(node, 'alt', 'YouTube')} />;
   const direct = /^(?:https?|xdt-audio|xdt-video|cindy-media):\/\//.test(raw);
-  const url = direct ? raw : mobileMarkdownManagedImagePreviewUrl(raw, origin?.workdir, body.markdownImageCacheKey, origin?.remoteHostId, origin?.sessionId);
-  // Outside-workdir files retain the existing explicit-open path; never fetch them automatically.
+  const resolveUrl = node.kind === 'video' ? mobileMarkdownImageUrlForWorkdir : mobileMarkdownManagedImagePreviewUrl;
+  const url = direct ? raw : resolveUrl(raw, origin?.workdir, body.markdownImageCacheKey, origin?.remoteHostId, origin?.sessionId);
+  // Images outside workdir retain explicit-open. Video resolves only on explicit play.
   if (!url) return <MarkdownBodyBase {...body} text={richMarkdown(node) ?? ''} streaming={false} />;
   const label = richString(node, 'alt', node.kind);
   const media: NormalizedToolMedia = { kind: node.kind, url, title: label, previewable: isDirectPreviewableMediaUrl(url) };
@@ -10028,7 +9974,9 @@ function RichAnswerMedia({ node, body }: { node: RichNode; body: Parameters<type
     imagePreviewHeight: imageHeight,
     mediaPreviewWidth: Math.min(body.layout.mediaPreviewWidth, width) };
   return <View style={{ minWidth: 0 }} onLayout={event => setWidth(event.nativeEvent.layout.width)}>
-    {width > 0 ? <MediaPreview key={previewKey} layout={layout} media={media} label={label} onResolveRemoteMedia={resolver}
+    {width > 0 && node.kind === 'video' ? <InlineVideoPlayer key={previewKey} url={url} label={label}
+      width={width} visible={visible} resolve={resolver} />
+      : width > 0 ? <MediaPreview key={previewKey} layout={layout} media={media} label={label} onResolveRemoteMedia={resolver}
       usePreviewState={useState}
       onOpen={body.onOpenPayload ? () => body.onOpenPayload!(buildMediaPayload(media, label)) : undefined} /> : null}
   </View>;

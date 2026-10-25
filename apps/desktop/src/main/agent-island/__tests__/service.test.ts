@@ -7013,7 +7013,7 @@ it('does not sound or mark attention for internal coordination completion, but s
   const meta = { sessionId: 'coordination', agentKind: 'codex' as const };
   service.handleAgentEvent(meta, { type: 'status', source: 'codex', data: { isRunning: true } });
   playSound.mockClear();
-  service.handleAgentEvent(meta, { ...doneEvent(), agentMeta: { botTaskCoordination: true, botPrivateReply: true } });
+  service.handleAgentEvent(meta, { ...doneEvent(), agentMeta: { botTaskCoordination: true, botPrivateReply: false } });
   expect(playSound).not.toHaveBeenCalled();
   expect(service.getSessionActivitySnapshot(meta.sessionId)?.attention).not.toBe(true);
   service.handleAgentEvent(meta, terminalErrorEvent('User action required'));

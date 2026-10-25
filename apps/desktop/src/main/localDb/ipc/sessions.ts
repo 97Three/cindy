@@ -1,3 +1,4 @@
+import { removeSessionModelInterface } from '../../maker-host/session-model-interface.js';
 import { ensureOpenedProjectGit, openSession } from '../sessionOpening.js';
 import {
   claimOwnedProvisionalSession,
@@ -89,7 +90,22 @@ import {
 import {
   normalizeWorkingDirForProjectSettings,
   normalizeWorkingDirForStorage,
+  workingDirEquals,
 } from '../../../shared/workingDir.js';
+import {
+  MAX_CONTEXT_WINDOW_BUDGET,
+  MIN_CONTEXT_WINDOW_BUDGET,
+  normalizeContextWindowBudget,
+} from '../../../shared/sessionContextWindowBudget.js';
+import {
+  WORKTREE_MOVE_BLOCKED_CODE,
+  WORKTREE_MOVE_BLOCKED_MESSAGE,
+} from '../../../shared/worktreeMoveGuardError.js';
+import {
+  pruneSessionContextWindowBudget,
+  readSessionContextWindowBudget,
+  writeSessionContextWindowBudget,
+} from '../../maker-host/session-context-budget-store.js';
 import { assertRendererSessionSourceAllowed } from './sessionSourceGuard.js';
 import type { SessionReference } from '../../../shared/sessionReference.js';
 import * as broadcastTap from '../../device-link/broadcast-tap.js';
@@ -177,9 +193,35 @@ export interface RegisterSessionIpcOpts {
   resolveContextWindow?: (session: ContextWindowSession) => number | null;
   /** Close a local Pi/Codex runtime only if its current turn is idle. */
   closeIdleSessionForMove?: (sessionId: string) => Promise<boolean>;
+  /**
+   * 任务级上下文窗口预算（tokens）变化后，把新值应用到**活着的**运行实例上
+   * （空闲关 handle 冷重建；回合中登记 pending，回合结束后生效）。
+   *
+   * 调用时机：本函数已把新值写进 DB（本函数是唯一写入链路）。回调失败只记录、
+   * 不阻断设置保存 —— 新值仍会在下一次启动/恢复时通过 start options 生效。
+   * 入参 previous/next 是用户显式值（null = 跟随模型默认），由 host 换算有效窗口。
+   */
+  applyContextWindowBudget?: (
+    sessionId: string,
+    change: { previous: number | null; next: number | null },
+  ) => Promise<void>;
 }
 let sessionWorktreeRecycle: SessionWorktreeRecycle | null = null;
 
+/**
+ * 会话当前 worktree 绑定的查询口。source of truth 是 worktreeStore（electron-store）：
+ * `sessions.worktree_path` 只是反范式快照，且回收后刻意保留历史值（徽标看 store
+ * 是否存在），所以不能用它当「是否仍持有 worktree」的判据。
+ */
+type SessionWorktreeBindingLookup = (sessionId: string) => string | null;
+let sessionWorktreeBindingLookup: SessionWorktreeBindingLookup | null = null;
+
+/** Composition-root injection keeps the localDb IPC layer independent of worktree implementation modules. */
+export function setSessionWorktreeBindingLookup(
+  lookup: SessionWorktreeBindingLookup | null,
+): void {
+  sessionWorktreeBindingLookup = lookup;
+}
 /** Composition-root injection keeps the localDb IPC layer independent of worktree implementation modules. */
 export function setSessionWorktreeRecycle(recycle: SessionWorktreeRecycle | null): void {
   sessionWorktreeRecycle = recycle;
@@ -426,6 +468,13 @@ function getSafeOwnerPushStamp(): ReturnType<typeof broadcastTap.getSafeDataOwne
  * 广播 sessions:patched 到本机所有窗口 + device-link tap。tap 让该 patch 经 topic 路由
  * 转发给订阅了 `sessions` 的控制端(push 驱动:控制端 applyPatch 即时镜像,无需重拉)。
  */
+let sessionStatusPatchedListener: ((sessionId: string) => void) | null = null;
+
+/** Archive / restore observer, set at registration so this module does not load teammate dependencies. */
+export function setSessionStatusPatchedListener(next: ((sessionId: string) => void) | null): void {
+  sessionStatusPatchedListener = next;
+}
+
 export function broadcastSessionPatched(
   sessionId: string,
   patch: Record<string, unknown>,
@@ -458,6 +507,14 @@ export function broadcastSessionPatched(
       sessionId,
       error: error instanceof Error ? error.message : String(error),
     });
+  }
+  // Archive / restore changes which open tasks a teammate's roster row links as followed.
+  if (patch.status !== undefined && !isProvisionalSession(sessionId)) {
+    try {
+      sessionStatusPatchedListener?.(sessionId);
+    } catch {
+      // Teammate roster refresh never blocks the task patch itself.
+    }
   }
   let windows: ReturnType<typeof BrowserWindow.getAllWindows> = [];
   try {
@@ -676,6 +733,9 @@ const REMOTE_PERSIST_FIELDS = new Set([
   'planModeEnabled',
   'extraDirs',
   'writableDirs',
+  // 任务级窗口预算：device-link 控制端改档位后，被控端需落库并广播，否则控制端
+  // 会拿旧值回滚自己的乐观 UI。
+  'contextWindowBudget',
 ]);
 
 /**
@@ -838,13 +898,66 @@ export async function persistSessionFields(
     if (persistableEffort === undefined) delete clean.effort;
     else clean.effort = persistableEffort;
   }
+  if (Object.prototype.hasOwnProperty.call(clean, 'contextWindowBudget')) {
+    // 镜像回流（被控端 → 本机）的值可能是旧版 peer / 手改偏好文件留下的越界值：
+    // store 的 clamp 会把越界值静默收敛（等于把本机预算改掉且没人知道），
+    // 这里显式归一化并留痕；非法值**跳过该字段**，不写偏好也不触发应用钩子。
+    const normalized = normalizeContextWindowBudget(clean.contextWindowBudget);
+    if (normalized === null && clean.contextWindowBudget !== null) {
+      console.warn('[sessions] dropping invalid mirrored context window budget', {
+        sessionId,
+        value: clean.contextWindowBudget,
+      });
+      delete clean.contextWindowBudget;
+    } else {
+      clean.contextWindowBudget = normalized;
+    }
+  }
   if (Object.keys(clean).length === 0) return;
   const db = getDbClient().drizzle;
-  const setObj = sessionPatchToRow(clean as Parameters<typeof sessionPatchToRow>[0], {
+  // 任务窗口预算不是会话列（见 session-context-budget-store 头注），单独走偏好文件；
+  // 其余字段照旧走行更新。
+  const hasBudgetChange = clean.contextWindowBudget !== undefined;
+  const previousContextWindowBudget: number | null = hasBudgetChange
+    ? readSessionContextWindowBudget(sessionId)
+    : null;
+  const rowPatch = { ...clean };
+  delete rowPatch.contextWindowBudget;
+  const setObj = sessionPatchToRow(rowPatch as Parameters<typeof sessionPatchToRow>[0], {
     bumpUpdatedAt: false,
   });
-  if (Object.keys(setObj).length === 0) return;
-  await db.update(sessions).set(setObj).where(eq(sessions.id, sessionId));
+  if (Object.keys(setObj).length > 0) {
+    await db.update(sessions).set(setObj).where(eq(sessions.id, sessionId));
+  } else if (!hasBudgetChange) {
+    return;
+  }
+  // 预算写偏好文件放在行更新**之后**：偏好文件不可读时 store 会拒绝写（保留坏文件给
+  // 人工修），若先写就会让同一个 patch 里的其它字段（改名、归档…）整包失败。
+  // 纯预算请求不能降级：那是用户唯一的意图，吞掉错误等于「看着成功、实际还是旧窗口」。
+  const budgetOnlyPatch = Object.keys(rowPatch).length === 0;
+  // 账号边界：偏好文件按「当下」账号的 userData 解析，而上面 db.update /
+  // 下面 apply 都是 await 出来的 —— 期间切账号时这条远程镜像更新必须整条作废
+  // （与 updateSessionInDb 同口径）。Greptile P1，2026-10-24。
+  const budgetScopeCurrent = isOwnerScopeCurrent(ownerScope);
+  let budgetWritten = false;
+  let nextContextWindowBudget: number | null = null;
+  if (hasBudgetChange && budgetScopeCurrent) {
+    try {
+      nextContextWindowBudget = writeSessionContextWindowBudget(
+        sessionId, (clean.contextWindowBudget as number | null) ?? null,
+      );
+      budgetWritten = true;
+    } catch (error) {
+      if (budgetOnlyPatch) throw error;
+      // 混合更新：其它字段已落库，只降级为「预算未保存」，并从广播里剔除这个键 ——
+      // 否则 UI 会显示一个没存下去的值（Greptile P1，2026-10-24）。
+      console.warn('[sessions] write context window budget failed; other fields already saved', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      delete clean.contextWindowBudget;
+    }
+  }
   let runtimeProjection = {};
   if (['model', 'providerId', 'effort', 'fastMode'].some((key) => key in clean)) {
     const [row] = await db.select({
@@ -857,6 +970,21 @@ export async function persistSessionFields(
     }
   }
   if (isOwnerScopeCurrent(ownerScope)) broadcastSessionPatched(sessionId, { ...clean, ...runtimeProjection }, ownerScope);
+  // 远程 set-* 落库后同样要把新预算应用到被控端活实例（语义与 updateSessionInDb 一致）。
+  if (budgetWritten && budgetScopeCurrent && isOwnerScopeCurrent(ownerScope)
+    && registeredSessionIpcOpts.applyContextWindowBudget) {
+    try {
+      await registeredSessionIpcOpts.applyContextWindowBudget(sessionId, {
+        previous: previousContextWindowBudget,
+        next: nextContextWindowBudget,
+      });
+    } catch (error) {
+      console.warn('[sessions] remote context window budget apply failed; takes effect on next start', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 }
 
 const MAX_LIMIT = 1000;
@@ -2014,6 +2142,10 @@ export function registerSessionIpc(
  * 会话操作工具(move / pin / delete 等)共用这一条路径:路由锁 + worktree 锁、
  * review 会话拒改、Pi/Codex 空闲 runtime 关闭、cc 转录目录搬迁、recent-workdir
  * 维护、sessions:patched 广播与 agent-island 通知都在这里,不得另起平行写入链路。
+ *
+ * 「绑定托管 worktree 的会话不得改到该 worktree 之外」是这里的不变量,所有入口
+ * (GUI 侧栏、MCP 工具、device-link)一并生效;GUI 侧的预检只为及时反馈,规则
+ * 以本函数为准,不得在入口层另立一份。
  */
 export async function updateSessionInDb(
   sid: string,
@@ -2060,6 +2192,21 @@ export async function updateSessionInDb(
     ) {
       throwIpcError('INVALID_PARAMS', `invalid orcaRole: ${String(p.orcaRole)}`);
     }
+    // 任务窗口预算：非法值不能静默 converge（normalize 会把 <1000 变成 null = 静默清预算、
+    // 把超大值静默夹到上限），而调用方收到的是成功回包。隧道入口与本地入口必须同口径拒绝。
+    if (
+      p.contextWindowBudget !== undefined &&
+      p.contextWindowBudget !== null &&
+      (typeof p.contextWindowBudget !== 'number' ||
+        !Number.isInteger(p.contextWindowBudget) ||
+        p.contextWindowBudget < MIN_CONTEXT_WINDOW_BUDGET ||
+        p.contextWindowBudget > MAX_CONTEXT_WINDOW_BUDGET)
+    ) {
+      throwIpcError(
+        'INVALID_PARAMS',
+        `contextWindowBudget must be null or an integer within [${MIN_CONTEXT_WINDOW_BUDGET}, ${MAX_CONTEXT_WINDOW_BUDGET}]`,
+      );
+    }
     if (typeof p.workingDir === 'string') {
       p.workingDir = normalizeWorkingDirForStorage(p.workingDir) ?? null;
     }
@@ -2068,6 +2215,7 @@ export async function updateSessionInDb(
       'workspaceKind',
       'model',
       'providerId',
+      'contextWindowBudget',
       'effort',
       'permissionMode',
       'fastMode',
@@ -2105,6 +2253,46 @@ export async function updateSessionInDb(
               .where(eq(sessions.id, sid))
           )[0]
         : undefined;
+    // worktree-handoff:worktree 会话的工作区边界就是它绑定的 worktree。只改 workingDir
+    // 会留下「半移动」—— 侧栏按新项目归组,而聊天框底部路径、Git 上下文、worktree
+    // store 归属与回收义务仍留在旧 worktree。完整的 worktree → Local Handoff 是独立
+    // 特性(#2190/#2585,需显式处置未提交改动与 worktree 归属),落地前这里拒绝把会话
+    // 移出 worktree;worktree 创建流程(基线目录 → 自己的 worktree)与同 worktree 内的
+    // no-op 不受影响。拦截发生在关 runtime / 写库 / 转录迁移之前,拒绝不留部分写入。
+    //
+    // 归属以 worktreeStore(组合层注入)为真源:旧版允许过的「半移动」会给会话留下
+    // working_dir 在普通项目、绑定仍在旧 worktree 的状态,只看 cwd 会漏掉这类存量行;
+    // 反过来,DB 的 worktree_path 快照在回收后仍保留历史值,也不能当活绑定用。
+    const requestedWorkingDir = typeof p.workingDir === 'string' ? p.workingDir : null;
+    // 显式清空(`workingDir: null`,或空串/空白串经上面的归一化变成 null)也是改归属:
+    // 字符串判据放它过去的话,worktree 会话会被摘掉工作目录,留下同一类归属分裂。
+    // 只当键真的出现且归一化后为 null 时才算清空(未传该键的 update 不落库,不能算)。
+    const clearsWorkingDir = Object.prototype.hasOwnProperty.call(p, 'workingDir') && p.workingDir === null;
+    if (
+      beforeMove &&
+      !beforeMove.remoteHostId &&
+      (requestedWorkingDir !== null || clearsWorkingDir) &&
+      (clearsWorkingDir || !workingDirEquals(requestedWorkingDir, beforeMove.workingDir))
+    ) {
+      // 归属真源:装了绑定查询(生产路径)就以 store 的答案为唯一依据 —— 返回 null 就是
+      // **没有活绑定**(worktree 已被回收的会话仍会留着历史 worktree 路径),此时不能再
+      // 从 cwd 反推,否则这些会话会被永久拦死;未装查询的场景(单测/裁剪引导)才退回 cwd。
+      let ownedWorktreeRoot: string | null = null;
+      if (sessionWorktreeBindingLookup) {
+        const liveWorktreePath = sessionWorktreeBindingLookup(sid);
+        ownedWorktreeRoot = liveWorktreePath ? managedWorktreeRoot(liveWorktreePath) : null;
+      } else if (beforeMove.workingDir) {
+        ownedWorktreeRoot = managedWorktreeRoot(beforeMove.workingDir);
+      }
+      const targetWorktreeRoot = requestedWorkingDir
+        ? managedWorktreeRoot(requestedWorkingDir)
+        : null;
+      if (ownedWorktreeRoot && !workingDirEquals(ownedWorktreeRoot, targetWorktreeRoot)) {
+        // 错误码与文案是跨进程契约:renderer 按它把这次拒绝映射成同一条 toast
+        // (shared/worktreeMoveGuardError.ts),两侧共用常量避免文案漂移。
+        throwIpcError(WORKTREE_MOVE_BLOCKED_CODE, WORKTREE_MOVE_BLOCKED_MESSAGE);
+      }
+    }
     const movingLocalNonClaudeSession =
       beforeMove &&
       beforeMove.agentKind !== 'cc' &&
@@ -2137,6 +2325,7 @@ export async function updateSessionInDb(
       'fastMode',
       'planModeEnabled',
       'providerId',
+      'contextWindowBudget',
       'orcaRole',
       'extraDirs',
       'writableDirs',
@@ -2146,7 +2335,11 @@ export async function updateSessionInDb(
       'title',
     ]);
     const isSettingsOnly = Object.keys(p).every((k) => SETTINGS_ONLY_FIELDS.has(k));
-    const setObj = sessionPatchToRow(p as Parameters<typeof sessionPatchToRow>[0], {
+    // 任务窗口预算不进入行更新（偏好文件才是它的真源）——从行 patch 里剔除，
+    // 否则 mapper 会把未知字段当成非法写入。
+    const rowPatch = { ...p };
+    delete rowPatch.contextWindowBudget;
+    const setObj = sessionPatchToRow(rowPatch as Parameters<typeof sessionPatchToRow>[0], {
       bumpUpdatedAt: !isSettingsOnly,
     });
     if (p.clearedAt !== undefined) {
@@ -2189,6 +2382,13 @@ export async function updateSessionInDb(
     // 先记号后写库,代价只是写库失败时该会话本进程内不再自动起名 —— 用户毕竟确实
     // 按下过保存,这个方向的偏差是安全的。
     if (typeof p.title === 'string') noteUserTitleWritten(sid);
+    // 窗口预算不是会话列（见 session-context-budget-store 头注）：旧值从偏好文件读，
+    // 下面的应用回调靠它判断「有效窗口是否真的变了」（已重新展开为同一值时不必关掉活实例）。
+    // 写入放在 UPDATE 之后（与广播同一顺序），保证 UI 先看到新选择。
+    const hasContextWindowBudgetChange = p.contextWindowBudget !== undefined;
+    const previousContextWindowBudget: number | null = hasContextWindowBudgetChange
+      ? readSessionContextWindowBudget(sid)
+      : null;
     let deletedSideChats: SessionsSetTerminalStatusResult['deletedSideChats'] | undefined;
     await withStatusWriteLock(
       db,
@@ -2331,6 +2531,46 @@ export async function updateSessionInDb(
     });
     scheduleWorktreeRecycleForStatusChange(sid, p.status, { ownerScope, mediaDb: db });
     notifyGhostSessionStatusChange(sid, p.status, updated.workingDir);
+    // 广播之后再把新预算应用到活实例：UI 先看到新选择，重建/延迟登记失败也不回滚设置。
+    // 只有本函数会写这份偏好，不存在平行写入链路；回调缺失（宿主未注入）时静默跳过，
+    // 新值在下次启动/恢复时按 start options 生效。
+    //
+    // 账号边界必须在这里**重新**核对：偏好文件按「当前」账号的 userData 解析
+    // （ownerScopedUserDataPath），而 DB 更新是 await 出来的 —— 期间切账号的话，
+    // 这条过期请求会把原任务的预算写进新账号的文件，原账号反而没保存
+    // （Greptile P1，2026-10-24；相邻广播本来就是同一口径）。
+    if (hasContextWindowBudgetChange && isOwnerScopeCurrent(ownerScope)) {
+      // 偏好文件不可读时 store 会拒绝写：行更新与广播都已提交，这里只能降级为
+      // 「预算未保存」（不回滚其它字段、也不让 IPC 报错盖掉已生效的改名等）——
+      // 用户在档位卡上会看到旧值，重设一次即可（GLM-5.3 独立审查，2026-10-24）。
+      let nextContextWindowBudget: number | null = null;
+      let budgetWritten = false;
+      try {
+        nextContextWindowBudget = writeSessionContextWindowBudget(sid, p.contextWindowBudget ?? null);
+        budgetWritten = true;
+      } catch (error) {
+        // 纯预算请求（`maker:set-context-window-budget` 就是这种）：这是用户唯一的
+        // 意图，必须让它失败，否则「看着成功、实际还是旧窗口」（Greptile P1，2026-10-24）。
+        if (Object.keys(p).every((key) => key === 'contextWindowBudget')) throw error;
+        console.warn('[sessions] write context window budget failed; row update already applied', {
+          sessionId: sid,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      if (budgetWritten && opts.applyContextWindowBudget) {
+        try {
+          await opts.applyContextWindowBudget(sid, {
+            previous: previousContextWindowBudget,
+            next: nextContextWindowBudget,
+          });
+        } catch (error) {
+          console.warn('[sessions] apply context window budget failed; takes effect on next start', {
+            sessionId: sid,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
     cleanupSessionTerminalArtifacts(sid, p.status);
     compactTerminalSessionToolResults(dbClient, sid, p.status);
     if (p.status === 'deleted' && updated.source !== 'side-chat') await deleteDependentSideChats(sid, dbClient, ownerScope, deletedSideChats);
@@ -3033,6 +3273,9 @@ function removeImAttachmentsIfStillDeleted(sessionId: string): Promise<void> {
 function cleanupSessionTerminalArtifacts(sessionId: string, status: unknown): void {
   if (status !== 'deleted' && status !== 'archived') return;
   if (status === 'deleted') {
+    try { removeSessionModelInterface(sessionId); } catch (error) {
+      log.warn('session interface snapshot cleanup failed', { sessionId, error: String(error) });
+    }
     void removeTurnChangeSetsForSession(sessionId).catch((err) => {
       log.warn('turn change-set cleanup failed', {
         sessionId,

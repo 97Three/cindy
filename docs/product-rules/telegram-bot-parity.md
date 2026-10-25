@@ -303,10 +303,20 @@ hook 侧既有的逐轮 `[渠道说明]`，两者措辞不同但都向模型说�
 | 4 | 受保护群内容的隐私边界 | 个人侧已做（出站回流 fail-closed，任一分片带保护标即整条不回流）。官方侧是否等价**待核** | 待核 |
 | 5 | 相册失败逐张回落 | 两侧都有实现，判据是否等价**待核** | 待核 |
 | 7 | **Bot API 更新类型两侧都只订阅一部分** | 个人：`allowed_updates = ['message', 'callback_query', 'my_chat_member']`（2026-10-17 补 `my_chat_member`：被拉进群 / 移出群进群窗口并私聊告知主人；群内升降管理员、私聊拉黑不产生动作）。仍没订阅：`edited_message`（用户改消息）、`message_reaction`（用户给 bot 消息点表情，群里还要 bot 是管理员）、`chat_member`（群成员进出）、`chat_join_request`、`channel_post`、inline / Web App / 支付 / 商业账号。出站也没有 inline 模式、Web App、支付。官方侧订阅集合**待核** | 两侧共同缺口，按需补；`message_reaction` 与 `chat_member` 对群场景价值最大，先补这两个 |
-| 6 | ack / 排队 / 结果表情 | 个人与官方 bot 都用 👀 表示排队；开始处理时从 👨‍💻 / 🤔 / 🤓 / ✍ 中随机选一个，两种开启档位均生效，不随进度轮换。正常完成和取消清除状态、不另加 👍；失败保留 👎（生动档沿用失败变体）。个人侧复用 `im/shared/turnRunner.ts` 的 ack 句柄，迟到回应由终态接管；官方新版 server 统一管理状态，鉴权后确认但不执行 Desktop 的自动 `:ack` / `:final` / `:final-fallback` 表情，`:processing` 只触发一次处理中状态，避免旧客户端重新加上 👍。表情关闭、ambient 或群不允许时静默；两种传输均为尽力反馈。 | 两仓配套实现。新版 server 可先发，旧 Desktop 的 accepted/首帧 progress 触发处理中；新版 Desktop 连旧 server 仍兼容 msg.op，但旧 server 的独立成功表情须升级 server 才能彻底消除。无协议字段、数据库或平台配置变更。 |
+| 6 | ack / 排队 / 结果表情 | 个人与官方 bot 都用 👀 表示排队；开始处理时从 🤔 / 🤓 / ✍ 中随机选一个，两种开启档位均生效，不随进度轮换。正常完成和取消清除状态、不另加 👍；失败保留 👎（生动档沿用失败变体）。个人侧复用 `im/shared/turnRunner.ts` 的 ack 句柄，迟到回应由终态接管；官方新版 server 统一管理状态，鉴权后确认但不执行 Desktop 的自动 `:ack` / `:final` / `:final-fallback` 表情，`:processing` 只触发一次处理中状态，避免旧客户端重新加上 👍。表情关闭、ambient 或群不允许时静默；两种传输均为尽力反馈。 | 两仓配套实现。新版 server 可先发，旧 Desktop 的 accepted/首帧 progress 触发处理中；新版 Desktop 连旧 server 仍兼容 msg.op，但旧 server 的独立成功表情须升级 server 才能彻底消除。新增可选 `hello.statusReactions` 声明客户端样式，旧 server 忽略，旧客户端沿用 server 默认；无数据库或平台配置变更。 |
+
+官方 Slack / Telegram 的状态表情样式由客户端通过 `hello.statusReactions` 下发，
+服务端只保留生命周期、实际表情清理与平台回落；重连重新声明，按原任务设备隔离。
+Telegram 个人 bot、官方旧服务端兼容回应与 hello 声明复用同一份客户端变体池。
+新旧任一端未支持时仍使用兼容默认值，不影响任务执行；两端升级后换肤色或变体只改客户端。
+
+处理中人物表情优先使用浅肤色女士：Slack 用 `female-technologist::skin-tone-2`，Discord 用 👩🏻‍💻，均保留原有
+思考、书写变体。Telegram 标准 reaction 不支持 👩‍💻，因此个人与官方 bot 均只用
+🤔 / 🤓 / ✍，基础回落为 🤔。飞书 / Lark 继续使用平台原生 `Typing` / `THINKING` /
+`SMART` / `OnIt`，不传不受支持的 Unicode 表情。
 
 官方 Desktop 连旧 `msg-op-v1` server 时，处理中变体被拒后复用既有回落表，使用独立
-`:processing-fallback` 幂等键尝试基础款 👨‍💻 一次；完成、取消或账号收口后丢弃迟到的
+`:processing-fallback` 幂等键尝试基础款 🤔 一次；完成、取消或账号收口后丢弃迟到的
 处理中回执，不在重连时补发处理中状态。新 server 成功确认 `:processing` 后不会触发此回落。
 个人渠道切换表情时，删除失败向共享 turn runner 返回错误，保留旧 token 给终态再清理，
 避免飞书／Discord 同时遗留旧排队表情和新处理中表情；最终清理仍是尽力而为。
