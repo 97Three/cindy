@@ -246,6 +246,8 @@ import {
   ensureBotChannelLaneSession,
   findBotChannelLaneSession,
   registerBotIpc,
+  createBotProfile,
+  setBotProfileAvatar,
   updateBotProfile as updateStoredBotProfile,
   getBotRemoteResourceSource,
   listBotRemoteResourceSources,
@@ -1356,6 +1358,37 @@ describe('Bot canonical Session lifecycle', () => {
       await expect(prepareImportedBotInvitation('archived-native', 'native-request')).rejects.toThrow('[NOT_FOUND]');
       expect(queued).not.toHaveBeenCalled();
     } finally { queued.mockRestore(); }
+  });
+
+  // #6897 (DB tier): a disposable sync file cannot be the only guard against
+  // publishing a fallback. Existing avatar tests never persisted this provenance.
+  it('persists cloud fallback provenance with the avatar and only releases it for a real image', async () => {
+    const created = await createBotProfile({ name: 'Restored fallback', avatar: '🤖' }, { avatarFallback: true });
+    const readProvenance = (botId = created.id) => {
+      const row = h.sqlite!.prepare(`SELECT v.capabilities_json AS json FROM bot_profiles p
+        JOIN bot_profile_versions v ON v.bot_id = p.id AND v.version = p.current_version WHERE p.id = ?`)
+        .get(botId) as { json: string };
+      return JSON.parse(row.json).cloudAvatarFallback;
+    };
+    expect(readProvenance()).toBe(true);
+    await updateStoredBotProfile({ id: created.id, name: 'Renamed fallback',
+      capabilities: { cloudAvatarFallback: false } });
+    expect(readProvenance()).toBe(true);
+    await updateStoredBotProfile({ id: created.id, avatar: '🦊' }, undefined, undefined, { avatarFallback: false });
+    expect(readProvenance()).toBeUndefined();
+    await updateStoredBotProfile({ id: created.id, avatar: '🤖' }, undefined, undefined, { avatarFallback: true });
+    expect(readProvenance()).toBe(true);
+    const original = await createBotProfile({ name: 'Real image source' });
+    const image = { buffer: readFileSync(resolveSafe(original.avatar).absPath), mimeType: 'image/png' };
+    await expect(setBotProfileAvatar(created.id, image, 0)).rejects.toThrow('PRECONDITION_FAILED');
+    expect(readProvenance()).toBe(true);
+    const updated = await setBotProfileAvatar(created.id, image);
+    expect(updated.avatar).toBe(original.avatar);
+    expect(readProvenance()).toBeUndefined();
+    await updateStoredBotProfile({ id: created.id, capabilities: { cloudAvatarFallback: true } });
+    expect(readProvenance()).toBeUndefined();
+    const untrusted = await createBotProfile({ name: 'Ordinary emoji', avatar: '🤖', capabilities: { cloudAvatarFallback: true } });
+    expect(readProvenance(untrusted.id)).toBeUndefined();
   });
 
   it('creates a real gallery portrait when the shared tool entry receives only a name', async () => {

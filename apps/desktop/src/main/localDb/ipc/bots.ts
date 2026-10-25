@@ -1739,13 +1739,16 @@ export async function setBotProfileAvatar(botId: string, image: { buffer: Buffer
     // loses a race, the unreferenced content-addressed blob is recycler-safe.
     ownerBoundary.assertCurrent();
     const written = await storeTeammateAvatarImage(image, db, ownerBoundary.assertCurrent);
+    const capabilities = parseJson(version.capabilitiesJson);
+    const clearsFallback = capabilities.cloudAvatarFallback === true;
+    delete capabilities.cloudAvatarFallback;
     const now = Date.now();
     await client.tx('bots.updateProfile', {
       id: botId,
       avatar: written.url,
       identitySource: version.identitySource,
-      capabilitiesJson: version.capabilitiesJson,
-      profileContentChanged: false,
+      capabilitiesJson: safeJson(capabilities),
+      profileContentChanged: clearsFallback,
       expectedCurrentVersion: current.currentVersion,
       expectedAvatar: expectedAvatar ?? current.avatar,
       botAvatarRef: { id: randomUUID(), hash: written.hash, createdAt: now },
@@ -1760,9 +1763,11 @@ export async function setBotProfileAvatar(botId: string, image: { buffer: Buffer
 
 /**
  * Trusted, main-only inputs of a companion restored from the cloud (cloud-companions.md §3.1):
- * the preset it was made from. Never reachable from a renderer or model body.
+ * the preset it was made from and provenance of a local stand-in avatar.
+ * Never reachable from a renderer or model body. The stand-in marker lives in
+ * the profile transaction, not in disposable companion sync bookkeeping.
  */
-export interface RestoredBotOrigin { templateId?: unknown }
+export interface RestoredBotOrigin { templateId?: unknown; avatarFallback?: boolean }
 
 /** Main-owned creation path shared by the renderer and Bot runtime tools. */
 export async function createBotProfile(raw: unknown, restored?: RestoredBotOrigin) {
@@ -1837,6 +1842,8 @@ export async function createBotProfile(raw: unknown, restored?: RestoredBotOrigi
   // Progress is main-owned; callers can request an invitation, never supply its result.
   delete persistedCapabilities.invitation;
   delete persistedCapabilities.templateId;
+  delete persistedCapabilities.cloudAvatarFallback;
+  if (restored?.avatarFallback === true) persistedCapabilities.cloudAvatarFallback = true;
   if (templateId) persistedCapabilities.templateId = templateId;
   else if (isBotTemplatePresetId(restored?.templateId)) persistedCapabilities.templateId = restored.templateId;
   if (prepareInvitation) persistedCapabilities.invitation = {
@@ -2043,6 +2050,11 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
   // Keep preparation checkpoints outside caller-editable capabilities.
   if (previous.invitation) nextConfig.invitation = previous.invitation;
   else delete nextConfig.invitation;
+  // Only cloud restoration can set/reset this provenance; ordinary settings
+  // edits (including stale full-form saves) cannot release it. A real image
+  // clears it atomically in setBotProfileAvatar.
+  if (restored?.avatarFallback ?? (previous.cloudAvatarFallback === true)) nextConfig.cloudAvatarFallback = true;
+  else delete nextConfig.cloudAvatarFallback;
   if (Object.prototype.hasOwnProperty.call(body, 'userContextSource')) {
     nextConfig.userContextSource = readText(body.userContextSource, 'userContextSource', 12000);
   }

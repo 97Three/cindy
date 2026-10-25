@@ -42,11 +42,6 @@ const bot = z.object({
   /** The never-synced local copy was backed up before a take-over; retries do not back it up again. */
   backedUp: z.boolean().optional(),
   /**
-   * The cloud image could not be restored, so this copy shows the default avatar.
-   * That default must not be published back over the cloud address.
-   */
-  avatarKept: z.boolean().optional(),
-  /**
    * What the last take-over could not keep of the old setup (cloud-companions.md §2): shown once
    * after the move, then cleared by the owner.
    */

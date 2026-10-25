@@ -45,7 +45,10 @@ export function avatarDownloadMaySucceedLater(error: unknown, signal?: AbortSign
 }
 
 export async function restoreCloudAvatar(avatar: string | null, signal?: AbortSignal): Promise<RestoredCloudAvatar> {
-  if (!avatar?.startsWith('https://')) return { portable: portableBotAvatarOrFallback(avatar) };
+  if (!avatar?.startsWith('https://')) {
+    const portable = portableBotAvatarOrFallback(avatar);
+    return portable === avatar ? { portable } : { portable, fallback: true };
+  }
   try {
     const { buffer } = await fetchPublicImageBytes(avatar, BOT_AVATAR_MAX_BYTES, undefined, { signal, timeoutMs: AVATAR_FETCH_TIMEOUT_MS });
     validateBotAvatarBuffer(Buffer.from(buffer));

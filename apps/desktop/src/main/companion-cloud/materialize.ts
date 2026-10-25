@@ -31,22 +31,21 @@ export interface CompanionMaterializeHost {
   readProfile: (botId: string) => Promise<CompanionLocalProfile | null>;
   /**
    * The cloud avatar is restored when its bytes are still available. A temporary download failure
-   * rejects; a permanent one stores the default avatar and returns `avatarFallback`, which must
-   * not be published back over the cloud address.
+   * rejects; a permanent one stores the default avatar together with durable local-only provenance.
    */
   createProfile: (input: {
     id: string; name: string; description: string; identitySource: string; userContextSource: string; avatar: string | null;
     /** The preset the companion was made from (the cloud profile's `templateId`). */
     templateId?: string;
-  }, fence: CompanionWriteFence) => Promise<{ avatarFallback?: boolean } | void>;
+  }, fence: CompanionWriteFence) => Promise<void>;
   /**
    * Also makes the profile active again. Undefined fields stay unchanged; a restored cloud avatar
-   * replaces the local one. A permanent download failure uses the default and returns `avatarFallback`.
+   * replaces the local one. A permanent download failure persists the default with local-only provenance.
    */
   updateProfile: (input: {
     id: string; name: string; description?: string; identitySource?: string; userContextSource?: string; avatar: string | null;
     templateId?: string;
-  }, fence: CompanionWriteFence) => Promise<{ avatarFallback?: boolean } | void>;
+  }, fence: CompanionWriteFence) => Promise<void>;
   /**
    * Apply the companion's portable capability setup (capabilities.ts): references stay even when
    * this computer lacks them, a model chain that is not usable here falls back to the default.
@@ -162,19 +161,17 @@ export async function materializeCompanion(input: {
   }
   const name = text(profile?.name)?.trim() || actor.name || local?.displayName || '伙伴';
   const templateId = text(record(profile)?.templateId);
-  let restored: { avatarFallback?: boolean } | void;
   if (!local) {
-    restored = await step(() => host.createProfile({ id: botId, name, description: text(profile?.description) ?? '',
+    await step(() => host.createProfile({ id: botId, name, description: text(profile?.description) ?? '',
       identitySource: text(profile?.soul) ?? '', userContextSource: text(profile?.user) ?? '', avatar: actor.avatar,
       ...(templateId ? { templateId } : {}) }, fence));
     // From here the copy exists, so a retry no longer sees it as new: remember the permission reset now.
     state.update(botId, actor.id, entry => { entry.arrivalNotices = [...new Set([...(entry.arrivalNotices ?? []), 'permissions' as const])]; });
   } else {
-    restored = await step(() => host.updateProfile({ id: botId, name, description: text(profile?.description),
+    await step(() => host.updateProfile({ id: botId, name, description: text(profile?.description),
       identitySource: text(profile?.soul), userContextSource: text(profile?.user), avatar: actor.avatar,
       ...(templateId ? { templateId } : {}) }, fence));
   }
-  const avatarFallback = restored?.avatarFallback === true;
   const systemPrompt = text(profile?.systemPrompt);
   if (systemPrompt !== undefined) await step(() => host.writeSystemPrompt(botId, systemPrompt, fence));
 
@@ -312,9 +309,7 @@ export async function materializeCompanion(input: {
     delete entry.demoted;
     // The next take-over (after this copy hands the companion away again) backs it up anew.
     delete entry.backedUp;
-    // A stand-in avatar stays local. Publishing it would replace the cloud image that could not be read.
-    if (avatarFallback) entry.avatarKept = true;
-    else delete entry.avatarKept;
+
   });
   return { created: !local, inserted, rebuild, notices, ...(backup !== undefined ? { backup } : {}) };
 }

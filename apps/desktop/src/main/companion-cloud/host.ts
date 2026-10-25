@@ -173,8 +173,7 @@ function createMaterializer(input: {
       fence.assertCurrent();
       await createBotProfile({ id, name: name.slice(0, 200), description, identitySource, userContextSource,
         ...('portable' in restored ? { avatar: restored.portable } : { avatarImageBase64: restored.imageBase64 }) },
-      { templateId });
-      return { avatarFallback: 'fallback' in restored && restored.fallback === true };
+      { templateId, avatarFallback: 'fallback' in restored && restored.fallback === true });
     },
     updateProfile: async ({ id, name, description, identitySource, userContextSource, avatar, templateId }, fence) => {
       const restored = await restoreCloudAvatar(avatar, fence.signal);
@@ -183,13 +182,13 @@ function createMaterializer(input: {
         ...(description !== undefined ? { description } : {}),
         ...(identitySource !== undefined ? { identitySource } : {}),
         ...(userContextSource !== undefined ? { userContextSource } : {}),
-        ...('portable' in restored ? { avatar: restored.portable } : {}) }, undefined, undefined, { templateId });
+        ...('portable' in restored ? { avatar: restored.portable } : {}) }, undefined, undefined,
+      { templateId, avatarFallback: 'portable' in restored ? restored.fallback === true : undefined });
       if ('imageBase64' in restored) {
         const image = decodeBotAvatarImage(restored.imageBase64);
         fence.assertCurrent();
         if (image) await setBotProfileAvatar(id, image);
       }
-      return { avatarFallback: 'fallback' in restored && restored.fallback === true };
     },
     applyCapabilities: async (botId, value, fence) => {
       // Only the same provider + model that this computer can use is kept (no credential travels);

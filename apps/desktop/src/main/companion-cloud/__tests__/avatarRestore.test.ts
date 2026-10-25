@@ -15,9 +15,20 @@ const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 describe('restoreCloudAvatar', () => {
   it('keeps a portable avatar without downloading it', async () => {
     fetchPublicImageBytes.mockReset();
-    await expect(restoreCloudAvatar('🦊')).resolves.toEqual({ portable: '🦊' });
+    for (const avatar of ['🦊', '🤖', 'cindy://avatar/cindy']) {
+      await expect(restoreCloudAvatar(avatar)).resolves.toEqual({ portable: avatar });
+    }
     expect(fetchPublicImageBytes).not.toHaveBeenCalled();
   });
+
+  // #6897: replacement values must never become an edit to the cloud identity.
+  it.each([null, '', 'http://cdn.example/avatar.png', `cindy-media://blobs/${'a'.repeat(64)}.png`])(
+    'marks a nonportable cloud avatar %s as a local stand-in', async avatar => {
+      fetchPublicImageBytes.mockReset();
+      await expect(restoreCloudAvatar(avatar)).resolves.toEqual({ portable: '🤖', fallback: true });
+      expect(fetchPublicImageBytes).not.toHaveBeenCalled();
+    },
+  );
 
   it('stores image bytes when the public address still serves an image', async () => {
     fetchPublicImageBytes.mockResolvedValue({ buffer: png, mimeType: 'image/png' });
