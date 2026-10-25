@@ -11,7 +11,6 @@ import { getCachedDeviceProviders } from '@/device-link/deviceProvidersCache';
 import { MountOnFirstOpen } from '@/session/MountOnFirstOpen';
 import { RunningTokenRatePopover } from '@/session/RunningTokenRatePopover';
 import { companionConversationItems } from '@/session/companionConversationPresentation';
-import { conversationSearchCompanionParams } from '@/session/conversationSearch';
 import { useRunningTokenRateHistory } from '@/session/useRunningTokenRateHistory';
 import { HomeHeaderGlassButton } from '@/session/HomeHeaderGlassButton';
 import { HomeNewTaskButton } from '@/session/HomeNewTaskButton';
@@ -3139,7 +3138,7 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
     const focusClientId = 'searchFocusClientId' in item
       ? (item as { searchFocusClientId?: string }).searchFocusClientId
       : undefined;
-    if (targetSession.id === sessionId && !focusClientId) {
+    if (targetSession.id === sessionId && !focusClientId && !('searchLocallyCached' in item)) {
       closeSessionListDrawer();
       return;
     }
@@ -3168,7 +3167,6 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
         deviceName: targetSession.deviceLinkDeviceName ?? targetDeviceId,
         sessionId: targetSession.id,
         ...(focusClientId ? { focusClientId } : {}),
-        ...conversationSearchCompanionParams(item),
       });
     });
   }, [closeSessionListDrawer, navigation, queueDrawerNavigation, sessionId, t]);
