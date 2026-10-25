@@ -83,6 +83,22 @@ export interface GitExecOpts {
    * 省略 = 不超时。
    */
   timeoutMs?: number;
+  /** Optional absolute performance.now() deadline shared by ownership repair and retries. */
+  deadlineAtMs?: number;
+  /** Called immediately after the git child is spawned. */
+  onSpawn?: (pid: number) => void;
+}
+
+/** Check the caller's monotonic budget before starting another repair step. */
+function remainingDeadlineMs(deadlineAtMs: number | undefined, args: readonly string[]): number | undefined {
+  if (deadlineAtMs === undefined) return undefined;
+  const remaining = Math.ceil(deadlineAtMs - performance.now());
+  if (remaining <= 0) {
+    throw new GitExecError({
+      args, exitCode: null, stdout: '', stderr: 'Git operation deadline exceeded', timedOut: true,
+    });
+  }
+  return remaining;
 }
 
 /** POSIX 超时后 SIGTERM → SIGKILL 的宽限期:给 git 留出清理 .lock 的时间窗。 */
@@ -158,6 +174,50 @@ async function queryWin32ProcessTable(
 }
 
 /**
+ * Check whether a detached git process or one of its descendants remains.
+ * Unknown process-table state is protective because reclaim must never race a
+ * filter/helper that still has the worktree open.
+ */
+export async function isGitProcessTreeAlive(pid: number): Promise<boolean> {
+  if (pid <= 0) return true;
+  if (process.platform !== 'win32') {
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+    }
+  }
+  if (pidMayBeAliveForGit(pid)) return true;
+  const rows = await queryWin32ProcessTable();
+  if (!rows) return true;
+  // Once the root has exited, a Windows snapshot may have already reparented
+  // or dropped its descendants. Missing ancestry cannot prove the tree is gone.
+  if (!rows.some((row) => row.pid === pid)) return true;
+  const descendants = new Set([pid]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const row of rows) {
+      if (descendants.has(row.ppid) && !descendants.has(row.pid)) {
+        descendants.add(row.pid);
+        changed = true;
+      }
+    }
+  }
+  return descendants.size > 1;
+}
+
+function pidMayBeAliveForGit(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
+/**
  * 执行一次 git, 不做 dubious-ownership 自动重试(底层用)。
  */
 function execFileOnce(
@@ -165,8 +225,11 @@ function execFileOnce(
   cwd?: string,
   opts?: GitExecOpts,
 ): Promise<GitExecResult> {
-  const diagnostic = beginExecFileDiagnostic('worktree.git');
   return new Promise((resolve, reject) => {
+    const remaining = remainingDeadlineMs(opts?.deadlineAtMs, args);
+    const timeoutMs = remaining === undefined ? opts?.timeoutMs
+      : Math.min(remaining, opts?.timeoutMs && opts.timeoutMs > 0 ? opts.timeoutMs : remaining);
+    const diagnostic = beginExecFileDiagnostic('worktree.git');
     // 超时不走 execFile 内建 timeout:它只终止直接子进程,且回调要等 stdout/stderr
     // 流关闭——被后代进程继承并占住时回调可能远超 deadline 才来。这里自管定时器,
     // 超时先终止整棵进程树/进程组(两个平台都含后代),再显式收口 Promise。
@@ -271,6 +334,7 @@ function execFileOnce(
           resolveWithResult({ stdout: stdoutStr, stderr: stderrStr });
         },
       );
+      if (child.pid !== undefined) opts?.onSpawn?.(child.pid);
     } catch (error) {
       const cause = error instanceof Error ? error : new Error(String(error));
       rejectWithGitError(
@@ -443,7 +507,6 @@ function execFileOnce(
       reaper.unref?.();
     }
 
-    const timeoutMs = opts?.timeoutMs;
     if (timeoutMs !== undefined && timeoutMs > 0) {
       timer = setTimeout(() => {
         startTreeCleanup((treeConfirmedGone) =>
@@ -520,7 +583,7 @@ export function safeDirectorySpellings(p: string): string[] {
  * 失败)必须向上抛,否则会把「读不到」误判成「未配置」而重复 --add,反而制造出
  * 本条修复要避免的重复条目。
  */
-async function readGlobalSafeDirectories(opts?: Pick<GitExecOpts, 'timeoutMs'>): Promise<string[]> {
+async function readGlobalSafeDirectories(opts?: Pick<GitExecOpts, 'timeoutMs' | 'deadlineAtMs'>): Promise<string[]> {
   try {
     const { stdout } = await execFileOnce(['config', '--global', '--get-all', 'safe.directory'], undefined, opts);
     return stdout
@@ -542,11 +605,15 @@ async function readGlobalSafeDirectories(opts?: Pick<GitExecOpts, 'timeoutMs'>):
  * dubious-ownership 错误还给调用方,而不是退化成并发写入重复条目。用底层
  * execFileOnce 而非 gitExec, 防止递归进入 dubious-ownership 分支。
  */
-async function ensureGlobalSafeDirectory(targetPath: string, opts?: Pick<GitExecOpts, 'timeoutMs'>): Promise<void> {
+async function ensureGlobalSafeDirectory(targetPath: string, opts?: Pick<GitExecOpts, 'timeoutMs' | 'deadlineAtMs'>): Promise<void> {
+  const configArgs = ['config', '--global', 'safe.directory'];
+  const remaining = remainingDeadlineMs(opts?.deadlineAtMs, configArgs);
   await withCrossProcessLock(
     globalSafeDirectoryLockPath(),
-    { label: 'git-safe-directory', waitMs: 1_000 },
+    { label: 'git-safe-directory', waitMs: Math.min(1_000, remaining ?? 1_000) },
     async (status) => {
+      // Lock acquisition may finish after its wait budget; never start Git then.
+      remainingDeadlineMs(opts?.deadlineAtMs, configArgs);
       if (!status.held) {
         throw new Error('could not acquire the global safe.directory lock');
       }
@@ -583,7 +650,9 @@ export async function gitExec(
       const dubiousPath = extractDubiousPath(err.stderr) ?? cwd;
       if (dubiousPath) {
         try {
-          await ensureGlobalSafeDirectory(dubiousPath, { timeoutMs: opts?.timeoutMs });
+          await ensureGlobalSafeDirectory(dubiousPath, {
+            timeoutMs: opts?.timeoutMs, deadlineAtMs: opts?.deadlineAtMs,
+          });
           // 配完 safe.directory 后重试原命令
           return await execFileOnce(args, cwd, opts);
         } catch (cause) {

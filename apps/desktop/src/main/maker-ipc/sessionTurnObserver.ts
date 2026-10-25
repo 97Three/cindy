@@ -1,5 +1,5 @@
 import type { Session } from '@cindy/maker-core';
-import { publishChannelTurn } from './channelTurnSignal';
+import { publishChannelTurn, publishProviderInitiatedTurn } from './channelTurnSignal';
 import { MANAGED_LLAMACPP_PROVIDER_ID } from '../../shared/llamaCpp.js';
 import { ensureManagedOllamaReadyForSession } from '../local-model-runtime/preflight.js';
 import { createLogger } from '../logger.js';
@@ -9,6 +9,7 @@ import { isProviderShareAgentDeviceId } from '../../shared/providerShare.js';
 import { verdictForModelRoute } from '../maker-host/model-route-guard-live.js';
 import { describeModelRouteRejection } from '../maker-host/model-route-guard.js';
 import { SilentStopTurnLeaseGate, SessionTurnLeaseTracker } from './sessionTurnLease.js';
+import { prepareBotPermissionDispatch } from './botPermissionDispatch.js';
 
 export interface InstallSessionTurnObserverDeps {
   readonly beforeLocalProviderStart?: (session: Session) => Promise<void>;
@@ -25,12 +26,16 @@ export interface InstallSessionTurnObserverDeps {
 }
 
 export function installSessionTurnObserver(deps: InstallSessionTurnObserverDeps, session: Session) {
+  let assertPermissionDispatch: (() => void) | undefined;
   session.setTurnLifecycleObserver({
+    onDispatching: () => assertPermissionDispatch?.(),
     beforeProviderStart: async (turnGeneration) => {
+      assertPermissionDispatch = undefined;
       if (session.remoteHostId) {
         await publishChannelTurn(session, 'starting');
         return;
       }
+      assertPermissionDispatch = await prepareBotPermissionDispatch(session);
       await deps.beforeLocalProviderStart?.(session);
       // 每条本地 Session.send 都经过这一个 Main-owned 边界，包括 renderer、IM、
       // Goal、Learn、Hook 与 Scheduler。付费权限不能只挂在普通 IPC 发送事务上。
@@ -101,6 +106,11 @@ export function installSessionTurnObserver(deps: InstallSessionTurnObserverDeps,
         session.id,
         deps.providerTurnLeaseId(session.instanceId, turnGeneration),
       );
+    },
+    onProviderInitiatedTurn: () => {
+      // Harness wake-ups (Claude Code background task notifications) skip beforeProviderStart.
+      // IM relay decides synchronously inside this call, before the first event fans out.
+      void publishProviderInitiatedTurn(session);
     },
     onTerminal: ({ turnGeneration, event, isCurrentGeneration }) => {
       if (session.remoteHostId) return;

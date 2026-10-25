@@ -1,3 +1,4 @@
+import { builtInSkillsRoot, sharedBuiltInSkillsRoot } from '../maker-host/built-in-skill-activation';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -81,8 +82,24 @@ export function readDisabledSkillPaths(): readonly string[] {
   return [...new Set(paths)];
 }
 
+/** Listing receives stored intent; resolving user aliases happens in its worker. */
+export function readDisabledSkillPathsForListing(): readonly string[] {
+  store.invalidateIfChanged();
+  return [...store.read().disabledPaths];
+}
+
 export function isCindySkillEnabled(source: string): boolean {
   return !readDisabledSkillPaths().includes(skillActivationKey(source));
+}
+
+/** Listing fallback reads stored intent only; never walks user discovery aliases. */
+export function isCindyLearnSkillEnabledForListing(descriptors: readonly { name: string }[]): boolean {
+  if (!descriptors.some((skill) => skill.name === BUILT_IN_LEARN_SKILL_NAME)) return false;
+  const disabled = readDisabledSkillPathsForListing();
+  return ![
+    path.join(builtInSkillsRoot(app.getPath('userData')), BUILT_IN_LEARN_SKILL_NAME),
+    path.join(sharedBuiltInSkillsRoot(app.getPath('appData')), BUILT_IN_LEARN_SKILL_NAME),
+  ].some((value) => disabled.includes(process.platform === 'win32' ? value.toLowerCase() : value));
 }
 
 export function isCindyLearnSkillEnabled(): boolean {
@@ -91,6 +108,14 @@ export function isCindyLearnSkillEnabled(): boolean {
     app.getPath('appData'),
   ).find((skill) => skill.name === BUILT_IN_LEARN_SKILL_NAME);
   return descriptor ? isCindySkillEnabled(descriptor.absolutePath) : false;
+}
+
+/** Listing reads user intent; execution checks the current Skill's integrity. */
+export function isCindyLearnSkillEnabledForCommandListing(): boolean {
+  // Use the same active path as execution, without enumerating or hashing files.
+  // A retired profile copy must not veto an explicitly reenabled shared copy.
+  const source = path.join(sharedBuiltInSkillsRoot(app.getPath('appData')), '.active', BUILT_IN_LEARN_SKILL_NAME);
+  return !readDisabledSkillPathsForListing().includes(skillActivationKey(source));
 }
 
 export interface SkillActivationSnapshot { key: string; revision?: string; aliases: string[] }

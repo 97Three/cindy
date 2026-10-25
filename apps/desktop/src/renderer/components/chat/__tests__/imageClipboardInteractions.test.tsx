@@ -84,6 +84,7 @@ afterEach(async () => {
 
 const label = (key: string) => i18n.t(key);
 async function copyFromMenu(image: HTMLElement) {
+  fireEvent.load(image);
   fireEvent.contextMenu(image, { clientX: 30, clientY: 40 });
   fireEvent.click(await screen.findByRole('menuitem', { name: label('chat.media.copyImage') }));
 }
@@ -112,9 +113,18 @@ describe('shared production image interactions', () => {
         expect(fileCopy).toHaveBeenCalledWith({ filePath: '/fixture/preview.png' }),
       );
       expect(toast.success).toHaveBeenCalledWith(label('chat.media.imageCopied'));
-      // The message toolbar copies Markdown text, never the image or its path.
-      fireEvent.click(screen.getByRole('button', { name: label('chat.messageActionBar.copy') }));
-      expect(writeText).toHaveBeenCalledWith('![preview](/fixture/preview.png)');
+      // The message toolbar copies Markdown text, never the image or its path. A teammate
+      // reply hangs the compact toolbar beside its bubble, with Copy inside More.
+      if (simplified) {
+        fireEvent.pointerDown(
+          screen.getByRole('button', { name: label('chat.messageActionBar.moreActions') }),
+          { button: 0, ctrlKey: false },
+        );
+        fireEvent.click(screen.getByRole('menuitem', { name: label('chat.messageActionBar.copy') }));
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: label('chat.messageActionBar.copy') }));
+      }
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith('![preview](/fixture/preview.png)'));
       expect(nativeCopy).not.toHaveBeenCalled();
     },
   );
@@ -266,6 +276,11 @@ describe('shared production image interactions', () => {
     const img = screen.getByAltText('preview');
     const remoteSrc = img.getAttribute('src')!;
     expect(parseRemoteMediaUrl(remoteSrc)?.origUrl).toBe(managed);
+    expect(screen.getByRole('status').getAttribute('aria-label')).toBe(label('chat.imageMissing.loading'));
+    expect(img.style.display).toBe('none');
+    fireEvent.load(img);
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+    expect(img.style.display).toBe('');
     await copyFromMenu(img);
     await waitFor(() => expect(nativeCopy).toHaveBeenCalled());
     expect(readBytes).toHaveBeenCalledWith({ url: remoteSrc });

@@ -65,6 +65,12 @@ export interface HistoryWorkdir {
   agentKinds: string[];
 }
 
+export interface HistoryCompanion {
+  id: string;
+  role: string;
+  channel?: string;
+}
+
 export interface HistorySession {
   id: string;
   title: string;
@@ -75,11 +81,21 @@ export interface HistorySession {
   status: string;
   source: string;
   orcaRole: string | null;
+  orcaRemoteLead?: {
+    leadDeviceId: string;
+    leadDeviceName: string;
+    leadSessionId: string;
+    leadTitle: string;
+    workerLabel: string;
+    releasedAt?: number;
+  };
   parentSessionId: string | null;
   createdAt: number; // unix ms
   updatedAt: number;
   userSendAt: number | null;
   messageCount: number;
+  lastActivityAt?: number;
+  companion?: HistoryCompanion | null;
 }
 
 export interface HistoryMessage {
@@ -107,6 +123,10 @@ export interface ListWorkdirsArgs {
 }
 
 export interface ListSessionsArgs {
+  /** Optional filters, intersected with the host-authorized scope. */
+  teammateId?: string;
+  source?: string;
+  timeField?: 'created' | 'activity';
   /** Host-owned ownership scope. null = account history; [] = deny all. */
   sessionIds: string[] | null;
   workdir: string | null;
@@ -142,6 +162,8 @@ export interface GetMessagesArgs {
 // 上下文窗口拼装; 向量不可用 / 未开 embedding 时静默退化为纯 FTS。
 
 export interface SearchChatHistoryArgs {
+  teammateId?: string;
+  source?: string;
   /** 自然语言查询(必填)。 */
   query: string;
   sessionIds: string[] | null;
@@ -193,6 +215,8 @@ export interface SearchChatHistoryHit {
 }
 
 export interface SearchChatHistorySessionMeta {
+  source?: string;
+  companion?: HistoryCompanion | null;
   workingDir: string | null;
   agentKind: string;
   title: string;
@@ -232,4 +256,14 @@ export interface XdtHelperHistoryDeps {
   searchChatHistory: (
     args: SearchChatHistoryArgs,
   ) => Promise<ControlResult<{ result: SearchChatHistoryResult }>>;
+  /** get_task_digest:一件任务的短摘要(本机 id 或 deviceId::sessionId)。不注入则不注册该工具。 */
+  taskDigest?: (args: {
+    sessionId: string;
+    callerSessionId?: string;
+  }) => Promise<
+    ControlResult<
+      { digest: import('./get_task_digest.js').TaskDigestWire },
+      'NOT_FOUND' | 'REMOTE_UNAVAILABLE' | 'INVALID_ARGS'
+    >
+  >;
 }

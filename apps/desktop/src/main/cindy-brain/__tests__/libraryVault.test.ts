@@ -20,6 +20,7 @@ import {
   type LibraryReadHandle,
 } from '../libraryVault.js';
 import { initCustomLibraryTree, openExistingCustomLibrary, parseExistingStdout, PROVABLE_STAGING_NAME } from '../libraryDirFd.js';
+import { relocateLibraryMetaOwner } from '../libraryBinding.js';
 
 const sha256Of = (s: string): string => createHash('sha256').update(s).digest('hex');
 
@@ -109,6 +110,53 @@ describe('LibraryVault', () => {
   });
 
   describe('open / status / meta', () => {
+    it('does not open a default library whose persisted owner differs from the plugin', async () => {
+      const previous = makeVault({ ghostId: 'other-plugin' });
+      expect(await previous.open()).toMatchObject({ ok: true, state: 'ready' });
+      await fs.promises.writeFile(path.join(libraryRoot, 'keep.txt'), 'private');
+      const current = makeVault();
+      expect(await current.open()).toMatchObject({ ok: true, state: 'unavailable', reason: 'corrupt' });
+      expect(await fs.promises.readFile(path.join(libraryRoot, 'keep.txt'), 'utf8')).toBe('private');
+    });
+
+    it('opens a physically relocated library after its owner meta is migrated', async () => {
+      const original = path.join(tmpRoot, 'libraries', 'hello');
+      const previous = makeVault({ rootDir: () => original, ghostId: 'hello' });
+      expect(await previous.open()).toMatchObject({ ok: true, state: 'ready' });
+      await fs.promises.writeFile(path.join(original, 'keep.txt'), 'org');
+      const destination = path.join(tmpRoot, 'libraries', '_ns__acme__hello');
+      await fs.promises.rename(original, destination);
+      expect(await relocateLibraryMetaOwner(destination, 'hello', '_ns__acme__hello')).toBe(true);
+      const current = makeVault({ rootDir: () => destination, ghostId: '_ns__acme__hello' });
+      expect(await current.open()).toMatchObject({ ok: true, state: 'ready' });
+      expect(await fs.promises.readFile(path.join(destination, 'keep.txt'), 'utf8')).toBe('org');
+    });
+
+    it('does not open a custom library whose persisted owner differs from the plugin', async () => {
+      const parent = path.join(tmpRoot, 'picked-owner');
+      const custom = path.join(parent, 'test-ghost');
+      await fs.promises.mkdir(parent, { recursive: true });
+      // Seed the persisted tree without a native helper: this unit tests the
+      // vault's owner comparison, not cold PowerShell startup (15s under CI load).
+      // Real held-fd init/open coverage remains in the custom-tree tests below.
+      const previous = makeVault({ rootDir: () => custom, ghostId: 'other-plugin' });
+      expect(await previous.open()).toMatchObject({ ok: true, state: 'ready' });
+      const metaFile = path.join(custom, '.cindy-library', 'meta.json');
+      const persistedMeta = await fs.promises.readFile(metaFile, 'utf8');
+      const keepFile = path.join(custom, 'keep.txt');
+      await fs.promises.writeFile(keepFile, 'private');
+      const openExistingCustom = vi.fn(async () => ({
+        ok: true as const,
+        meta: JSON.parse(await fs.promises.readFile(metaFile, 'utf8')),
+        usage: null,
+      }));
+      const current = makeVault({ rootDir: () => custom, locationKind: 'custom', openExistingCustom });
+      expect(await current.open()).toMatchObject({ ok: true, state: 'unavailable', reason: 'binding-moved' });
+      expect(openExistingCustom).toHaveBeenCalledOnce();
+      expect(await fs.promises.readFile(metaFile, 'utf8')).toBe(persistedMeta);
+      expect(await fs.promises.readFile(keepFile, 'utf8')).toBe('private');
+    });
+
     it('open 建骨架并写 meta;重复 open 幂等', async () => {
       const vault = makeVault();
       const first = await vault.open();

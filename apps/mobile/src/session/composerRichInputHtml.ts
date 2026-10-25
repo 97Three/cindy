@@ -147,7 +147,7 @@ export function buildComposerRichInputHtml(config: ComposerRichInputConfig): str
   };
   const atomIcon = (node) => {
     if (node.type === 'quote' || (node.type === 'session-link' && node.messageClientId)) return '❝';
-    if (node.type === 'mention') return node.kind === 'dir' || node.kind === 'project' ? '⌁' : node.kind === 'agent' ? '◇' : '▧';
+    if (node.type === 'mention') return node.kind === 'dir' || node.kind === 'project' ? '⌁' : node.kind === 'agent' ? '◇' : node.kind === 'todo' ? '☐' : '▧';
     if (node.type === 'session-link') return '↳';
     return '▤';
   };
@@ -582,8 +582,11 @@ export function buildComposerRichInputHtml(config: ComposerRichInputConfig): str
     applyDocument(value, focusAfter, caret, nextDocumentId) {
       if (Number.isSafeInteger(nextDocumentId)) documentId = nextDocumentId;
       render(value, focusAfter === true && !caret);
-      if (!focusAfter || !caret) return;
-      root.focus();
+      if (!caret) return;
+      // Without focusAfter, restore the caret only for an editor that already has
+      // focus (keyboard open); never focus it here, which would raise the keyboard.
+      if (focusAfter) root.focus();
+      else if (document.activeElement !== root) return;
       const nodes = Array.from(root.childNodes).filter((node) => !isEmptyCaretAnchor(node));
       const node = nodes[caret.nodeIndex];
       const selection = window.getSelection();

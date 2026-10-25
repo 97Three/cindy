@@ -15,11 +15,12 @@
  * 或等继续时不能再安排新的：小菜单时点「+」只说明原因，面板里这一行置灰并写明原因（同桌面）。
  * 占位文字跟随未结束的安排。
  */
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, View, type TextInput as NativeTextInput } from 'react-native';
 import { randomUUID } from 'expo-crypto';
 import { Camera, Folder, Image as ImageIcon, Plus, Square, Users, X } from 'lucide-react-native';
 import { useTranslation } from 'react-i18next';
+import { useConfirmLeaveWhileUploading } from '@/session/useConfirmLeaveWhileUploading';
 import { BOT_GROUP_MESSAGE_MAX_CHARS, type BotGroupMemberView, type BotGroupMention } from '@cindy/maker-shared/botGroupChat';
 import {
   filterBotGroupMentionCandidates,
@@ -43,6 +44,7 @@ import { BOT_GROUP_STEP_AVATAR_SIZE, BotGroupAvatar } from './BotGroupAvatars';
 import { BotGroupMenu } from './BotGroupMenu';
 import type { BotGroupIdentityLookup } from './BotGroupPlan';
 import { ComposerAttachmentCollapsedBadge, ComposerAttachmentTray } from './ComposerAttachmentTray';
+import { useComposerPendingImagePreview } from './useComposerPendingImagePreview';
 import { ContextSheet, ContextSheetGroup, ContextSheetRow } from './ContextSheet';
 import { RecentPhotosStrip } from './ContextSheetMediaViews';
 import { ImageLightbox } from './ImageLightbox';
@@ -73,7 +75,7 @@ type MentionOption =
   | { kind: 'member'; label: string; member: BotGroupMemberView };
 
 export function BotGroupComposer({
-  members, identityFor, deviceId, online, running, planState, attachmentsSupported, divisionSupported = true, onSend, onStop,
+  members, identityFor, deviceId, online, running, planState, attachmentsSupported, divisionSupported = true, focusKey, onSend, onStop,
 }: {
   members: readonly BotGroupMemberView[];
   identityFor: BotGroupIdentityLookup;
@@ -84,6 +86,7 @@ export function BotGroupComposer({
   /** The computer takes attachments on `send` (`BotGroupRemoteChatData.supportsAttachments`). */
   attachmentsSupported: boolean;
   divisionSupported?: boolean;
+  focusKey?: string;
   /** Rejects with the host's error; the draft (and its tag) come back and the attachments stay. */
   onSend(input: BotGroupSendInput): Promise<void>;
   onStop(): Promise<void>;
@@ -98,8 +101,11 @@ export function BotGroupComposer({
   const [tracked, setTracked] = useState<BotGroupTrackedMention[]>([]);
   const [division, setDivision] = useState(false);
   const [sending, setSending] = useState(false);
+  const [waitingUploads, setWaitingUploads] = useState(false);
+  const waitForLeaveDecision = useConfirmLeaveWhileUploading(waitingUploads);
   const [stopping, setStopping] = useState(false);
   const inputRef = useRef<NativeTextInput>(null);
+  useEffect(() => { if (focusKey) inputRef.current?.focus(); }, [focusKey]);
   const textRef = useRef(text); textRef.current = text;
   const selectionRef = useRef({ start: 0, end: 0 });
   const sendingRef = useRef(false);
@@ -112,6 +118,7 @@ export function BotGroupComposer({
     deviceId,
     onPicked: () => { setSheetOpen(false); focusInput(); },
   });
+  const pendingImagePreview = useComposerPendingImagePreview(tray);
   const attachmentsEnabled = attachmentsSupported && online;
   // Paste handlers stay mounted for the whole screen (the input would remount otherwise); they
   // check support when an image actually arrives.
@@ -187,8 +194,13 @@ export function BotGroupComposer({
     let release: (() => void) | null = null;
     try {
       // A photo picked a moment ago may still be uploading; it goes with this message. A failed
-      // upload stays in the tray with 重试 and nothing is sent.
-      const { failedCount } = await tray.waitForPendingUploads();
+      // upload stays in the tray with 重试 and nothing is sent. Leaving meanwhile asks first;
+      // once the chat is gone the upload is dropped, so nothing is sent either.
+      setWaitingUploads(true);
+      const { failedCount, abandoned } = await tray.waitForPendingUploads();
+      const discarded = abandoned || await waitForLeaveDecision();
+      setWaitingUploads(false);
+      if (discarded) return;
       const attachments = attachmentsSupported ? [...tray.attachmentsRef.current] : [];
       if (failedCount > 0 || (!draftText && attachments.length === 0)) {
         restoreDraft();
@@ -201,7 +213,7 @@ export function BotGroupComposer({
         tracked: draftTracked,
       });
       // Targets, tag and attachments are part of the same send intent.
-      const attempt = nextBotGroupSendAttempt(attemptRef.current, draftText, draftDivision, randomUUID, attachmentIds, mentions);
+      const attempt = nextBotGroupSendAttempt(attemptRef.current, draftText, draftDivision, randomUUID, attachmentIds, mentions, focusKey);
       attemptRef.current = attempt;
       release = tray.holdForSend(attachmentIds);
       await onSend({ text: attempt.text, mentions, clientId: attempt.clientId, division: attempt.division, attachments });
@@ -351,6 +363,7 @@ export function BotGroupComposer({
       onPasteImagesLoadFailed={() => { if (pasteAllowedRef.current) tray.failPastePlaceholders(); }}
       cardActive={cardActive}
       accessoryAbove={hasAttachments ? <ComposerAttachmentTray attachments={tray.attachments} previews={tray.previews}
+        onPreviewPending={pendingImagePreview.open}
         pendingUploads={tray.pendingUploads} pastePlaceholderCount={tray.pastePlaceholderCount}
         onPreview={setPreviewId} onRemove={tray.removeAttachment} onRemovePending={tray.removePendingUpload}
         onRetryPending={tray.retryPendingUpload} removeDisabled={sending} testIDPrefix="botGroup" /> : null}
@@ -395,6 +408,7 @@ export function BotGroupComposer({
           onPress={() => { setDivision(true); inputRef.current?.focus(); }} testID="botGroup.contextSheetDivisionRow" />
       </ContextSheetGroup>
     </ContextSheet>
+    {pendingImagePreview.host}
     {previewUrl ? <ImageLightbox images={tray.galleryImages} initialUrl={previewUrl} onClose={() => setPreviewId(null)} /> : null}
   </View>;
 }

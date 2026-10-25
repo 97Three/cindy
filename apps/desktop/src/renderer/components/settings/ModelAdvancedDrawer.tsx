@@ -1,3 +1,5 @@
+import { isDisplayPricingTableRedundant } from '@/lib/displayPricingFormat';
+import { DisplayPricingDetails, DisplayPricingQuote } from '@/components/DisplayPricingDetails';
 import { Button } from '@/components/ui/button';
 import { localizedModelDescription } from '@/lib/modelDescriptions';
 import { localizedModelName, localizedBrandName } from '@/lib/modelDisplayNames';
@@ -215,6 +217,7 @@ export function ModelAdvancedDrawer({
   const locale = i18n.resolvedLanguage ?? i18n.language ?? 'en';
   const [priceDialogOpen, setPriceDialogOpen] = useState(false);
   const [protocolSaving, setProtocolSaving] = useState(false);
+  const [imageCapabilitySaving, setImageCapabilitySaving] = useState(false);
   const titleRef = useRef<HTMLHeadingElement>(null);
   // 开关/档位写的是 renderer 本地存储，订阅 version 才能在写后重渲染。
   useModelVisibilityVersion();
@@ -281,23 +284,64 @@ export function ModelAdvancedDrawer({
   );
   const ctx = useModelContextLimit(open ? contextTarget : null);
   const canEditProtocol = provider.source === 'user' && !provider.auth?.native && !isManagedSidecarProviderId(provider.id);
-  const setModelApi = async (agent: AgentKind, api: PiModelApi) => {
+  const imageAgents = canEditProtocol
+    ? provider.agents.filter(agent => provider.routing?.[agent]?.imageApi === 'openai-images')
+    : [];
+  const imageAgent = imageAgents.length === 1 ? imageAgents[0] : undefined;
+  const imageModel = imageAgent ? row?.byAgent[imageAgent] : undefined;
+  const imageCapability = imageModel?.userModelConfig?.mode === 'image_generation'
+    ? imageModel.userModelConfig.modalities?.input.includes('image') ? 'edit' : 'generate'
+    : 'default';
+  const videoAgents = canEditProtocol
+    ? provider.agents.filter(agent => provider.routing?.[agent]?.videoApi === 'xai-videos') : [];
+  const videoAgent = videoAgents.length === 1 ? videoAgents[0] : undefined;
+  const videoModel = videoAgent ? row?.byAgent[videoAgent] : undefined;
+  const videoCapability = videoModel?.userModelConfig?.mode === 'video_generation'
+    ? videoModel.userModelConfig.modalities?.input.includes('image') ? 'edit' : 'generate' : 'default';
+  const setImageCapability = async (value: string, kind: 'image' | 'video' = 'image') => {
+    const agent = kind === 'image' ? imageAgent : videoAgent;
+    const sourceModel = kind === 'image' ? imageModel : videoModel;
+    if (imageCapabilitySaving || !agent || !sourceModel || !['default', 'generate', 'edit'].includes(value)) return;
+    const config = providerViewToCustomProviderConfig(provider);
+    const model = config.runtimes[agent]?.models.find(item => item.id === sourceModel.id);
+    if (!model) return;
+    if (value === 'default') {
+      delete model.mode;
+      delete model.modalities;
+    } else {
+      model.mode = kind === 'image' ? 'image_generation' : 'video_generation';
+      model.modalities = { input: value === 'edit' ? ['text', 'image'] : ['text'], output: [kind] };
+    }
+    setImageCapabilitySaving(true);
+    try {
+      const result = await updateCustomProvider(config, {}, { source: 'manual-settings' });
+      if (!result.ok) toast.error(t('settings.providers.custom.toast.saveFailed'));
+    } catch { toast.error(t('settings.providers.custom.toast.saveFailed')); }
+    finally { setImageCapabilitySaving(false); }
+  };
+  const setModelApi = async (agent: AgentKind, api: string) => {
     if (protocolSaving || !canEditProtocol || !row?.byAgent[agent]) return;
     const config = providerViewToCustomProviderConfig(provider);
     const runtime = config.runtimes[agent];
     const model = runtime?.models.find(m => m.id === row.byAgent[agent]!.id);
     if (!runtime || !model) return;
-    model.api = api;
-    if (agent === 'pi') model.piApi = api;
-    const wire = providerWireProtocolForApi(api);
-    if (!wire) return;
-    const existingRoute = { ...(model.route ?? {}) };
-    delete existingRoute.requestPath;
-    model.route = {
-      ...existingRoute,
-      baseUrl: providerBaseUrlForApi(model.route?.baseUrl ?? runtime.baseUrl, api),
-      wireProtocol: wire,
-    };
+    const choice = row.byAgent[agent]?.availableInterfaces?.find(item => item.profileId === api);
+    if (api === 'auto' || choice) {
+      model.interfaceId = api;
+      delete model.api;
+      delete model.piApi;
+      delete model.route;
+    } else {
+      delete model.interfaceId;
+      model.api = api as PiModelApi;
+      if (agent === 'pi') model.piApi = api as PiModelApi;
+      const wire = providerWireProtocolForApi(api);
+      if (!wire) return;
+      model.route = {
+        baseUrl: providerBaseUrlForApi(model.route?.baseUrl ?? runtime.baseUrl, api),
+        wireProtocol: wire,
+      };
+    }
     setProtocolSaving(true);
     try {
       const result = await updateCustomProvider(config, {}, { source: 'manual-settings' });
@@ -355,8 +399,10 @@ export function ModelAdvancedDrawer({
     );
   }
 
-  const vision =
-    primaryModel.supportsImageInput !== undefined
+  const capabilityModel = primaryModel.mode === 'video_generation' ? videoModel ?? primaryModel : imageModel ?? videoModel ?? primaryModel;
+  const vision = imageModel?.modalities
+    ? imageModel.modalities.input.includes('image') ? 'vision' : 'no-vision'
+    : primaryModel.supportsImageInput !== undefined
       ? primaryModel.supportsImageInput
         ? 'vision'
         : 'no-vision'
@@ -396,6 +442,10 @@ export function ModelAdvancedDrawer({
   );
   const description = localizedModelDescription(primaryModel, t);
   const price = pricePresentationOf(primaryAgent, primaryModel);
+  // Ordinary Gateway chat models carry effective cost; keep their inferred discount.
+  const discount =
+    (!primaryModel.displayPricing && price?.kind === 'priced' ? price.discount : undefined) ??
+    primaryModel.costDiscount;
   const protocols = modelProtocolComparison(provider, row.byAgent);
   const protocolLabel = (api: PiModelApi | null) =>
     api ? MODEL_PROTOCOL_LABEL[api] ?? null : t('settings.providers.models.advanced.undeclared');
@@ -432,6 +482,9 @@ export function ModelAdvancedDrawer({
       return model?.efforts.includes(effort) || model?.displayEfforts?.includes(effort);
     }),
   );
+  const ultrafastSupport = chatAgents.includes('codex')
+    ? row.byAgent.codex?.supportsUltrafastMode
+    : false;
   /**
    * 推理强度的存储是 per (agent, provider, model) 的。这里按显示轴同一条哲学
    * **一次写该模型全部可用引擎** —— 用户在这个面板里选的是「这个模型默认想多用力」,
@@ -568,7 +621,7 @@ export function ModelAdvancedDrawer({
                                   id={protocolId}
                                   className="mt-0.5 text-11 leading-4 text-[var(--text-tertiary)]"
                                 >
-                                  {canEditProtocol && !model?.catalogPresetId && supported ? (
+                                  {canEditProtocol && (!model?.catalogPresetId || !!model.availableInterfaces?.length) && supported ? (
                                     <DropdownMenu>
                                       <DropdownMenuTrigger asChild>
                                         <button type="button" disabled={protocolSaving}
@@ -578,9 +631,12 @@ export function ModelAdvancedDrawer({
                                         </button>
                                       </DropdownMenuTrigger>
                                       <DropdownMenuContent className="z-[10003]" align="start">
-                                        <DropdownMenuRadioGroup value={protocol.outbound ?? ''}
-                                          onValueChange={value => void setModelApi(agent, value as PiModelApi)}>
-                                          {MODEL_PROTOCOL_OPTIONS.map(([api, label]) => <DropdownMenuRadioItem key={api} value={api}>{label}</DropdownMenuRadioItem>)}
+                                        <DropdownMenuRadioGroup value={model?.availableInterfaces?.length ? model.userModelConfig?.interfaceId ?? ((model.userModelConfig?.api || model.userModelConfig?.piApi || model.userModelConfig?.route) ? model.selectedInterface?.profileId : 'auto') : protocol.outbound ?? ''}
+                                          onValueChange={value => void setModelApi(agent, value)}>
+                                          {model?.availableInterfaces?.length ? <>
+                                            <DropdownMenuRadioItem value="auto">{t('settings.providers.models.advanced.protocol.automatic')}</DropdownMenuRadioItem>
+                                            {model.availableInterfaces.map(item => <DropdownMenuRadioItem key={item.profileId} value={item.profileId}>{protocolLabel(item.api)}</DropdownMenuRadioItem>)}
+                                          </> : MODEL_PROTOCOL_OPTIONS.map(([api, label]) => <DropdownMenuRadioItem key={api} value={api}>{label}</DropdownMenuRadioItem>)}
                                         </DropdownMenuRadioGroup>
                                       </DropdownMenuContent>
                                     </DropdownMenu>
@@ -671,6 +727,14 @@ export function ModelAdvancedDrawer({
                       <SegmentedControl
                         className="mt-1"
                         fullWidth
+                        // Six translated labels exceed a details column. Keep every
+                        // level visible instead of hiding Ultra in horizontal overflow.
+                        style={shownEfforts.length > 4 ? {
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                          borderRadius: 'var(--radius-xl)',
+                        } : undefined}
+                        optionClassName={shownEfforts.length > 4 ? '!min-w-0 px-1' : undefined}
                         height={32}
                         optionHeight={24}
                         aria-label={t('settings.providers.models.advanced.defaultEffort')}
@@ -835,10 +899,60 @@ export function ModelAdvancedDrawer({
                     title={t('settings.providers.models.advanced.capability')}
                     hint={t('settings.providers.models.advanced.capabilityHint')}
                   >
+                    {imageModel && (
+                      <>
+                        <Row label={t('settings.providers.models.advanced.imageCapability.label')}>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button type="button" disabled={imageCapabilitySaving || !selectionAvailable || paymentRequired}
+                                aria-label={t('settings.providers.models.advanced.imageCapability.label')}
+                                className="rounded-full px-2 py-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]">
+                                {t(`settings.providers.models.advanced.imageCapability.${imageCapability}`)} <ChevronDown size={12} className="inline" aria-hidden />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent className="z-[10003]" align="start">
+                              <DropdownMenuRadioGroup value={imageCapability} onValueChange={value => void setImageCapability(value)}>
+                                {(['default', 'generate', 'edit'] as const).map(value => (
+                                  <DropdownMenuRadioItem key={value} value={value}>{t(`settings.providers.models.advanced.imageCapability.${value}`)}</DropdownMenuRadioItem>
+                                ))}
+                              </DropdownMenuRadioGroup>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </Row>
+                        <p className="text-12 leading-5 text-[var(--text-tertiary)]">
+                          {t('settings.providers.models.advanced.imageCapability.hint', { agent: AGENT_LABEL[imageAgent!] })}
+                        </p>
+                      </>
+                    )}
+                    {videoModel && (
+                      <>
+                        <Row label={t('settings.providers.models.advanced.videoCapability.label')}>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button type="button" disabled={imageCapabilitySaving || !selectionAvailable || paymentRequired}
+                                aria-label={t('settings.providers.models.advanced.videoCapability.label')}
+                                className="rounded-full px-2 py-1 text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]">
+                                {t(`settings.providers.models.advanced.videoCapability.${videoCapability}`)} <ChevronDown size={12} className="inline" aria-hidden />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent className="z-[10003]" align="start">
+                              <DropdownMenuRadioGroup value={videoCapability} onValueChange={value => void setImageCapability(value, 'video')}>
+                                {(['default', 'generate', 'edit'] as const).map(value => (
+                                  <DropdownMenuRadioItem key={value} value={value}>{t(`settings.providers.models.advanced.videoCapability.${value}`)}</DropdownMenuRadioItem>
+                                ))}
+                              </DropdownMenuRadioGroup>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </Row>
+                        <p className="text-12 leading-5 text-[var(--text-tertiary)]">
+                          {t('settings.providers.models.advanced.videoCapability.hint', { agent: AGENT_LABEL[videoAgent!] })}
+                        </p>
+                      </>
+                    )}
                     <Row label={t('settings.providers.models.advanced.imageInput')}>
                       <span
                         title={
-                          primaryModel.modalities || primaryModel.supportsImageInput !== undefined
+                          capabilityModel.modalities || capabilityModel.supportsImageInput !== undefined
                             ? t('settings.providers.models.advanced.catalogCapabilities')
                             : t(`settings.providers.models.advanced.visionSource.${vision}`)
                         }
@@ -851,13 +965,13 @@ export function ModelAdvancedDrawer({
                         />
                       </span>
                     </Row>
-                    {primaryModel.modalities &&
+                    {capabilityModel.modalities &&
                       (['input', 'output'] as const).map((direction) => (
                         <Row
                           key={direction}
                           label={t(`settings.providers.models.advanced.${direction}Modalities`)}
                         >
-                          {primaryModel
+                          {capabilityModel
                             .modalities![direction].map((modality) =>
                               ['text', 'image', 'audio', 'video', 'file'].includes(modality)
                                 ? t(`settings.providers.models.advanced.modalities.${modality}`)
@@ -874,10 +988,44 @@ export function ModelAdvancedDrawer({
                         )}
                       />
                     </Row>
+                    <Row label={t('newChat.modelSelector.speed.ultrafast')} muted>
+                      <CapabilityValue
+                        state={ultrafastSupport}
+                        label={t(
+                          `settings.providers.models.advanced.${ultrafastSupport === true ? 'supported' : ultrafastSupport === false ? 'unsupported' : 'undeclared'}`,
+                        )}
+                      />
+                    </Row>
                   </Section>
 
                   <Section title={t('settings.providers.models.advanced.pricing')}>
-                    {price === null ? (
+                    {primaryModel.displayPricing && primaryModel.currency ? (
+                      <>
+                        {(['input', 'output', 'cacheRead', 'cacheWrite'] as const).map((role) => {
+                          const quotes = primaryModel.displayPricing?.summary?.[role];
+                          if (!quotes?.length) return null;
+                          return (
+                            <Row
+                              key={role}
+                              label={t(`settings.providers.models.advanced.price.${role === 'cacheWrite' ? 'cacheCreate' : role}`)}
+                            >
+                              <span className="flex flex-wrap items-start justify-end gap-x-2 gap-y-2">
+                                {quotes.map((quote, index) => (
+                                  <span key={index} className="inline-flex min-w-0 max-w-full items-start gap-x-2">
+                                    {index > 0 && <span aria-hidden> · </span>}
+                                    <DisplayPricingQuote
+                                      quote={quote}
+                                      currency={primaryModel.currency!}
+                                      costDiscount={discount}
+                                    />
+                                  </span>
+                                ))}
+                              </span>
+                            </Row>
+                          );
+                        })}
+                      </>
+                    ) : price === null ? (
                       <Row label={t('settings.providers.models.advanced.pricingLabel')} muted>
                         {t(
                           provider.access?.kind === 'subscription'
@@ -909,7 +1057,7 @@ export function ModelAdvancedDrawer({
                         </Row>
                       ))
                     )}
-                    {price?.kind === 'priced' && price.discount !== undefined && (
+                    {discount !== undefined && discount > 0 && discount <= 1 && (
                       <Row label={t('settings.providers.models.advanced.discount')}>
                         <span
                           className="inline-flex items-center rounded-full px-2 py-[1px] text-10 font-medium"
@@ -918,10 +1066,17 @@ export function ModelAdvancedDrawer({
                             backgroundColor: `color-mix(in srgb, ${EFFORT_TIER_COLORS.low} 14%, transparent)`,
                           }}
                         >
-                          {`↓${Math.round(price.discount * 100)}%`}
+                          {`↓${Math.round(discount * 100)}%`}
                         </span>
                       </Row>
                     )}
+                    {/* Keep conditions and notes after the primary quotes and their discount. */}
+                    {primaryModel.displayPricing && primaryModel.currency &&
+                      !isDisplayPricingTableRedundant(primaryModel.displayPricing) && (
+                        <div className={primaryModel.displayPricing.summary ? 'pt-3' : undefined}>
+                          <DisplayPricingDetails model={primaryModel} />
+                        </div>
+                      )}
                     {/* 自定义报价:原「⋯」菜单的一项,搬到它真正相关的段落里。
                     XD 网关的价格由服务端定,不给覆盖入口(与 IPC 侧的拒绝一致)。 */}
                     {provider.id !== 'xd' && !isOrganizationManagedProvider(provider) && !paymentRequired && (

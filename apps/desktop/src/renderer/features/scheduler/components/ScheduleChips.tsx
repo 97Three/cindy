@@ -15,7 +15,15 @@ import {
 import { useDetectCwd } from '@/hooks/useWorktreeQueries';
 import { useAgentCapabilities, type ModelDescriptor } from '@/hooks/useAgentCapabilities';
 import { useProviders } from '@/hooks/useProviders';
-import { ModelIconMark, ModelSelectorContent } from '@/components/new-chat/ModelSelector';
+import { useDeviceProviders } from '@/hooks/useDeviceProviders';
+import { useModelRouteDevices } from '@/hooks/useModelRouteDevices';
+import { agentDeviceModelMemoryAccessors } from '@/state/agentDeviceModelMemory';
+import { RemoteSourceMark } from '@/components/icons/RemoteSourceMark';
+import {
+  ModelIconMark,
+  ModelSelectorContent,
+  type RemoteAgentSelectorOptions,
+} from '@/components/new-chat/ModelSelector';
 import { useModelDiscoveryPending } from '@/components/new-chat/useModelDiscoveryPending';
 import {
   effectiveSourceIdForModel,
@@ -44,7 +52,7 @@ import {
   SUPPORTED_INTERVAL_MINUTES,
   type CodexScheduleConfig,
 } from '../lib/cronCodexPreset';
-import { getScheduleDefaultModel, type EffortValue } from '../hooks/useScheduleForm';
+import { getScheduleDefaultRoute, type EffortValue } from '../hooks/useScheduleForm';
 import {
   isFollowingSessionSelection,
   PENDING_SESSION_ID,
@@ -63,6 +71,8 @@ interface ChipButtonProps {
   active?: boolean;
   variant?: 'toolbar' | 'pill';
   className?: string;
+  /** 悬停 / 读屏的完整说明(label 会被截断时用)。 */
+  title?: string;
   onClick?: () => void;
 }
 
@@ -1059,8 +1069,20 @@ export function ModelEffortChip({
   onNavigateToProviders,
   fastMode,
   onChangeFast,
+  agentDeviceId = null,
+  remoteLocation = 'none',
 }: {
   onSelect: NonNullable<React.ComponentProps<typeof ModelSelectorContent>['onUnifiedSelect']>;
+  /**
+   * Agent 运行位置(同账号另一台电脑或分享来的供应商);null = 本机。模型目录、能力与
+   * 按钮上的来源标识都按这个位置读。
+   */
+  agentDeviceId?: string | null;
+  /**
+   * 模型面板是否列出其他电脑与分享来的供应商:any = 全部可选(每次新建任务);
+   * locked = 只列 agentDeviceId 那一处(绑定已有任务,运行位置跟随任务);none = 只列本机。
+   */
+  remoteLocation?: 'any' | 'locked' | 'none';
   onFollowSession: () => void;
   agentKind: AgentKind;
   modelValue: string;
@@ -1081,8 +1103,8 @@ export function ModelEffortChip({
   /** 0 个 / 引导连接来源时跳设置→供应商页;不传则来源轨不显示「连接」入口。 */
   onNavigateToProviders?: () => void;
   /** Fast 模式状态 + 回调(与聊天一致,收进模型选择器 Edit 配置列)。绑定任务同样保存，下一次触发时应用。 */
-  fastMode?: boolean;
-  onChangeFast?: (v: boolean) => void;
+  fastMode?: boolean | 'ultrafast';
+  onChangeFast?: (v: boolean | 'ultrafast') => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -1109,12 +1131,31 @@ export function ModelEffortChip({
     },
     [disabled, discovery],
   );
-  const pickerAgents = useModelPickerAgents(agentKind);
-  const caps = useAgentCapabilities(agentKind);
+  const pickerAgents = useModelPickerAgents(agentKind, agentDeviceId);
+  const caps = useAgentCapabilities(agentKind, agentDeviceId ?? undefined);
   // 触发器(trigger)展示用:仍按 openai-codex/ 与 codex/ 折扣模型的 XD 网关来源可见性过滤,算出当前
   // 选中模型名。下拉内容本体改用聊天的 ModelSelectorContent(它内部按来源/api-key 自行
-  // 过滤 + 分组),这里只为 trigger 文案保留最小化 model 解析。
-  const { providers } = useProviders();
+  // 过滤 + 分组),这里只为 trigger 文案保留最小化 model 解析。Agent 在另一台电脑时读那台的目录。
+  const localProviders = useProviders();
+  const deviceProviders = useDeviceProviders(agentDeviceId ?? undefined);
+  const { providers, loading: providersLoading } = agentDeviceId ? deviceProviders : localProviders;
+  // 其他电脑与分享来的供应商:与普通任务同一份候选(useModelRouteDevices)。locked 只留
+  // 当前所在的那一处,绑定任务的运行位置跟随任务本身。
+  const routeDevices = useModelRouteDevices({
+    controlledDeviceId: remoteLocation === 'none' ? undefined : null,
+    leadAgentDeviceId: agentDeviceId,
+  });
+  const remoteAgent = useMemo<RemoteAgentSelectorOptions | undefined>(() => {
+    const devices = remoteLocation === 'locked'
+      ? routeDevices.devices?.filter((device) => device.deviceId === agentDeviceId)
+      : routeDevices.devices;
+    return devices && devices.length > 0
+      ? { devices, selectedDeviceId: agentDeviceId, deviceModelMemory: agentDeviceModelMemoryAccessors }
+      : undefined;
+  }, [agentDeviceId, remoteLocation, routeDevices.devices]);
+  const agentDeviceName = agentDeviceId
+    ? (routeDevices.devices?.find((device) => device.deviceId === agentDeviceId)?.name || agentDeviceId)
+    : null;
   const xdConnected = providers.some((p) => p.id === 'xd' && p.connected);
   const availableModels = caps.capabilities?.availableModels;
   const models = useMemo(
@@ -1134,9 +1175,15 @@ export function ModelEffortChip({
     effort: effortValue,
   });
   const followsSessionModel = usesBoundSessionModel({ followSession, model: modelValue });
-  const effectiveId = followsSessionModel ? '' : modelValue || getScheduleDefaultModel(agentKind);
+  // 模型留空时显示与表单回填同源的默认路由(模型与来源成对)。
+  const defaultRoute =
+    followsSessionModel || modelValue
+      ? null
+      : getScheduleDefaultRoute(agentKind, providersLoading ? undefined : providers, providerId);
+  const effectiveId = followsSessionModel ? '' : modelValue || defaultRoute?.model || '';
+  const effectiveProviderId = providerId || defaultRoute?.providerId || null;
   const current = models.find((m) => m.id === effectiveId);
-  const sourceId = effectiveSourceIdForModel(providers, providerId || null, effectiveId, agentKind);
+  const sourceId = effectiveSourceIdForModel(providers, effectiveProviderId, effectiveId, agentKind);
   const source = providers.find((provider) => provider.id === sourceId);
   const catalogModel = source ? getModel(source, effectiveId, agentKind) : undefined;
   const effectiveEffort = effortValue || catalogModel?.defaultEffort || current?.defaultEffort || '';
@@ -1162,30 +1209,39 @@ export function ModelEffortChip({
   const activeSourceId = useMemo(
     () =>
       effectiveId
-        ? effectiveSourceIdForModel(providers, providerId || null, effectiveId, agentKind)
+        ? effectiveSourceIdForModel(providers, effectiveProviderId, effectiveId, agentKind)
         : null,
-    [providers, providerId, effectiveId, agentKind],
+    [providers, effectiveProviderId, effectiveId, agentKind],
   );
   const activeProvider = providers.find((p) => p.id === activeSourceId);
+  const activeMark = activeSourceId ? (
+    // 图标统一规则(与聊天 trigger 同口径):模型条目 icon(AI Gateway / 目录设定)
+    // 优先,缺省回落来源供应商标。
+    <ModelIconMark
+      icon={activeProvider ? getModel(activeProvider, effectiveId, agentKind)?.icon : undefined}
+      providerId={activeSourceId}
+      name={activeProvider?.name}
+      routing={activeProvider?.routing}
+      logoKind={activeProvider?.logoKind}
+      colorClass={agentDeviceId ? 'text-current' : ''}
+      withMargin={false}
+    />
+  ) : null;
+  // Agent 在另一台电脑:与聊天 trigger 一样在来源标上叠信号波纹,悬停说出是哪台。
+  const agentDeviceTitle = agentDeviceName
+    ? t('newChat.modelSelector.trigger.agentDevice', { device: agentDeviceName })
+    : null;
 
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <ChipButton
           icon={
-            !isFollowingSession && activeSourceId ? (
-              // 图标统一规则(与聊天 trigger 同口径):模型条目 icon(AI Gateway / 目录设定)
-              // 优先,缺省回落来源供应商标。
-              <ModelIconMark
-                icon={activeProvider ? getModel(activeProvider, effectiveId, agentKind)?.icon : undefined}
-                providerId={activeSourceId}
-                name={activeProvider?.name}
-                routing={activeProvider?.routing}
-                colorClass=""
-                withMargin={false}
-              />
-            ) : undefined
+            !isFollowingSession && activeMark
+              ? agentDeviceId ? <RemoteSourceMark>{activeMark}</RemoteSourceMark> : activeMark
+              : undefined
           }
+          title={agentDeviceTitle ? `${display} · ${agentDeviceTitle}` : undefined}
           label={display}
           active={open}
           disabled={disabled}
@@ -1212,6 +1268,8 @@ export function ModelEffortChip({
           fastModeConfigurable={['codex', 'pi']}
           unifiedAgents={pickerAgents}
           onUnifiedSelect={onSelect}
+          {...(remoteAgent ? { remoteAgent } : {})}
+          {...(agentDeviceId ? { modelMemory: agentDeviceModelMemoryAccessors(agentDeviceId) } : {})}
           vendorKey={vendorKey}
           modelId={effectiveId}
           effort={effectiveEffort}

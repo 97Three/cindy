@@ -8,11 +8,15 @@
  *      选模型 = 留在 grok-bot-vm 只换模型(带那台上的供应商 id)，不把 Agent 挪到 Mac Mini；
  *   2. 没归组、只是直接用着那台的任务：同样收进组里，但组那一项不显示为正在用，选它照旧是挪过去；
  *   3. 组所在电脑离线(组那一项不在)：那台照常单独显示、照常选中；
- *   4. 归组的任务就在这台电脑上运行：打开同样先停在组那一项，在里面选模型留在这台。
+ *   4. 归组的任务就在这台电脑上运行：打开同样先停在组那一项，在里面选模型留在这台；
+ *   5. 远程控制 Mac Mini 上的任务(组就建在被控电脑上)：同样问得到归组，在组那一项里选模型留在 grok-bot-vm。
  */
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The shared-quota rail observes auth; this component fixture has no auth host.
+vi.mock('@/contexts/AuthContext', () => ({ useOptionalAuthUser: () => null }));
 
 vi.mock('react-i18next', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react-i18next')>()),
@@ -271,6 +275,40 @@ describe('任务正跑在组里的某台电脑上', () => {
     await click(row('Sonnet'));
     expect(onRelocate).toHaveBeenCalledWith(
       expect.objectContaining({ providerId: 'anthropic-local', modelId: 'sonnet', agentDevice: null }),
+    );
+  });
+
+  it('远程控制被控电脑上归组的任务：组那一项是被控电脑自己的供应商，在里面选模型留在 grok-bot-vm', async () => {
+    const onRelocate = vi.fn(async () => true);
+    // 被控电脑回答「归它自己建的组」：位置是任务所在电脑视角，null = 被控电脑自己的供应商。
+    const readProviderGroup = vi.fn(async () => ({ deviceId: null, providerId: 'anthropic' }));
+    render(
+      React.createElement(ModelSelectorContent, {
+        modelId: 'opus',
+        effort: 'high',
+        onModelChange: vi.fn(),
+        onEffortChange: vi.fn(),
+        currentProviderId: 'anthropic-9z',
+        onProviderChange: vi.fn(),
+        actualRoute: true,
+        vendorKey: 'cc',
+        deviceId: 'mini',
+        remoteAgent: {
+          devices: [{ deviceId: 'vm', name: 'grok-bot-vm' }],
+          selectedDeviceId: 'vm',
+          homeDeviceId: 'mini',
+          homeDeviceName: 'Mac Mini',
+          onRelocate,
+          readProviderGroup,
+        },
+      }),
+    );
+    await act(async () => {});
+    expect(screen.queryByRole('button', { name: 'Anthropic · grok-bot-vm' })).toBeNull();
+    expect(row('Opus').getAttribute('aria-selected')).toBe('true');
+    await click(row('Sonnet'));
+    expect(onRelocate).toHaveBeenCalledWith(
+      expect.objectContaining({ providerId: 'anthropic-9z', modelId: 'sonnet', agentDevice: { deviceId: 'vm', name: 'grok-bot-vm' } }),
     );
   });
 });

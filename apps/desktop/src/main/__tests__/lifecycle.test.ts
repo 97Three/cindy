@@ -15,10 +15,14 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ts from 'typescript';
+import { EventEmitter } from 'node:events';
+
+const scanFork = vi.hoisted(() => vi.fn());
 
 // lifecycle.ts 里 import { app } from 'electron' —— 用最小 stub 喂给它。
 // 真实退出路径 (信号 / before-quit) 不在本文件覆盖。
 vi.mock('electron', () => ({
+  utilityProcess: { fork: scanFork },
   app: {
     on: vi.fn(),
     isReady: () => false,
@@ -30,7 +34,6 @@ vi.mock('electron', () => ({
 const nativePopupWebContentsIds = vi.hoisted(() => new Set<number>());
 const resourceUsageWebContentsIds = vi.hoisted(() => new Set<number>());
 const rsbWindowWebContentsIds = vi.hoisted(() => new Set<number>());
-const ghostPanelWebContentsIds = vi.hoisted(() => new Set<number>());
 const reviewArtifactConfirmWebContentsIds = vi.hoisted(() => new Set<number>());
 
 vi.mock('../rsb-browser-bridge/native-popup-surfaces', () => ({
@@ -47,10 +50,6 @@ vi.mock('../right-sidebar-window/registry.js', () => ({
   isRsbWindowWebContentsId: (webContentsId: number) => rsbWindowWebContentsIds.has(webContentsId),
 }));
 
-vi.mock('../ghost-panel-window/registry.js', () => ({
-  isGhostPanelWebContentsId: (webContentsId: number) =>
-    ghostPanelWebContentsIds.has(webContentsId),
-}));
 
 vi.mock('../reviewer/reviewArtifactConfirmWindowRegistry.js', () => ({
   isReviewArtifactConfirmWebContentsId: (webContentsId: number) =>
@@ -140,6 +139,21 @@ function snapshotProcessListeners(events: ProcessEventName[]) {
 }
 
 describe('runQuitDisposers', () => {
+  it('disposes pending Skill discovery through the real quit registry', async () => {
+    const lifecycle = await freshLifecycle();
+    const child = new EventEmitter();
+    const kill = vi.fn(() => true);
+    scanFork.mockReturnValue(Object.assign(child, { kill, postMessage: vi.fn() }));
+    const { scanLocalCustomizations } = await import('../skillhub/customizationScanHost');
+    const scan = scanLocalCustomizations('pi', {});
+    expect(kill).not.toHaveBeenCalled();
+    await lifecycle.runQuitDisposers();
+    expect((await scan).errors[0].message).toContain('stopped');
+    expect(kill).toHaveBeenCalledOnce();
+    expect((await scanLocalCustomizations('pi', {})).errors[0].message).toContain('stopped');
+    expect(scanFork).toHaveBeenCalledOnce();
+  });
+
   it('keeps the bootstrap quit budget open for an in-flight mode write and restoration', async () => {
     vi.useFakeTimers();
     const { onQuit, runQuitDisposers, SHUTDOWN_HARD_KILL_GRACE_SECONDS } = await freshLifecycle();
@@ -572,7 +586,6 @@ describe('installQuitHandler render-process-gone', () => {
     nativePopupWebContentsIds.clear();
     resourceUsageWebContentsIds.clear();
     rsbWindowWebContentsIds.clear();
-    ghostPanelWebContentsIds.clear();
     reviewArtifactConfirmWebContentsIds.clear();
   });
 
@@ -668,21 +681,6 @@ describe('installQuitHandler render-process-gone', () => {
       expect(app.exit).not.toHaveBeenCalled();
       expect(mocks.logger.warn).toHaveBeenCalledWith(
         expect.stringContaining('right sidebar render-process-gone'),
-      );
-    } finally {
-      restore();
-    }
-  });
-
-  it('ghost panel renderer crash does NOT shut the app down', async () => {
-    ghostPanelWebContentsIds.add(46);
-    const { handler, app, restore } = await installAndGrabHandler();
-    try {
-      handler(undefined, { id: 46, getType: () => 'window' }, { reason: 'crashed', exitCode: 5 });
-      await new Promise((r) => setTimeout(r, 20));
-      expect(app.exit).not.toHaveBeenCalled();
-      expect(mocks.logger.warn).toHaveBeenCalledWith(
-        expect.stringContaining('ghost panel render-process-gone'),
       );
     } finally {
       restore();

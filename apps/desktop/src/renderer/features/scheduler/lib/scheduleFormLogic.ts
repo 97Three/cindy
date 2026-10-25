@@ -8,9 +8,9 @@
  *   - RunMode 三态("运行会话"概念,合并 persistentSession 与手绑会话):
  *       fresh      每次新建会话(persistentSession=false, targetSessionId='')
  *       persistent 持续会话·自动创建(persistentSession=true;首次 fire 后
- *                  runner 回写 targetSessionId,归档自动重建续绑)
+ *                  runner 回写 targetSessionId,归档后恢复原任务)
  *       bound      绑定已有会话(targetSessionId=<id>, persistentSession=false;
- *                  会话不可用时 runner 自动 pause)
+ *                  归档后恢复原任务，删除/丢失时 runner 自动 pause)
  *   - buildScheduleInput:表单 → CreateScheduleInput(原 toInput 迁入)
  */
 
@@ -149,9 +149,14 @@ export interface ScheduleFormState {
    * `form.providerId || nativeDefaultSourceId(agentKind)` 算出当前高亮的来源。
    */
   providerId: string;
+  /**
+   * 每次新建任务时 Agent 在哪台电脑运行(同账号另一台电脑或分享来的供应商);'' / 缺省 = 本机。
+   * 与 providerId 成对:来源属于那台电脑的目录。绑定已有任务时运行位置跟随任务,不保存。
+   */
+  agentDeviceId?: string;
   effort: EffortValue | '';
   /** Codex Fast 模式开关。仅 Codex 有意义;切到 Claude / 不支持 fast 的模型时自动清为 false。 */
-  fastMode: boolean;
+  fastMode: boolean | 'ultrafast';
   workspaceKind: ScheduleWorkspaceKind;
   workingDir: string;
   useWorktree: boolean;
@@ -159,7 +164,7 @@ export interface ScheduleFormState {
   targetSessionId: string;
   /**
    * 持续会话:true → runner 首次 fire 完把新建 sessionId 回写 targetSessionId,
-   * 后续每次 fire 都在同一 session 中接着跑;会话被归档后自动重建续绑。
+   * 后续每次 fire 都在同一 session 中接着跑;归档后恢复原任务，删除/丢失后重建续绑。
    * RunMode 三态中它是 persistent 与 bound 的判别器(bound 恒为 false)。
    */
   persistentSession: boolean;
@@ -294,8 +299,9 @@ export interface RememberedBinding {
   targetSessionId: string;
   model: string;
   providerId: string;
+  agentDeviceId?: string;
   effort: EffortValue | '';
-  fastMode: boolean;
+  fastMode: boolean | 'ultrafast';
   agentKind: ScheduleFormState['agentKind'];
   modelAgentKind?: ScheduleFormState['modelAgentKind'];
   boundAgent?: ScheduleFormState['boundAgent'];
@@ -308,6 +314,7 @@ export function captureBinding(form: ScheduleFormState): RememberedBinding | nul
     targetSessionId: form.targetSessionId,
     model: form.model,
     providerId: form.providerId,
+    agentDeviceId: form.agentDeviceId,
     effort: form.effort,
     fastMode: form.fastMode,
     agentKind: form.agentKind,
@@ -343,6 +350,7 @@ export function applyRunMode(
           targetSessionId: remembered.targetSessionId,
           model: remembered.model,
           providerId: remembered.providerId,
+          agentDeviceId: remembered.agentDeviceId,
           effort: remembered.effort,
           fastMode: remembered.fastMode,
           agentKind: remembered.agentKind,
@@ -386,7 +394,11 @@ export function sessionAgentKindToScheduleAgentKind(
 }
 
 interface TemplateAgentDefaults {
-  getDefaultModel: (agentKind: ScheduleFormState['agentKind']) => string;
+  /** 目标 agent 在给定来源内的默认模型及与之成对的来源(null = 跟随原生默认)。 */
+  getDefaultRoute: (
+    agentKind: ScheduleFormState['agentKind'],
+    preferredProviderId?: string | null,
+  ) => { model: string; providerId: string | null };
   getAgentPrefs: (
     agentKind: ScheduleFormState['agentKind'],
   ) => Pick<ScheduleFormState, 'providerId' | 'effort' | 'fastMode'>;
@@ -403,11 +415,22 @@ export function resolveTemplateAgentFields(
   const templateModel = typeof template.model === 'string' ? template.model.trim() : '';
   const templateProviderId = typeof template.providerId === 'string' ? template.providerId.trim() : undefined;
   const templateEffort = template.effort && isEffortValue(template.effort) ? template.effort : undefined;
+  // 模板没给模型、换了 agent 时用默认路由:限定在模板 / 任务记忆的来源内,模型与来源整对应用。
+  const defaultRoute =
+    agentChanged && !templateModel
+      ? defaults.getDefaultRoute(agentKind, templateProviderId ?? (agentPrefs?.providerId || null))
+      : null;
 
   return {
     agentKind,
-    model: templateModel || (agentChanged ? defaults.getDefaultModel(agentKind) : form.model),
-    providerId: templateProviderId ?? (agentChanged ? (agentPrefs?.providerId ?? '') : form.providerId),
+    model: templateModel || (agentChanged ? (defaultRoute?.model ?? '') : form.model),
+    providerId:
+      templateProviderId ??
+      (agentChanged
+        ? defaultRoute
+          ? (defaultRoute.providerId ?? '')
+          : (agentPrefs?.providerId ?? '')
+        : form.providerId),
     effort: templateEffort ?? (agentChanged ? (agentPrefs?.effort ?? '') : form.effort),
     fastMode: template.fastMode ?? (agentChanged ? (agentPrefs?.fastMode ?? false) : form.fastMode),
   };
@@ -551,6 +574,12 @@ export function buildScheduleInput(form: ScheduleFormState): CreateScheduleInput
     intervalMs: form.intervalMs,
     agentKind: scheduleAgentKindForForm(form),
     modelAgentKind: !isScript && form.model.trim() ? form.modelAgentKind : undefined,
+    // 恒带 key:运行位置与模型 / 来源成对,update 时 undefined 清回本机。只有每次新建任务
+    // (含持续会话首次与重建)才用它;绑定任务的运行位置跟随任务本身。
+    agentDeviceId:
+      !isScript && form.model.trim() && (!isHeartbeat || form.persistentSession)
+        ? form.agentDeviceId?.trim() || undefined
+        : undefined,
     workspaceKind: form.workspaceKind,
     useWorktree: !isScript && form.workspaceKind === 'project' && form.useWorktree,
     persistentSession: !isScript && form.persistentSession,
@@ -613,6 +642,7 @@ export function scheduleToUserCreateInput(
     modelAgentKind: schedule.modelAgentKind,
     model: schedule.model,
     providerId: schedule.providerId,
+    agentDeviceId: schedule.agentDeviceId,
     fastMode: schedule.fastMode,
     effort: schedule.effort,
     workspaceKind: schedule.workspaceKind,

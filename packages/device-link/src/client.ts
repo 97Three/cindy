@@ -1,6 +1,12 @@
-import { isPeerResetRetryableInvoke, isBackgroundInvoke, bypassInvokeScheduling } from './invokePolicy.js';
+import { isPeerResetRetryableInvoke, bypassInvokeScheduling, resolveInvokePriority } from './invokePolicy.js';
 import { InvokeScheduler } from './invokeScheduler.js';
 import { SessionMessageReuse } from './sessionMessageReuse.js';
+import {
+  InboundInvokeTransferOptions,
+  InvokeResultCache,
+  encodeInvokeResultTransfer,
+  type DeviceLinkTransferCodec,
+} from './invokeTransfer.js';
 import { decodeScopedEnvelope, encodeScopedEnvelope, type ScopeSupport } from './providerShareEnvelope.js';
 import { isProviderSharePeer } from './providerSharePeer.js';
 import { isSharedTaskPeer } from './sharedTaskPeer.js';
@@ -8,6 +14,8 @@ import { PROVIDER_SHARE_RELAY_CAPABILITY, ROUTED_KINDS, SHARED_TASK_RELAY_CAPABI
 import {
   requestSessionTagCatalog,
   decodeSessionTagCatalog,
+  decodeModelSpeedPayload,
+  encodeModelSpeedPayload,
 } from './sessionListTransport.js';
 import { CongestionSendBudget } from './congestionSendBudget.js';
 import { PUSH_FORWARD_ALLOWLIST, REMOTE_INVOKE_ALLOWLIST } from './allowlist.js';
@@ -16,6 +24,7 @@ import {
   MAX_FRAME_BYTES,
   SERVER_CAPABILITY_NOTIFY,
   DeviceLinkError,
+  isScopedPeer,
   type Envelope,
   type HelloPayload,
   type HelloAckPayload,
@@ -53,9 +62,25 @@ import {
   makeTransportSkipPayload,
   parseTransportAck,
   parseTransportPayload,
+  reliableRetryDelayMs,
+  retransmitBaseMs,
+  updateRetransmitEstimate,
+  updateDeliveryEstimate,
   byteLength,
+  type RetransmitEstimate,
 } from './transport.js';
+import { PLUGIN_SYNC_CHANNEL } from './pluginSyncProtocol.js';
+import { DIRECT_LINK_CAPABILITY, DIRECT_LINK_SIGNAL, DirectLinkNegotiator, parseDirectSignal,
+  type DirectRuntime } from './directNegotiation.js';
 import { MAKER_EVENT_BATCH_CHANNEL } from './topics.js';
+import {
+  DIRECT_PATH_HIGH_WATER_BYTES,
+  type DeviceLinkDirectChannel,
+  type DeviceLinkDirectCloseReason,
+  type DeviceLinkDirectPathHandle,
+  type DeviceLinkPeerPath,
+  type DeviceLinkPeerPathChanged,
+} from './directPath.js';
 
 /** Budget measurement: physical wire envelope size regardless of relay announcement. */
 const ALL_SCOPES: ScopeSupport = { sharedTask: true, providerShare: true };
@@ -124,6 +149,8 @@ const HANDSHAKE_TIMEOUT_WIDEN_AFTER = 2;
 /** 「link 未就绪收到可靠帧」通知的 per-peer 节流(见 onReliableFrameBeforeLink)。 */
 const STALE_LINK_NOTIFY_THROTTLE_MS = 30_000;
 const SLOW_REQUEST_WARN_MS = 1_000;
+/** Local transport admission must not consume a remote handler's response budget. */
+const REQUEST_SEND_WAIT_MAX_MS = 10_000;
 // Stop bulk writes well before the native socket's hard limit. Control envelopes
 // retain the hard-limit headroom; healthy sockets that drain immediately stay unpaced.
 const SOCKET_DATA_HIGH_WATER_BYTES = 512 * 1024;
@@ -139,10 +166,10 @@ const RELIABLE_ACK_BATCH_MESSAGES = 2;
 const RELIABLE_ACK_BATCH_BYTES = 256 * 1024;
 const RECOVERY_TRACE_WINDOW_MS = 30_000;
 // Allow slow relay -> controller delivery before duplicating an entire message.
-// With the default 2s tick this allows 8KiB/s, capped at 30s per attempt. Small
+// With the default 2s tick this allows 8KiB/s, capped at 120s per attempt. Small
 // messages retain their existing retry cadence; dead peers still exhaust retries.
 const RELIABLE_RETRY_BYTES_PER_INTERVAL = 16 * 1024;
-const RELIABLE_RETRY_MAX_SIZE_INTERVALS = 15;
+const RELIABLE_RETRY_MAX_SIZE_INTERVALS = 60;
 /** 连续三次握手成功后仍没撑过稳定期，才把普通抖动升级为可见问题。 */
 const SHORT_LIVED_STREAK_LIMIT = 3;
 const MAX_LEGACY_INBOUND_FRAMES = 128;
@@ -222,6 +249,8 @@ export interface DeviceLinkLogger {
 }
 
 export interface DeviceLinkClientOptions {
+  /** Host WebRTC adapter. Both peers must opt in; unavailable/old hosts keep using relay. */
+  directRuntime?: DirectRuntime;
   /** relay 的完整 ws(s) URL,如 wss://host/api/device-link/ws */
   getWsUrl(): string;
   /** 每次(重)连前取新鲜 token;null = 当前无登录态,跳过本轮并按退避重试 */
@@ -252,6 +281,18 @@ export interface DeviceLinkClientOptions {
    * 由 host 重开 link 后最多重试一次。写请求和长执行请求不走这条路径。
    */
   peerResetReadRetry?: boolean;
+  /**
+   * invoke 结果传输编码（gzip 与内容标签，见 invokeTransfer.ts）。控制端提供
+   * gunzipBase64 才声明可解 gzip；被控端提供 gzipBase64 / contentTag 才编码。
+   * 不传时 wire 行为与旧版完全相同。
+   */
+  transferCodec?: DeviceLinkTransferCodec;
+  /** Optional local counters; no content/identities, never part of delivery decisions. */
+  invokeMetrics?: {
+    enabled(): boolean;
+    record(event: { channel: string; phase: 'sent' | 'result'; payloadBytes?: number;
+      notModified?: boolean; gzip?: boolean }): void;
+  };
   /** 测试注入:覆盖重连/心跳的时间参数 */
   timing?: Partial<DeviceLinkTiming>;
 }
@@ -421,6 +462,8 @@ export type DeviceLinkStatus = 'stopped' | 'connecting' | 'online';
 export type DeviceLinkConnectionIssueKind =
   /** WS upgrade 被 401 拒绝:token 失效 / 已在别处登出 */
   | 'auth-failed'
+  /** 4410:设备登记已被同账号另一台设备移除。 */
+  | 'device-removed'
   /** 4409:同 deviceId 的新连接顶掉了本连接 */
   | 'replaced'
   /** 4429:同账号连接数超限 */
@@ -484,6 +527,7 @@ export function classifyConnectionIssue(
   reason?: string,
   socketErrorMessage?: string | null,
 ): DeviceLinkConnectionIssueKind | null {
+  if (code === 4410) return 'device-removed';
   if (code === 4409) return 'replaced';
   if (code === 4429) return 'too-many-connections';
   if (code === 4400 && /version/i.test(reason ?? '')) return 'version-mismatch';
@@ -498,8 +542,9 @@ export type InboundFrameHandler = (env: Envelope) => unknown | Promise<unknown>;
 interface PendingRequest {
   /** Timers may be suspended; retire an overdue request before replaying its payload. */
   expireIfOverdue(): boolean;
-  /** Diagnostics only: first successful socket write, not a delivery receipt. */
+  /** First successful socket write starts the response budget; never a delivery receipt. */
   noteFirstWrite?: () => void;
+  hasWritten(): boolean;
   resolve(env: Envelope): void;
   reject(err: DeviceLinkError): void;
   timer: ReturnType<typeof setTimeout>;
@@ -539,7 +584,10 @@ interface PendingReliableMessage {
    */
   firstSentAt?: number;
   /** Last observed gate, diagnostics only; never controls transport scheduling. */
-  lastBlockedBy?: 'link' | 'receive-window' | 'recovery-ack' | 'relay-budget' | 'socket' | 'socket-budget' | 'pass-budget';
+  lastBlockedBy?: 'link' | 'receive-window' | 'recovery-ack' | 'relay-budget' | 'socket' | 'socket-budget' | 'pass-budget'
+    | 'direct-buffer';
+  /** 最近一次物理写出走的路径；直连失效时据此把仍未确认的帧改走 relay。 */
+  path?: DeviceLinkPeerPath;
 }
 
 type ReliableSendPhase = 'down' | 'awaiting-confirm' | 'ready';
@@ -642,6 +690,8 @@ interface PeerTransportState {
   recoveryNeedsAck: boolean;
   /** 本轮恢复探测已写出的帧数（含 replay 与恢复期内首发）。 */
   recoveryFramesSent: number;
+  /** ACK round-trip estimate for this peer; survives link resets on the same network path. */
+  rtt: RetransmitEstimate;
   recoveryTrace: RecoveryTrace | null;
   /** latest-wins 腾位驱逐的聚合计数(自上次告警起),仅服务日志聚合。 */
   pushAdmissionDropCount: number;
@@ -649,6 +699,13 @@ interface PeerTransportState {
   pushAdmissionDropLogAt: number;
   /** 同一 relay WebSocket 内每次接受 link-open/link-accept 都递增。 */
   linkGeneration: number;
+  /**
+   * 最近一条可靠帧从哪条路径到达。累计 ACK 原路返回：对端已因直连异常改走
+   * relay 时，ACK 不能继续投进可能已失效的直连通道。
+   */
+  lastInboundPath: DeviceLinkPeerPath;
+  /** 直连尚未写出时的缓冲进展；持续不下降也要切回 relay，不能只等待已发送帧的 ACK。 */
+  directBufferWait?: { channel: DeviceLinkDirectChannel; bytes: number; since: number };
 }
 
 interface PendingInboundLinkOffer {
@@ -686,7 +743,12 @@ interface ReceiveStreamState {
 // ─── 客户端实现 ───────────────────────────────────────────────────────────────
 
 export class DeviceLinkClient {
-  private readonly invokeScheduler = new InvokeScheduler();
+  private readonly invokeScheduler = new InvokeScheduler((id) => {
+    const peer = this.peerTransport.get(id);
+    return (this.ws?.bufferedAmount ?? 0) > SOCKET_DATA_LOW_WATER_BYTES
+      || (peer?.pendingBytes ?? 0) > SOCKET_DATA_LOW_WATER_BYTES
+      || (peer?.pending.size ?? 0) >= MAX_TRANSPORT_REASSEMBLIES / 2;
+  });
   private readonly opts: DeviceLinkClientOptions;
   private readonly timing: DeviceLinkTiming;
   private readonly log: DeviceLinkLogger;
@@ -729,6 +791,11 @@ export class DeviceLinkClient {
   private networkChangeHintedAt = 0;
   private networkProbeNextAllowedAt = 0;
   private connectionStartedAt = 0;
+  /**
+   * Wall-clock deadline of the current attempt's active watchdog (token wait, then
+   * each handshake window). Unlike timers it keeps counting through app suspension.
+   */
+  private connectAttemptDeadlineWallAt = 0;
   /** 当前连接的代号,用于丢弃过期 socket 的事件回调 */
   private connEpoch = 0;
   /** 本轮连接的最后一条 socket error message(升级失败 401 只在 error 事件里可见) */
@@ -799,9 +866,36 @@ export class DeviceLinkClient {
     string,
     Map<string, Array<{ linkGeneration: number; count: number }>>
   >();
+  /**
+   * 每台同账号设备至多一条直连通道(见 directPath.ts)。只承载已建立可靠链路上的
+   * 数据面帧；没有通道或通道失效时，同一批帧照常走 relay。
+   */
+  private readonly directPaths = new Map<string, DeviceLinkDirectChannel>();
+  private readonly directPeerSupport = new Set<string>();
+  private readonly directNegotiator?: DirectLinkNegotiator;
+  private peerPathHandlers = new Set<(change: DeviceLinkPeerPathChanged) => void>();
 
   constructor(opts: DeviceLinkClientOptions) {
     this.opts = opts;
+    if (opts.directRuntime) this.directNegotiator = new DirectLinkNegotiator({
+      runtime: opts.directRuntime,
+      identity: () => this.selfDeviceId,
+      streams: (id) => {
+        const peer = this.peerTransport.get(id);
+        return !this.stopped && this.status === 'online' && !isScopedPeer(id)
+          && this.directPeerSupport.has(id) && peer?.reliable && peer.receiveReady
+          && this.isPeerSendReady(peer) && peer.remoteStreamId
+          ? { local: peer.streamId, remote: peer.remoteStreamId } : null;
+      },
+      id: createRequestId,
+      signal: (dst, payload) => {
+        // Signaling is a control plane: never put SDP or close notices onto the direct path.
+        this.sendBestEffortRoutedEnvelope({ v: PROTOCOL_VERSION, kind: 'push', dst,
+          payload: { channel: DIRECT_LINK_SIGNAL, payload } });
+      },
+      attach: (id, channel) => this.attachDirectPath(id, channel),
+    });
+    this.invokeResultCache = new InvokeResultCache(opts.transferCodec);
     this.timing = { ...DEFAULT_TIMING, ...opts.timing };
     this.log = opts.logger ?? {
       debug: () => {},
@@ -835,11 +929,29 @@ export class DeviceLinkClient {
    * 只有显式用户意图(移动端回前台)传 overrideCongestionCooldown 保留立即重连;
    * 被 park 的调用方等冷却计时器到点自然重连(封顶 congestionBackoffMaxMs)。
    */
-  connectNow(reason = 'connect-now', opts?: { overrideCongestionCooldown?: boolean }): void {
+  connectNow(
+    reason = 'connect-now',
+    opts?: { overrideCongestionCooldown?: boolean; keepInFlightAttempt?: boolean },
+  ): void {
     // online 时强制重建请用 restartConnection —— 它才是「半开假活」场景的入口,
     // 且已包含 resetLinkStateForReconnect(此处曾有一个等价的 { force } 分支,
     // 生产代码从未使用,只有测试在调,故收敛为单一入口)。
+    if (this.connectionIssue?.kind === 'device-removed') return;
     if (this.status === 'online') return;
+    // A foreground flicker (Face ID, notification, Control Center) re-fires this
+    // within seconds. Restarting a handshake that is still inside its window only
+    // throws away the progress made on a slow link (2026-10-12 in-flight Wi-Fi:
+    // 5 of 5 such restarts discarded a 1–3s old attempt). Wall time covers app
+    // suspension, so an attempt that sat frozen in the background is restarted.
+    if (
+      opts?.keepInFlightAttempt
+      && this.status === 'connecting'
+      && !this.reconnectTimer
+      && Date.now() < this.connectAttemptDeadlineWallAt
+    ) {
+      this.log.debug(`connectNow(${reason}) kept in-flight connect attempt`);
+      return;
+    }
     if (this.stopped) {
       // stopped → 等价 start():全新生命周期不背上一世代的拥塞冷却(review P1,
       // 与 start() 的清零语义对齐)。
@@ -989,11 +1101,16 @@ export class DeviceLinkClient {
 
   stop(): void {
     this.messageReuse.clear();
+    this.invokeResultCache.clear();
+    this.inboundInvokeTransfer.clear();
     if (this.stopped) return;
     this.stopped = true;
     this.clearTimers();
     this.handshakeTimeoutStreak = 0;
     this.failAllPending(new DeviceLinkError('NOT_CONNECTED', 'client stopped'));
+    // 登出、切账号与设备被移除都经由 stop：直连通道绑定的是旧账号下的身份，不能留给下一次 start。
+    for (const [deviceId, channel] of this.directPaths) this.closeDirectChannel(deviceId, channel, 'stopped');
+    this.directPaths.clear();
     this.clearPeerTransport();
     this.congestionSendBudget.reset();
     this.localSendPressure = false;
@@ -1038,6 +1155,12 @@ export class DeviceLinkClient {
   isLinkReady(dst: string): boolean {
     const peer = this.peerTransport.get(dst);
     return !!peer && this.isPeerSendReady(peer) && peer.receiveReady;
+  }
+
+  /** Even unlinked reads queue behind a previously negotiated reliable link. */
+  needsLinkRecovery(dst: string): boolean {
+    const peer = this.peerTransport.get(dst);
+    return !!peer?.reliable && !this.isPeerSendReady(peer);
   }
 
   /** Mirror admission only: listing-only/legacy peers need no bidirectional link. */
@@ -1131,6 +1254,50 @@ export class DeviceLinkClient {
   onPresenceChanged(cb: (snap: PresenceSnapshot) => void): () => void {
     this.presenceHandlers.add(cb);
     return () => this.presenceHandlers.delete(cb);
+  }
+
+  /**
+   * 接入一条到同账号设备的直连通道(直连优先、中继兜底，见 directPath.ts)。
+   *
+   * 通道只承载该设备已建立可靠链路上的数据面帧与 ACK；link 控制帧、跨账号范围
+   * 与未协商可靠传输的对端始终走 relay。通道断开、写入失败或经它发出的帧过期
+   * 未确认时，客户端关闭通道，把仍未确认的帧经 relay 重发；接收端按 seq 去重，
+   * 不会重复执行。同一设备再次接入会替换旧通道。
+   */
+  attachDirectPath(deviceId: string, channel: DeviceLinkDirectChannel): DeviceLinkDirectPathHandle {
+    const isActive = (): boolean => this.directPaths.get(deviceId) === channel;
+    const handle: DeviceLinkDirectPathHandle = {
+      receive: (text) => {
+        if (isActive()) this.handleDirectFrame(deviceId, text);
+      },
+      drained: () => {
+        if (isActive()) this.retryPending(deviceId, { ignoreInterval: false, onlyUnsent: true });
+      },
+      closed: () => {
+        if (isActive()) this.detachDirectPath(deviceId, 'channel-closed');
+      },
+      isActive,
+    };
+    if (this.stopped || !deviceId || deviceId === this.selfDeviceId || isScopedPeer(deviceId)) {
+      this.closeDirectChannel(deviceId, channel, 'not-eligible');
+      return handle;
+    }
+    this.detachDirectPath(deviceId, 'replaced');
+    this.directPaths.set(deviceId, channel);
+    this.log.info(`device-link direct path attached dst=${deviceId.slice(0, 8)}`);
+    this.emitPeerPathChanged({ deviceId, path: 'direct' });
+    return handle;
+  }
+
+  /** 该设备的数据面路径：接入了直连通道即为 'direct'(链路就绪后启用)，否则走 relay。 */
+  getPeerPath(deviceId: string): DeviceLinkPeerPath {
+    return this.directPaths.has(deviceId) ? 'direct' : 'relay';
+  }
+
+  /** 订阅直连与 relay 之间的切换；平台据此在切回 relay 后安排重新建立直连。 */
+  onPeerPathChanged(cb: (change: DeviceLinkPeerPathChanged) => void): () => void {
+    this.peerPathHandlers.add(cb);
+    return () => this.peerPathHandlers.delete(cb);
   }
 
   private notifyPeerRouteOffline(deviceId: string, linkGeneration: number): void {
@@ -1355,6 +1522,8 @@ export class DeviceLinkClient {
         this.abandonReliablePending(dst, `control link closed locally (${reason})`);
       }
     }
+    // 撤权或断开都不保留直连：之后的数据面只能在 relay 重新建链(并复验授权)后恢复。
+    this.detachDirectPath(dst, 'link-closed');
     // 显式关闭的本地语义不能依赖 relay 当前可写；离线时只跳过通知，
     // 已经清掉的可靠 pending 也绝不能在下一次 openLink 后复活。
     if (this.status !== 'online') return;
@@ -1376,34 +1545,44 @@ export class DeviceLinkClient {
     dst: string,
     payload: InvokePayload,
     timeoutMs?: number,
-    options?: { preSend?: () => void },
+    options?: { preSend?: () => void; background?: boolean },
   ): Promise<InvokeResultPayload> {
     if (this.status !== 'online') throw new DeviceLinkError('NOT_CONNECTED', 'not connected to relay');
-    const reuse = this.messageReuse.prepare(dst, payload);
-    const send = () => {
+    const send = async () => {
       // Admission may wait: validate caller ownership/cancellation after dequeue,
       // synchronously before creating the request or retaining a transport frame.
       options?.preSend?.();
-      return this.request(
-        { v: PROTOCOL_VERSION, kind: 'invoke', dst, payload: requestSessionTagCatalog(reuse.payload) },
+      // Prepare at dispatch, not when joining the admission queue. Earlier
+      // reads may have filled the existing cache while this one was waiting.
+      const reuse = this.messageReuse.prepare(dst, payload);
+      const tagged = requestSessionTagCatalog(reuse.payload);
+      const transfer = isScopedPeer(dst) ? null : this.invokeResultCache.prepare(dst, tagged);
+      const env = await this.request(
+        { v: PROTOCOL_VERSION, kind: 'invoke', dst, payload: transfer?.payload ?? tagged },
         'invoke-result',
         timeoutMs,
       );
+      this.reportInvokeMetric(payload.channel, env.payload as InvokeResultPayload);
+      const result = transfer
+        ? transfer.decode(env.payload as InvokeResultPayload)
+        : env.payload as InvokeResultPayload;
+      return result.ok
+        ? {
+            ...result,
+            result: reuse.decode(decodeModelSpeedPayload(payload.channel, decodeSessionTagCatalog(payload.channel, result.result))),
+          }
+        : result;
     };
-    const env = await (bypassInvokeScheduling(payload) ? send() : this.invokeScheduler.run(
-      dst, isBackgroundInvoke(payload.channel), Math.min(timeoutMs ?? this.timing.requestTimeoutMs, 30_000), send,
-    ));
-    const result = env.payload as InvokeResultPayload;
-    return result.ok
-      ? {
-          ...result,
-          result: reuse.decode(decodeSessionTagCatalog(payload.channel, result.result)),
-        }
-      : result;
+    return bypassInvokeScheduling(payload) ? send() : this.invokeScheduler.run(
+      dst, resolveInvokePriority(payload.channel, options?.background),
+      Math.min(timeoutMs ?? this.timing.requestTimeoutMs, 30_000), send,
+    );
   }
 
   /** 被控端:回 invoke-result(对应入站 invoke 的 id) */
   sendInvokeResult(dst: string, requestId: string, payload: InvokeResultPayload): void {
+    const transfer = this.opts.transferCodec ? this.inboundInvokeTransfer.get(dst, requestId) : undefined;
+    if (transfer) payload = encodeInvokeResultTransfer(transfer, payload, this.opts.transferCodec!);
     const peer = this.peerTransport.get(dst);
     const env: Envelope = { v: PROTOCOL_VERSION, kind: 'invoke-result', id: requestId, dst, payload };
     // 死锁绕行:relay 在线但控制链路未就绪时,result 不能只进可靠队列等一个可能永远
@@ -1481,6 +1660,7 @@ export class DeviceLinkClient {
           ? {
               capabilities: this.mergeCapabilities(payload?.capabilities, [
                 DEVICE_LINK_CAPABILITY_RELIABLE_TRANSPORT,
+                ...(this.directNegotiator && !isScopedPeer(dst) ? [DIRECT_LINK_CAPABILITY] : []),
                 ...(peerSupportsLinkConfirm
                   ? [DEVICE_LINK_CAPABILITY_RELIABLE_LINK_CONFIRM]
                   : []),
@@ -1528,6 +1708,7 @@ export class DeviceLinkClient {
     payload: unknown,
     ownerStamp?: import('./protocol.js').PushOwnerStamp,
   ): void {
+    payload = encodeModelSpeedPayload(channel, payload);
     if (this.status !== 'online') return;
     const pushPayload = {
       channel,
@@ -1558,6 +1739,17 @@ export class DeviceLinkClient {
 
   // ─── 内部:请求配对 ─────────────────────────────────────────────────────────
 
+  private reportInvokeMetric(channel: string, result?: InvokeResultPayload): void {
+    try {
+      if (!this.opts.invokeMetrics?.enabled()) return;
+      this.opts.invokeMetrics.record(result === undefined ? { channel, phase: 'sent' } : {
+        channel, phase: 'result', payloadBytes: byteLength(JSON.stringify(result)),
+        notModified: result.ok && result.transfer?.notModified === true,
+        gzip: result.ok && typeof result.transfer?.gzipBase64 === 'string',
+      });
+    } catch { /* Diagnostics must never affect delivery or response decoding. */ }
+  }
+
   /** 发送请求帧并等待同 id 响应;同 id relay-error 转成 DeviceLinkError reject */
   private request(
     env: Omit<Envelope, 'id'>,
@@ -1573,6 +1765,9 @@ export class DeviceLinkClient {
     const startedAt = Date.now();
     const startedMonotonicAt = this.monotonicNow();
     let firstWriteAt: number | undefined;
+    const sendWaitMs = env.kind === 'invoke' ? Math.min(timeout, REQUEST_SEND_WAIT_MAX_MS) : timeout;
+    let deadlineMonotonicAt = startedMonotonicAt + sendWaitMs;
+    let deadlineWallAt = startedAt + sendWaitMs;
     const requestDescription = `${this.describeRequest(env, expectKind)} request=${id.slice(0, 8)}`;
 
     const logFinished = (outcome: 'ok' | 'timeout' | 'error', err?: DeviceLinkError): void => {
@@ -1605,9 +1800,14 @@ export class DeviceLinkClient {
         if (env.dst) this.settleOutboundRouteAttemptsForId(env.dst, id);
         if (env.dst && env.kind === 'invoke') this.dropReliablePendingForRequest(env.dst, id);
         logFinished('timeout');
-        reject(new DeviceLinkError('INVOKE_TIMEOUT', `no ${expectKind} within ${timeout}ms`));
+        // No physical write is local backpressure, not evidence against the peer.
+        const err = firstWriteAt === undefined
+          ? new DeviceLinkError('BACKPRESSURE', `request expired before socket write within ${sendWaitMs}ms`)
+          : new DeviceLinkError('INVOKE_TIMEOUT', `no ${expectKind} within ${timeout}ms after first socket write`);
+        err.inFlight = firstWriteAt !== undefined;
+        reject(err);
       };
-      const timer = setTimeout(expire, timeout);
+      let timer = setTimeout(expire, sendWaitMs);
 
       const pendingRequest: PendingRequest = {
         expireIfOverdue: () => {
@@ -1615,12 +1815,26 @@ export class DeviceLinkClient {
           // clock reaching the budget retires this request: wall time covers
           // suspension, monotonic time covers wall-clock rollback. A forward
           // wall correction may expire early, but must not replay stale writes.
-          if (this.monotonicNow() - startedMonotonicAt < timeout
-            && Date.now() - startedAt < timeout) return false;
+          if (this.monotonicNow() < deadlineMonotonicAt
+            && Date.now() < deadlineWallAt) return false;
           expire();
           return true;
         },
-        noteFirstWrite: () => { firstWriteAt ??= this.monotonicNow(); },
+        noteFirstWrite: () => {
+          if (firstWriteAt !== undefined) return;
+          firstWriteAt = this.monotonicNow();
+          if (env.kind === 'invoke') this.reportInvokeMetric((env.payload as InvokePayload).channel);
+          // Only the first write can move the deadline. Replays and partial writes
+          // cannot extend it; total transport lifetime is at most sendWaitMs + timeout.
+          deadlineMonotonicAt = Math.min(firstWriteAt + timeout, startedMonotonicAt + sendWaitMs + timeout);
+          deadlineWallAt = Math.min(Date.now() + timeout, startedAt + sendWaitMs + timeout);
+          clearTimeout(timer);
+          timer = setTimeout(expire, Math.max(0, Math.min(
+            deadlineMonotonicAt - this.monotonicNow(), deadlineWallAt - Date.now(),
+          )));
+          pendingRequest.timer = timer;
+        },
+        hasWritten: () => firstWriteAt !== undefined,
         resolve: (frame) => {
           clearTimeout(timer);
           logFinished('ok');
@@ -1628,8 +1842,12 @@ export class DeviceLinkClient {
         },
         reject: (err) => {
           clearTimeout(timer);
-          logFinished('error', err);
-          reject(err);
+          // Batch failures can share an error, but each request has its own
+          // delivery status (including partial writes). Never mutate the shared error.
+          const failure = new DeviceLinkError(err.code, err.message);
+          failure.inFlight = firstWriteAt !== undefined;
+          logFinished('error', failure);
+          reject(failure);
         },
         timer,
         expectKind,
@@ -1657,7 +1875,6 @@ export class DeviceLinkClient {
             'PEER_RESET',
             `peer link reset before ${expectKind}; host may retry this read once`,
           );
-          err.inFlight = true;
           pendingRequest.reject(err);
         };
       }
@@ -1682,8 +1899,7 @@ export class DeviceLinkClient {
           err instanceof DeviceLinkError
             ? err
             : new DeviceLinkError('INTERNAL', err instanceof Error ? err.message : String(err));
-        logFinished('error', deviceLinkErr);
-        reject(deviceLinkErr);
+        pendingRequest.reject(deviceLinkErr);
       }
     });
   }
@@ -1696,20 +1912,18 @@ export class DeviceLinkClient {
 
   private failAllPending(err: DeviceLinkError): void {
     this.invokeScheduler.clear(err);
-    // pending 里的请求全部已经 sendEnvelope 成功(in-flight):打上标记,
-    // 让控制端的重试逻辑知道「请求可能已送达对端,只是响应丢了」,
-    // 与发送前本地拒绝的 NOT_CONNECTED 区分开。
-    err.inFlight = true;
-    for (const [, p] of this.pending) p.reject(err);
+    for (const pending of this.pending.values()) {
+      pending.reject(err);
+    }
     this.pending.clear();
   }
 
   private failNonReliablePending(err: DeviceLinkError): void {
     this.invokeScheduler.clear(err);
-    err.inFlight = true;
     for (const [id, pending] of this.pending) {
-      if (pending.reliableDst) continue;
+      if (pending.reliableDst && pending.hasWritten()) continue;
       this.pending.delete(id);
+      if (pending.reliableDst) this.dropReliablePendingForRequest(pending.reliableDst, id);
       pending.reject(err);
     }
   }
@@ -1753,8 +1967,7 @@ export class DeviceLinkClient {
       peer.pendingBytes += skipBytes - pending.bytes;
       pending.envelope = skipEnvelope;
       pending.bytes = skipBytes;
-      pending.attempts = 0;
-      pending.lastSentAt = 0;
+      resetReliableSendRound(pending);
       pending.sent = false;
       // **定向**发这一帧,不借道 retryPending:后者从队头遍历,skip 前面若压着超过预算的
       // pending,预算会在到达它之前用完 —— 注释说的「立刻发」就没发生,而接收端正等这个
@@ -1790,6 +2003,7 @@ export class DeviceLinkClient {
     this.clearNetworkProbe();
     this.resetLegacyInboundQueue();
     this.connectionStartedAt = this.monotonicNow();
+    this.connectAttemptDeadlineWallAt = Date.now() + this.timing.getTokenTimeoutMs + this.effectiveHandshakeTimeoutMs();
     this.setStatus('connecting');
     const epoch = ++this.connEpoch;
     this.lastSocketErrorMessage = null;
@@ -1953,6 +2167,11 @@ export class DeviceLinkClient {
     this.resetLinkStateForReconnect();
     this.failNonReliablePending(new DeviceLinkError('NOT_CONNECTED', 'relay connection lost'));
     if (this.stopped) return;
+    if (code === 4410) {
+      this.stop();
+      this.setConnectionIssue({ kind: 'device-removed', closeCode: code, at: Date.now() });
+      return;
+    }
     if (code === DUPLICATE_CONNECTION_CLOSE_CODE) {
       this.log.warn(
         `relay replaced this device connection; keeping reconnect backoff warm${reason ? ` (${reason})` : ''}`,
@@ -1991,6 +2210,8 @@ export class DeviceLinkClient {
   private armHandshakeTimeout(epoch: number): void {
     if (this.handshakeTimer) clearTimeout(this.handshakeTimer);
     const timeoutMs = this.effectiveHandshakeTimeoutMs();
+    // keepInFlightAttempt judges by the same deadline the watchdog enforces.
+    this.connectAttemptDeadlineWallAt = Date.now() + timeoutMs;
     this.handshakeTimer = setTimeout(() => {
       this.handshakeTimer = null;
       if (this.stopped || epoch !== this.connEpoch || this.status === 'online') return;
@@ -2338,6 +2559,8 @@ export class DeviceLinkClient {
         return true;
       case 'presence-changed': {
         const snap = env.payload as PresenceSnapshot;
+        // 在线与账号归属以 relay 为准：对端离开 relay(含被移出账号)即撤下直连。
+        if (snap.online === false) this.detachDirectPath(snap.deviceId, 'peer-offline');
         for (const cb of this.presenceHandlers) {
           try {
             cb(snap);
@@ -2590,6 +2813,7 @@ export class DeviceLinkClient {
           peer.remoteBaseSeq = 1;
           peer.receive.clear();
           this.abandonReliablePending(env.src, 'control link closed by peer');
+          this.detachDirectPath(env.src, 'link-closed');
         } else if (
           env.kind === 'invoke'
           && env.src
@@ -2614,6 +2838,7 @@ export class DeviceLinkClient {
    */
   private ingestTransportEnvelope(
     env: Envelope,
+    path: DeviceLinkPeerPath = 'relay',
   ): { handled: false } | { handled: true; result?: Promise<void> } {
     const parsed = parseTransportPayload(env.payload);
     if (!parsed || !env.src || !isReliableKind(env.kind)) return { handled: false };
@@ -2637,6 +2862,7 @@ export class DeviceLinkClient {
       return { handled: true };
     }
     if (!peer.remoteStreamId) peer.remoteStreamId = parsed.meta.streamId;
+    peer.lastInboundPath = path;
     const { meta } = parsed;
     this.logRecoveryStage(env.src, 'first-reliable-receive', ` seq=${meta.seq} baseSeq=${meta.baseSeq ?? 1}`);
     const stream = this.getReceiveStream(
@@ -2860,11 +3086,23 @@ export class DeviceLinkClient {
   }
 
   private readonly messageReuse = new SessionMessageReuse();
+  private readonly invokeResultCache: InvokeResultCache;
+  private readonly inboundInvokeTransfer = new InboundInvokeTransferOptions();
 
   private emitFrame(env: Envelope): boolean | Promise<boolean> {
+    if (env.kind === 'push' && (env.payload as { channel?: string })?.channel === DIRECT_LINK_SIGNAL) {
+      const signal = parseDirectSignal((env.payload as { payload?: unknown }).payload);
+      if (signal && env.src && !isScopedPeer(env.src)) this.directNegotiator?.receive(env.src, signal);
+      return true;
+    }
+    if (env.kind === 'invoke' && env.src && env.id && !isScopedPeer(env.src)) {
+      this.inboundInvokeTransfer.record(env.src, env.id, env.payload);
+    }
     if (env.kind === 'push' && env.src) {
       const push = env.payload as { channel: string; payload: unknown };
-      this.messageReuse.receive(env.src, push.channel, push.payload);
+      const decoded = decodeModelSpeedPayload(push.channel, push.payload);
+      if (decoded !== push.payload) env = { ...env, payload: { ...push, payload: decoded } };
+      this.messageReuse.receive(env.src!, push.channel, decoded);
     }
     let ok = true;
     let chain: Promise<void> | null = null;
@@ -3029,15 +3267,17 @@ export class DeviceLinkClient {
     // 真会发送时仍在驱逐/腾位之前预检(旧 P1:先驱逐再拒会清空镜像历史)。
     const additionalFrames = Math.max(1, frames.length);
     const previousBaseSeq = this.getTransportBaseSeq(peer);
+    // 走直连的帧不占 relay 的拥塞预算与 socket 缓冲。
+    const viaDirect = this.directChannelForSend(env.dst, peer) !== null;
     const willSendNow = this.isPeerSendReady(peer)
       // Admission may evict a discardable prefix and move this message into
       // the window. Preserve the socket preflight before that mutation.
       && (!this.isOutsideReceiveWindow(peer, seq) || !hasPendingCapacity())
       && !this.shouldHoldRecoverySend(peer, additionalFrames)
-      && (this.congestionCloseStreak === 0 || this.congestionSendBudget.canTake(
+      && (viaDirect || this.congestionCloseStreak === 0 || this.congestionSendBudget.canTake(
         env.dst, additionalFrames, this.getReadyReliablePeers(env.dst), this.monotonicNow(),
       ));
-    if (willSendNow) {
+    if (willSendNow && !viaDirect) {
       this.assertWebSocketCapacity(this.measureReliableFrames(frames));
     }
     if (!hasPendingCapacity()) {
@@ -3132,6 +3372,16 @@ export class DeviceLinkClient {
       this.getTransportBaseSeq(peer),
     );
     const wireBytes = this.measureReliableFrames(frames);
+    const direct = this.directChannelForSend(pending.envelope.dst!, peer);
+    if (direct) {
+      const sentDirect = this.sendReliableFramesDirect(peer, pending, frames, wireBytes, direct);
+      // null: 一帧都没写进直连且通道已撤下，本次立即改走 relay。
+      if (sentDirect !== null) return sentDirect;
+      // 撤下通道可能把更早的 direct 帧也恢复成未发送。先由 detach 安排的恢复
+      // 从队头推进 ACK，不能让当前短尾帧抢占 relay 探测预算，卡住缺失的大队头。
+      const head = peer.pending.values().next().value;
+      if (head && head !== pending && !head.sent) return 0;
+    }
     const peers = this.getReadyReliablePeers(pending.envelope.dst!);
     const budgetNow = this.monotonicNow();
     const congestionBudget = this.congestionCloseStreak > 0 ? this.congestionSendBudget : null;
@@ -3178,29 +3428,230 @@ export class DeviceLinkClient {
     } finally {
       congestionBudget?.refund(pending.envelope.dst!, frames.length - sent);
       localBudget?.refund(pending.envelope.dst!, byteCredits - Math.ceil(writtenBytes / SOCKET_SEND_CREDIT_BYTES));
-      if (sent > 0) {
-        const ageMs = Math.round(this.monotonicNow() - pending.enqueuedAt);
-        if ((pending.envelope.kind === 'invoke' || pending.envelope.kind === 'invoke-result')
-          && (ageMs >= 250 || pending.attempts > 0)) {
-          this.log.debug(`device-link send timing kind=${pending.envelope.kind} request=${pending.envelope.id?.slice(0, 8) ?? 'none'}`
-            + ` dst=${pending.envelope.dst!.slice(0, 8)} seq=${pending.seq}`
-            + ` ${pending.attempts === 0 ? 'queueMs' : 'ageMs'}=${ageMs}`
-            + ` attempt=${pending.attempts + 1} frames=${sent} bytes=${pending.bytes}`
-            + ` pending=${peer.pending.size} congestion=${this.congestionCloseStreak}`
-            + ` lastBlockedBy=${pending.lastBlockedBy ?? 'none'} socketBufferedBytes=${this.ws?.bufferedAmount ?? 0}`);
-        }
-        pending.lastBlockedBy = undefined;
-        pending.sent = true;
-        if (pending.attempts === 0) pending.firstSentAt = this.monotonicNow();
-        pending.attempts++;
-        pending.lastSentAt = Date.now();
-        this.logRecoveryStage(pending.envelope.dst!, 'first-reliable-write', ` seq=${pending.seq} frames=${sent}`);
-        if (pending.envelope.kind === 'invoke-result') {
-          this.logRecoveryStage(pending.envelope.dst!, 'first-response-write', ` seq=${pending.seq} frames=${sent}`);
-        }
-      }
+      this.noteReliableWrite(peer, pending, sent, 'relay');
     }
     return sent;
+  }
+
+  /** 一次物理写出(relay 或直连)之后的统一记账。 */
+  private noteReliableWrite(
+    peer: PeerTransportState,
+    pending: PendingReliableMessage,
+    sent: number,
+    path: DeviceLinkPeerPath,
+  ): void {
+    if (sent <= 0) return;
+    const ageMs = Math.round(this.monotonicNow() - pending.enqueuedAt);
+    if ((pending.envelope.kind === 'invoke' || pending.envelope.kind === 'invoke-result')
+      && (ageMs >= 250 || pending.attempts > 0)) {
+      this.log.debug(`device-link send timing kind=${pending.envelope.kind} request=${pending.envelope.id?.slice(0, 8) ?? 'none'}`
+        + ` dst=${pending.envelope.dst!.slice(0, 8)} seq=${pending.seq} path=${path}`
+        + ` ${pending.attempts === 0 ? 'queueMs' : 'ageMs'}=${ageMs}`
+        + ` attempt=${pending.attempts + 1} frames=${sent} bytes=${pending.bytes}`
+        + ` pending=${peer.pending.size} congestion=${this.congestionCloseStreak}`
+        + ` lastBlockedBy=${pending.lastBlockedBy ?? 'none'} socketBufferedBytes=${this.ws?.bufferedAmount ?? 0}`);
+    }
+    pending.lastBlockedBy = undefined;
+    pending.sent = true;
+    pending.path = path;
+    if (pending.attempts === 0) pending.firstSentAt = this.monotonicNow();
+    pending.attempts++;
+    pending.lastSentAt = Date.now();
+    this.logRecoveryStage(pending.envelope.dst!, 'first-reliable-write', ` seq=${pending.seq} frames=${sent}`);
+    if (pending.envelope.kind === 'invoke-result') {
+      this.logRecoveryStage(pending.envelope.dst!, 'first-response-write', ` seq=${pending.seq} frames=${sent}`);
+    }
+  }
+
+  // ─── 内部:直连选路(直连优先、中继兜底) ─────────────────────────────────────
+
+  /** 可靠帧此刻能否走直连：双方已提交可靠链路、本机发送方向就绪且接入了通道。 */
+  private directChannelForSend(dst: string, peer: PeerTransportState): DeviceLinkDirectChannel | null {
+    if (!peer.reliable || !this.isPeerSendReady(peer)) return null;
+    return this.directPaths.get(dst) ?? null;
+  }
+
+  /**
+   * 经直连写出一条可靠消息的全部分片。返回 null 表示一帧都没写出且通道已撤下，
+   * 调用方改走 relay；返回 0 表示暂缓发送或部分写入后已安排从队头恢复。
+   */
+  private sendReliableFramesDirect(
+    peer: PeerTransportState,
+    pending: PendingReliableMessage,
+    frames: readonly Envelope[],
+    wireBytes: number,
+    channel: DeviceLinkDirectChannel,
+  ): number | null {
+    const dst = pending.envelope.dst!;
+    const buffered = channel.bufferedAmount ?? 0;
+    // 与 relay 一致：缓冲排空后单条大消息总能发出，不会被软上限永久卡住。
+    if (buffered > 0 && buffered + wireBytes > DIRECT_PATH_HIGH_WATER_BYTES) {
+      const now = this.monotonicNow();
+      const waiting = peer.directBufferWait;
+      if (!waiting || waiting.channel !== channel || buffered < waiting.bytes) {
+        peer.directBufferWait = { channel, bytes: buffered, since: now };
+      } else {
+        waiting.bytes = buffered;
+        if (now - waiting.since >= retransmitBaseMs(peer.rtt, this.timing.transportRetryIntervalMs)) {
+          this.detachDirectPath(dst, 'buffer-timeout');
+          return null;
+        }
+      }
+      pending.lastBlockedBy = 'direct-buffer';
+      return 0;
+    }
+    peer.directBufferWait = undefined;
+    let sent = 0;
+    for (const frame of frames) {
+      try {
+        channel.send(JSON.stringify(frame));
+      } catch (err) {
+        this.log.debug(`device-link direct send failed dst=${dst.slice(0, 8)} seq=${pending.seq} frames=${sent}`, err);
+        break;
+      }
+      sent += 1;
+    }
+    if (sent === 0) {
+      this.detachDirectPath(dst, 'send-failed');
+      return null;
+    }
+    if (pending.envelope.id) this.pending.get(pending.envelope.id)?.noteFirstWrite?.();
+    this.noteReliableWrite(peer, pending, sent, 'direct');
+    // 只写出部分分片：整条消息改由 relay 从头重发，接收端丢弃重复分片。
+    if (sent < frames.length) {
+      this.detachDirectPath(dst, 'send-failed');
+      // 这些片已属于撤下的直连，不能再计入新一轮 relay 的恢复预算。
+      return 0;
+    }
+    return sent;
+  }
+
+  /**
+   * 撤下直连并切回 relay。经直连写出、仍未确认的消息恢复为未发送，按 relay 的
+   * 恢复预算重发(先发一批探测，收到 ACK 再继续)。只作用于这一台设备：不重连
+   * relay、不重建链路、不影响其它设备的链路与在途请求。
+   */
+  private detachDirectPath(deviceId: string, reason: DeviceLinkDirectCloseReason): void {
+    if (reason === 'link-closed' || reason === 'peer-offline' || reason === 'stopped') {
+      this.directNegotiator?.forget(deviceId);
+    }
+    const channel = this.directPaths.get(deviceId);
+    if (!channel) return;
+    this.directPaths.delete(deviceId);
+    this.closeDirectChannel(deviceId, channel, reason);
+    const peer = this.peerTransport.get(deviceId);
+    let resent = 0;
+    if (peer) {
+      peer.directBufferWait = undefined;
+      peer.lastInboundPath = 'relay';
+      for (const pending of peer.pending.values()) {
+        if (pending.path !== 'direct') continue;
+        pending.path = undefined;
+        pending.sent = false;
+        resetReliableSendRound(pending);
+        resent += 1;
+      }
+      if (resent > 0) {
+        peer.recoveryNeedsAck = true;
+        peer.recoveryFramesSent = 0;
+      }
+    }
+    const message = `device-link direct path closed dst=${deviceId.slice(0, 8)} reason=${reason} resendViaRelay=${resent}`;
+    if (reason === 'ack-timeout' || reason === 'buffer-timeout' || reason === 'send-failed') this.log.warn(message);
+    else this.log.info(message);
+    this.emitPeerPathChanged({ deviceId, path: 'relay', reason, ...(resent > 0 ? { resent } : {}) });
+    if (resent === 0) return;
+    // 调用方可能正处于 retryPending / sendPeerEnvelope 中：下一个微任务再重放，避免重入。
+    // 只补发仍未发送的：调用方当轮已经改走 relay 发出的帧不再复制一份。
+    void Promise.resolve().then(() => {
+      this.retryPending(deviceId, { ignoreInterval: false, onlyUnsent: true });
+      const current = this.peerTransport.get(deviceId);
+      if (current?.reliable && this.isPeerSendReady(current) && current.pending.size > 0) {
+        this.ensureRetryTimer(deviceId);
+      }
+    });
+  }
+
+  private closeDirectChannel(
+    deviceId: string,
+    channel: DeviceLinkDirectChannel,
+    reason: DeviceLinkDirectCloseReason,
+  ): void {
+    try {
+      channel.close(reason);
+    } catch (err) {
+      this.log.debug(`device-link direct path close failed dst=${deviceId.slice(0, 8)}`, err);
+    }
+  }
+
+  private emitPeerPathChanged(change: DeviceLinkPeerPathChanged): void {
+    for (const cb of this.peerPathHandlers) {
+      try {
+        cb(change);
+      } catch (err) {
+        this.log.error('device-link peer path handler failed', err);
+      }
+    }
+  }
+
+  /**
+   * 直连入站：只接受同账号对端发给本机的可靠数据面帧与累计 ACK。来源取自通道
+   * 绑定的设备，不信任帧内 src；跨账号范围、link 控制帧与非可靠帧一律丢弃(它们
+   * 只走 relay)。不刷新 relay 心跳：直连有流量不能掩盖 relay 已经失联。
+   */
+  private handleDirectFrame(deviceId: string, text: string): void {
+    if (this.stopped) return;
+    const self = this.selfDeviceId;
+    let parsed: unknown;
+    try {
+      if (byteLength(text) > MAX_FRAME_BYTES) throw new Error('direct frame too large');
+      parsed = JSON.parse(text) as unknown;
+    } catch {
+      this.log.warn(`dropping invalid direct frame from ${deviceId.slice(0, 8)}`);
+      return;
+    }
+    if (
+      !isRecord(parsed)
+      || parsed.v !== PROTOCOL_VERSION
+      || typeof parsed.kind !== 'string'
+      || !isReliableKind(parsed.kind as Envelope['kind'])
+      || parsed.sharedTask !== undefined
+      || parsed.providerShare !== undefined
+      || !self
+      || parsed.dst !== self
+      || (parsed.id !== undefined && typeof parsed.id !== 'string')
+    ) {
+      this.log.warn(`dropping disallowed direct frame from ${deviceId.slice(0, 8)}`);
+      return;
+    }
+    const env: Envelope = {
+      v: PROTOCOL_VERSION,
+      kind: parsed.kind as Envelope['kind'],
+      ...(typeof parsed.id === 'string' ? { id: parsed.id } : {}),
+      src: deviceId,
+      dst: self,
+      payload: parsed.payload,
+    };
+    if (!isValidInboundEnvelope(env)) {
+      this.log.warn(`dropping invalid direct frame kind=${env.kind} from ${deviceId.slice(0, 8)}`);
+      return;
+    }
+    const ack = parseTransportAck(env);
+    if (ack) {
+      // 链路确认 ACK 属于控制面，只认 relay；直连上的确认只按普通累计 ACK 处理。
+      this.handleTransportAck(deviceId, ack.streamId, ack.ackSeq);
+      return;
+    }
+    if (!parseTransportPayload(env.payload)) {
+      this.log.warn(`dropping non-reliable direct frame kind=${env.kind} from ${deviceId.slice(0, 8)}`);
+      return;
+    }
+    const transport = this.ingestTransportEnvelope(env, 'direct');
+    if (transport.handled) {
+      void transport.result?.catch((err) => {
+        this.log.error('device-link reliable frame failed', err);
+      });
+    }
   }
 
   private canWriteReliableBytes(bytes: number): boolean {
@@ -3523,6 +3974,10 @@ export class DeviceLinkClient {
   }
 
   private markPeerLinkDown(peer: PeerTransportState): void {
+    for (const [id, state] of this.peerTransport) if (state === peer) {
+      this.detachDirectPath(id, 'link-closed');
+      break;
+    }
     peer.duplicateOpenRepair = null;
     peer.confirmedGapRepair = null;
     if (peer.pendingLinkConfirmation?.timer) {
@@ -3535,6 +3990,8 @@ export class DeviceLinkClient {
     peer.receiveReady = false;
     peer.pendingLinkConfirmation = null;
     peer.outboundLinkConfirmationAck = null;
+    peer.directBufferWait = undefined;
+    peer.lastInboundPath = 'relay';
   }
 
   private getPeerTransport(dst: string): PeerTransportState {
@@ -3568,10 +4025,12 @@ export class DeviceLinkClient {
         lastDuplicateOpenRepairAt: Number.NEGATIVE_INFINITY,
         recoveryNeedsAck: false,
         recoveryFramesSent: 0,
+        rtt: { srttMs: null, rttVarMs: 0 },
         recoveryTrace: null,
         pushAdmissionDropCount: 0,
         pushAdmissionDropLogAt: 0,
         linkGeneration: 0,
+        lastInboundPath: 'relay',
       };
       this.peerTransport.set(dst, peer);
     }
@@ -3659,6 +4118,12 @@ export class DeviceLinkClient {
     source: 'inbound-open' | 'outbound-accept' = 'inbound-open',
   ): void {
     const peer = this.getPeerTransport(dst);
+    if (this.directNegotiator && !isScopedPeer(dst) && capabilities?.includes(DIRECT_LINK_CAPABILITY)) {
+      this.directPeerSupport.add(dst);
+    } else {
+      this.directPeerSupport.delete(dst);
+      this.directNegotiator?.forget(dst);
+    }
     const reliable = (
       Array.isArray(capabilities)
       && capabilities.includes(DEVICE_LINK_CAPABILITY_RELIABLE_TRANSPORT)
@@ -3682,6 +4147,8 @@ export class DeviceLinkClient {
       ? remoteBaseSeq!
       : 1;
     if (peer.remoteStreamId !== nextRemoteStreamId) {
+      this.directNegotiator?.forget(dst);
+      this.detachDirectPath(dst, 'link-closed');
       peer.receive.clear();
       peer.duplicateOpenRepair = null;
       peer.confirmedGapRepair = null;
@@ -3715,6 +4182,7 @@ export class DeviceLinkClient {
         DEVICE_LINK_CAPABILITY_RELIABLE_LINK_CONFIRM,
         DEVICE_LINK_CAPABILITY_RELIABLE_TRANSPORT,
         DEVICE_LINK_CAPABILITY_TRANSPORT_TIMEOUT_CLOSE,
+        ...(this.directNegotiator && !isScopedPeer(dst) ? [DIRECT_LINK_CAPABILITY] : []),
       ]),
       transportStreamId: typeof payload.transportStreamId === 'string'
         ? payload.transportStreamId
@@ -3753,10 +4221,23 @@ export class DeviceLinkClient {
         ? pendingConfirmation.requestId
         : undefined
     );
+    const ack = makeTransportAck(dst, streamId, ackSeq, effectiveLinkRequestId);
+    // 累计 ACK 原路返回；链路确认 ACK 属于控制面，始终走 relay。
+    const direct = !effectiveLinkRequestId && this.peerTransport.get(dst)?.lastInboundPath === 'direct'
+      ? this.directPaths.get(dst)
+      : undefined;
+    if (direct) {
+      try {
+        direct.send(JSON.stringify(ack));
+        this.logRecoveryStage(dst, 'ack-sent', ` receiveStream=${streamId.slice(0, 8)} ack=${ackSeq}`, false);
+        return true;
+      } catch (err) {
+        this.log.debug(`reliable transport direct ACK send failed dst=${dst.slice(0, 8)}`, err);
+        this.detachDirectPath(dst, 'send-failed');
+      }
+    }
     try {
-      this.sendBestEffortRoutedEnvelope(
-        makeTransportAck(dst, streamId, ackSeq, effectiveLinkRequestId),
-      );
+      this.sendBestEffortRoutedEnvelope(ack);
       this.logRecoveryStage(dst, 'ack-sent', ` receiveStream=${streamId.slice(0, 8)} ack=${ackSeq}`, false);
       return true;
     } catch (err) {
@@ -3859,20 +4340,49 @@ export class DeviceLinkClient {
     if (ackSeq > peer.nextSeq - 1 || ackSeq <= peer.highestAckSeq) return;
     peer.highestAckSeq = ackSeq;
     this.logRecoveryStage(src, 'ack-received', ` ack=${ackSeq}`, false);
+    let rttSample: number | null = null;
+    const acknowledgedAt = this.monotonicNow();
+    let deliveryStartedAt = acknowledgedAt;
+    let deliveryBytes = 0;
+    let deliverySampleValid = true;
     for (const [seq, pending] of peer.pending) {
       if (seq > ackSeq) break;
       if (pending.envelope.id) {
         this.discardOutboundRouteAttemptsForId(src, pending.envelope.id);
       }
+      // Measured from the first write of this round (replay restarts it), so a
+      // slow link still yields samples after its frames were retried; the latest
+      // message in the ACK gives the tightest one. Large messages measure
+      // transfer time, which byte pacing already covers.
+      if (pending.firstSentAt !== undefined && pending.bytes <= RELIABLE_RETRY_BYTES_PER_INTERVAL) {
+        rttSample = this.monotonicNow() - pending.firstSentAt;
+      }
+      if (pending.firstSentAt !== undefined && pending.attempts === 1) {
+        deliveryStartedAt = Math.min(deliveryStartedAt, pending.firstSentAt);
+        deliveryBytes += pending.bytes;
+      } else {
+        deliverySampleValid = false;
+      }
       peer.pending.delete(seq);
       peer.pendingBytes -= pending.bytes;
     }
+    // A cumulative ACK measures the whole acknowledged burst. Sampling its
+    // tail separately counts time spent delivering preceding messages as slowness.
+    // Retransmitted batches have ambiguous timing and cannot teach delivery pace.
+    if (deliverySampleValid) {
+      updateDeliveryEstimate(peer.rtt, deliveryBytes, acknowledgedAt - deliveryStartedAt);
+    }
+    if (rttSample !== null) updateRetransmitEstimate(peer.rtt, rttSample);
     if (peer.recoveryNeedsAck) {
       peer.confirmedGapRepair = null;
       peer.recoveryNeedsAck = false;
       peer.recoveryFramesSent = 0;
       this.logRecoveryStage(src, 'recovery-probe-acked', ` ack=${ackSeq}`);
-      this.retryPending(src, { ignoreInterval: true });
+      // Lift the probe budget only. The recovery pass just wrote the head
+      // frames; resending them before their retry delay doubles the replay on
+      // the slow links that caused the reset (a link-confirm ACK lands within
+      // milliseconds of that pass).
+      this.retryPending(src, { ignoreInterval: false });
     } else {
       const repair = peer.confirmedGapRepair;
       if (repair && ackSeq >= repair.awaitingSeq) {
@@ -4217,10 +4727,17 @@ export class DeviceLinkClient {
         RELIABLE_RETRY_MAX_SIZE_INTERVALS,
         Math.ceil(pending.bytes / RELIABLE_RETRY_BYTES_PER_INTERVAL),
       );
-      const retryDelayMs = this.timing.transportRetryIntervalMs * Math.max(
-        sizeIntervals,
-        Math.min(4, 2 ** Math.max(0, pending.attempts - 1)),
-      );
+      // 直连无 ACK 时要及时换路：relay 的大消息字节退避可能长于调用方超时，
+      // 不能让单条大结果在失效直连上等满退避期才尝试健康的 relay。
+      const retryDelayMs = pending.path === 'direct'
+        ? retransmitBaseMs(peer.rtt, this.timing.transportRetryIntervalMs)
+        : reliableRetryDelayMs(
+          peer.rtt,
+          this.timing.transportRetryIntervalMs,
+          sizeIntervals,
+          pending.attempts,
+          pending.bytes,
+        );
       if (pending.sent && !opts.ignoreInterval && now - pending.lastSentAt < retryDelayMs) {
         // A large head frame may still be inside its byte-based cooldown while
         // a later small request is already eligible. Cumulative ACK cannot
@@ -4228,12 +4745,22 @@ export class DeviceLinkClient {
         // the later frame without exhausting its budget behind that head.
         continue;
       }
+      if (pending.path === 'direct' && pending.sent && !opts.ignoreInterval) {
+        // 经直连写出的帧到了重发期限仍未确认：直连已不可信，撤下并改走 relay。
+        // 这些帧恢复为未发送、重试次数从零计，直连的失败不消耗 relay 的重试预算。
+        this.detachDirectPath(dst, 'ack-timeout');
+        // 本轮可能在非队头短帧处超时；让 detach 的微任务从最早未确认帧重启恢复。
+        return;
+      }
       if (pending.attempts >= this.timing.transportMaxRetryAttempts) {
         this.handleReliableRetryExhausted(dst, pending.seq);
         return;
       }
       const admittingNew = !pending.sent;
-      if (admittingNew && this.shouldHoldRecoverySend(peer, this.estimateReliableFrameCount(pending))) {
+      // 回退后队头可能尚未发送，而后面的 relay 帧仍在途。累计 ACK 不能越过
+      // 缺失队头，尾帧不可能释放预算；必须允许队头整条发出，再等 ACK 推进。
+      if (admittingNew && pending !== head
+        && this.shouldHoldRecoverySend(peer, this.estimateReliableFrameCount(pending))) {
         pending.lastBlockedBy = 'recovery-ack';
         break;
       }
@@ -4385,6 +4912,13 @@ export class DeviceLinkClient {
       + ` conn=${this.connEpoch}`,
     );
     const attempts = normalizeTransportRetryAttempts(this.timing.transportMaxRetryAttempts);
+    // Accept + confirmation crosses the same slow path as a handshake. Keep a
+    // cold-path allowance and reuse the peer RTT estimate once available; this
+    // single timer stays bounded and retains the existing recovery policy.
+    const confirmationTimeoutMs = Math.max(
+      this.timing.handshakeTimeoutMs * 2,
+      retransmitBaseMs(peer.rtt, normalizeTransportRetryInterval(this.timing.transportRetryIntervalMs)) * attempts,
+    );
     confirmation.timer = setTimeout(() => {
       confirmation.timer = null;
       if (
@@ -4400,7 +4934,7 @@ export class DeviceLinkClient {
         + ` request=${requestId.slice(0, 8)}; resetting peer link`,
       );
       this.handleReliableRetryExhausted(dst, confirmation.minimumAckSeq);
-    }, normalizeTransportRetryInterval(this.timing.transportRetryIntervalMs) * attempts);
+    }, confirmationTimeoutMs);
   }
 
   /**
@@ -4417,6 +4951,8 @@ export class DeviceLinkClient {
     }
     peer.sendPhase = 'ready';
     peer.pendingLinkConfirmation = null;
+    // Defer until this handshake commits; negotiation never occupies the reliable FIFO.
+    void Promise.resolve().then(() => this.directNegotiator?.ready(dst));
     this.logRecoveryStage(dst, 'send-ready');
     this.cancelTimeoutCloseNotify(dst);
     if (resume.duplicateOpen) {
@@ -4465,10 +5001,7 @@ export class DeviceLinkClient {
     if (peer.pending.size === 0) return;
     if (resumedLink || peer.lastReplayEpoch !== this.connEpoch) {
       peer.lastReplayEpoch = this.connEpoch;
-      for (const pending of peer.pending.values()) {
-        pending.attempts = 0;
-        pending.lastSentAt = 0;
-      }
+      for (const pending of peer.pending.values()) resetReliableSendRound(pending);
     }
     if (peer.recoveryTrace) peer.recoveryTrace.replayThroughSeq = peer.nextSeq - 1;
     this.retryPending(dst, { ignoreInterval: true });
@@ -4665,8 +5198,10 @@ export class DeviceLinkClient {
    */
   private isRelayWideReliableStall(dst: string, peer: PeerTransportState): boolean {
     // 与首发同一时刻到达的入站帧不可能是对它的应答,所以取 <=。
+    // 经直连发出的队头不能证明 relay 卡住:它的应答不经 relay,沉默只说明直连有问题。
     const silentSince = (head: PendingReliableMessage | undefined): boolean => (
       head?.sent === true
+      && head.path !== 'direct'
       && head.firstSentAt !== undefined
       && this.lastPeerInboundAt <= head.firstSentAt
     );
@@ -4743,7 +5278,6 @@ export class DeviceLinkClient {
       peer.pendingBytes = 0;
     }
     const err = new DeviceLinkError('NOT_CONNECTED', message);
-    err.inFlight = true;
     for (const [id, pending] of this.pending) {
       if (pending.reliableDst !== dst) continue;
       this.pending.delete(id);
@@ -4765,6 +5299,9 @@ export class DeviceLinkClient {
   }
 
   private clearPeerTransport(): void {
+    this.directNegotiator?.clear();
+    this.directPeerSupport.clear();
+    this.opts.directRuntime?.suspend?.();
     for (const peer of this.peerTransport.values()) {
       if (peer.retryTimer) clearInterval(peer.retryTimer);
       if (peer.pendingLinkConfirmation?.timer) clearTimeout(peer.pendingLinkConfirmation.timer);
@@ -5021,6 +5558,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Start a new send round. firstSentAt belongs to the round: a message the peer
+ * acknowledges before it is written again in this round (ACK lost across a
+ * reconnect) must not turn the offline gap into an RTT sample.
+ */
+function resetReliableSendRound(pending: PendingReliableMessage): void {
+  pending.attempts = 0;
+  pending.lastSentAt = 0;
+  pending.firstSentAt = undefined;
+}
+
 function isReliableKind(kind: Envelope['kind']): kind is 'invoke' | 'invoke-result' | 'push' {
   return kind === 'invoke' || kind === 'invoke-result' || kind === 'push';
 }
@@ -5056,6 +5604,9 @@ const UNLINKED_LEGACY_INVOKE_CHANNELS = new Set([
   'maker:git-safety:get',
 ]);
 const UNLINKED_LEGACY_PUSH_CHANNELS = new Set([
+  // Same-account encrypted sync does not require an open remote-control link.
+  // The Desktop plugin-sync receiver still checks owner, revocation and capability.
+  PLUGIN_SYNC_CHANNEL,
   'device-link:voice:dictionary:snapshot',
 ]);
 

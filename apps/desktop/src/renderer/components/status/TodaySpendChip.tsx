@@ -1,3 +1,5 @@
+import { useCodexRateLimitReset } from '@/hooks/useCodexRateLimitReset';
+import { CodexResetCredits } from './CodexResetCredits';
 import {
   FIVE_HOUR_WINDOW_MINUTES,
   formatCompactTimeUntilReset,
@@ -15,11 +17,16 @@ import { useProviders } from '@/hooks/useProviders';
  */
 
 import React from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
+import { X } from 'lucide-react';
+import { Tip } from '@/components/ui/tooltip';
+import { Button } from '@/components/ui/button';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { summarizeCodexRateLimitReset } from '@cindy/maker-shared/session-controls';
 
 import { cn } from '@/lib/utils';
+import { handOffTabFromCard } from '@/lib/focusTraversal';
 import { TASK_USAGE_ACCOUNT, type UsageAccountLocation } from '@/lib/usageAccountLocation';
 import {
   DAILY_SOFT_LIMIT_FACTOR,
@@ -30,6 +37,12 @@ import {
   formatTurnCostUsd,
 } from '@/lib/usageFormat';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  registerStatusBarCard,
+  STATUS_CARD_HOVER_OPEN_DELAY_MS,
+  STATUS_CARD_HOVER_CLOSE_GRACE_MS,
+  type StatusBarCardHandle,
+} from '@/lib/statusBarCards';
 import { useApiKey } from '@/hooks/useApiKey';
 import { useClaudeOAuthConnected } from '@/hooks/useClaudeOAuthConnected';
 import { useClaudeSessionRoute } from '@/hooks/useClaudeSessionRoute';
@@ -134,8 +147,6 @@ type MetricKey = 'daily' | 'monthly' | 'credit' | 'session';
 // daily / monthly 与 credit 来自服务端两种不同的额度语义(周期配额 vs 额度池账本),
 // 按账号所属租户二选一下发, 两组互斥, 同一形态下不会都占位。
 const PRIMARY_GATEWAY_METRICS: readonly MetricKey[] = ['daily', 'credit', 'session'];
-const QUOTA_POPOVER_OPEN_DELAY_MS = 300;
-const QUOTA_POPOVER_CLOSE_GRACE_MS = 200;
 const DEFAULT_MONEY_SYMBOL = DEFAULT_USAGE_CURRENCY === 'CNY' ? '¥' : '$';
 const DEFAULT_MONEY_PLACEHOLDER = `${DEFAULT_MONEY_SYMBOL}—`;
 
@@ -219,7 +230,7 @@ function computeMetricSlots(
       }),
       available: true,
     };
-    if (typeof claudeQuota.todaySpend === 'number') {
+    if (claudeQuota.dailyLimitEnabled !== false && typeof claudeQuota.todaySpend === 'number') {
       const softLimit = (claudeQuota.maxBudget / 30) * DAILY_SOFT_LIMIT_FACTOR;
       slots.daily = {
         label: t('todaySpend.dailyLimitLabel', {
@@ -1001,6 +1012,7 @@ export function TodaySpendChip({
     usesCodexQuotaForm && !isAnyRemoteSession,
     providerId ?? 'openai',
   );
+  const manualReset = useCodexRateLimitReset(codexRateLimits, refreshCodexRateLimits, providerId ?? 'openai');
   // xAI 限流快照同为本机 main 抓的 —— SSH 远程仍抑制回落价值估算;device-link 远程
   // 走被控端镜像(订阅周用量 invoke + push,限流头 push-only,与本机同语义降级)。
   // 本机侧按所选供应商账号取(多账号供应商,#4197 / #4246:限流 hook 同样带 providerId)。
@@ -1051,6 +1063,12 @@ export function TodaySpendChip({
   const quotaCardSessionUsage = toQuotaHoverCardSessionUsage(sessionUsage, sessionTokens);
   const quotaCardTurnUsage = toQuotaHoverCardTurnUsage(latestTurnUsage, t);
   const [quotaPopoverOpen, setQuotaPopoverOpen] = React.useState(false);
+  // 浮层宿主：紧跟触发器之后（见 popover.tsx 的 portalContainer 注释）。portal 到 body
+  // 末尾时，键盘焦点一旦进卡就再也 Tab 不回底栏（用户实测）。
+  const [quotaPopoverPortalHost, setQuotaPopoverPortalHost] = React.useState<HTMLDivElement | null>(
+    null,
+  );
+  const [resetListOpen, setResetListOpen] = React.useState(false);
   const quotaPopoverOpenTimerRef = React.useRef<number | null>(null);
   const quotaPopoverCloseTimerRef = React.useRef<number | null>(null);
   const quotaPopoverPointerInsideRef = React.useRef(false);
@@ -1061,6 +1079,8 @@ export function TodaySpendChip({
   const quotaPopoverTriggerRef = React.useRef<HTMLElement>(null);
   const quotaPopoverContentRef = React.useRef<HTMLDivElement>(null);
   const quotaPopoverDashboardButtonRef = React.useRef<HTMLButtonElement>(null);
+  // 底栏卡片互斥协调器的本实例句柄（见 statusBarCards：认实例，不认种类）。
+  const statusCardHandleRef = React.useRef<StatusBarCardHandle | null>(null);
   const setQuotaPopoverFocusTarget = React.useCallback((node: HTMLElement | null) => {
     quotaPopoverTriggerRef.current = node;
   }, []);
@@ -1084,6 +1104,18 @@ export function TodaySpendChip({
     quotaPopoverFocusTakenRef.current = false;
     quotaPopoverOpenSourceRef.current = null;
     if (!shouldRestoreFocus) return;
+    // Tab 已把焦点交给卡片外**仍然存在**的控件时不要抢回触发器：关闭路径
+    // （focus-outside → onOpenChange(false)）会比浏览器的 Tab 目标更早执行，抢回焦点
+    // 就把 Tab 正要去的控件顶掉，实测表现为焦点在 trigger 与卡片之间反复弹、永远走不到
+    // 右边下一枚 chip（用户实测）。焦点在卡片里（Escape）、或卡片正在卸载而焦点即将掉
+    // 到 body（形态切换）时，照旧归还 —— 那两种情况下不归还就是用户丢焦点。
+    const activeElement = document.activeElement;
+    const focusStillOwned =
+      quotaPopoverTriggerRef.current === activeElement ||
+      quotaPopoverContentRef.current?.contains(activeElement) === true;
+    const focusLostOrDetached =
+      activeElement === null || activeElement === document.body || !activeElement.isConnected;
+    if (!focusStillOwned && !focusLostOrDetached) return;
     quotaPopoverRestoringFocusRef.current = true;
     quotaPopoverTriggerRef.current?.focus({ preventScroll: true });
     quotaPopoverRestoringFocusRef.current = false;
@@ -1108,7 +1140,7 @@ export function TodaySpendChip({
       quotaPopoverOpenSourceRef.current = 'hover';
       setWindowLabelNowMs(Date.now());
       setQuotaPopoverOpen(true);
-    }, QUOTA_POPOVER_OPEN_DELAY_MS);
+    }, STATUS_CARD_HOVER_OPEN_DELAY_MS);
   }, [clearQuotaPopoverCloseTimer, clearQuotaPopoverOpenTimer]);
   const scheduleQuotaPopoverClose = React.useCallback(() => {
     clearQuotaPopoverOpenTimer();
@@ -1117,7 +1149,7 @@ export function TodaySpendChip({
       quotaPopoverCloseTimerRef.current = null;
       setQuotaPopoverOpen(false);
       restoreQuotaPopoverFocus();
-    }, QUOTA_POPOVER_CLOSE_GRACE_MS);
+    }, STATUS_CARD_HOVER_CLOSE_GRACE_MS);
   }, [clearQuotaPopoverCloseTimer, clearQuotaPopoverOpenTimer, restoreQuotaPopoverFocus]);
   const handleQuotaPopoverMouseEnter = React.useCallback(() => {
     quotaPopoverPointerInsideRef.current = true;
@@ -1136,6 +1168,30 @@ export function TodaySpendChip({
     quotaPopoverPointerInsideRef.current = true;
     scheduleQuotaPopoverOpen();
   }, [scheduleQuotaPopoverOpen]);
+
+  // 底栏状态卡片互斥（用户要求"该窗体为唯一窗体"）：本卡展开时请求独占（另一张立刻收起），
+  // 收起时让位；另一张卡展开时由协调器回调到这里立刻收起。
+  // 句柄认**本实例**：分屏可能同时挂载多份底栏，按种类登记会互相顶掉关闭回调。
+  React.useEffect(() => {
+    const handle = registerStatusBarCard('quota', () => {
+      keepQuotaPopoverOpen();
+      setQuotaPopoverOpen(false);
+      restoreQuotaPopoverFocus();
+    });
+    statusCardHandleRef.current = handle;
+    return () => {
+      statusCardHandleRef.current = null;
+      handle.unregister();
+    };
+  }, [keepQuotaPopoverOpen, restoreQuotaPopoverFocus]);
+  React.useEffect(() => {
+    if (!quotaPopoverOpen) {
+      statusCardHandleRef.current?.release();
+      return;
+    }
+    // 注册 effect 更早声明，挂载时句柄已就位。
+    statusCardHandleRef.current?.request();
+  }, [quotaPopoverOpen]);
 
   const quotaPopoverContextRef = React.useRef({
     identity: JSON.stringify([
@@ -1172,6 +1228,7 @@ export function TodaySpendChip({
       identity,
     };
     if (!contextInvalidated) return;
+    setResetListOpen(false);
 
     // provider / model 或任务切换会原地复用组件；在新 chip 节点挂载后同步收口旧弹窗，
     // 清掉 hover / focus 残态与悬空 timer，并把卡片接管的键盘焦点交还给当前 chip。
@@ -1460,7 +1517,13 @@ export function TodaySpendChip({
     // accountUsage / xai / claude 快照均已在上方切到被控端镜像,与本机同一套卡片渲染。
     if (!remoteHostId) {
       account = usesCodexQuotaForm
-        ? buildCodexUsageCard(accountUsage, codexResetSummary, t, windowLabelNowMs, formatterLocale)
+        ? buildCodexUsageCard(
+            accountUsage,
+            !isAnyRemoteSession && codexRateLimits?.rateLimitResetCredits ? null : codexResetSummary,
+            t,
+            windowLabelNowMs,
+            formatterLocale,
+          )
         : usesXaiQuotaForm
           ? buildXaiUsageCard(xaiSubscriptionUsage, xaiRateLimit, t, windowLabelNowMs)
           : buildClaudeUsageCard(claudeSubscriptionUsage, t);
@@ -1495,6 +1558,9 @@ export function TodaySpendChip({
     if (usesGatewayQuota || isDeviceLinkRemoteGateway) {
       account.title = t('quotaCard.gatewayTitle');
       if (creditTotals) {
+        // Keep the retained balance's observation time; a render/refresh is not new data.
+        const observedAt = Date.parse(creditUsage?.observedAt ?? '');
+        if (Number.isFinite(observedAt)) account.updatedAt = observedAt;
         account.windows.push({
           key: 'balance',
           title: t('quotaCard.balanceLabel'),
@@ -1506,7 +1572,7 @@ export function TodaySpendChip({
         });
       }
       if (claudeQuota && claudeQuota.maxBudget > 0) {
-        if (typeof claudeQuota.todaySpend === 'number') {
+        if (claudeQuota.dailyLimitEnabled !== false && typeof claudeQuota.todaySpend === 'number') {
           const softLimit = (claudeQuota.maxBudget / 30) * DAILY_SOFT_LIMIT_FACTOR;
           account.windows.push({
             key: 'daily',
@@ -1530,7 +1596,7 @@ export function TodaySpendChip({
       }
       if (!claudeQuota && !creditTotals) {
         account.emptyText = t('todaySpend.tooltip.monthlyUnavailable');
-      } else if (claudeQuota?.todaySpend === null) {
+      } else if (claudeQuota?.dailyLimitEnabled !== false && claudeQuota?.todaySpend === null) {
         account.details = [t('todaySpend.tooltip.dailyUnavailable')];
       }
     }
@@ -1607,7 +1673,7 @@ export function TodaySpendChip({
       onFocusCapture={refreshCodexRateLimits}
     >
       <Popover
-        open={quotaPopoverOpen}
+        open={quotaPopoverOpen && !resetListOpen}
         onOpenChange={(open) => {
           // 打开只由 hover / focus 驱动；Radix 的 outside / Escape 仍可请求关闭。
           if (!open) closeQuotaPopoverImmediately();
@@ -1646,8 +1712,23 @@ export function TodaySpendChip({
             {labelNode}
           </button>
         </PopoverTrigger>
+        {/* 浮层挂到触发器紧跟其后的宿主：DOM 顺序 = 视觉顺序，Tab 才能从卡片继续走到
+            右边下一枚 chip（原实现 portal 到 body 末尾，焦点进卡后就出不来了）。 */}
+        <div ref={setQuotaPopoverPortalHost} className="contents" />
         <PopoverContent
           ref={quotaPopoverContentRef}
+          portalContainer={quotaPopoverPortalHost}
+          // Radix 给 FocusScope 写死 `loop：true`（见 popover.tsx）：Tab 在卡内永远环回。
+          // 把两个 Tab 边缘接过来，让 Tab 能从卡片走到右边下一枚 chip（用户实测）。
+          onKeyDownCapture={(event) => {
+            if (event.key !== 'Tab') return;
+            const cardRoot = event.currentTarget;
+            if (!(cardRoot instanceof HTMLElement)) return;
+            if (handOffTabFromCard(cardRoot, event)) {
+              event.preventDefault();
+              event.stopPropagation();
+            }
+          }}
           side="top"
           align="end"
           sideOffset={8}
@@ -1698,9 +1779,59 @@ export function TodaySpendChip({
             dashboardLabel={usageDashboardLabel}
             onOpenDashboard={handleClick}
             dashboardButtonRef={quotaPopoverDashboardButtonRef}
+            windowAction={usesCodexQuotaForm && !isAnyRemoteSession && (codexRateLimits?.rateLimitResetCredits || manualReset.canRetry) ? (
+              <Button size="xs" compact tone="quiet" aria-label={t('codexResets.title')} title={t('codexResets.title')}
+                onClick={() => {
+                  quotaPopoverFocusTakenRef.current = false;
+                  closeQuotaPopoverImmediately();
+                  setResetListOpen(true);
+                }}>
+                {manualReset.canRetry ? t('codexResets.retryReset') : t('codexResets.available', { count: codexRateLimits?.rateLimitResetCredits?.availableCount ?? 0 })}
+              </Button>
+            ) : null}
           />
         </PopoverContent>
       </Popover>
+      <Dialog.Root open={resetListOpen && usesCodexQuotaForm && !isAnyRemoteSession} onOpenChange={setResetListOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="modal-scrim fixed inset-0 z-[10000]" />
+          <Dialog.Content
+            aria-describedby={undefined}
+            onPointerDownOutside={(event) => event.preventDefault()}
+            className="modal-panel fixed left-1/2 top-1/2 z-[10000] w-[400px] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 p-4"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              // The confirmation owns focus when it opens after this dialog closes.
+              if (!manualReset.busy) {
+                quotaPopoverFocusTakenRef.current = true;
+                restoreQuotaPopoverFocus();
+              }
+            }}
+          >
+            <Dialog.Title className="sr-only">{t('codexResets.title')}</Dialog.Title>
+            <div className="max-h-[60vh] overflow-y-auto">
+              <CodexResetCredits providerId={providerId ?? 'openai'} onChanged={refreshCodexRateLimits} variant="dialog" snapshot={codexRateLimits} busy={manualReset.busy}
+                canReset={manualReset.canReset} canRetry={manualReset.canRetry} onReset={(credit) => {
+                  setResetListOpen(false);
+                  const context = quotaPopoverContextRef.current.identity;
+                  void manualReset.reset(credit).finally(() => {
+                    if (quotaPopoverContextRef.current.identity !== context) return;
+                    quotaPopoverFocusTakenRef.current = true;
+                    restoreQuotaPopoverFocus();
+                  });
+                }} />
+            </div>
+            <Dialog.Close asChild>
+              <Tip text={t('common.dismiss')} contentClassName="z-[10001]">
+                <button type="button" aria-label={t('common.dismiss')}
+                  className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full text-[var(--confirm-desc)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--confirm-title)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]">
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </Tip>
+            </Dialog.Close>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
       {confettiBurst && (
         <QuotaResetConfetti
           key={confettiBurst.nonce}

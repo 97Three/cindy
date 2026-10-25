@@ -16,8 +16,8 @@ export const LIGHTBOX_ZOOM_EPS = 0.01;
 export const LIGHTBOX_DISMISS_DISTANCE = 120;
 export const LIGHTBOX_DISMISS_VELOCITY = 800;
 /**
- * 单击关闭允许的最大位移(pt)。RNGH Tap 默认 maxDist 为无限(NAN 跳过校验),
- * 与平移 Simultaneous 时,500ms 内的短拖松手会被当成单击,lightbox 直接关掉。
+ * 单击(切换 chrome)允许的最大位移(pt)。RNGH Tap 默认 maxDist 为无限(NAN 跳过校验),
+ * 与平移 Simultaneous 时,500ms 内的短拖松手会被当成单击,工具栏被意外切掉。
  */
 export const LIGHTBOX_TAP_MAX_DISTANCE = 12;
 /** 橡皮筋系数(对齐 UIScrollView 的 0.55):越界量 x 显示为 (1 - 1/(x·c/d + 1))·d。 */
@@ -460,12 +460,6 @@ export function shouldDismissLightbox(
     || Math.abs(velocityY) > LIGHTBOX_DISMISS_VELOCITY;
 }
 
-/** 单击是否关闭:仅 1x。放大时单击留给看图,避免和拖图/双击抢手势。 */
-export function shouldCloseLightboxOnTap(scale: number): boolean {
-  'worklet';
-  return !isLightboxZoomed(scale);
-}
-
 /** 下滑拖动中的背景不透明度:拖过半屏降到 0.3,跟手渐隐。 */
 export function lightboxBackgroundOpacity(translationY: number, containerHeight: number): number {
   'worklet';
@@ -510,7 +504,7 @@ export interface LightboxImageLayers {
   showPreview: boolean;
   /** 是否渲染转圈(仅在连缩略图都没有、否则就是纯黑时)。 */
   showSpinner: boolean;
-  /** 是否渲染失败终态文案(原图已确证失败且没有重试路径,不能永远转圈)。 */
+  /** 是否渲染整页失败(原图已确证失败且没有可用显示层,不能永远转圈)。 */
   showFailure: boolean;
 }
 
@@ -543,8 +537,8 @@ export function lightboxImageLayers(input: {
   /** 垫底图是否已确认 onError(文件被清理等);失败的垫底不能顶替转圈。 */
   previewFailed?: boolean;
   /**
-   * 原图已确证 onError,且这条路径没有自动重取 / 重试入口(直连 http 图)。
-   * 此时既没有像素也不会再有,必须给失败终态——转圈会一直谎报"还在加载"。
+   * 原图取件已失败 / 不支持,或原生 onError 的自动恢复已结束。
+   * 没有可用原图与预览时给失败终态;保留用户主动重试的入口。
    */
   fullFailedTerminally?: boolean;
 }): LightboxImageLayers {

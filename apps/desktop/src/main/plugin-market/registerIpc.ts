@@ -3,10 +3,13 @@ import os from 'node:os';
 import { ipcMain } from 'electron';
 
 import { isIpcError } from '../../shared/ipc-errors.js';
+import { ServerApiError } from '../serverApiClient.js';
+import { isPluginMarketPassthroughErrorCode } from './api.js';
 import {
   isGhostInstallApprovalToken,
   type GhostManifest,
 } from '../../shared/ghost.js';
+import { installedGhostStoragePart } from '../../shared/pluginIdentity.js';
 import {
   isPluginMarketCustomIconKey,
   type PluginMarketSnapshot,
@@ -57,7 +60,7 @@ async function snapshotAndSignalRemovalNotice(options?: PluginMarketSnapshotOpti
 /**
  * Reuse the market snapshot reconciliation outside the Plugins page so
  * default-install plugins are provisioned and stable-source updates are applied
- * as soon as an app owner is ready. The Plugins page remains a later retry path.
+ * as soon as an app owner is ready. Resume and periodic maintenance retry it.
  */
 export type DefaultMarketPluginSyncOutcome = 'completed' | 'deferred' | 'failed';
 
@@ -65,9 +68,15 @@ export function defaultMarketPluginSyncOutcome(
   snapshot: PluginMarketSnapshot,
   reconciliationOutcome: 'completed' | 'failed' = 'completed',
 ): DefaultMarketPluginSyncOutcome {
+  // The organization catalog was not reconciled. Only an upgrade can fix a
+  // client-version rejection; every other reason may clear on retry.
+  const organizationRetryable =
+    Boolean(snapshot.organizationAccessError)
+    && snapshot.organizationAccessError !== 'PLUGIN_NAMESPACE_CLIENT_REQUIRED';
   if (
     (snapshot.unavailableReason === null || snapshot.unavailableReason === 'not-configured')
     && reconciliationOutcome === 'completed'
+    && !organizationRetryable
   ) {
     return 'completed';
   }
@@ -80,10 +89,13 @@ export function defaultMarketPluginSyncOutcome(
   return 'failed';
 }
 
-export async function syncDefaultMarketPlugins(): Promise<DefaultMarketPluginSyncOutcome> {
+export async function syncDefaultMarketPlugins(
+  trigger: PluginMarketSnapshotOptions['trigger'] = 'background',
+): Promise<DefaultMarketPluginSyncOutcome> {
   try {
     let reconciliationOutcome: 'completed' | 'failed' | null = null;
     const snapshot = await snapshotAndSignalRemovalNotice({
+      trigger,
       onDefaultReconciliationOutcome: (outcome) => {
         reconciliationOutcome = outcome;
       },
@@ -95,6 +107,7 @@ export async function syncDefaultMarketPlugins(): Promise<DefaultMarketPluginSyn
     if (outcome === 'failed') {
       log.warn('default plugin startup sync incomplete', {
         unavailableReason: snapshot.unavailableReason,
+        organizationAccessError: snapshot.organizationAccessError ?? null,
       });
     }
     return outcome;
@@ -103,6 +116,16 @@ export async function syncDefaultMarketPlugins(): Promise<DefaultMarketPluginSyn
       error: error instanceof Error ? error.message : String(error),
     });
     return 'failed';
+  }
+}
+
+/** Signal foreground removals without requesting another snapshot or disk scan. */
+export async function refreshForegroundMarketPlugins(): Promise<'completed' | 'failed'> {
+  try {
+    return await service().refreshCatalogForForeground();
+  } finally {
+    // A removal can succeed before a later maintenance step fails.
+    signalRemovalNoticeAvailable();
   }
 }
 
@@ -116,6 +139,9 @@ async function invokePluginMarket<T>(operation: () => Promise<T>): Promise<T> {
     return await operation();
   } catch (error) {
     if (isIpcError(error)) throw error;
+    if (error instanceof ServerApiError && isPluginMarketPassthroughErrorCode(error.code)) {
+      throwIpcError(error.code, 'Plugin market operation failed');
+    }
     log.warn('plugin market IPC failed', {
       error: error instanceof Error ? error.message : String(error),
     });
@@ -134,7 +160,7 @@ export function registerPluginMarketIpc(): void {
     assertTrustedAppRendererEvent(event);
     return invokePluginMarket(() =>
       snapshotAndSignalRemovalNotice({
-        deferReconciliation: true,
+        discoveryOnly: true,
         onConsentHoldsChanged: signalUpdateConsentHoldsChanged,
       }),
     );
@@ -207,7 +233,7 @@ export function registerPluginMarketIpc(): void {
       const previouslyInstalled = new Set(
         getGhostManager()
           .list()
-          .map((g) => g.manifest.id),
+          .map((g) => installedGhostStoragePart(g)),
       );
       return invokePluginMarket(async () => {
         const result = await service().install(
@@ -228,10 +254,10 @@ export function registerPluginMarketIpc(): void {
         );
         if (
           getActiveAppSession().generation === owner.generation &&
-          !previouslyInstalled.has(result.ghost.manifest.id)
+          !previouslyInstalled.has(installedGhostStoragePart(result.ghost))
         ) {
           try {
-            markGhostRecommendationInstalled(result.ghost.manifest.id);
+            markGhostRecommendationInstalled(installedGhostStoragePart(result.ghost));
           } catch {
             log.warn('ghost recommendation install history unavailable');
           }

@@ -1,7 +1,9 @@
+import { ErrorNotice } from '@/components/ErrorNotice';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
+import { workspacePathsEqual } from "./workspaceSelection";
 import {
   ArrowUp,
   ChevronRight,
@@ -115,7 +117,7 @@ export function NewTaskSelectionSheet(p: NewTaskSelectionSheetProps) {
                 leading={icon(Folder)}
                 selected={
                   p.workspaceKind === "project" &&
-                  p.workingDir.trim() === workspace.workingDir
+                  workspacePathsEqual(p.workingDir, workspace.workingDir)
                 }
                 disabled={p.busy}
                 onPress={() => p.onProject(workspace.workingDir)}
@@ -207,17 +209,7 @@ export function NewTaskSelectionSheet(p: NewTaskSelectionSheetProps) {
             {p.loading ? (
               <ActivityIndicator color={colors.textSecondary} />
             ) : null}
-            {p.error ? (
-              <Text
-                style={{
-                  color: colors.errorText,
-                  fontSize: typeScale.footnote,
-                  lineHeight: lineHeight.caption,
-                }}
-              >
-                {p.error}
-              </Text>
-            ) : null}
+            {p.error ? <ErrorNotice message={p.error} /> : null}
             {!p.loading && !p.error && !p.entries.length ? (
               <Text
                 style={{

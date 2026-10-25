@@ -90,6 +90,7 @@ import { DIALOGUE_FILTER_KEY, projectFilterIncludes } from '../hooks/helpers/sid
 import { DEFAULT_TASK_INFO_FIELDS } from '../hooks/helpers/sidebarFilterCore';
 import { useTaskInfoFields, type TaskInfoField } from '../hooks/useTaskInfoFields';
 import { MENU_ITEM_CLASS, MENU_ROW_CLASS } from './menuStyles';
+import { FilterReminderDot } from './FilterReminderDot';
 
 type Option<T extends string> = {
   value: T;
@@ -197,8 +198,8 @@ export interface SidebarFilterPopoverProps {
   /** 当前范围内无项目任务数,用来在项目筛选里画「对话」选项。 */
   dialogueCount?: number;
   /**
-   * 是否有远程设备连接(E 期)。「按设备分组」与顶部设备切换栏同一出现条件:
-   * 仅远程连接时显示;仅本机时该选项整行隐藏。
+   * 是否有可选的远程设备（含断线缓存）。设备仍在切换栏可选时保留分组选项，
+   * 仅剩本机或被拒设备时隐藏，不因连接状态抖动改变分组。
    */
   hasRemoteDevices?: boolean;
   /**
@@ -525,7 +526,8 @@ export function SidebarFilterPopover({
           )
           .join(t('ccAgent.sidebar.taskInfoSummarySeparator'))
       : t('ccAgent.sidebar.taskInfoSummaryNone');
-  const taskInfoIsDefault = taskInfoFields.length === DEFAULT_TASK_INFO_FIELDS.length &&
+  const taskInfoIsDefault =
+    taskInfoFields.length === DEFAULT_TASK_INFO_FIELDS.length &&
     DEFAULT_TASK_INFO_FIELDS.every((field, index) => taskInfoFields[index] === field);
 
   const ariaLabel = t('ccAgent.sidebar.filterAria', {
@@ -575,12 +577,15 @@ export function SidebarFilterPopover({
               aria-pressed={isFilterActive}
               className={cn(
                 // 配色与段头其余按钮统一(侧栏 token 对),不用通用 text-tertiary。
-                'flex h-7 w-7 items-center justify-center rounded-md',
+                'relative flex h-7 w-7 items-center justify-center rounded-md',
                 'text-[var(--sidebar-list-muted)]',
                 'transition-colors hover:text-[var(--sidebar-nav-text)]',
               )}
             >
               <SlidersHorizontal size={14} strokeWidth={2} />
+              {/* 正在看已归档任务时标一个点,提醒列表不是平常的进行中任务;
+                  段头会让这个按钮常驻显示。 */}
+              {status === 'archived' && <FilterReminderDot />}
             </button>
           </Tip>
         )}

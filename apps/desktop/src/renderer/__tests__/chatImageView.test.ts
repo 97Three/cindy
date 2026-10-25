@@ -30,6 +30,7 @@ vi.mock('../components/chat/ImageMissingPlaceholder', () => ({
 }));
 
 import { ChatImageView } from '../components/chat/ChatImageView';
+import { prepareShareMessageClone } from '../lib/shareConversationImage';
 
 afterEach(() => {
   cleanup();
@@ -38,14 +39,128 @@ afterEach(() => {
 });
 
 describe('ChatImageView', () => {
+  // PR #6943 review: exporting a loaded long attachment must keep its image,
+  // but omit the live-only click promise. Existing clone tests use synthetic DOM.
+  it('omits the interactive long-image hint from the static share clone', () => {
+    const { container } = render(React.createElement(ChatImageView, {
+      src: 'data:image/png;base64,test', filename: 'long.png', variant: 'user-attached',
+    }));
+    const image = screen.getByAltText('long.png');
+    Object.defineProperties(image, { naturalWidth: { value: 100 }, naturalHeight: { value: 301 } });
+    fireEvent.load(image);
+    expect(screen.getByText('chat.media.longImagePreview')).toBeTruthy();
+    const clone = prepareShareMessageClone(container);
+    expect(clone?.querySelector('img')?.getAttribute('src')).toBe(image.getAttribute('src'));
+    expect(clone?.textContent).not.toContain('chat.media.longImagePreview');
+    expect(screen.getByText('chat.media.longImagePreview')).toBeTruthy();
+  });
+
+  // #6796, unit: existing coverage only exercised loading/errors and click routing.
+  // A 100x301 user attachment must expose the crop warning; 100x300 must not.
+  // Source replacement must not inherit the previous image's crop decision.
+  it.each([
+    ['user-attached', 100, 301, true],
+    ['user-attached', 100, 300, false],
+    ['user-attached', 100, 200, false],
+    ['user-attached', 200, 100, false],
+    ['user-attached', 0, 600, false],
+    ['tool-output', 100, 600, false],
+  ] as const)('%s %sx%s announces a partial preview: %s', (variant, width, height, cropped) => {
+    render(React.createElement(ChatImageView, { src: 'data:image/png;base64,test', filename: 'sample.png', variant }));
+    const image = screen.getByAltText('sample.png');
+    expect(image.getAttribute('aria-describedby')).toBeNull();
+    Object.defineProperties(image, { naturalWidth: { value: width }, naturalHeight: { value: height } });
+    fireEvent.load(image);
+    const description = image.getAttribute('aria-describedby');
+    expect(Boolean(description)).toBe(cropped);
+    if (description) expect(document.getElementById(description)?.textContent).toBe('chat.media.longImagePreview');
+  });
+
+  it('forgets the crop warning on source replacement and keeps keyboard preview available', () => {
+    const props = { filename: 'sample.png', variant: 'user-attached' as const };
+    const { rerender } = render(React.createElement(ChatImageView, { ...props, src: 'first.png' }));
+    const image = screen.getByAltText('sample.png');
+    Object.defineProperties(image, { naturalWidth: { value: 100 }, naturalHeight: { value: 600 } });
+    fireEvent.load(image);
+    expect(image.getAttribute('aria-describedby')).toBeTruthy();
+    fireEvent.keyDown(image, { key: 'Enter' });
+    expect(screen.getByTestId('image-lightbox')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('image-lightbox'));
+    expect(document.activeElement).toBe(image);
+    rerender(React.createElement(ChatImageView, { ...props, src: 'next.png' }));
+    expect(screen.getByAltText('sample.png').getAttribute('aria-describedby')).toBeNull();
+    expect(screen.queryByText('chat.media.longImagePreview')).toBeNull();
+  });
+
   describe.each(['user-attached', 'tool-output'] as const)('%s diagnostics', (variant) => {
+    it('keeps a loading frame until decode and resets it for a different source', async () => {
+      const props = { filename: 'a.png', variant };
+      const { rerender } = render(React.createElement(ChatImageView, {
+        ...props, src: 'cindy-remote-media://m/device/a',
+      }));
+      expect(screen.getByRole('status').getAttribute('aria-label')).toBe('chat.imageMissing.loading');
+      expect(screen.getByAltText('a.png').style.display).toBe('none');
+      const image = screen.getByAltText('a.png') as HTMLImageElement;
+      let finishDecode!: () => void;
+      image.decode = vi.fn(() => new Promise<void>((resolve) => { finishDecode = resolve; }));
+      fireEvent.load(image);
+      expect(image.decode).toHaveBeenCalledOnce();
+      expect(screen.getByRole('status')).toBeTruthy();
+      expect(image.style.display).toBe('none');
+      await act(async () => { finishDecode(); });
+      expect(screen.queryByRole('status')).toBeNull();
+      expect(screen.getByRole('button', { name: 'a.png' }).style.display).toBe('');
+      rerender(React.createElement(ChatImageView, {
+        ...props, src: 'cindy-remote-media://m/device/b',
+      }));
+      expect(screen.getByRole('status')).toBeTruthy();
+      expect(screen.getByAltText('a.png').style.display).toBe('none');
+      fireEvent.load(screen.getByAltText('a.png'));
+      expect(screen.queryByRole('status')).toBeNull();
+    });
+
+    it.each(['resolve', 'reject'] as const)('ignores a late decode %s after changing source', async (outcome) => {
+      const props = { filename: 'a.png', variant };
+      const { rerender } = render(React.createElement(ChatImageView, {
+        ...props, src: 'cindy-remote-media://m/device/a',
+      }));
+      const oldImage = screen.getByAltText('a.png') as HTMLImageElement;
+      let finishDecode!: () => void;
+      oldImage.decode = vi.fn(() => new Promise<void>((resolve, reject) => {
+        finishDecode = outcome === 'resolve' ? resolve : () => reject(new Error('Stale decode'));
+      }));
+      fireEvent.load(oldImage);
+      rerender(React.createElement(ChatImageView, {
+        ...props, src: 'cindy-remote-media://m/device/b',
+      }));
+      await act(async () => { finishDecode(); });
+      expect(screen.queryByTestId('image-failure')).toBeNull();
+      expect(screen.getByRole('status')).toBeTruthy();
+      expect(screen.getByAltText('a.png').getAttribute('src')).toBe('cindy-remote-media://m/device/b');
+      fireEvent.load(screen.getByAltText('a.png'));
+      expect(screen.queryByRole('status')).toBeNull();
+    });
+
+    it('routes decode failure through the existing image diagnostics', async () => {
+      const read = vi.fn().mockRejectedValue(new Error('[NOT_FOUND] Image file not found'));
+      vi.stubGlobal('electronAPI', { readCachedImageAsBase64: read });
+      const src = 'cindy-media://blobs/a.png';
+      render(React.createElement(ChatImageView, { src, filename: 'a.png', variant }));
+      const image = screen.getByAltText('a.png') as HTMLImageElement;
+      image.decode = vi.fn().mockRejectedValue(new Error('Decode failed'));
+      fireEvent.load(image);
+      await waitFor(() => expect(screen.getByTestId('image-failure').dataset.status).toBe('missing'));
+      expect(screen.queryByRole('status')).toBeNull();
+      expect(read).toHaveBeenCalledExactlyOnceWith({ url: src });
+    });
+
     it.each(['xdt-image://images/a.png', 'cindy-media://blobs/a.png'])(
       'confirms missing bytes via preload for %s',
       async (src) => {
         const read = vi.fn().mockRejectedValue(new Error('[NOT_FOUND] Image file not found'));
         vi.stubGlobal('electronAPI', { readCachedImageAsBase64: read });
         render(React.createElement(ChatImageView, { src, filename: 'a.png', variant }));
-        fireEvent.error(screen.getByRole('button', { name: 'a.png' }));
+        fireEvent.error(screen.getByAltText('a.png'));
         await waitFor(() => expect(screen.getByTestId('image-failure').dataset.status).toBe('missing'));
         expect(read).toHaveBeenCalledExactlyOnceWith({ url: src });
       },
@@ -59,11 +174,11 @@ describe('ChatImageView', () => {
       render(React.createElement(ChatImageView, {
         src: 'cindy-media://blobs/a.png', filename: 'a.png', variant,
       }));
-      fireEvent.error(screen.getByRole('button', { name: 'a.png' }));
+      fireEvent.error(screen.getByAltText('a.png'));
       expect(screen.getByTestId('image-failure').dataset.status).toBe('unavailable');
       fireEvent(window, new Event(event));
-      expect(screen.getByRole('button', { name: 'a.png' })).toBeTruthy();
-      fireEvent.error(screen.getByRole('button', { name: 'a.png' }));
+      expect(screen.getByAltText('a.png')).toBeTruthy();
+      fireEvent.error(screen.getByAltText('a.png'));
       await act(async () => { reject(new Error('[NOT_FOUND] Stale result')); });
       expect(read).toHaveBeenCalledTimes(2);
       expect(screen.getByTestId('image-failure').dataset.status).toBe('unavailable');
@@ -76,11 +191,11 @@ describe('ChatImageView', () => {
     vi.stubGlobal('electronAPI', { readCachedImageAsBase64: read });
     const props = { filename: 'a.png', variant: 'tool-output' as const };
     const { rerender } = render(React.createElement(ChatImageView, { ...props, src: 'xdt-image://images/a.png' }));
-    fireEvent.error(screen.getByRole('button', { name: 'a.png' }));
+    fireEvent.error(screen.getByAltText('a.png'));
     const remote = 'cindy-remote-media://m/device/a';
     rerender(React.createElement(ChatImageView, { ...props, src: remote }));
     await act(async () => { reject(new Error('[NOT_FOUND] Stale local result')); });
-    expect(screen.getByRole('button', { name: 'a.png' }).getAttribute('src')).toBe(remote);
+    expect(screen.getByAltText('a.png').getAttribute('src')).toBe(remote);
     expect(read).toHaveBeenCalledTimes(1);
   });
 
@@ -92,12 +207,13 @@ describe('ChatImageView', () => {
       src: 'cindy-remote-media://m/device/a', filename: 'a.png', variant: 'tool-output',
     }));
     for (const delay of [2000, 4000, 8000]) {
-      fireEvent.error(screen.getByRole('button', { name: 'a.png' }));
+      fireEvent.error(screen.getByAltText('a.png'));
       expect(screen.getByTestId('image-failure').dataset.status).toBe('unavailable');
       act(() => vi.advanceTimersByTime(delay));
-      expect(screen.getByRole('button', { name: 'a.png' })).toBeTruthy();
+      expect(screen.getByAltText('a.png')).toBeTruthy();
+      expect(screen.getByRole('status')).toBeTruthy();
     }
-    fireEvent.error(screen.getByRole('button', { name: 'a.png' }));
+    fireEvent.error(screen.getByAltText('a.png'));
     act(() => vi.advanceTimersByTime(60000));
     expect(screen.getByTestId('image-failure').dataset.status).toBe('unavailable');
     expect(read).not.toHaveBeenCalled();
@@ -113,7 +229,7 @@ describe('ChatImageView', () => {
       }),
     );
 
-    fireEvent.error(screen.getByRole('button', { name: 'shot.png' }));
+    fireEvent.error(screen.getByAltText('shot.png'));
     expect(screen.queryByRole('button', { name: 'shot.png' })).toBeNull();
     expect(screen.getByText('shot.png')).toBeTruthy();
 
@@ -126,7 +242,7 @@ describe('ChatImageView', () => {
       }),
     );
 
-    const image = screen.getByRole('button', { name: 'shot.png' });
+    const image = screen.getByAltText('shot.png');
     expect(image.getAttribute('src')).toBe('cindy-remote-media://m/device/shot');
   });
 
@@ -147,6 +263,7 @@ describe('ChatImageView', () => {
         modelFile: { provider: 'cindy', url: 'cindy-media://blobs/' + 'a'.repeat(64) + '.glb', format },
       }),
     );
+    fireEvent.load(screen.getByAltText('preview.png'));
     fireEvent.click(screen.getByRole('button', { name: 'preview.png' }));
     expect(screen.queryByTestId('model-lightbox') !== null).toBe(opensModel);
   });
@@ -166,6 +283,7 @@ describe('ChatImageView', () => {
         },
       }),
     );
+    fireEvent.load(screen.getByAltText('preview.png'));
     fireEvent.click(screen.getByRole('button', { name: 'preview.png' }));
     expect(screen.queryByTestId('model-lightbox')).not.toBeNull();
   });
@@ -173,6 +291,7 @@ describe('ChatImageView', () => {
     render(React.createElement(ChatImageView, {
       src: 'xdt-image://control/keyboard.png', filename: 'keyboard.png', variant: 'tool-output',
     }));
+    fireEvent.load(screen.getByAltText('keyboard.png'));
     const trigger = screen.getByRole('button', { name: 'keyboard.png' });
     trigger.focus();
     fireEvent.keyDown(trigger, { key });

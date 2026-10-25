@@ -1,6 +1,8 @@
+import { NativeErrorNotice } from '@/components/NativeErrorNotice.ios';
 import { Button, Image, Picker, ProgressView, Text, Toggle } from '@expo/ui/swift-ui';
 import { disabled, font, foregroundStyle, frame, pickerStyle, tag, tint } from '@expo/ui/swift-ui/modifiers';
 import { useTranslation } from 'react-i18next';
+import { workspacePathsEqual } from './workspaceSelection';
 import { iconSize, useTheme } from '@/theme';
 import { ComposerSheet } from './ComposerSheet';
 import { ComposerNativeRow } from './ComposerNativeRow';
@@ -52,7 +54,7 @@ export function NewTaskSelectionSheet(p: NewTaskSelectionSheetProps) {
         {p.workspaces.length ? <Section>
           {p.workspaces.map(workspace => <ComposerNativeRow key={workspace.workingDir}
             title={workspace.title} subtitle={workspace.workingDir} leading={icon('folder')}
-            selected={p.workspaceKind === 'project' && p.workingDir.trim() === workspace.workingDir}
+            selected={p.workspaceKind === 'project' && workspacePathsEqual(p.workingDir, workspace.workingDir)}
             disabled={p.busy} onPress={() => p.onProject(workspace.workingDir)} testID="newSession.workspaceProjectOption" />)}
         </Section> : null}
         <Section>
@@ -76,7 +78,7 @@ export function NewTaskSelectionSheet(p: NewTaskSelectionSheetProps) {
             onIsOnChange={p.onShowHidden} modifiers={[disabled(p.busy), tint(colors.inputCaret)]} testID="newSession.remoteBrowseShowHidden" />
         </Section>
         {p.loading ? <Section><ProgressView /></Section> : null}
-        {p.error ? <Section><Text modifiers={[foregroundStyle(colors.errorText)]}>{p.error}</Text></Section> : null}
+        {p.error ? <Section><NativeErrorNotice message={p.error} /></Section> : null}
         <Section>
           {!p.loading && !p.error && p.entries.length === 0 ? <Text>{newSessionText('emptyDirectory')}</Text> : null}
           {p.entries.map(entry => <ComposerNativeRow key={entry.path} title={entry.name}

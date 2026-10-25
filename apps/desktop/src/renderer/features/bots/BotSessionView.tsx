@@ -7,13 +7,18 @@ import { useTranslation } from 'react-i18next';
 
 import { Spinner } from '@/components/ui/spinner';
 import { CCAgentSessionView } from '@/features/cc-agent/CCAgentSessionView';
+import { useCompanionCloud } from './companionCloudStore';
+import { withoutShadowedBots } from './companionCloudPresentation';
+import { useCompanionArrivalNotice } from './useCompanionArrivalNotice';
+import { CompanionShadowBanner } from './CompanionShadowBanner';
 import type { ComposerBotMention } from '@/lib/fileTypes';
 import { getBotLastReadAt, markBotRead } from './botReadState';
 import { useBotProfiles } from './botStore';
-import { ensureBotWorkbenchTab } from '@/features/right-sidebar/lib/openBotWorkbenchTab';
 import type { BotChatIdentity } from './BotSessionContentHeader';
 import type { BotChatBinding } from './botChatPresentation';
 import { useBotIslandVisibleSession } from './useBotIslandVisibleSession';
+import { BotDmThreadHost } from './BotDmThreadHost';
+import { useBotPluginFocusedSession } from './useBotPluginFocusedSession';
 
 type BotSessionGate =
   | { kind: 'loading' }
@@ -83,13 +88,24 @@ function BotSessionGateView() {
   const { botId, sessionId } = useParams();
   const [reloadVersion, setReloadVersion] = useState(0);
   const [gate, setGate] = useState<BotSessionGate>({ kind: 'loading' });
-  useBotIslandVisibleSession(gate.kind === 'ready' ? sessionId ?? null : null);
+  // The companion now runs on its main computer: this copy's main task is read only.
+  const cloud = useCompanionCloud();
+  const shadowed = cloud.demotedBotIds.includes(botId ?? '');
+  // The send / delegate choices leave out copies that run on another computer or were retired
+  // there, like the roster (cloud-companions.md §6); read live, the gate's list is a one-off.
+  const readyMentions = gate.kind === 'ready' ? gate.mentions : null;
+  const mentions = useMemo(() => (readyMentions ? withoutShadowedBots(readyMentions, cloud) : []), [readyMentions, cloud]);
+  const ownedSessionId = gate.kind === 'ready' ? sessionId ?? null : null;
+  useBotIslandVisibleSession(ownedSessionId);
+  useBotPluginFocusedSession(ownedSessionId);
   // The gate proves ownership once; name and avatar edited in settings must
   // still reach the open chat's header and composer.
   const liveProfile = useBotProfiles().find((profile) => profile.id === botId);
   const liveName = liveProfile?.name;
   const liveAvatar = liveProfile?.avatar;
   const liveAvatarColor = liveProfile?.avatarColor;
+  const liveInvitationStage = liveProfile?.invitation?.stage;
+  useCompanionArrivalNotice(gate.kind === 'ready' ? botId : undefined, liveName);
   const gateIdentity = gate.kind === 'ready' ? gate.identity : null;
   const identity = useMemo(
     () =>
@@ -102,6 +118,12 @@ function BotSessionGateView() {
           }
         : gateIdentity,
     [gateIdentity, liveName, liveAvatar, liveAvatarColor],
+  );
+  // A read-only demoted copy offers no add-to-group entry, like its settings.
+  const canonicalChat = gate.kind === 'ready' && gate.isCanonical && !shadowed;
+  const chatIdentity = useMemo(
+    () => (gateIdentity ? { ...(identity ?? gateIdentity), canonicalChat } : null),
+    [gateIdentity, identity, canonicalChat],
   );
 
   useEffect(() => {
@@ -186,14 +208,6 @@ function BotSessionGateView() {
     };
   }, [botId, reloadVersion, sessionId]);
 
-  // 本机伙伴主任务:右侧栏默认带上「工作台」标签(首次进入时创建并展开)。
-  // 远程伙伴走 RemoteBotSessionView,不经过这里;渠道任务、历史任务不提供工作台。
-  const workbenchSessionId = gate.kind === 'ready' && gate.isCanonical ? sessionId : undefined;
-  useEffect(() => {
-    if (!botId || !workbenchSessionId) return;
-    void ensureBotWorkbenchTab(workbenchSessionId, botId).catch(() => undefined);
-  }, [botId, workbenchSessionId]);
-
   const onReadThrough = useCallback((at: number) => {
     if (isDataOwnerGenerationCurrent(readOwner.current) && gate.kind === 'ready' && gate.isCanonical && botId && gate.identity.sessionId === sessionId) markBotRead(botId, at);
   }, [botId, gate, sessionId]);
@@ -255,16 +269,24 @@ function BotSessionGateView() {
       </main>
     );
   }
+  const readOnly = shadowed && gate.isCanonical;
   return (
     <main className="relative flex h-full min-w-0 overflow-hidden bg-[var(--surface)]">
-      <div className="min-w-0 flex-1">
-        <CCAgentSessionView
-          botMentions={gate.mentions}
-          botIdentity={identity ?? gate.identity}
-          botUnreadBoundaryAt={gate.unreadBoundaryAt}
-          onBotReadThrough={gate.isCanonical ? onReadThrough : undefined}
-        />
-      </div>
+      {/* 私聊话题只属于本机的伙伴主对话；只读副本没有话题。 */}
+      <BotDmThreadHost enabled={gate.isCanonical && !readOnly} bot={identity ?? gate.identity}
+        rootSessionId={sessionId} mentions={mentions}>
+        {readOnly && botId ? <CompanionShadowBanner botId={botId} name={(identity ?? gate.identity).name} /> : null}
+        <div className="min-h-0 flex-1">
+          <CCAgentSessionView
+            botMentions={mentions}
+            botIdentity={chatIdentity ?? gate.identity}
+            botInvitationStage={gate.isCanonical ? liveInvitationStage : undefined}
+            botUnreadBoundaryAt={gate.unreadBoundaryAt}
+            onBotReadThrough={gate.isCanonical ? onReadThrough : undefined}
+            {...(readOnly ? { readOnly: true } : {})}
+          />
+        </div>
+      </BotDmThreadHost>
     </main>
   );
 }

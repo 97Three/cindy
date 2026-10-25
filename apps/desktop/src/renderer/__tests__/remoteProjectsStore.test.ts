@@ -26,6 +26,7 @@ function mk(id: string, partial: Partial<Session> = {}): Session {
   return {
     id,
     userId: 'u',
+    source: partial.source,
     title: partial.title ?? id,
     workingDir: partial.workingDir ?? `/proj/${id}`,
     workspaceKind: 'project',
@@ -52,6 +53,35 @@ function mk(id: string, partial: Partial<Session> = {}): Session {
 }
 
 describe('remoteProjectsStore', () => {
+  // Unit, #6529: ordinary lists deliberately omit side chats; a list refresh
+  // must not erase detail loaded for an opened full-page follow-up.
+  it('retains a hidden side chat across ordinary snapshots until an explicit deletion', () => {
+    remoteProjectsStore.mergeDeviceSessions('host', 'Host', [mk('parent'), mk('child', { source: 'side-chat', parentSessionId: 'parent' })]);
+    remoteProjectsStore.setDeviceSessions('host', 'Host', [mk('parent')]);
+    expect(remoteProjectsStore.getDeviceSessions('host').map(row => row.id)).toEqual(['parent', 'child']);
+    remoteProjectsStore.applyPatch('host', 'child', { model: 'new-model' });
+    expect(remoteProjectsStore.getDeviceSessions('host').find(row => row.id === 'child')?.model).toBe('new-model');
+    remoteProjectsStore.applyPatch('host', 'child', { status: 'deleted' });
+    expect(remoteProjectsStore.getDeviceSessions('host').map(row => row.id)).toEqual(['parent']);
+  });
+  it('hides Make tasks from visible snapshots while preserving raw mirrors and origins', () => {
+    remoteProjectsStore.clear();
+    remoteProjectsStore.setDeviceSessions('dev-B', 'B', [
+      mk('make', { source: 'cindy-make' }),
+      mk('merge', { source: 'cindy-make-merge' }),
+      mk('ordinary', { source: 'desktop' }),
+    ]);
+    expect(remoteProjectsStore.getMergedRemoteSessions()).toHaveLength(3);
+    expect(getSessionDeviceId('make')).toBe('dev-B');
+    const visible = remoteProjectsStore.getVisibleMergedRemoteSessions();
+    expect(visible.map(session => session.id)).toEqual(['ordinary']);
+    remoteProjectsStore.applyPatch('dev-B', 'make', { title: 'Hidden update' });
+    expect(remoteProjectsStore.getVisibleMergedRemoteSessions()).toBe(visible);
+    remoteProjectsStore.applyPatch('dev-B', 'ordinary', { source: 'cindy-make' });
+    expect(remoteProjectsStore.getVisibleMergedRemoteSessions()).toEqual([]);
+    remoteProjectsStore.clear();
+    expect(remoteProjectsStore.getVisibleMergedRemoteSessions()).toEqual([]);
+  });
   beforeEach(() => {
     setRemoteReseedImpl(null);
     setRemoteSessionBootstrapRetryImpl(null);

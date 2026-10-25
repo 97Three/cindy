@@ -47,15 +47,15 @@ it('waits for a paired interval and shows its rate instead of the turn average',
   expect(report({ outputTokens: 1100, generationDurationMs: 12_000 })).toBe('50');
   // Clock ticks and time-only reports do not manufacture slower throughput.
   act(() => vi.advanceTimersByTime(5000));
-  expect(host.textContent).toBe('waiting');
-  expect(report({ generationDurationMs: 14_000 })).toBe('waiting');
+  expect(host.textContent).toBe('50');
+  expect(report({ generationDurationMs: 14_000 })).toBe('50');
   expect(report({ outputTokens: 1140 })).toBe('20');
 });
 
-it('expires stale samples after the one-second observation window and resumes on a new paired report', () => {
+it('expires stale samples after 60 seconds and resumes on a new paired report', () => {
   report();
   report({ outputTokens: 1100, generationDurationMs: 12_000 });
-  act(() => vi.advanceTimersByTime(999));
+  act(() => vi.advanceTimersByTime(59_999));
   expect(host.textContent).toBe('50');
   act(() => vi.advanceTimersByTime(1));
   expect(host.textContent).toBe('waiting');
@@ -146,4 +146,12 @@ it('drops the previous rate when a new local turn starts during the terminal lin
     }),
   ).toBe('waiting');
   expect(report({ outputTokens: 40, generationDurationMs: 1000 })).toBe('40');
+});
+
+it('keeps the recent speed separate from the calibrated final average', () => {
+  expect(report({ tokenSpeed: { rate: 50, average: 40, tokens: 80, elapsedMs: 2000, streaming: true } })).toBe('50');
+  expect(report({ startedAt: null, tokenSpeed: { rate: 100, average: 100, tokens: 300, elapsedMs: 3000, streaming: false } })).toBe('50');
+  // A final report is not new evidence of recent throughput.
+  act(() => vi.advanceTimersByTime(60_000));
+  expect(report()).toBe('waiting');
 });

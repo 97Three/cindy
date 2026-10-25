@@ -32,7 +32,7 @@ it('expires the displayed rate without losing history, including after remount',
     const view = render(<Probe tokens={0} />);
     view.rerender(<Probe tokens={100} />);
     expect(screen.getByTestId('rate').textContent).toBe('100:1');
-    act(() => vi.advanceTimersByTime(999));
+    act(() => vi.advanceTimersByTime(59_999));
     expect(screen.getByTestId('rate').textContent).toBe('100:1');
     act(() => vi.advanceTimersByTime(1));
     expect(screen.getByTestId('rate').textContent).toBe('waiting:1');
@@ -172,6 +172,7 @@ it.each(['Escape', 'close'] as const)(
     expect(screen.getByRole('dialog')).toBeTruthy();
     fireEvent.pointerLeave(trigger);
     fireEvent.pointerMove(trigger, { pointerType: 'mouse' });
+    // real-wait: the popover dismissal uses the production 550ms hover grace period.
     await act(() => new Promise((resolve) => setTimeout(resolve, 550)));
     expect(screen.queryByRole('tooltip')).toBeNull();
     if (dismissal === 'Escape') {

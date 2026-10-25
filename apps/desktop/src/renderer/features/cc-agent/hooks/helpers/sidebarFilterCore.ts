@@ -33,6 +33,7 @@ export const VENDOR_KEY = 'cc-agent.sidebar.filter.vendor';
 export const GROUP_BY_KEY = 'cc-agent.sidebar.filter.groupBy';
 export const GROUP_DIALOGUE_KEY = 'cc-agent.sidebar.filter.groupDialogue';
 export const GROUP_DEVICE_KEY = 'cc-agent.sidebar.filter.groupDevice';
+export const DEVICE_GROUP_COLLAPSED_KEY = 'cc-agent.sidebar.deviceGroupCollapsed';
 export const DIALOGUE_GROUP_COLLAPSED_KEY = 'cc-agent.sidebar.dialogueGroupCollapsed';
 /** 单一混排列表(未按设备切段)里唯一对话组的折叠状态 key。 */
 export const DIALOGUE_GROUP_ALL_KEY = 'all';
@@ -359,8 +360,8 @@ export function persistGroupDialogue(groupDialogue: boolean): void {
 /* ============================== groupDevice load/persist ============================== */
 
 /**
- * 「按设备分组」开关(E 期):默认开(定稿)。仅在有远程设备连接时可见/生效
- * (与顶部设备切换栏同一出现条件);仅本机时选项隐藏、效果自然为单段。
+ * 「按设备分组」开关(E 期):默认开(定稿)。有可选远程设备（含断线缓存）时可见/生效；
+ * 没有可选远程设备时选项隐藏、效果自然为单段，不改写偏好。
  */
 export function loadGroupDevice(): boolean {
   const storage = safeStorage();
@@ -380,6 +381,34 @@ export function persistGroupDevice(groupDevice: boolean): void {
     storage.setItem(GROUP_DEVICE_KEY, String(groupDevice));
   } catch (err) {
     log.warn('[useSidebarFilter] failed to persist groupDevice:', err);
+  }
+}
+
+/* ==================== device group collapsed load/persist ==================== */
+
+/** 最外层设备段按 'local' / deviceId 记忆折叠，属于本地显示偏好，默认展开。 */
+export function loadDeviceGroupCollapsedKeys(): ReadonlySet<string> {
+  const storage = safeStorage();
+  if (!storage) return new Set();
+  try {
+    const raw = storage.getItem(DEVICE_GROUP_COLLAPSED_KEY);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((v): v is string => typeof v === 'string'));
+  } catch (err) {
+    log.warn('[useSidebarFilter] failed to read deviceGroupCollapsed:', err);
+    return new Set();
+  }
+}
+
+export function persistDeviceGroupCollapsedKeys(keys: ReadonlySet<string>): void {
+  const storage = safeStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(DEVICE_GROUP_COLLAPSED_KEY, JSON.stringify([...keys]));
+  } catch (err) {
+    log.warn('[useSidebarFilter] failed to persist deviceGroupCollapsed:', err);
   }
 }
 

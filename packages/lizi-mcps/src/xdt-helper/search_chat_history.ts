@@ -29,6 +29,7 @@ import { z } from 'zod';
 import type { XdtHelperToolRegistry } from '../lizi_xdtHelperToolRegistry.js';
 import type { XdtHelperHistoryDeps, HistoryRole } from './_history_types.js';
 import { okPayload, errorPayload } from './_payload.js';
+import { stringArrayParam } from './_array-param.js';
 import { resolveHistoryScope } from './_history_scope.js';
 import { historyDeviceShape, HISTORY_DEVICE_DESCRIPTION, queryHistoryDevices } from './_history_devices.js';
 
@@ -87,10 +88,10 @@ export function registerSearchChatHistoryTool(
     description: DESCRIPTION,
     inputShape: {
       ...historyDeviceShape,
+      teammate_id: z.string().min(1).max(256).optional().describe('限定已保存归属的伙伴聊天（含历史、话题、渠道专线），使用 get_teammate_state 的 profile.id。不限制当前 workdir；未关联的旧 IM 记录不自动认领。'),
+      source: z.string().min(1).max(64).optional().describe('精确匹配任务原始 source，如 telegram（旧独立机器人）或 bot（伙伴）。不指定则跨来源搜索。'),
       query: z.string().min(1).max(256).describe('自然语言查询(必填, 最长 256)。例: "上次怎么修的语音输入授权问题"。'),
-      session_ids: z
-        .array(z.string().min(1))
-        .max(50)
+      session_ids: stringArrayParam(z.array(z.string().min(1)).max(50))
         .optional()
         .describe('限定一批 sessionId(最多 50)。与其它过滤叠加(AND)。'),
       workdir: z.string().optional().describe('精确匹配 sessions.workingDir。'),
@@ -100,8 +101,7 @@ export function registerSearchChatHistoryTool(
         .enum(['cc', 'codex', 'pi'])
         .optional()
         .describe('按 session.agentKind 过滤; 不传 = 全部搜。'),
-      roles: z
-        .array(z.enum(ROLE_VALUES))
+      roles: stringArrayParam(z.array(z.enum(ROLE_VALUES)))
         .optional()
         .describe(
           '只命中这些 role 的消息(也用于上下文窗口过滤)。不传 = 问答类' +
@@ -166,6 +166,8 @@ export function registerSearchChatHistoryTool(
       const res = await deps.history.searchChatHistory({
         query: query.trim(),
         sessionIds: scope.sessionIds,
+        ...(args.teammate_id ? { teammateId: args.teammate_id } : {}),
+        ...(args.source ? { source: args.source } : {}),
         workdir: workdir ?? null,
         fromMs,
         toMs,
@@ -224,6 +226,8 @@ export function registerSearchChatHistoryTool(
         hasMore: result.hasMore,
         query: {
           query: query.trim(),
+          teammate_id: args.teammate_id,
+          source: args.source,
           session_ids,
           workdir,
           from,
