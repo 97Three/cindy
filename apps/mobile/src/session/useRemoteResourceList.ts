@@ -9,7 +9,7 @@ import {
   cacheRemoteResourceItems, readRemoteResourceSnapshot,
   remoteResourceCacheRevision, subscribeRemoteResourceCache,
 } from '@/device-link/remoteResourceCache';
-import { remoteResourceConnectionState, hasRemoteCollectionCache, isRemoteResourceHostOnline, readRemoteCollectionCache, writeRemoteCollectionCache } from '@/device-link/remoteResourceAvailability';
+import { REMOTE_RESOURCE_STARTUP_TIMEOUT_MS, remoteResourceConnectionState, hasRemoteCollectionCache, isRemoteResourceHostOnline, readRemoteCollectionCache, writeRemoteCollectionCache } from '@/device-link/remoteResourceAvailability';
 import { listRemoteCollection, mergeRemoteCollectionHostShards, normalizeRemoteCollectionItems,
   type HostedRemoteCollectionItem, type RemoteResourceHostTarget } from '@/device-link/remoteResources';
 import { formatRemoteError, isAutoRecoveringRemoteError } from '@/device-link/remoteStatus';
@@ -37,6 +37,8 @@ export function useRemoteResourceList(collectionId: string, targets: readonly Re
   const focusController = useRef(new AbortController());
   const recovery = useRef<ReturnType<typeof createRemoteReadRecovery> | null>(null);
   const failedHosts = useRef(new Set<string>());
+  const settledRef = useRef(false);
+  settledRef.current = state.binding === binding && state.settled;
   const presenceKey = targets.map((target) => `${target.deviceId}:${getPresenceAvailability(target.deviceId)}`).join('|');
   void presenceVersion;
   useEffect(() => {
@@ -54,8 +56,22 @@ export function useRemoteResourceList(collectionId: string, targets: readonly Re
     return () => { cancelled = true; generation.current += 1; };
   }, [binding, collectionId, owner, user?.id]);
 
+  useEffect(() => {
+    if (!enabled || hydrated !== binding || state.settled || (status !== 'stopped' && status !== 'connecting')) return;
+    const timer = setTimeout(() => {
+      setState((old) => old.binding === binding && !old.settled ? {
+        ...old, settled: true, loading: false, refreshing: false, error: t('devices.resources.hostOffline'),
+      } : old);
+    }, REMOTE_RESOURCE_STARTUP_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [binding, enabled, hydrated, state.settled, status, t]);
+
   const read = useCallback(async (run: RemoteSyncRun) => {
     if (!enabled || !active.current || hydrated !== binding || !collectionId) return;
+    // The relay starts as stopped/connecting during a cold launch.  Do not
+    // turn that transport startup window into a resource failure; the status
+    // dependency will schedule the same read once the relay is online.
+    if ((status === 'stopped' || status === 'connecting') && !settledRef.current) return;
     const expected = ++generation.current;
     const signal = focusController.current.signal;
     const current = () => !run.isStale() && !signal.aborted && generation.current === expected
@@ -72,7 +88,10 @@ export function useRemoteResourceList(collectionId: string, targets: readonly Re
       while (offset < selected.length && current()) {
         const host = selected[offset++];
         try {
-          if (status !== 'online' || getPresenceAvailability(host.deviceId) === false) throw new Error(t('devices.resources.hostOffline'));
+          if (status !== 'online') throw new Error(t('devices.resources.hostOffline'));
+          // An explicitly offline peer is an expected cached shard, not a failed
+          // refresh of the whole roster. Presence changes already schedule a read.
+          if (getPresenceAvailability(host.deviceId) === false) continue;
           const response = await retryRemoteSyncRead({ signal, isStale: () => !current() }, async () => {
             await openLink(host.deviceId);
             return listRemoteCollection(invoke, host, collectionId, i18n.language);
@@ -83,7 +102,7 @@ export function useRemoteResourceList(collectionId: string, targets: readonly Re
             key: JSON.stringify([host.deviceId, item.ref.collectionId, item.ref.kind, item.ref.id]) }));
           setState(old => ({ ...old,
             items: mergeRemoteCollectionHostShards(old.items, next, new Set([host.deviceId]), targets),
-            replies: { ...old.replies, [host.deviceId]: connectionEpoch }, settled: true,
+            replies: { ...old.replies, [host.deviceId]: connectionEpoch },
           }));
         } catch (error) {
           if (!current()) return;
@@ -113,10 +132,10 @@ export function useRemoteResourceList(collectionId: string, targets: readonly Re
 
   // Persist after commit, never from a React state updater (which may be replayed).
   useEffect(() => {
-    if (state.binding !== binding || !state.settled || hydrated !== binding) return;
+    if (state.binding !== binding || (!state.settled && Object.keys(state.replies).length === 0) || hydrated !== binding) return;
     writeRemoteCollectionCache(owner, collectionId, state.items);
     void cacheRemoteResourceItems(user?.id ?? '', collectionId, state.items);
-  }, [binding, collectionId, hydrated, owner, state.items, state.settled, state.binding, user?.id]);
+  }, [binding, collectionId, hydrated, owner, state.items, state.replies, state.settled, state.binding, user?.id]);
   useFocusEffect(useCallback(() => {
     if (!enabled) return;
     const start = () => {
@@ -145,7 +164,10 @@ export function useRemoteResourceList(collectionId: string, targets: readonly Re
   ), [connectionEpoch, getPresenceAvailability, ownState, presenceKey, state.replies, status]);
   return {
     items: ownState ? state.items : [],
-    loading: !ownState || (!state.settled && state.items.length === 0 && (state.loading || hydrated !== binding)),
+    // A disk snapshot is still unverified on a cold mount. Keep the first
+    // screen in its loading state until a live collection read settles; after
+    // that, background refreshes continue to leave the current rows visible.
+    loading: !ownState || (!state.settled && (state.loading || hydrated !== binding)),
     syncing: !ownState || state.loading || hydrated !== binding,
     refreshing: ownState && state.refreshing,
     error: ownState ? state.error : null,

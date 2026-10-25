@@ -6,7 +6,7 @@ import type { RemoteActionInvokeResponse } from '@cindy/device-link';
 import type { BotGroupAttachment, BotGroupRemoteActionId } from '@cindy/maker-shared/botGroupChat';
 import { useAuth } from '@/auth/AuthContext';
 import { getActiveMobileSessionRealm, getMobileEndpointForRealm, loadMobileEndpointsForRealm } from '@/config/env';
-import { forgetRemoteResource, markRemoteResourceRead } from '@/device-link/remoteResourceCache';
+import { cacheChatRoster, forgetRemoteResource, hideCachedChatRooms, markRemoteResourceRead, readCachedChatRoster } from '@/device-link/remoteResourceCache';
 import { useRemoteSyncCoordinator } from '@/device-link/remoteSyncTask';
 import type { BotGroupChatState } from '@/session/useBotGroupChat';
 import { chatAccessLost, chatCursor, chatGroupView, chatHttpsUrl, chatRoomRow, chatReadAt, chatReadSequence, chatLastReplyAt, chatLastReplySequence, createChatServerClient, type ChatActor, type ChatPage, type ChatRequest, type ChatSnapshot } from './chatServerClient';
@@ -54,7 +54,7 @@ export function useChatClient() {
       check(); return result;
     };
     const client = createChatServerClient(request, listFor(owner));
-    return { owner, userId: auth.user?.id ?? '', current, baseUrl, endpoint, request, client,
+    return { owner, realm, userId: auth.user?.id ?? '', current, baseUrl, endpoint, request, client,
       token: async () => { check(); await client.me(); const token = await deps.current.getAccessToken(); check(); return token; }, enabled: !!auth.user };
   }, [owner, !!auth.user]);
 }
@@ -71,24 +71,40 @@ export function useChatServerRoster(enabled: boolean) {
   const read = useRemoteSyncCoordinator(async run => {
     if (!api.enabled || !enabled) return;
     setState(old => ({ ...old, refreshing: run.reasons.includes('visible') }));
+    const saved = await readCachedChatRoster(api.userId, api.realm);
+    const cached = saved ?? { items: [], ids: [] };
+    if (run.isStale() || !api.current()) return;
+    for (const id of cached.ids) known.current.ids.add(id);
+    if (saved) setState(old => old.owner === api.owner && !old.loading ? old : { owner: api.owner,
+      rooms: cached.items.filter(row => !api.client.personalList.hidden(row.item.ref.id)), loading: false, refreshing: false, error: null });
     try {
       await api.client.syncListState(run.reasons.some(reason => ['focus', 'visible', 'connected'].includes(reason)));
       const [rooms, self] = await Promise.all([api.client.list(), api.client.me()]);
       const rows: ReturnType<typeof chatRoomRow>[] = [];
       const fresh = new Map<string, { owner: string; head: string | undefined; value: ChatSnapshot }>();
+      // Keep archived IDs in `rooms` for computer-copy deduplication, but do not
+      // download their histories or project them into the default teammate list.
+      const visibleRooms = rooms.filter(room => !room.archived);
       let partial = false;
       // List provides room heads, so unchanged rooms need no history download on polling.
-      for (let offset = 0; offset < rooms.length; offset += 4) {
-        await Promise.all(rooms.slice(offset, offset + 4).map(async room => {
+      for (let offset = 0; offset < visibleRooms.length; offset += 4) {
+        await Promise.all(visibleRooms.slice(offset, offset + 4).map(async room => {
           try {
             const cached = snapshots.current.get(room.id);
             const value = cached?.owner === api.owner && room.head !== undefined && cached.head === room.head
               && !run.reasons.some(reason => ['changed', 'connected', 'visible'].includes(reason))
               ? cached.value : await api.client.snapshot(room.id);
             fresh.set(room.id, { owner: api.owner, head: room.head, value });
-            rows.push(chatRoomRow(room, value, self));
+            // An archive can land between the list and the newer snapshot.
+            if (!value.room.archived) rows.push(chatRoomRow(room, value, self));
           } catch (error) {
-            if (!chatAccessLost(error)) { partial = true; rows.push(chatRoomRow(room)); }
+            if (!chatAccessLost(error)) {
+              partial = true;
+              const previous = cached.items.find(row => row.item.ref.id === room.id);
+              const row = chatRoomRow(room);
+              // Member links back the composite avatar and member search until a snapshot replaces them.
+              rows.push(previous ? { ...previous, item: { ...row.item, display: { ...previous.item.display, title: row.item.display.title }, links: previous.item.links } } : row);
+            }
           }
         }));
         if (run.isStale() || !api.current()) return;
@@ -104,10 +120,15 @@ export function useChatServerRoster(enabled: boolean) {
         snapshots.current = fresh;
         for (const room of rooms) known.current.ids.add(room.id);
         for (const id of api.client.personalList.ids()) known.current.ids.add(id);
-        setState({ owner: api.owner, rooms: rows.filter(row => !api.client.personalList.hidden(row.item.ref.id)), loading: false, refreshing: false, error: partial ? 'CHAT_LIST_FAILED' : null });
+        const visible = rows.filter(row => !api.client.personalList.hidden(row.item.ref.id));
+        setState({ owner: api.owner, rooms: visible, loading: false, refreshing: false, error: partial ? 'CHAT_LIST_FAILED' : null });
+        await cacheChatRoster(api.userId, api.realm, visible, known.current.ids);
       }
     } catch (error) {
-      if (!run.isStale() && api.current()) setState(old => ({ owner: api.owner, rooms: old.owner === api.owner && !chatAccessLost(error) ? old.rooms.filter(row => !api.client.personalList.hidden(row.item.ref.id)) : [], loading: false, refreshing: false, error: error instanceof Error && error.message === 'CHAT_ENDPOINT_UNAVAILABLE' ? error.message : 'CHAT_LIST_FAILED' }));
+      if (!run.isStale() && api.current()) {
+        setState(old => ({ owner: api.owner, rooms: old.owner === api.owner && !chatAccessLost(error) ? old.rooms.filter(row => !api.client.personalList.hidden(row.item.ref.id)) : [], loading: false, refreshing: false, error: error instanceof Error && error.message === 'CHAT_ENDPOINT_UNAVAILABLE' ? error.message : 'CHAT_LIST_FAILED' }));
+        if (chatAccessLost(error)) await cacheChatRoster(api.userId, api.realm, [], known.current.ids);
+      }
     }
   }, api.owner);
   const refresh = useCallback(() => read({ reason: 'visible' }), [read]);
@@ -149,6 +170,7 @@ export function useChatServerRoster(enabled: boolean) {
     if (!api.current()) return;
     for (const id of api.client.personalList.ids()) known.current.ids.add(id);
     setState(old => old.owner !== api.owner ? old : { ...old, rooms: old.rooms.filter(row => !api.client.personalList.hidden(row.item.ref.id)) });
+    void hideCachedChatRooms(api.userId, api.realm, api.client.personalList.ids().filter(id => api.client.personalList.hidden(id)));
   }), [api]);
   const own = state.owner === api.owner;
   return { items: own ? state.rooms : [], serverIds: known.current.ids, loading: api.enabled && (!own || state.loading),
@@ -156,9 +178,9 @@ export function useChatServerRoster(enabled: boolean) {
 }
 
 /** Reads and sends use the account's Chat Server identity, never its computer identity. */
-export function useChatServerGroup(groupId: string, enabled: boolean) {
+export function useChatServerGroup(groupId: string, enabled: boolean, threadRootId?: string) {
   const api = useChatClient();
-  const identity = `${api.owner}:${groupId}`;
+  const identity = `${api.owner}:${groupId}:${threadRootId ?? 'main'}`;
   const active = useRef(identity); active.current = identity;
   const [state, setState] = useState<{ identity: string; value: BotGroupChatState; online: boolean; loadingOlder: boolean }>({ identity, value: { kind: 'loading' }, online: true, loadingOlder: false });
   const page = useRef<{ identity: string; page: ChatPage; self: string; actors: ChatActor[] } | null>(null);
@@ -168,6 +190,7 @@ export function useChatServerGroup(groupId: string, enabled: boolean) {
   const valid = () => api.current() && active.current === identity;
   const loseAccess = () => {
     accessGeneration.current++; freshRead.current = false; page.current = null;
+    if (valid()) void forgetRemoteResource(api.userId, groupId);
     setState({ identity, value: { kind: 'missing' }, online: false, loadingOlder: false });
   };
   const view = (next: ChatPage, self: string, actors: ChatActor[]) => ({ ...chatGroupView(next, self, actors), ...api.client.lifecycleCapabilities() });
@@ -178,10 +201,10 @@ export function useChatServerGroup(groupId: string, enabled: boolean) {
     try {
       await api.client.syncListState(run.reasons.some(reason => ['focus', 'visible', 'connected'].includes(reason)));
       const previous = page.current?.identity === identity ? page.current.page : null;
-      const oldest = previous?.messages.reduce<string | undefined>((oldest, message) => !oldest || BigInt(message.seq) < BigInt(oldest) ? message.seq : oldest, undefined);
+      const oldest = previous?.messages.filter(message => !threadRootId || message.threadRootId === threadRootId).reduce<string | undefined>((oldest, message) => !oldest || BigInt(message.seq) < BigInt(oldest) ? message.seq : oldest, undefined);
       // The account's actors say which computer runs each owned companion (live task cards);
       // the group still reads when that list is unavailable.
-      const [next, self, actors] = await Promise.all([api.client.load(groupId, oldest), api.client.me(), api.client.actors().catch((): ChatActor[] => [])]);
+      const [next, self, actors] = await Promise.all([api.client.load(groupId, oldest, threadRootId), api.client.me(), api.client.actors().catch((): ChatActor[] => [])]);
       if (run.isStale() || !valid() || generation !== accessGeneration.current) return;
       // Replace the reauthorized window; no stale history survives changed access.
       if (api.client.personalList.hidden(groupId)) { loseAccess(); return; }
@@ -272,14 +295,18 @@ export function useChatServerGroup(groupId: string, enabled: boolean) {
       if (mentions.botIds.some(id => !joined.some(member => member.id === id))) throw new Error('MENTION_UNAVAILABLE');
       const recipients = mentions.all
         ? joined.map(member => member.id)
-        : mentions.botIds;
-      await api.client.send(groupId, { clientId: String(input.clientId), text: String(input.text),
+        : [...mentions.botIds];
+      const root = threadRootId ? latest.page.messages.find(message => message.id === threadRootId) : undefined;
+      if (root && joined.some(member => member.id === root.authorId && member.kind === 'bot')) recipients.push(root.authorId);
+      await api.client.send(groupId, { clientId: String(input.clientId), text: String(input.text), threadRootId,
+        ...(input.quote && typeof input.quote === 'object' && 'messageId' in input.quote
+          ? { quote: { messageId: String(input.quote.messageId) } } : {}),
         mentions: { all: false, botIds: recipients.filter(id => id !== latest.self) } });
       if (valid()) reload();
       return { effects: [] };
     } catch (error) {
       // An unavailable mention is a draft correction, not a connectivity failure.
-      if (error instanceof Error && error.message === 'MENTION_UNAVAILABLE') throw error;
+      if (error instanceof Error && ['MENTION_UNAVAILABLE', 'QUOTE_UNAVAILABLE'].includes(error.message)) throw error;
       if (valid()) {
         freshRead.current = false;
         if (chatAccessLost(error)) loseAccess();
@@ -313,7 +340,13 @@ export function useChatServerGroup(groupId: string, enabled: boolean) {
     // Only the measured UI's messages are acknowledged, even if a newer read is settling.
     const seen = new Set(messageIds);
     const messages = latest.page.messages.filter(message => seen.has(message.id));
-    await markRemoteResourceRead(api.userId, '', groupId, chatLastReplyAt(messages, latest.self), chatLastReplySequence(messages, latest.self));
+    if (!threadRootId) await markRemoteResourceRead(api.userId, '', groupId, chatLastReplyAt(messages, latest.self), chatLastReplySequence(messages, latest.self));
+    if (!api.current() || active.current !== identity) return;
+    try { await api.client.markRead(groupId, latest.page, messageIds); }
+    catch {
+      // The foreground recovery refresh retries from the measured viewport, never from the head.
+      if (api.current() && active.current === identity) freshRead.current = false;
+    }
   }, [api, groupId, identity]);
   const acceptListState = useCallback(async (value: unknown) => {
     if (!api.current()) throw new Error('OWNER_CHANGED');

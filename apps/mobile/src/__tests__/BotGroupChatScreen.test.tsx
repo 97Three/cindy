@@ -8,6 +8,8 @@ const h = vi.hoisted(() => ({
   chat: null as any,
   management: null as any,
   alert: vi.fn(),
+  leaveGuard: [] as boolean[],
+  leaveDecision: (async () => false) as () => Promise<boolean>,
   confirm: vi.fn(),
   leave: vi.fn(),
   focused: true,
@@ -29,6 +31,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('expo-web-browser', () => ({ openBrowserAsync: vi.fn(async () => ({})) }));
+vi.mock('@/components/ChatReplyIcon', () => ({ ChatReplyIcon: () => null }));
 vi.mock('react-native', () => {
   const box = (tag: string) => ({ children, testID, accessibilityLabel, style }: any) =>
     el(tag, { 'data-testid': testID, 'aria-label': accessibilityLabel,
@@ -59,10 +62,14 @@ vi.mock('react-native', () => {
 });
 vi.mock('expo-router', () => ({
   useIsFocused: () => h.focused,
-  Stack: { Screen: () => null },
+  Stack: {
+    Screen: ({ options }: any) => typeof options.headerTitle === 'function' ? options.headerTitle() : null,
+    Toolbar: Object.assign(({ children }: any) => children, { View: ({ children }: any) => children }),
+  },
   useRouter: () => ({ back: vi.fn(), replace: vi.fn() }),
   useFocusEffect: (effect: () => void) => useEffect(effect, [effect]),
 }));
+vi.mock('expo-router/react-navigation', () => ({ useHeaderHeight: () => 72 }));
 vi.mock('react-native-safe-area-context', () => ({ SafeAreaView: ({ children }: any) => el('main', null, children), useSafeAreaInsets: () => ({ top: 59, bottom: 34, left: 0, right: 0 }) }));
 vi.mock('@/session/SessionHeaderNativeControls', () => ({ SessionHeaderNativeBlur: ({ height, fadeInside }: any) => { h.headerBlur.push(height); h.headerFade.push(fadeInside); return null; } }));
 vi.mock('react-i18next', async (importOriginal) => ({
@@ -105,6 +112,7 @@ vi.mock('@/components/AppText', () => ({
   TextInput: ({ testID, ...props }: any) => { h.inputs[testID] = props; return el('input', { 'data-testid': testID, value: props.value ?? '', readOnly: true }); },
 }));
 vi.mock('@/components/PaperPlaneIcon', () => ({ PaperPlaneIcon: () => null }));
+vi.mock('@/session/useConfirmLeaveWhileUploading', () => ({ useConfirmLeaveWhileUploading: (active: boolean) => { h.leaveGuard.push(active); return () => h.leaveDecision(); } }));
 vi.mock('@/components/MobilePrimitives', () => ({
   MainWindowActionButton: ({ action }: any) => el('button', {
     'data-testid': action.testID, 'aria-label': action.accessibilityLabel, 'aria-busy': action.busy ? 'true' : undefined,
@@ -278,7 +286,7 @@ beforeEach(() => {
   h.uuid = 0; h.inputs = {}; h.teammateQuery = ''; h.teammates = { rows: [], loading: false, failed: false };
   h.platform.OS = 'ios'; h.focused = true; h.keyboardAvoidingView = null; h.headerBlur = []; h.headerFade = [];
   h.chat = { reload: vi.fn(), act: vi.fn(async () => ({ effects: [] })), online: true };
-  h.discarded = []; h.deleted = [];
+  h.discarded = []; h.deleted = []; h.leaveGuard = []; h.leaveDecision = async () => false;
   h.local = {
     options: null, setPending: null,
     addImages: vi.fn(), addDocument: vi.fn(), addPastedImages: vi.fn(), enqueueUploads: vi.fn(),
@@ -386,8 +394,8 @@ describe('group timeline', () => {
 
   it('floats the iOS header on the task header blur instead of an opaque band', async () => {
     await render();
-    // Before the header is measured the blur still covers the status bar plus one bar row.
-    expect(h.headerBlur.at(-1)).toBe(59 + 44);
+    // Duo's native measurement already includes its shared status row; do not add another 44pt.
+    expect(h.headerBlur.at(-1)).toBe(72);
     // The two-line identity stays over solid blur; the feather starts at the header's lower edge.
     expect(h.headerFade.at(-1)).toBe(0);
   });
@@ -426,6 +434,33 @@ describe('group timeline', () => {
     await render(newer);
     await act(async () => h.scroll.onContentSizeChange(400, 3000));
     expect(h.markRead).not.toHaveBeenCalled();
+    // The reader stays in history, sees the arrival, and can explicitly return to it.
+    const jump = byId('botGroup.newMessages') as HTMLButtonElement;
+    expect(jump.textContent).toContain('count=1');
+    h.scrollToEnd.mockClear();
+    await act(async () => jump.click());
+    expect(h.scrollToEnd).toHaveBeenCalledWith({ animated: false });
+    expect(h.markRead).not.toHaveBeenCalled();
+    await act(async () => scroll(2500, 3000));
+    expect(byId('botGroup.newMessages')).toBeNull();
+  });
+
+  it('notices arrivals after a notification opens history without acknowledging the tail', async () => {
+    const data = group();
+    h.chat = { ...h.chat, state: { kind: 'ready', group: data } };
+    const props = { deviceId: 'mac', deviceName: 'Mac', groupId: 'g1', messageId: data.messages[0].id };
+    await act(async () => root.render(el(BotGroupChatScreen, props)));
+    await act(async () => {
+      h.scroll.onLayout({ nativeEvent: { layout: { height: 500 } } });
+      h.scroll.onContentSizeChange(400, 2000);
+    });
+    h.scrollToEnd.mockClear();
+    h.chat = { ...h.chat, state: { kind: 'ready', group: { ...data, messages: [...data.messages, message('arrival', 20, {})] } } };
+    await act(async () => root.render(el(BotGroupChatScreen, props)));
+    await act(async () => h.scroll.onContentSizeChange(400, 2500));
+    expect(byId('botGroup.newMessages')?.textContent).toContain('count=1');
+    expect(h.markRead).not.toHaveBeenCalled();
+    expect(h.scrollToEnd).not.toHaveBeenCalled();
   });
 
   it('acknowledges a short conversation only after both native dimensions are measured', async () => {
@@ -495,6 +530,13 @@ describe('group timeline', () => {
     expect(h.chat.act).toHaveBeenLastCalledWith('plan-edit', { planId: 'p1', position: 1, action: 'reassign', botId: 'xiaoman' });
     await click('botGroup.plan.stepMenu.0.action.remove');
     expect(h.chat.act).toHaveBeenLastCalledWith('plan-edit', { planId: 'p1', position: 0, action: 'remove' });
+  });
+
+  // The computer's 自动交接 survives the phone's parse, so the card does not promise a 继续 that never comes.
+  it.each([[true, 'groupChat.plan.autoNote'], [undefined, 'groupChat.plan.pauseNote']] as const)('says how steps hand on (autoContinue=%s)', async (autoContinue, note) => {
+    const data = group();
+    await render(parseBotGroupChatData({ ...data, plans: data.plans.map(plan => ({ ...plan, ...(autoContinue ? { autoContinue } : {}) })) })!);
+    expect(byId('botGroup.message.plan')?.textContent).toContain(note);
   });
 
   it.each([undefined, true, false])('renders human-signed plans as organizer cards with working actions and read-only old plans (isSelf=%s)', async (isSelf) => {
@@ -609,6 +651,27 @@ describe('group composer', () => {
       h.row.onSelectionChange({ nativeEvent: { selection: { start: text.length, end: text.length } } });
     });
   }
+
+  // Both Chat Server entry paths must carry the selected original through the real composer.
+  it.each([true, false])('sends a quote and retains it after failure (direct server %s)', async server => {
+    h.chat.server = server;
+    const originalId = '11111111-1111-4111-8111-111111111111';
+    await render(group({ serverBacked: true, openPlan: null, messages: [
+      message(originalId, 1, { authorName: '咪咪', authorBotId: 'mimi', content: '请回复这条' }),
+    ] }));
+    await click(`botGroup.reply.${originalId}`);
+    await type('引用回复');
+    h.chat.act.mockRejectedValueOnce(new Error('QUOTE_UNAVAILABLE'));
+    await click('botGroup.composer.send');
+    expect(h.row.value).toBe('引用回复');
+    expect(byId('botGroup.cancelReply')).not.toBeNull();
+    await click('botGroup.composer.send');
+    expect(h.chat.act).toHaveBeenLastCalledWith('send', expect.objectContaining({
+      text: '引用回复', quote: { messageId: originalId }, clientId: 'uuid-1',
+    }));
+    expect(byId('botGroup.cancelReply')).toBeNull();
+    expect(h.row.value).toBe('');
+  });
 
   it.each([true, false])('locks an existing draft when dissolved without being archived (direct server %s)', async server => {
     h.chat.server = server;
@@ -737,17 +800,29 @@ describe('group composer', () => {
     expect(last).not.toHaveProperty('division');
   });
 
-  it('explains why 安排分工 is unavailable while a plan runs, and stops the round when empty', async () => {
+  // bot-group-chat.md §7.0 (2026-10-23): the computer arranges a 分工 in single-speaker rooms too,
+  // so a phone working through it keeps 安排分工; a phone talking to the server directly does not, nor one
+  // whose older computer would answer the request as a queue (no supportsDivision) (component tier).
+  it.each([[true, true, false, true], [true, false, false, false], [false, false, false, true], [true, true, true, false]])(
+    'offers 安排分工 (singleSpeaker=%s, supportsDivision=%s, direct=%s)', async (singleSpeaker, supportsDivision, direct, offered) => {
+    h.chat.server = direct;
+    await render(parseBotGroupChatData(group({ serverBacked: true, singleSpeaker, ...(supportsDivision ? { supportsDivision } : {}), replyMode: 'mentioned', openPlan: null }))!);
+    expect(!!byId('botGroup.composer.menu.action.division')).toBe(offered);
+  });
+
+  it.each(['all', 'mentioned'] as const)('keeps the running work-plan gate and uses truthful %s copy', async replyMode => {
     const data = group({
+      replyMode,
       openPlan: { id: 'p1', status: 'running', currentStep: 0, stepCount: 2, currentBotName: '咪咪', currentStepStatus: 'running' },
       round: { status: 'running', speakers: [{ botId: 'mimi', sessionId: 's1', activity: 'step' }], canContinue: false },
     });
-    data.plans[0] = { ...data.plans[0]!, status: 'running', currentStep: 0, steps: [{ ...data.plans[0]!.steps[0]!, status: 'running' }, data.plans[0]!.steps[1]!] };
+    data.plans[0] = { ...data.plans[0]!, kind: 'work', status: 'running', currentStep: 0, steps: [{ ...data.plans[0]!.steps[0]!, status: 'running' }, data.plans[0]!.steps[1]!] };
     await render(data);
     expect(byId('botGroup.composer.menu')).toBeNull();
     await click('botGroup.composer.more');
     expect(h.alert).toHaveBeenCalledWith('groupChat.composer.division', 'groupChat.composer.divisionBusy');
-    expect(byId('placeholder')?.textContent).toBe('groupChat.composer.placeholderPlanRunning(name=咪咪)');
+    expect(byId('placeholder')?.textContent).toBe(replyMode === 'mentioned'
+      ? 'groupChat.composer.placeholder' : 'groupChat.composer.placeholderPlanRunning(name=咪咪)');
     await click('botGroup.composer.stop');
     expect(h.chat.act).toHaveBeenLastCalledWith('stop');
   });
@@ -874,6 +949,39 @@ describe('group attachments', () => {
     expect(byId('botGroup.attachmentTray')).toBeNull();
   });
 
+  // Leaving mid-upload drops the photo: ask first, and never send the text alone.
+  it('asks before leaving while a send waits on an upload, and sends nothing once left', async () => {
+    await render(group({ openPlan: null, supportsAttachments: true }));
+    await focusComposer();
+    await act(async () => { h.row.onChangeText('配图'); });
+    let settle!: (result: { failedCount: number; abandoned: boolean }) => void;
+    h.local.wait.mockImplementationOnce(() => new Promise((resolve) => { settle = resolve; }));
+    await click('botGroup.composer.send');
+    expect(h.leaveGuard.at(-1)).toBe(true);
+    await act(async () => settle({ failedCount: 0, abandoned: true }));
+    expect(h.chat.act).not.toHaveBeenCalled();
+    expect(h.leaveGuard.at(-1)).toBe(false);
+  });
+
+  // The leave dialog stays open after the upload settles: nothing may be sent before the answer.
+  it('holds the send for an open leave dialog, then sends or drops it by the answer', async () => {
+    await render(group({ openPlan: null, supportsAttachments: true }));
+    await focusComposer();
+    await act(async () => { h.row.onChangeText('配图'); });
+    let answer!: (discard: boolean) => void;
+    h.leaveDecision = () => new Promise((resolve) => { answer = resolve; });
+    await click('botGroup.composer.send');
+    expect(h.chat.act).not.toHaveBeenCalled();
+    await act(async () => answer(false));
+    expect(h.chat.act).toHaveBeenCalledTimes(1);
+
+    h.chat.act.mockClear();
+    await act(async () => { h.row.onChangeText('再来一条'); });
+    await click('botGroup.composer.send');
+    await act(async () => answer(true));
+    expect(h.chat.act).not.toHaveBeenCalled();
+  });
+
   it('reclaims unsent uploads when the chat closes', async () => {
     await render(group({ openPlan: null, supportsAttachments: true }));
     const photo = uploaded('att-4', 'c.jpg');
@@ -923,6 +1031,16 @@ describe('group settings', () => {
     await click('botGroup.settingsButton');
     expect(byId('botGroup.settings')).not.toBeNull();
   }
+
+  it('allows personal removal from an archived read-only group without management rights', async () => {
+    h.chat.server = true;
+    await openSettings(group({ serverBacked: true, archived: true, supportsListRemoval: true, supportsSettingsManagement: false,
+      members: [{ botId: 'self', actorId: 'self', name: 'Me', avatar: '', avatarColor: '', status: 'active', isSelf: true, role: 'member' }] }));
+    expect(byId('botGroup.settings.delete')).toBeNull();
+    expect(byId('botGroup.settings.hide')?.disabled).toBe(false);
+    await click('botGroup.settings.hide');
+    expect(h.chat.act).toHaveBeenCalledExactlyOnceWith('hide', undefined);
+  });
 
   it.each([true, false])('leaves after confirmed personal hide even when settings unmounts before the reply (direct=%s)', async direct => {
     h.chat.server = direct;
@@ -1267,8 +1385,8 @@ describe('direct server group presentation', () => {
 });
 
 
-it('acknowledges other humans only once their messages reach the measured visible tail', async () => {
-  h.chat.server = true;
+it.each([true, false])('acknowledges other humans at the measured visible tail (direct: %s)', async server => {
+  h.chat.server = server;
   h.chat.markRead = vi.fn(async () => {});
   await render(group({ messages: [message('incoming-human', 12, { authorKind: 'user', isSelf: false, content: 'hello' }),
     message('mine', 13, { authorKind: 'user', isSelf: true, content: 'reply' })], plans: [], openPlan: null }));
@@ -1279,5 +1397,19 @@ it('acknowledges other humans only once their messages reach the measured visibl
     h.scroll.onContentSizeChange(400, 400);
   });
   expect(h.chat.markRead).toHaveBeenLastCalledWith(['incoming-human']);
-  expect(h.markRead).not.toHaveBeenCalled();
+  if (server) expect(h.markRead).not.toHaveBeenCalled();
+  else expect(h.markRead).toHaveBeenCalled();
+});
+
+// #6550: screen + real mobile Markdown parser, with RN host primitives simulated in jsdom.
+it('renders component body as readable text without changing the message', async () => {
+  const content = 'Before\n\n```cindy-ui\n' + JSON.stringify({ seq: 1, version: 1, op: 'create', id: 'body', kind: 'text', props: { text: 'Readable answer' } }) + '\n```\n\nAfter';
+  const reply = message('rich-body', 1, { authorBotId: 'mimi', authorName: '咪咪', content });
+  await render(group({ messages: [reply] }));
+  const body = byId('botGroup.message.bot')!;
+  expect(body.textContent).toContain('Readable answer');
+  expect(body.textContent).toContain('Before');
+  expect(body.textContent).toContain('After');
+  expect(body.textContent).not.toContain('"op":"create"');
+  expect(reply.content).toBe(content);
 });

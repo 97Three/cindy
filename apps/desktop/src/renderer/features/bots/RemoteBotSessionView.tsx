@@ -11,8 +11,10 @@ import { Spinner } from '@/components/ui/spinner';
 import { BotAvatar } from './BotAvatar';
 import { parseRemoteBots, type RemoteBot } from './remoteBotRoster';
 import { markRemoteBotRead, useRemoteBots } from './useRemoteBots';
+import { useBotIslandVisibleSession } from './useBotIslandVisibleSession';
 import { useCompanionCloud } from './companionCloudStore';
-import { cloudCompanionAt } from './companionCloudPresentation';
+import { cloudCompanionAt, homeControlOff } from './companionCloudPresentation';
+import { useDeviceLinkDeviceList } from '@/features/device-link/useDeviceLinkDeviceList';
 import { useDelayedFlag } from '@/features/cc-agent/workdir-browse/hooks/useDelayedFlag';
 // Loaded only when a main computer is offline; keeps the live remote path light.
 const CloudCompanionOfflineView = lazy(() => import('./CloudCompanionOfflineView')
@@ -28,8 +30,9 @@ export function RemoteBotSessionView() {
   const bots = useRemoteBots();
   const bot = bots.find((row) => row.id === botId && row.deviceId === deviceId);
   const cloud = useCompanionCloud();
+  const deviceList = useDeviceLinkDeviceList();
   const cloudActor = cloudCompanionAt(cloud, deviceId, botId);
-  const [ready, setReady] = useState<(RemoteBot & { sessionId: string }) | null>(null);
+  const [ready, setReady] = useState<(RemoteBot & { sessionId: string; canonicalChat: true }) | null>(null);
   const [validatedSessionId, setValidatedSessionId] = useState<string | null | undefined>(null);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -81,7 +84,7 @@ export function RemoteBotSessionView() {
         isSessionReadCurrent.mergeActivity(session),
       ]);
       readOwner.current = owner;
-      setReady({ ...resolved, sessionId: canonicalId });
+      setReady({ ...resolved, sessionId: canonicalId, canonicalChat: true });
       setValidatedSessionId(sessionId);
     })().catch(() => {
       if (!disposed) setFailed(true);
@@ -99,6 +102,8 @@ export function RemoteBotSessionView() {
   }, [bot, failed, ready, validatedSessionId]);
 
   const liveChat = !!bot && !failed && !!ready?.sessionId && ready.id === botId && ready.deviceId === deviceId;
+  // Like a local companion chat: once the chat is shown, the island card for this Session is read.
+  useBotIslandVisibleSession(liveChat ? ready!.sessionId : null);
   const homeAway = !!cloudActor && !!deviceId && !!botId && cloudActor.homeDeviceId !== cloud.selfDeviceId
     && (!bot || (!bot.online && bot.connectionKnown !== false));
   // Like IM, a brief drop keeps the open chat in place (cloud-companions.md §3.1).
@@ -116,7 +121,7 @@ export function RemoteBotSessionView() {
         avatar={bot?.avatar || cloudActor.avatar}
         avatarColor={bot?.avatarColor}
         deviceName={bot?.deviceName || cloudActor.homeDevice?.name || ''}
-        reachable={!bot && cloudActor.homeDevice?.online === true}
+        controlOff={!bot && homeControlOff(cloudActor, deviceList)}
       />
       </Suspense>
     );

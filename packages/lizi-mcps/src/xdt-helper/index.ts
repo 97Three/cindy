@@ -108,6 +108,10 @@ export {
   type ArchiveWorkerDeps,
 } from './archive_worker.js';
 export {
+  registerUpdateWorkerTool,
+  type UpdateWorkerDeps,
+} from './update_worker.js';
+export {
   registerListAvailableModelsTool,
   type ListAvailableModelsDeps,
   type ModelDescriptor,
@@ -161,23 +165,25 @@ export {
 } from './bot_skills.js';
 export {
   registerBotWorkbenchTools,
-  WORKBENCH_BATCH_MAX,
+  glanceForModel,
   WORKBENCH_MESSAGE_MAX_CHARS,
+  type BotGlanceWire,
   type BotWorkbenchCallbacks,
-  type BotWorkbenchSnapshotWire,
   type BotWorkbenchToolDeps,
-  type WorkbenchAutomationWire,
-  type WorkbenchDigestWire,
-  type WorkbenchItemWire,
-  type WorkbenchJudgmentInputWire,
-  type WorkbenchJudgmentWire,
-  type WorkbenchProjectBriefWire,
-  type WorkbenchProjectWire,
-  type WorkbenchTaskStateWire,
-  type WorkbenchTaskWire,
+  type GlanceKindWire,
+  type GlanceRowWire,
   type WorkbenchTranscriptWire,
-  type WorkbenchVerdictWire,
 } from './bot_workbench.js';
+export {
+  registerGetTaskDigestTool,
+  boundTaskDigest,
+  TASK_DIGEST_MAX_BYTES,
+  TASK_DIGEST_TEXT_MAX,
+  type GetTaskDigestToolDeps,
+  type TaskDigestPhase,
+  type TaskDigestRoute,
+  type TaskDigestWire,
+} from './get_task_digest.js';
 export {
   registerCreateTeammateTool,
   type CreateTeammateCallbacks,
@@ -218,6 +224,7 @@ export type {
   HistoryPage,
   HistoryWorkdir,
   HistorySession,
+  HistoryCompanion,
   HistoryMessage,
   ListWorkdirsArgs,
   ListSessionsArgs,

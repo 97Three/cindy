@@ -86,7 +86,7 @@ export interface PermissionModeState {
 
 export type SessionEventListener = (event: AgentEvent) => void;
 export type SessionStatusListener = (status: SessionStatus) => void;
-export type InteractionRequestListener = (req: InteractionRequest) => Promise<InteractionDecision>;
+export type InteractionRequestListener = (req: InteractionRequest, signal?: AbortSignal) => Promise<InteractionDecision>;
 
 /**
  * turn 零事件看门狗阈值(ms)。turn 在跑、却连续这么久**没有产品进展**,视为整条
@@ -133,6 +133,11 @@ export const STALL_ABORT_RECOVERY_GRACE_MS = 10_000;
  * 端到端最长不超过 15s(review #944 第十一轮末尾调优)。
  */
 export const MANUAL_ABORT_RECOVERY_GRACE_MS = 15_000;
+/**
+ * The same Codex tool call starting again sooner than this cannot be a new model
+ * response (one sampling takes seconds): it is a script repeating it in a burst.
+ */
+const CODEX_BURST_REPEAT_GAP_MS = 2_000;
 
 /** Shared confirmation budget for provider interrupt ACK and send acceptance. */
 const GRACEFUL_STOP_CONFIRMATION_TIMEOUT_MS = 5_000;
@@ -350,6 +355,8 @@ export interface SessionSendOptions extends SendOptions {
 }
 
 export interface SessionTurnLifecycleObserver {
+  /** Last synchronous authorization check; no asynchronous work may follow before handle.send. */
+  onDispatching?(): void;
   /** Awaited after option validation and before any provider-owned start hook or send. */
   beforeProviderStart(turnGeneration: number): void | Promise<void>;
   /** Called when a prepared generation never crosses the provider dispatch boundary. */
@@ -512,6 +519,8 @@ export class Session {
     sdkError?: string;
     errorStatus?: number;
     toolLoop?: import('./types/events.js').ToolLoopErrorDetails;
+    /** Codex app-server 的结构化错误 tag(如 badRequest / cyberPolicy)。 */
+    codexErrorInfo?: string;
   } | null = null;
   /** Survives N+1 reservation clearing the current snapshot; leftover done must not adopt. */
   private lastObservedTerminalGeneration: number | null = null;
@@ -630,7 +639,7 @@ export class Session {
 
     // 注入 InteractionResolver 到底层 handle, 转发到 host 维护的 listener。
     // 没接 listener 时按 kind 给出安全默认: 都视作 deny(host 必须接 listener 才能交互)。
-    this.handle.setInteractionResolver((req) => this.runHostInteraction(req, async () => {
+    this.handle.setInteractionResolver((req, signal) => this.runHostInteraction(req, async () => {
       if (!this.interactionListener) {
         this.logger.warn('interaction request received but no listener attached, denying', { kind: req.kind, requestId: req.requestId });
         if (req.kind === 'ask_user_question') {
@@ -641,7 +650,7 @@ export class Session {
         }
         return { kind: req.kind, behavior: 'deny', reason: 'no_listener_attached' } as InteractionDecision;
       }
-      return await this.interactionListener(req);
+      return await (signal ? this.interactionListener(req, signal) : this.interactionListener(req));
     }));
   }
 
@@ -666,6 +675,7 @@ export class Session {
     sdkError?: string;
     errorStatus?: number;
     toolLoop?: import('./types/events.js').ToolLoopErrorDetails;
+    codexErrorInfo?: string;
   } {
     if (
       this.turnGeneration <= 0 ||
@@ -693,6 +703,9 @@ export class Session {
         ...(this.terminalEventObservedErrorSignals?.toolLoop
           ? { toolLoop: this.terminalEventObservedErrorSignals.toolLoop }
           : {}),
+        ...(this.terminalEventObservedErrorSignals?.codexErrorInfo
+          ? { codexErrorInfo: this.terminalEventObservedErrorSignals.codexErrorInfo }
+          : {}),
       };
     }
     return { kind: 'done', generation: this.turnGeneration };
@@ -705,6 +718,7 @@ export class Session {
       sdkError?: string;
       errorStatus?: number;
       toolLoop?: import('./types/events.js').ToolLoopErrorDetails;
+      codexErrorInfo?: string;
     } | null;
   } {
     const errorData = (listenerEvent.data ?? null) as {
@@ -713,6 +727,7 @@ export class Session {
       sdkError?: unknown;
       errorStatus?: unknown;
       toolLoop?: unknown;
+      codexErrorInfo?: unknown;
     } | null;
     const errorMessage = errorData?.message;
     const signals: {
@@ -720,6 +735,7 @@ export class Session {
       sdkError?: string;
       errorStatus?: number;
       toolLoop?: import('./types/events.js').ToolLoopErrorDetails;
+      codexErrorInfo?: string;
     } = {};
     if (typeof errorData?.reason === 'string' && errorData.reason.length > 0) {
       signals.reason = errorData.reason;
@@ -732,13 +748,18 @@ export class Session {
     }
     const toolLoop = parseToolLoopErrorDetails(errorData?.toolLoop);
     if (toolLoop) signals.toolLoop = toolLoop;
+    // Codex 的结构化 tag 是有界枚举名(translator 只取 tag,不带原文),不需要脱敏。
+    if (typeof errorData?.codexErrorInfo === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(errorData.codexErrorInfo)) {
+      signals.codexErrorInfo = errorData.codexErrorInfo;
+    }
     return {
       message: typeof errorMessage === 'string' && errorMessage.length > 0 ? errorMessage : null,
       signals:
         signals.reason ||
         signals.sdkError ||
         signals.errorStatus !== undefined ||
-        signals.toolLoop
+        signals.toolLoop ||
+        signals.codexErrorInfo
           ? signals
           : null,
     };
@@ -825,8 +846,7 @@ export class Session {
         return { accepted: false, reason: 'cancelled-before-dispatch' };
       }
     }
-    // A user/API permission change may have been waiting for the lease above.
-    // Preserve its ordering before admitting the next turn.
+    // Preserve user/API permission change ordering before admitting the next turn.
     while (this.externalPermissionModeChangesInFlight > 0) {
       if (await this.waitForGateOrAbort(this.externalPermissionModeChangeChain, handleOpts.signal)) {
         return { accepted: false, reason: 'cancelled-before-dispatch' };
@@ -989,6 +1009,14 @@ export class Session {
       try {
         this.beginTurnControl(reservedTurnGeneration);
         onDispatching?.();
+        try {
+          turnLifecycleObserver?.onDispatching?.();
+        } catch (error) {
+          // Host authorization rejected synchronously, before handle.send could
+          // create work. Do not fence a later valid send for a nonexistent tail.
+          dispatchConfirmedUndispatched = true;
+          throw error;
+        }
         this.insideProviderSendSync = true;
         try {
           await this.handle.send(msg, {
@@ -1410,6 +1438,15 @@ export class Session {
   }
 
   /**
+   * 宿主发起的独占 RPC 操作(手动压缩 / rewind / 切模等)在途。这类操作不预约
+   * turn,关闭会把它们拦腰截断；空闲回收据此拒绝关闭。会话已关闭 → false。
+   */
+  hasPendingHostOperation(): boolean {
+    if (this.status === 'closed' || this.status === 'error') return false;
+    return this.handle.hasPendingHostOperation?.() ?? false;
+  }
+
+  /**
    * 「任务已终态、wake turn 尚未启动或仍在跑」的 continuation claim 数。
    * 会话已关闭 / agent 不支持 → 0(此时不会再有 wake turn,0 即事实)。
    */
@@ -1535,13 +1572,15 @@ export class Session {
   }
 
   /**
-   * Close only when no send reservation or agent turn is active. The check and
-   * close reservation are synchronous, so a concurrent send either wins first
-   * and keeps the session open, or observes closePromise and is rejected.
+   * Close only when no send reservation, agent turn, or host-initiated exclusive
+   * RPC operation (manual compact / rewind / model switch) is active. The check
+   * and close reservation are synchronous, so a concurrent send either wins
+   * first and keeps the session open, or observes closePromise and is rejected.
    */
   closeIfIdle(): Promise<boolean> {
     if (this.status !== 'active' || this.closePromise || this.isTurnRunning() || this.hasUnsettledTurn()
-      || this.retirementContinuationGeneration === this.turnGeneration) {
+      || this.retirementContinuationGeneration === this.turnGeneration
+      || this.hasPendingHostOperation()) {
       return Promise.resolve(false);
     }
     return this.close().then(() => true);
@@ -1779,6 +1818,14 @@ export class Session {
     return enabled === null ? null : { enabled, generation: this.planModeGeneration };
   }
 
+  /** Native ownership covers harness tool calls, never independently initiated Host work. */
+  get autoReviewOwner(): 'native' | 'cindy' {
+    return this.stablePermissionModeState?.mode === 'auto'
+      && this.stablePlanModeState?.enabled === false
+      ? this.handle.getAutoReviewOwner?.() ?? 'cindy'
+      : 'cindy';
+  }
+
   /** Review a Host-side tool step without reconstructing or persisting another copy of user intent. */
   async reviewHostPermissionAction(action: ReviewableAction): Promise<AutoReviewDecision> {
     const permission = this.stablePermissionModeState;
@@ -1839,7 +1886,10 @@ export class Session {
 
   // ── 运行时切换 ─────────────────────────────────────────────────────────────
 
-  async setModel(model: string, opts?: { providerId?: string | null; effort?: Effort }): Promise<void> {
+  async setModel(
+    model: string,
+    opts?: { providerId?: string | null; effort?: Effort; contextWindowBudget?: number | null; thinkingEnabled?: boolean },
+  ): Promise<void> {
     if (!this.capabilities.switchModel.supported) {
       throw new NotSupportedError('switchModel', this.capabilities.switchModel);
     }
@@ -1851,7 +1901,7 @@ export class Session {
 
   async previewModelSwitch(
     model: string,
-    opts?: { providerId?: string | null },
+    opts?: { providerId?: string | null; contextWindowBudget?: number | null },
   ): Promise<PiModelSwitchPreview | undefined> {
     return this.handle.previewModelSwitch?.(model, opts);
   }
@@ -1877,16 +1927,8 @@ export class Session {
     this.assertPermissionModeSupported(mode);
     this.externalPermissionModeChangesInFlight += 1;
     const operation = this.externalPermissionModeChangeChain.catch(() => undefined).then(async () => {
-      if (this.isTurnPermissionPolicyUnsafe(mode)) {
-        // Official group turns hold a host lease until background continuations
-        // and the temporary safe-mode restore have both settled. Do not let an
-        // external Full access / accept-edits switch weaken that active turn.
-        // Host-owned temporary switches use setPermissionModeTracked and remain
-        // able to restore while this operation waits, avoiding a lease deadlock.
-        while (this.hostTurnLeases.size > 0) {
-          await Promise.all([...this.hostTurnLeases]);
-        }
-      }
+      // The owner's live permission choice applies equally to IM and Desktop
+      // turns. Host leases fence new sends/retirement, not permission changes.
       await this.setPermissionModeTracked(mode);
     });
     const tracked = operation.finally(() => {
@@ -1940,9 +1982,8 @@ export class Session {
     mode: PermissionMode,
   ): Promise<boolean> {
     this.assertPermissionModeSupported(mode);
-    // An external request is newer user intent even when an unsafe target is
-    // still waiting for a host turn lease. Never restore over it, and never
-    // wait here: that request may need this restore path to release the lease.
+    // An external request is newer user intent, including while its runtime
+    // update is still in flight. Never restore over it.
     if (this.externalPermissionModeChangesInFlight > 0) return false;
     this.permissionModeChangesInFlight += 1;
     const operation = this.permissionModeChangeChain.catch(() => undefined).then(async () => {
@@ -1987,11 +2028,7 @@ export class Session {
     }
   }
 
-  private isTurnPermissionPolicyUnsafe(mode: PermissionMode): boolean {
-    return this.capabilities.turnPermissionPolicy?.unsupportedPermissionModes.includes(mode) === true;
-  }
-
-  async setFastMode(enabled: boolean): Promise<void> {
+  async setFastMode(enabled: boolean | 'ultrafast'): Promise<void> {
     this.ensureActive();
     if (!this.handle.setFastMode) {
       throw new NotSupportedError('fastMode', { supported: false, reason: 'not-implemented' });
@@ -2088,7 +2125,7 @@ export class Session {
     return this.handle.navigateSessionTree(entryId, options);
   }
 
-  getFastMode(): boolean | null {
+  getFastMode(): boolean | 'ultrafast' | null {
     return this.handle.getFastMode?.() ?? null;
   }
 
@@ -2331,6 +2368,9 @@ export class Session {
         // not enable the retry-count rule without that evidence. Claude also
         // disables category-only retries; repetition rules stay active.
         contractConsecutiveLimit: Number.POSITIVE_INFINITY,
+        // Codex code mode: a background script's calls carry no ownership marker;
+        // see ToolLoopGuardOptions.burstRepeatGapMs.
+        ...(this.agentKind === 'codex' ? { burstRepeatGapMs: CODEX_BURST_REPEAT_GAP_MS } : {}),
       }), {
         reviewer: this.toolLoopReviewer,
         context: () => ({ sessionId: this.id, agentKind: this.agentKind, model: this.handle.model }),

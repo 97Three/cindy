@@ -29,8 +29,8 @@ export interface CloudCompanionOfflineViewProps {
   avatarColor?: string | null;
   /** Home computer name; empty when this device never saw it. */
   deviceName: string;
-  /** The home is online but does not allow remote control from here. */
-  reachable?: boolean;
+  /** The home is online but has not opened remote control; otherwise it is simply not reachable. */
+  controlOff?: boolean;
 }
 
 type TakeOverState =
@@ -39,7 +39,7 @@ type TakeOverState =
   | { kind: 'conflict'; device: string }
   | { kind: 'error'; key: string };
 
-export function CloudCompanionOfflineView({ botId, deviceId, name, avatar, avatarColor, deviceName, reachable = false }: CloudCompanionOfflineViewProps) {
+export function CloudCompanionOfflineView({ botId, deviceId, name, avatar, avatarColor, deviceName, controlOff = false }: CloudCompanionOfflineViewProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const devices = useDeviceLinkDeviceList();
@@ -136,7 +136,7 @@ export function CloudCompanionOfflineView({ botId, deviceId, name, avatar, avata
         <BotAvatar bot={identity} size="sm" />
         <div className="min-w-0 flex-1">
           <p className="text-14 font-medium text-[var(--text-primary)]">
-            {t(reachable ? 'bots.cloud.homeUnreachable' : 'bots.cloud.homeOffline', { device })}
+            {t(controlOff ? 'bots.cloud.homeControlOff' : 'bots.cloud.homeOffline', { device })}
           </p>
           <p className="mt-0.5 text-12 text-[var(--text-secondary)]">
             {state.kind === 'running' ? t('bots.cloud.takingOver', { name })
@@ -194,7 +194,7 @@ export function CloudCompanionOfflineView({ botId, deviceId, name, avatar, avata
             </article>
           ) : (
             <article key={message.id} className={`flex min-w-0 flex-col gap-2 text-[var(--msg-assistant-text)] ${CHAT_BODY_CLASS}`}>
-              {message.text ? <MarkdownRenderer workingDir="" content={message.text} allowPrivilegedLinks={false} /> : null}
+              {message.text ? <MarkdownRenderer renderRichAnswers streamFadeKey={`cloud:${botId}:${message.id}`} workingDir="" content={message.text} allowPrivilegedLinks={false} /> : null}
               {message.attachments?.length ? <CloudMessageAttachments botId={botId} files={message.attachments} align="start" /> : null}
             </article>
           ))}
