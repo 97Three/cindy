@@ -161,7 +161,6 @@ async function freshService() {
   markSessionNeedsAttention.mockClear();
   sendMobileSessionNotify.mockReset().mockReturnValue(true);
   getMobileNotifyGeneration.mockClear();
-  pendingHandoffSessions.clear();
   latestMessageText.mockClear();
   readSessionNotificationPreview.mockReset().mockImplementation(async (sessionId, includeReply = true) => {
     if (!includeReply) return {};
@@ -252,6 +251,7 @@ describe('notificationService — channels 分发', () => {
       await notify('im-bot'); // a removed route cannot suppress a fallback
       expect(feishuIm.sendMarkdownText).toHaveBeenCalledTimes(5);
     } finally {
+      pendingHandoffSessions.clear();
       clearInputHandoffChannelNotices();
     }
   });
