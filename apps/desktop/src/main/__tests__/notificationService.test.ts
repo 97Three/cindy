@@ -229,7 +229,7 @@ describe('notificationService — channels 分发', () => {
   });
 
   it.each(['owned', 'owner-changed', 'focused'] as const)(
-    'keeps desktop immediate and rechecks delayed handoff ownership (%s)', async outcome => {
+    'keeps desktop independent of delayed handoff ownership (%s)', async outcome => {
       const { initNotificationService } = await freshService();
       const { notifyInputHandoffOnce, forgetInputHandoffNotice, clearInputHandoffChannelNotices } =
         await import('../im/shared/inputHandoffChannelNotice');
@@ -244,6 +244,9 @@ describe('notificationService — channels 分发', () => {
           sessionId: 'bot', title: 'Bot', kind: 'needs-reply', inputHandoffRequestId: 'request',
           channels: { desktop: true, feishu: true, mobile: false },
         });
+        // Allow Main's independent identity enrichment to finish; the handoff
+        // routing promise below stays unresolved throughout this desktop check.
+        await flushAsync();
         expect(notificationCtor).toHaveBeenCalledOnce();
         expect(feishuIm.sendMarkdownText).not.toHaveBeenCalled();
         forgetInputHandoffNotice('bot', 'request'); // completion cleanup while resolution is in flight
