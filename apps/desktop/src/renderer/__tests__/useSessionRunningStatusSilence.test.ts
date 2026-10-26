@@ -673,7 +673,7 @@ describe('useSessionRunningStatus silenced completion handling', () => {
     });
 
     await emitSnapshot(new Map([['s-handoff', handoffStatus(1)]]));
-    expect(onSessionNeedsReply).toHaveBeenCalledExactlyOnceWith('s-handoff', { inputHandoff: true });
+    expect(onSessionNeedsReply).toHaveBeenCalledExactlyOnceWith('s-handoff', { inputHandoff: true, inputHandoffRequestId: 'same-request' });
     first.result.current.clearNotification('s-handoff');
     first.unmount();
     vi.mocked(addSessionAttention).mockClear();
@@ -693,7 +693,7 @@ describe('useSessionRunningStatus silenced completion handling', () => {
 
     await emitSnapshot(new Map([['s-handoff', handoffStatus(2)]]));
     expect(onSessionNeedsReply).toHaveBeenCalledTimes(2);
-    expect(onSessionNeedsReply).toHaveBeenLastCalledWith('s-handoff', { inputHandoff: true });
+    expect(onSessionNeedsReply).toHaveBeenLastCalledWith('s-handoff', { inputHandoff: true, inputHandoffRequestId: 'same-request' });
     expect(addSessionAttention).toHaveBeenCalledWith('s-handoff', 'awaiting');
     await emitSnapshot(new Map([['s-handoff', handoffStatus(2)]]));
     expect(onSessionNeedsReply).toHaveBeenCalledTimes(2);
@@ -708,7 +708,7 @@ describe('useSessionRunningStatus silenced completion handling', () => {
       ...status(false), hasPendingInputHandoff: true, hasActionableInputHandoff: true,
       pendingRequestKeys: ['handoff:same-request:1'],
     }]]));
-    expect(onSessionNeedsReply).toHaveBeenLastCalledWith('s-mixed', { inputHandoff: true });
+    expect(onSessionNeedsReply).toHaveBeenLastCalledWith('s-mixed', { inputHandoff: true, inputHandoffRequestId: 'same-request' });
 
     await emitSnapshot(new Map([['s-mixed', {
       ...status(false), hasPendingInputHandoff: true, hasActionableInputHandoff: true,

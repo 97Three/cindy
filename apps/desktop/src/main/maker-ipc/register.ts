@@ -250,7 +250,7 @@ import {
 } from '../cindy-brain/ghostGrantConfirmBridge.js';
 import { createFeishuDesktopConfirmNotifier } from '../im/desktopConfirmNoticeWiring.js';
 import { buildInputHandoffNoticeText } from '../im/desktopConfirmNotice.js';
-import { sendInputHandoffChannelNotice } from '../im/shared/inputHandoffChannelNotice.js';
+import { sendInputHandoffChannelNotice, notifyInputHandoffOnce, forgetInputHandoffNotice } from '../im/shared/inputHandoffChannelNotice.js';
 import { bindingStore } from '../im/binding.js';
 import { isHeadlessGhostSetupTurn } from '../mcp-integrations/ghostSetupInteractionSurface.js';
 import {
@@ -3318,7 +3318,6 @@ const ghostSetupInteractionBridge = initGhostSetupInteractionBridge({
  * Broadcasts carry step structure only; owner values never leave the
  * trusted local channel or the signed v3 exchange.
  */
-const inputHandoffImNotified = new Set<string>();
 /** Who is answering: this Desktop, or the server-verified controller device. */
 function inputHandoffActor(): InputHandoffHolder {
   const context = getDeviceLinkInvokeContext();
@@ -3342,19 +3341,22 @@ const inputHandoffImNotifier = createFeishuDesktopConfirmNotifier(buildInputHand
  */
 function notifyInputHandoffOwner(sessionId: string, snapshot: InputHandoffSnapshot): void {
   const generation = getMobileNotifyGeneration();
+  const ownerScope = captureDataOwnerBroadcastScope();
+  const titleRead = readSessionTitle(sessionId);
+  // Register before any await: Renderer can race both lookup and handoff completion.
+  void notifyInputHandoffOnce(sessionId, snapshot.requestId, async () => {
+    const title = await titleRead;
+    if (!isDataOwnerBroadcastScopeCurrent(ownerScope)) return true;
+    if (sendInputHandoffChannelNotice(sessionId, buildInputHandoffNoticeText(title), log)) return true;
+    return inputHandoffImNotifier(sessionId, title);
+  }, () => isDataOwnerBroadcastScopeCurrent(ownerScope))
+    .catch(err => log.warn('[input-handoff] owner IM notice failed (non-fatal)', err));
   void (async () => {
     try {
       const [title, preview] = await Promise.all([
-        readSessionTitle(sessionId),
+        titleRead,
         readSessionNotificationPreview(sessionId, false).catch(() => undefined),
       ]);
-      // An IM-driven task gets one text pointer per request, not one per screen.
-      if (!inputHandoffImNotified.has(snapshot.requestId)) {
-        inputHandoffImNotified.add(snapshot.requestId);
-        // Channel-driven tasks get it in their chat; a desktop task taken over from Feishu (/ctr) by its binding.
-        if (!sendInputHandoffChannelNotice(sessionId, buildInputHandoffNoticeText(title), log))
-          inputHandoffImNotifier(sessionId, title);
-      }
       sendMobileSessionNotify({
         sessionId,
         title: preview?.teammateName ?? title,
@@ -3407,8 +3409,8 @@ initInputHandoffService({
   },
   notifyOwner: (sessionId, snapshot) => notifyInputHandoffOwner(sessionId, snapshot),
   describeDevice: describeInputHandoffDevice,
-  onClosed: (_sessionId, requestId) => {
-    inputHandoffImNotified.delete(requestId);
+  onClosed: (sessionId, requestId) => {
+    forgetInputHandoffNotice(sessionId, requestId);
   },
   continueAgent: async (sessionId, requestId, message) => {
     if (!inputHandoffContinuation) throw new Error('INPUT_HANDOFF_CONTINUATION_UNAVAILABLE');

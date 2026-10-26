@@ -34,8 +34,7 @@ import { drainSessionActiveTurnWrites, getSessionNotificationTurnSignal } from '
 import { captureDataOwnerBroadcastScope, isDataOwnerBroadcastScopeCurrent } from './device-link/broadcast-tap';
 import { latestMessageText } from './localDb/latestMessageText';
 import { drainPersistQueue } from './messagePersistBroadcaster';
-import { getInputHandoffService } from './input-handoff/service';
-import { hasInputHandoffChannelNotice } from './im/shared/inputHandoffChannelNotice';
+import { getInputHandoffNoticeOwnership } from './im/shared/inputHandoffChannelNotice';
 import { createLogger } from './logger';
 import {
   getSessionExternalNotificationText,
@@ -80,6 +79,8 @@ interface ShowSessionEventPayload {
   sessionId: string;
   title: string;
   kind: SessionEventKind;
+  /** Local handoff event identity, verified against Main's request-scoped notice record. */
+  inputHandoffRequestId?: string;
   /**
    * 渠道偏好。renderer 侧 gate 后填入,缺省时按"仅桌面"兼容,防御漏传——
    * 当前唯一 invoke 调用方 CCAgentSidebarUpper.tsx 总是显式传 channels,
@@ -391,13 +392,17 @@ export function initNotificationService(deps: NotificationServiceDeps): void {
         }
       })().catch((err) => log.warn('[notification] reply notification failed (non-fatal)', err));
 
-      // Channel-driven handoffs already receive Main's fixed pointer once per
-      // request. Bot tasks share source='bot' with ordinary Desktop bot tasks,
-      // so decide from the live request and route instead of Renderer metadata.
-      const channelOwnsHandoff = kind === 'needs-reply'
-        && getInputHandoffService()?.hasPending(sessionId)
-        && hasInputHandoffChannelNotice(sessionId);
-      if (wantFeishu && kind !== 'done' && !channelOwnsHandoff) {
+      if (wantFeishu && kind !== 'done') {
+        if (payload.inputHandoffRequestId) {
+          const ownership = getInputHandoffNoticeOwnership(sessionId, payload.inputHandoffRequestId);
+          // Unknown/expired events cannot invent a new fallback. A known event
+          // keeps its actual routing decision even after the handoff ends.
+          if (!ownership || await ownership.catch(err => {
+            log.warn('[notification] handoff routing unavailable', err);
+            return true;
+          })) return;
+          if (!isDataOwnerBroadcastScopeCurrent(ownerScope) || getWindow()?.isFocused()) return;
+        }
         await sendFeishuMessage(feishuIm, safeTitle, kind);
       }
     },
@@ -424,7 +429,11 @@ function assertValidSessionEventPayload(
     typeof p.kind !== 'string' ||
     !SESSION_EVENT_KINDS.has(p.kind) ||
     (p.channels !== undefined && (typeof p.channels !== 'object' || p.channels === null)) ||
-    (p.markAttention !== undefined && typeof p.markAttention !== 'boolean')
+    (p.markAttention !== undefined && typeof p.markAttention !== 'boolean') ||
+    (p.inputHandoffRequestId !== undefined && (
+      p.kind !== 'needs-reply' || typeof p.inputHandoffRequestId !== 'string'
+      || p.inputHandoffRequestId.length === 0 || p.inputHandoffRequestId.length > 256
+    ))
   ) {
     throw new TypeError('invalid session event payload');
   }

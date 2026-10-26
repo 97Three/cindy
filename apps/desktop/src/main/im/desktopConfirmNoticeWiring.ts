@@ -26,7 +26,7 @@ const log = createLogger('im-desktop-confirm-notice');
 /** 生产接线:接管绑定 / sessions 行反查 feishuOpenId + 复用 im/host 的 feishuIm 实例。 */
 export function createFeishuDesktopConfirmNotifier(
   buildText?: (what: string) => string,
-): (sessionId: string, what: string) => void {
+): (sessionId: string, what: string) => Promise<boolean> {
   return createDesktopConfirmNotifier({
     async getFeishuOpenId(sessionId) {
       return resolveFeishuNoticeTarget(

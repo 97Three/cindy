@@ -58,23 +58,26 @@ export function buildInputHandoffNoticeText(taskTitle: string): string {
 
 /**
  * 组装 fire-and-forget 通知函数(DI 便于单测;生产接线见
- * desktopConfirmNoticeWiring.ts)。
+ * desktopConfirmNoticeWiring.ts)。返回是否解析到目标,而非是否发送成功;
+ * 忽略返回值的既有调用方仍为 best-effort,不抛出。
  */
 export function createDesktopConfirmNotifier(
   deps: DesktopConfirmNoticeDeps,
   buildText: (what: string) => string = buildDesktopConfirmNoticeText,
-): (sessionId: string, what: string) => void {
-  return (sessionId, what) => {
-    void (async () => {
-      try {
-        const openId = await deps.getFeishuOpenId(sessionId);
-        if (!openId) return;
-        await deps.sendFeishuText(openId, buildText(what));
-      } catch (err) {
-        deps.logWarn?.(
-          `desktop-confirm IM notice failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    })();
+): (sessionId: string, what: string) => Promise<boolean> {
+  return async (sessionId, what) => {
+    let handled = false;
+    try {
+      const openId = await deps.getFeishuOpenId(sessionId);
+      if (!openId) return false;
+      // Finding a target claims this notice, even when best-effort delivery fails.
+      handled = true;
+      await deps.sendFeishuText(openId, buildText(what));
+    } catch (err) {
+      deps.logWarn?.(
+        `desktop-confirm IM notice failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return handled;
   };
 }

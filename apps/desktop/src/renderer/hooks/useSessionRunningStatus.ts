@@ -103,7 +103,7 @@ interface UseSessionRunningStatusOptions {
    * edge fires for a new request (or new input-handoff step) in the session.
    * Like onSessionDone, no active-session filter; the consumer decides.
    */
-  onSessionNeedsReply?: (sessionId: string, options?: { inputHandoff: true }) => void;
+  onSessionNeedsReply?: (sessionId: string, options?: { inputHandoff: true; inputHandoffRequestId?: string }) => void;
 }
 
 /**
@@ -392,8 +392,14 @@ export function useSessionRunningStatus(
               && !info.hasPendingPermission
               && !info.hasPendingPlanReview
               && !info.hasPendingPluginSetup;
-          if (handoffOnly) onSessionNeedsReplyRef.current?.(id, { inputHandoff: true });
-          else onSessionNeedsReplyRef.current?.(id);
+          if (handoffOnly) {
+            const handoffKey = (newKeys ?? keys)?.find((key) => key.startsWith('handoff:'));
+            const requestId = handoffKey?.slice('handoff:'.length, handoffKey.lastIndexOf(':'));
+            onSessionNeedsReplyRef.current?.(id, {
+              inputHandoff: true,
+              ...(requestId ? { inputHandoffRequestId: requestId } : {}),
+            });
+          } else onSessionNeedsReplyRef.current?.(id);
         }
         // Other hook consumers only read running status. They may add the
         // in-app dot, but must not consume the system notification owner's edge.

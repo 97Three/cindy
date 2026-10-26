@@ -116,20 +116,22 @@ describe('shared session event notifications', () => {
     });
   });
 
-  // #6754: only channel-driven / attached handoffs already have Main's pointer.
-  // Exercise the shared delivery entry, including the channels sent to Main.
+  // #6754 review 4373832299 / unit: persisted sources and bindings do not prove
+  // that this request has an IM pointer. Main resolves the actual request target.
   it.each([
     { source: 'desktop', openId: null, attached: false, fallback: true },
-    { source: 'feishu', openId: 'ou_native', attached: false, fallback: false },
-    { source: 'desktop', openId: 'ou_legacy', attached: false, fallback: false },
-    { source: 'desktop', openId: null, attached: true, fallback: false },
-    { source: 'telegram', openId: null, attached: false, fallback: false },
-  ])('preserves handoff Feishu delivery only without Main channel ownership: %j', async entry => {
+    { source: 'feishu', openId: 'ou_native', attached: false, fallback: true },
+    { source: 'desktop', openId: 'ou_legacy', attached: false, fallback: true },
+    { source: 'desktop', openId: null, attached: true, fallback: true },
+    { source: 'telegram', openId: null, attached: false, fallback: true },
+    { source: 'slack', openId: null, attached: false, fallback: true },
+    { source: 'discord', openId: null, attached: false, fallback: true },
+  ])('passes handoff identity to Main regardless of persisted source: %j', async entry => {
     gates.feishu = true;
     getSession.mockResolvedValue({ source: entry.source, feishuOpenId: entry.openId });
     resolveBinding.mockResolvedValue({ attached: entry.attached });
 
-    sendSessionEventNotification('handoff', 'Task', 'needs-reply', { inputHandoff: true });
+    sendSessionEventNotification('handoff', 'Task', 'needs-reply', { inputHandoff: true, inputHandoffRequestId: 'request-1' });
     // Desktop must not wait for the asynchronous route lookup.
     expect(showSessionEvent).toHaveBeenCalledWith({
       sessionId: 'handoff', title: 'Task', kind: 'needs-reply',
@@ -145,6 +147,7 @@ describe('shared session event notifications', () => {
     expect(markAttention).toHaveBeenCalledTimes(1);
     if (entry.fallback) expect(showSessionEvent).toHaveBeenLastCalledWith({
       sessionId: 'handoff', title: 'Task', kind: 'needs-reply', markAttention: false,
+      inputHandoffRequestId: 'request-1',
       channels: { desktop: false, feishu: true, mobile: false },
     });
   });
@@ -154,7 +157,7 @@ describe('shared session event notifications', () => {
       gates.feishu = true;
       let release!: (row: unknown) => void;
       getSession.mockReturnValueOnce(new Promise(resolve => { release = resolve; }));
-      sendSessionEventNotification('handoff', 'Task', 'needs-reply', { inputHandoff: true });
+      sendSessionEventNotification('handoff', 'Task', 'needs-reply', { inputHandoff: true, inputHandoffRequestId: 'request-1' });
       if (change === 'owner-change') setDataOwnerGeneration('another-owner');
       if (change === 'setting-off') gates.feishu = false;
       if (change === 'focused') vi.mocked(document.hasFocus).mockReturnValue(true);

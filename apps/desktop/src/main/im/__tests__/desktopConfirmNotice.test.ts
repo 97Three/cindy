@@ -22,7 +22,7 @@ describe('createDesktopConfirmNotifier', () => {
       getFeishuOpenId: async () => 'ou_123',
       sendFeishuText: send,
     });
-    notify('feishu_bot_ou_123', '「提交 GitHub issue」的确认卡');
+    expect(await notify('feishu_bot_ou_123', '「提交 GitHub issue」的确认卡')).toBe(true);
     await flush();
     expect(send).toHaveBeenCalledWith(
       'ou_123',
@@ -38,7 +38,7 @@ describe('createDesktopConfirmNotifier', () => {
       getFeishuOpenId: async () => null,
       sendFeishuText: send,
     });
-    notify('desktop-session', 'x');
+    expect(await notify('desktop-session', 'x')).toBe(false);
     await flush();
     expect(send).not.toHaveBeenCalled();
   });
@@ -63,7 +63,7 @@ describe('createDesktopConfirmNotifier', () => {
       },
       logWarn: sendFail,
     });
-    notify2('s1', 'x');
+    expect(await notify2('s1', 'x')).toBe(true);
     await flush();
     expect(sendFail).toHaveBeenCalled();
   });

@@ -115,6 +115,8 @@ export function sendSessionEventNotification(
     feishu?: boolean;
     /** Main owns the phone push; Feishu falls back only without an IM target. */
     inputHandoff?: true;
+    /** The request that caused this event, independent of later task state. */
+    inputHandoffRequestId?: string;
   } = {},
 ): void {
   // The user is already looking at Cindy. In-app attention remains available,
@@ -122,13 +124,13 @@ export function sendSessionEventNotification(
   if (typeof document !== 'undefined' && document.hasFocus()) return;
 
   if (kind === 'needs-reply' && options.inputHandoff) {
-    // Keep the desktop reminder immediate while existing IPC reads determine
-    // whether Main already sends the request's fixed pointer in an IM channel.
+    // Keep the desktop reminder immediate; Main owns request-scoped IM routing.
     deliverSessionEventNotification(sessionId, title, kind, options.remoteDevice === true,
       { ...options, mobile: false, feishu: false });
     // The controller cannot resolve the execution host's IM bindings locally.
-    if (options.remoteDevice !== true && options.feishu !== false && getFeishuNotificationsEnabled()) {
-      void sendUnhandledHandoffFeishuNotification(sessionId, title);
+    if (options.remoteDevice !== true && options.feishu !== false && options.inputHandoffRequestId
+      && getFeishuNotificationsEnabled()) {
+      void sendUnhandledHandoffFeishuNotification(sessionId, title, options.inputHandoffRequestId);
     }
     return;
   }
@@ -142,26 +144,18 @@ export function sendSessionEventNotification(
   deliverSessionEventNotification(sessionId, title, kind, options.remoteDevice === true, options);
 }
 
-const IM_SESSION_SOURCES = new Set(['feishu', 'slack', 'telegram', 'x', 'discord', 'wechat', 'dingtalk', 'wecom']);
-
-/** Ordinary Desktop handoffs have no Main IM pointer; preserve the owner's global Feishu setting. */
-async function sendUnhandledHandoffFeishuNotification(sessionId: string, title: string): Promise<void> {
+/** Main resolves the event's IM ownership; persisted source alone is not a live route. */
+async function sendUnhandledHandoffFeishuNotification(sessionId: string, title: string, requestId: string): Promise<void> {
   const owner = getDataOwnerGeneration();
   try {
-    const [row, binding] = await Promise.all([
-      window.electronAPI.localDb.sessions.get(sessionId),
-      window.electronAPI.binding.resolveSession(sessionId),
-    ]);
-    // Failed/absent routing data is not proof that Main has no target.
+    const row = await window.electronAPI.localDb.sessions.get(sessionId);
+    // Missing session data is not proof of a valid local notification target.
     if (!row || typeof row !== 'object' || Array.isArray(row)) return;
-    const session = row as { source?: unknown; feishuOpenId?: unknown };
-    if (binding.attached
-      || (typeof session.source === 'string' && IM_SESSION_SOURCES.has(session.source))
-      || (typeof session.feishuOpenId === 'string' && session.feishuOpenId.trim())) return;
     if (!isDataOwnerGenerationCurrent(owner) || !getFeishuNotificationsEnabled()
       || (typeof document !== 'undefined' && document.hasFocus())) return;
     await window.electronAPI.notificationShowSessionEvent({
       sessionId, title, kind: 'needs-reply', markAttention: false,
+      inputHandoffRequestId: requestId,
       channels: { desktop: false, feishu: true, mobile: false },
     });
   } catch {

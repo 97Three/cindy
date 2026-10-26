@@ -16,9 +16,31 @@ interface Route {
 
 const routes = new Map<string, Route>();
 
-/** Main-only routing truth; a bot's persisted source does not identify its active channel. */
-export function hasInputHandoffChannelNotice(sessionId: string): boolean {
-  return routes.has(sessionId);
+// Keep the request's decision through the handoff service's terminal retention.
+// A late Renderer event must not infer ownership from the next turn's live route.
+const notices = new Map<string, { sessionId: string; handled: Promise<boolean>; isCurrent: () => boolean }>();
+
+export function notifyInputHandoffOnce(
+  sessionId: string,
+  requestId: string,
+  notify: () => Promise<boolean>,
+  isCurrent: () => boolean = () => true,
+): Promise<boolean> {
+  const previous = notices.get(requestId);
+  if (previous) return previous.sessionId === sessionId ? previous.handled : Promise.resolve(true);
+  const handled = Promise.resolve().then(notify);
+  notices.set(requestId, { sessionId, handled, isCurrent });
+  return handled;
+}
+
+/** Undefined means this host no longer knows the event, not permission to send a fallback. */
+export function getInputHandoffNoticeOwnership(sessionId: string, requestId: string): Promise<boolean> | undefined {
+  const notice = notices.get(requestId);
+  return notice?.sessionId === sessionId && notice.isCurrent() ? notice.handled : undefined;
+}
+
+export function forgetInputHandoffNotice(sessionId: string, requestId: string): void {
+  if (notices.get(requestId)?.sessionId === sessionId) notices.delete(requestId);
 }
 
 export function bindInputHandoffChannelNotice(
@@ -62,4 +84,5 @@ export function sendInputHandoffChannelNotice(
 /** Tests only. */
 export function clearInputHandoffChannelNotices(): void {
   for (const route of [...routes.values()]) route.cleanup();
+  notices.clear();
 }
