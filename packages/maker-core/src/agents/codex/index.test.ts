@@ -1958,6 +1958,7 @@ function installFakeHost(
     isCodexProxyActive,
     isCodexBrowserUseAvailable,
     getCodexBrowserUseVersion,
+    getNativeRuntimeVersion: () => opts.userAgent?.match(/\/(\d+\.\d+\.\d+)(?:\s|$)/)?.[1] ?? null,
     waitForMcpTool,
     getRemoteCompactionProviderId,
     getCindyRemoteCompactionProviderId,
@@ -2000,6 +2001,77 @@ async function nextEvent(iterator: AsyncIterator<AgentEvent>): Promise<AgentEven
   if (result.done) throw new Error('event stream ended');
   return result.value;
 }
+
+describe('Codex native compaction action bridge', () => {
+  // Desktop PreCompact block ends the native turn as interrupted, without a
+  // boundary. Unit regression: report noop, retain real failures, release the lane.
+  it.each([
+    { status: 'interrupted', error: false, noop: true },
+    { status: 'interrupted', error: true, noop: false },
+    { status: 'failed', error: false, noop: false },
+  ])('maps native terminal $status with error=$error to noop=$noop', async ({ status, error, noop }) => {
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent, method => {
+      if (method === Method.ConfigRead) return { config: { features: { hooks: false } }, layers: [] };
+      if (method === 'thread/compact/start') return {};
+    }, { userAgent: 'test-codex/0.159.2' });
+    const handle = await agent.startSession({ sessionId: 'harness-cancel', workingDir: '/repo', model: 'gpt-5.4' });
+    try {
+      const handlers = host.getThreadHandlers()!;
+      const compact = handle.requestHarnessCompaction!();
+      const outcome = noop
+        ? expect(compact).resolves.toEqual({ noop: true })
+        : expect(compact).rejects.toThrow('Codex compaction failed');
+      handlers.turnStarted?.({ threadId: 'start-thread-id', turn: { id: 'cancelled-compact' } });
+      if (error) handlers.error?.({ turnId: 'cancelled-compact', error: { message: 'native failure' }, willRetry: false });
+      handlers.turnCompleted?.({ threadId: 'start-thread-id', turn: { id: 'cancelled-compact', status, items: [] } });
+      await outcome;
+      const next = handle.requestHarnessCompaction!();
+      handlers.turnStarted?.({ threadId: 'start-thread-id', turn: { id: 'next-compact' } });
+      handlers.turnCompleted?.({ threadId: 'start-thread-id', turn: { id: 'next-compact', status: 'completed', items: [] } });
+      await expect(next).resolves.toEqual({ noop: true });
+    } finally {
+      await handle.close();
+      await agent.dispose();
+    }
+  });
+
+  it('waits for the native terminal and keeps control completion outside the product turn', async () => {
+    const agent = new CodexAgent(createDeps());
+    const host = installFakeHost(agent, method => {
+      if (method === Method.ConfigRead) return { config: { features: { hooks: false } }, layers: [] };
+      if (method === 'thread/compact/start') return {};
+    }, { userAgent: 'test-codex/0.159.2' });
+    const handle = await agent.startSession({ sessionId: 'harness-compact', workingDir: '/repo', model: 'gpt-5.4' });
+    const events: AgentEvent[] = [];
+    const collect = (async () => { for await (const event of handle.events()) events.push(event); })();
+    try {
+      const compact = handle.requestHarnessCompaction!();
+      await vi.waitFor(() => expect(host.request).toHaveBeenCalledWith('thread/compact/start', { threadId: 'start-thread-id' }));
+      let completed = false;
+      void compact.then(() => { completed = true; });
+      await Promise.resolve();
+      expect(completed).toBe(false);
+      await expect(handle.requestHarnessCompaction!()).rejects.toThrow('SESSION_RUNNING');
+      const handlers = host.getThreadHandlers()!;
+      handlers.turnCompleted?.({ threadId: 'start-thread-id', turn: { id: 'old-turn', status: 'completed', items: [] } });
+      await Promise.resolve();
+      expect(completed).toBe(false);
+      const turnId = 'native-compact';
+      handlers.turnStarted?.({ threadId: 'start-thread-id', turn: { id: turnId } });
+      handlers.itemCompleted?.({ threadId: 'start-thread-id', turnId,
+        item: { type: 'contextCompaction', id: 'compact-item' } });
+      handlers.turnCompleted?.({ threadId: 'start-thread-id', turn: { id: turnId, status: 'completed', items: [] } });
+      await expect(compact).resolves.toEqual({});
+    } finally {
+      await handle.close();
+      await collect;
+      await agent.dispose();
+    }
+    expect(events.some(event => event.type === 'compact_boundary')).toBe(true);
+    expect(events.some(event => event.type === 'done')).toBe(false);
+  });
+});
 
 describe('CodexAgent permissions', () => {
   it('graceful stop sends only turn/interrupt for the current turn', async () => {
@@ -31836,6 +31908,33 @@ describe('CodexAgent reconnect-stall watchdog', () => {
         Method.TurnInterrupt,
         expect.objectContaining({ turnId: 'turn-1' }),
       ]);
+      await handle.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // #7055: after WebSocket retries Codex uploads the full history over HTTPS and emits
+  // nothing until the upload ends; on a slow link that exceeds the reconnect deadline.
+  it('HTTPS 回退开始后不再按重连 deadline 中断正在上传的请求', async () => {
+    vi.useFakeTimers();
+    try {
+      const agent = new CodexAgent(createDeps());
+      const { host, handle, handlers, seen } = await startReconnectTurn(agent, 'session-https-fallback');
+      emitReconnect(handlers, 1);
+      handlers.warning?.({
+        threadId: 'start-thread-id',
+        message: 'Falling back from WebSockets to HTTPS transport. stream disconnected before completion: ' +
+          'websocket closed by server before response.completed',
+      });
+
+      await vi.advanceTimersByTimeAsync(RECONNECT_STALL_MS + 1);
+
+      expect(seen).not.toContainEqual(expect.objectContaining({
+        type: 'error', data: expect.objectContaining({ reason: 'codex_reconnect_stalled' }),
+      }));
+      expect(handle.isTurnRunning?.()).toBe(true);
+      expect(host.request.mock.calls.map(([method]) => method)).not.toContain(Method.TurnInterrupt);
       await handle.close();
     } finally {
       vi.useRealTimers();

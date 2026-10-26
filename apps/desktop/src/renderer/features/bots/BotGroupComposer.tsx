@@ -392,10 +392,10 @@ export function BotGroupComposer({
     [groupId, thread],
   );
 
-  const send = () => {
+  const send = async () => {
     if (thread) { void sendThreadReply(); return; }
     // A second Enter before the cleared input has rendered must not send the same draft twice.
-    if (!canSend || textRef.current !== text || attachmentsRef.current !== attachmentState.attachments) return;
+    if (!canSend || sendingRef.current || textRef.current !== text || attachmentsRef.current !== attachmentState.attachments) return;
     if (!botGroupApi()) {
       toast.error(t('bots.groupChat.composer.sendFailed'));
       return;
@@ -418,7 +418,8 @@ export function BotGroupComposer({
     const clientId = groupAttemptRef.current?.signature === signature ? groupAttemptRef.current.clientId : crypto.randomUUID();
     // The outbox owns this attempt now; a failure hands it back through `restore`.
     groupAttemptRef.current = null;
-    enqueueBotGroupSend({
+    sendingRef.current = true; setSending(true);
+    try { const saved = enqueueBotGroupSend({
       input: { ...fields, clientId },
       signature,
       draft: text,
@@ -427,6 +428,12 @@ export function BotGroupComposer({
       files,
       attachmentScope,
     });
+      if (botGroupApi()?.botGroupOutbox) await saved;
+      else void saved.catch(() => undefined);
+    } catch {
+      toast.error(t('bots.groupChat.composer.sendFailed'));
+      return;
+    } finally { sendingRef.current = false; setSending(false); }
     // Clear at once like any chat, so the next message can be written while this one
     // goes out. The batch leaves the tray without deleting its files: the message has them.
     textRef.current = '';
@@ -591,6 +598,7 @@ export function BotGroupComposer({
             // The Chat Server caps a 话题 reply; the field enforces it as typing does (a pick obeys it too).
             maxLength={thread ? BOT_GROUP_MESSAGE_MAX_CHARS : undefined}
             {...mention.textareaProps}
+            readOnly={sending}
             placeholder={placeholder}
             onChange={(event) => mention.onChange(event.target.value)}
             onPaste={handlePaste}

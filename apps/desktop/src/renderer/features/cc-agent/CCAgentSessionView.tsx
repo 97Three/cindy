@@ -8,6 +8,7 @@ import { BotFollowUpInvitation } from '@/features/bots/BotFollowUpInvitation';
 import { formatSessionDuration } from '@/lib/sessionDurationFormat';
 import { shouldShowOpenPathError } from '../../../shared/openPathResult';
 import { shouldShowFailedScheduleNotice } from '@cindy/maker-shared/schedule-model';
+import { canContinueFailedTurn } from '@cindy/maker-shared/synthetic-trigger';
 /**
  * CCAgentSessionView
  * ---------------------------------------------------------------------------
@@ -43,7 +44,7 @@ import {
 import { CINDY_MAKE_ENABLED, isCindyMakeSource } from '@cindy/maker-shared/cindy-make-feature';
 import { CindyMakeSessionGate } from './CindyMakeSessionGate';
 import { SessionRouteOriginGate } from './SessionRouteOriginGate';
-import { sideChatTaskRoute } from '@/features/right-sidebar/plugins/side-chat/state';
+import { useBotIslandVisibleSession } from '@/features/bots/useBotIslandVisibleSession';
 import { dbToMakerAgentKind, normalizeDbAgentKind } from '../../../shared/agentKindConversion';
 import { useTranslation } from 'react-i18next';
 import { buildSessionDeepLink } from '@/lib/deepLink';
@@ -81,6 +82,7 @@ import {
 
 import { cn, basename } from '@/lib/utils';
 import { Spinner } from '@/components/ui/spinner';
+import { Collapse } from '@/components/ui/collapse';
 import { setRemoteReceiptDisplayReady } from '@/lib/sessionAttentionStore';
 import { shortSessionId } from '@/lib/sessionId';
 import { ChatInput } from '@/components/new-chat/ChatInput';
@@ -280,6 +282,7 @@ import {
   getSessionRouteOwnerId,
   isOrcaLeadSession,
   isOrcaWorkerSession,
+  orcaWorkerSessionRoute,
   resolveSessionRoute,
 } from '@/lib/orcaSessionIdentity';
 import type { Effort, PermissionMode } from '@/lib/userPreferences.types';
@@ -506,6 +509,8 @@ function parseOrcaWorkersRevealState(state: unknown): OrcaWorkersRevealState | n
 }
 
 interface CCAgentSessionViewProps {
+  /** Topic root and reply divider, inside the existing message scroller. */
+  messageStreamHeader?: ReactNode;
   sessionIdProp?: string;
   /** Host-read metadata for an embedded remote task intentionally absent from task lists. */
   sessionSnapshotProp?: Session | null;
@@ -822,6 +827,7 @@ export function CCAgentSessionView(props: CCAgentSessionViewProps) {
 }
 
 function CCAgentSessionContent({
+  messageStreamHeader,
   sessionIdProp,
   sessionSnapshotProp,
   routeOwner,
@@ -1418,9 +1424,15 @@ function CCAgentSessionContent({
   }, [session?.status, sessionId, navigate, ownsWindowRoute]);
   const vendorAuthGate = useVendorAuthGate();
   const { confirmWithCheckbox } = useConfirmDialog();
+  const [workerRouteChecked, setWorkerRouteChecked] = useState<string | null>(null);
 
   useEffect(() => {
     if (!sessionId || !searchJump) return;
+    if (ownsWindowRoute && !session) return;
+    // The route owner hands Worker jumps to the Lead sidebar. Do not consume
+    // the anchor in this temporary view while its workflow read is in flight.
+    if (ownsWindowRoute && !isOrcaMode && !isCompactRail && session
+      && isOrcaWorkerSession(session) && workerRouteChecked !== location.key) return;
     if (searchJump.sessionId !== sessionId) {
       if (!session) return;
       // 仅路由主权实例回收「跳转目标 ≠ 当前会话」的陈旧状态：分屏的嵌入 pane
@@ -1489,12 +1501,15 @@ function CCAgentSessionContent({
     clearSearchJumpState,
     isOrcaLeadSessionView,
     isOrcaMode,
+    isCompactRail,
+    location.key,
     ownsWindowRoute,
     requestFocusMessage,
     searchJump,
     session,
     sessionId,
     t,
+    workerRouteChecked,
   ]);
 
   // 后台任务面板行点击 → 聊天流定位对应任务卡:sessionId 匹配当前会话才消费;
@@ -1540,15 +1555,21 @@ function CCAgentSessionContent({
     void orcaWorkflowsFor(session.id)
       .getByWorkerSession(session.id)
       .then((workflow) => {
-        if (!cancelled && workflow) {
-          navigate(`/cc-agent/${workflow.leadSessionId}?worker=${sessionId}`, { replace: true });
+        if (cancelled) return;
+        if (workflow) {
+          navigate(orcaWorkerSessionRoute(workflow.leadSessionId, sessionId, location.search), {
+            replace: true,
+            state: location.state,
+          });
+        } else {
+          setWorkerRouteChecked(location.key);
         }
       })
-      .catch(() => undefined);
+      .catch(() => { if (!cancelled) setWorkerRouteChecked(location.key); });
     return () => {
       cancelled = true;
     };
-  }, [isOrcaMode, isCompactRail, navigate, ownsWindowRoute, session, sessionId]);
+  }, [isOrcaMode, isCompactRail, location.key, location.search, location.state, navigate, ownsWindowRoute, session, sessionId]);
 
   // F2: controlled folder picker open state
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
@@ -1844,6 +1865,7 @@ function CCAgentSessionContent({
     cancelUsageLimitWait,
     errorIsRecoverable,
     errorRetryText,
+    errorCanContinue,
     disposedErrorPersistId,
     credentialSwitchWait,
     continuationInFlightClientId,
@@ -1902,6 +1924,10 @@ function CCAgentSessionContent({
     updateQueueItemContent,
     chatDisplaySnapshot,
   } = useCCAgentChat(sessionId, handleTitleUpdate, { chatRealtime });
+  useBotIslandVisibleSession(
+    viewVisible && session?.id === sessionId && historyLoaded ? sessionId ?? null : null,
+    ownsWindowRoute && !isCompactRail && !isOrcaMode,
+  );
   const clearQueueComposerEditDraft = useCallback(
     (edit: NonNullable<typeof queueComposerEdit>, files: readonly AttachedFile[]) => {
       const originalIds = new Set(edit.originalAttachmentIds);
@@ -2874,7 +2900,7 @@ function CCAgentSessionContent({
           toast.info(t('chat.sideChat.mainTaskOnly'));
           return;
         }
-        void openSideChatTab(sessionId, { prompt: payload.args, onOpen: (id, deviceId) => navigate(sideChatTaskRoute(id, deviceId)) });
+        void openSideChatTab(sessionId, { prompt: payload.args });
         return;
       }
       if (payload.command === 'cmd') {
@@ -3567,7 +3593,6 @@ function CCAgentSessionContent({
         const accepted = await openSideChatTab(sessionId, {
           prompt: args,
           attachments: files,
-          onOpen: (id, deviceId) => navigate(sideChatTaskRoute(id, deviceId)),
         });
         return { handled: true, accepted, message };
       }
@@ -4635,6 +4660,20 @@ function CCAgentSessionContent({
     continueAfterSilentStop();
   }, [continueAfterSilentStop]);
 
+  const canContinueError = canContinueFailedTurn({
+    error,
+    retryText: errorRetryText,
+    running: isAgentBusy || errorIsRecoverable || !!credentialSwitchWait || syntheticContinuationPending,
+    hostCanContinue: errorCanContinue === true,
+  });
+  const handleContinueAfterError = useCallback(async () => {
+    if (!sessionId || !canContinueError || isHistoryRecoveryPending()) return;
+    invalidateHistoryRecoveryNavigation();
+    await rebuildClaudeSubscriptionSessionBeforeRetry(errorReason);
+    await makerChatStore.sendUiTrigger(sessionId, CONTINUE_AFTER_ERROR_PROMPT);
+  }, [canContinueError, errorReason, invalidateHistoryRecoveryNavigation, isHistoryRecoveryPending,
+    rebuildClaudeSubscriptionSessionBeforeRetry, sessionId]);
+
   // 点击 Cancel 关闭报错 banner 同样是处置(用户选择不管它了)。
   const handleDismissError = useCallback(() => {
     if (sessionId) ackErrorAlertHandled(sessionId);
@@ -5228,6 +5267,7 @@ function CCAgentSessionContent({
     <BotChatQuoteProvider value={botChatQuote}>
     <MessageReadAloudContext.Provider value={messageReadAloud.value}>
     <MessageStream
+      header={messageStreamHeader}
       key={sessionId}
       sessionId={sessionId}
       sessionTitle={session?.title ?? null}
@@ -5250,7 +5290,7 @@ function CCAgentSessionContent({
       activeVoiceCallId={activeVoiceCallId}
       historyVisibleAfter={session?.source === 'side-chat' ? new Date(session.createdAt).getTime() : undefined}
       onAskInSideChat={!readOnly && canNavigateSession && sessionId && session?.source !== 'side-chat' && session?.source !== 'bot'
-        ? (quote) => openSideChatTab(sessionId, { quote, onOpen: (id, deviceId) => navigate(sideChatTaskRoute(id, deviceId)) }) : undefined}
+        ? (quote) => openSideChatTab(sessionId, { quote }) : undefined}
       cindyMakeSessionId={session?.source === 'cindy-make' ? sessionId : undefined}
       cindyMakeCompletionInComposer={session?.source === 'cindy-make' && (remoteMakeCards.supported || (!remoteDeviceId && !readOnly && typeof window.electronAPI.cindyMakeTest === 'function'))}
       historyLoaded={historyLoaded}
@@ -5555,7 +5595,6 @@ function CCAgentSessionContent({
               className="mx-auto grid grid-cols-1 grid-rows-1 items-center"
               style={{ width: inputWidth }}
             >
-              {!pendingPlanReview || (hasControlledBanner && controlledBannerCollapsed) ? (
                 <RunningStatusBar
                   key={sessionId}
                   sessionKey={sessionId ?? null}
@@ -5600,7 +5639,6 @@ function CCAgentSessionContent({
                   }
                   className="col-start-1 row-start-1"
                 />
-              ) : null}
               <div
                 data-composer-center-group="true"
                 className="pointer-events-none relative z-10 col-start-1 row-start-1 flex max-w-full -translate-y-1 items-center justify-center gap-2"
@@ -5766,6 +5804,7 @@ function CCAgentSessionContent({
                 isRecoverable={errorIsRecoverable}
                 retryText={errorRetryText}
                 onRetry={handleRetry}
+                onContinueAfterError={canContinueError ? handleContinueAfterError : undefined}
                 onSilentStopContinue={handleSilentStopContinue}
                 usageLimitWait={usageLimitWait}
                 onCancelUsageLimitWait={cancelUsageLimitWait}
@@ -6772,22 +6811,22 @@ function RunningStatusBar({
         !backgroundTasksRunning &&
         usageMeta.kind === 'rate'));
   // A pinned panel keeps its anchor mounted through idle and subsequent turns.
-  // 空闲后真正收起,不再给输入框上方留下固定空行。overlay 的 ResizeObserver 会在
-  // DOM 尺寸变化后补齐 MessageStream 的 bottomPadding,因此不靠硬编码高度制造跳变。
-  if (!rightLeadingSlot && (suppressContent || (isHidden && !ratePanelPinned))) return null;
+  // Retain the outgoing row while its occupied height closes. Returning null
+  // after the opacity fade removed the whole row in one frame.
+  const rowVisible = Boolean(rightLeadingSlot) || (!suppressContent && (!isHidden || ratePanelPinned));
 
   // 两段式布局:左(运行状态) / 右(elapsed·tokens)。
   // - 左段 min-w-0(可收缩):status 并非短枚举 —— turn-start 文案带用户名(可含中文长句)、
   //   claude tool 进度会拼成 `mcp__x__y running...` 长串,窄宽时左段靠 span truncate;
   // - 右段 justify-self-end + min-w-0:elapsed / token 是低优先级信息,必要时可溢出。
   return (
-    <div
-      className={cn(
-        'mx-auto grid select-none grid-cols-[minmax(0,1fr)_auto] items-center px-2 py-[6px]',
-        className,
-      )}
+    <Collapse
+      open={rowVisible}
+      animateResize
+      className={cn('mx-auto', className)}
       style={{ width: inputWidth }}
     >
+    <div className="grid select-none grid-cols-[minmax(0,1fr)_auto] items-center px-2 py-[6px]">
       <div
         // cadenced shimmer:key 重挂载 = 重播一次呼吸(见上方 shimmerCycle 说明)。
         // 左段只有 icon + 一行文字,1.5s 一次的重挂载成本可忽略。
@@ -6839,7 +6878,7 @@ function RunningStatusBar({
         {(!suppressContent && (!isHidden || ratePanelPinned)) && (
           <div
             data-running-status-meta="true"
-            className="flex min-w-0 items-center gap-[6px]"
+            className="flex min-w-0 items-center gap-[6px] whitespace-nowrap tabular-nums"
             style={ratePanelPinned ? undefined : fadeStyle}
             aria-hidden={isHidden && !ratePanelPinned}
           >
@@ -6906,6 +6945,7 @@ function RunningStatusBar({
         )}
       </div>
     </div>
+    </Collapse>
   );
 }
 

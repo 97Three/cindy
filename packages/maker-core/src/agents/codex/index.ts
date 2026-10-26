@@ -43,6 +43,7 @@ import { structuredPatch } from 'diff';
 import { syncCodexArchiveState } from './archive-state.js';
 import { readCodexThreadMcpServerTools } from './mcp-server-tools.js';
 import { readAccountRateLimitsWithRefresh } from './app-server/account-rate-limits.js';
+import { createCodexHarnessHooks } from './harness-hooks.js';
 
 import {
   BaseAgent,
@@ -1263,6 +1264,13 @@ const CODEX_UPSTREAM_IDLE_SUSPEND_GAP_MS = 30_000;
  * deadline，不会因为后续的 `2/5`、`3/5` 提示重新计时。
  */
 const CODEX_RECONNECT_STALL_TIMEOUT_MS = RETRY_ESCALATION_MAX_ELAPSED_MS;
+
+/**
+ * WebSocket 重试用尽后 Codex 改走 HTTPS 时推的 `warning`。之后要先上传完整历史才有事件,
+ * 慢网下可达数分钟,不再属于重连序列:清掉重连 deadline,由 Codex 自身 HTTP 超时与
+ * upstream-idle 看门狗兜底。
+ */
+const CODEX_HTTPS_FALLBACK_WARNING_PREFIX = 'Falling back from WebSockets to HTTPS transport';
 
 /** 只含空白、格式字符或控制字符的 text delta 不算重连已经恢复。 */
 const CODEX_INVISIBLE_TEXT_PATTERN = /[\s\p{Cf}\p{Cc}]/gu;
@@ -3906,6 +3914,22 @@ assertRouteCurrent();
       });
     };
     let isTurnInFlight = false;
+    let harnessCompaction: {
+      turnId: string | null;
+      boundary: boolean;
+      failed: boolean;
+      resolve: (value: { noop?: boolean }) => void;
+      reject: (error: Error) => void;
+    } | undefined;
+    function finishHarnessCompaction(error?: Error): void {
+      const pending = harnessCompaction;
+      if (!pending) return;
+      harnessCompaction = undefined;
+      if (currentTurnId === pending.turnId) currentTurnId = null;
+      isTurnInFlight = false;
+      if (error || pending.failed) pending.reject(error ?? new Error('Codex compaction failed or was cancelled'));
+      else pending.resolve(pending.boundary ? {} : { noop: true });
+    }
     const yieldedExecCellsByTurnId = new Map<string, Map<string, YieldedExecCell[]>>();
     const yieldContinuationClaims = new Map<number, YieldContinuationClaim>();
     const interactionContinuationClaims = new Map<number, InteractionContinuationClaim>();
@@ -5981,6 +6005,23 @@ assertRouteCurrent();
       }
     }
 
+    const nativeHarnessHooks = !reviewMode && !hosted && !opts.remoteHostId && opts.sessionInstanceId &&
+      this.deps.registerCodexMcpThreadContext && host.getNativeRuntimeVersion?.() === '0.159.2'
+      ? createCodexHarnessHooks((nativeThreadId, nativeTurnId) =>
+        !closed && !sessionHostForceRetired && !subscriptionInvalidatedByTransport && isCurrentHost() &&
+        threadId === nativeThreadId && currentTurnId === nativeTurnId)
+      : undefined;
+    if (nativeHarnessHooks) {
+      // Read only. Native configuration and trust remain under the user's
+      // control; no Hook definitions, hashes or trust records are synthesized.
+      const [config, listing] = await Promise.allSettled([
+        host.request('config/read', { cwd: opts.workingDir, includeLayers: false }, { timeoutMs: 2_000 }),
+        host.request('hooks/list', { cwds: [opts.workingDir] }, { timeoutMs: 2_000 }),
+      ]);
+      if (config.status === 'fulfilled' && listing.status === 'fulfilled') {
+        nativeHarnessHooks.configure(config.value, listing.value);
+      }
+    }
     const textOnlyPolicyCleanups = new Map<string, () => void>();
     const registerCodexMcpContext = (
       threadId: string,
@@ -6002,6 +6043,7 @@ assertRouteCurrent();
           sessionId: sid,
           mcpCallerKind,
           mcpCallerAttested: true,
+          ...(mcpCallerKind === 'root' && nativeHarnessHooks ? { nativeHarnessHook: nativeHarnessHooks.run } : {}),
           ...(opts.sessionInstanceId ? { sessionInstanceId: opts.sessionInstanceId } : {}),
           workingDir: opts.workingDir,
           ...((makerMemoryEnabled || opts.makerMemoryScopeKey) ? { memoryScopeKey } : {}),
@@ -8923,7 +8965,7 @@ assertRouteCurrent();
         const stalledTurnGeneration = reconnectStallTurnGeneration;
         const allowPendingTurnStart = !isTurnInFlight;
         const stalledMessage =
-          `Codex app-server has been reconnecting for ${Math.round(CODEX_RECONNECT_STALL_TIMEOUT_MS / 1000)}s ` +
+          `The model connection has been retrying for ${Math.round(CODEX_RECONNECT_STALL_TIMEOUT_MS / 1000)}s ` +
           'without making progress; the turn was interrupted automatically. ' +
           'You can send the next message to continue.';
         const emitStalled = (reason: string, message: string): void => {
@@ -12202,6 +12244,8 @@ assertRouteCurrent();
 
     // ── subscribeThread: notification 路由 + approval handlers ─────────────
     const handlers: ThreadEventHandlers = {
+      hookStarted: params => nativeHarnessHooks?.observe(params, false),
+      hookCompleted: params => nativeHarnessHooks?.observe(params, true),
       // 强制退役(账号切换/auth 失效)时由 host 发结构化信号，按本会话自身真实状态收口。
       // 空闲/已完成 → 静默失效；真实在飞(turn in-flight / turn/start pending /
       // overload retry) → 清理在途状态并推终态 error + Done。
@@ -12209,6 +12253,8 @@ assertRouteCurrent();
       // targetsPendingTurn 要求非空 turnId、wasTurnRunning 不含 overload retry，
       // pending/retry 会话会收不了口（busy 永久卡死）。所以由这里统一收口。
       hostForcedRetire: ({ reason }) => {
+        nativeHarnessHooks?.close();
+        finishHarnessCompaction(new Error('Codex compaction runtime retired'));
         sessionHostForceRetired = true;
         subscriptionInvalidatedByTransport = false;
         resetCodexGenerationTiming(translatorRt);
@@ -12309,6 +12355,11 @@ assertRouteCurrent();
       },
       descendantNotification: handleDescendantNotification,
       turnStarted: (params) => {
+        if (harnessCompaction && !completedTurnIds.has(params.turn.id) && !terminalErroredTurnIds.has(params.turn.id)) {
+          harnessCompaction.turnId ??= params.turn.id;
+          if (harnessCompaction.turnId === params.turn.id) currentTurnId = params.turn.id;
+          return;
+        }
         // turn/start RPC 已失败(超时/拒绝)但 daemon 实际已建 turn — 迟到的孤儿
         // turnStarted 不得重新激活已报终态错误的会话 (greptile P1): 立墓碑 +
         // 补 interrupt 让 daemon 停掉这个没人消费的 turn。分支先于 stale 闸
@@ -12567,6 +12618,19 @@ assertRouteCurrent();
         publishTurnDiff(threadId, params.turnId, params.diff);
       },
       turnCompleted: (params) => {
+        if (harnessCompaction) {
+          // Native compaction emits turn/started before its terminal. An older
+          // turn's late completion cannot acknowledge this control request.
+          if (harnessCompaction.turnId === params.turn.id) {
+            completedTurnIds.add(params.turn.id);
+            // PreCompact block is an interrupted turn without a compaction boundary.
+            // Keep explicit native failures and partial compactions on the error path.
+            const cancelled = params.turn.status === 'interrupted' && !harnessCompaction.boundary;
+            finishHarnessCompaction(params.turn.status === 'completed' || cancelled
+              ? undefined : new Error('Codex compaction failed or was cancelled'));
+          }
+          return;
+        }
         // buffered turn 的终态同样进队列等对账 (greptile R11 P1 + codex R12 P1):
         // 合法 → 激活后按序重放, handleTurnCompleted 自然收口 send; 孤儿 →
         // 整队丢弃。直接处理会让孤儿 completed 提前收口在飞 send
@@ -12587,6 +12651,11 @@ assertRouteCurrent();
         handleTurnCompleted(params);
       },
       itemStarted: (params) => {
+        if (harnessCompaction && params.turnId === harnessCompaction.turnId) {
+          if (params.item.type === 'contextCompaction') translateItemNotification('started', params, eventQueue,
+            { rt: translatorRt, log, onCompactBoundary: handleCompactBoundary });
+          return;
+        }
         // 血缘不能跟着 turn 对账队列一起迟到:AppServerHost 只为未知 child 缓冲 5s。
         // 卡片/翻译仍在队列内,这里只保留 provisional claim；父 turn 被接受后
         // 重放 item 才 commit root route，孤儿则 discard。
@@ -12643,6 +12712,7 @@ assertRouteCurrent();
         if (replayedSubagentUpdate) emitSubagentCardUpdate(replayedSubagentUpdate);
       },
       itemUpdated: (params) => {
+        if (harnessCompaction && params.turnId === harnessCompaction.turnId) return;
         const reservedChildThreadIds = reserveSubagentSpawnLineage(params.item);
         if (enqueueIfBufferedTurn(params.turnId, () => handlers.itemUpdated?.(params), {
           modelWork: itemRepresentsModelWork(params.item),
@@ -12689,6 +12759,14 @@ assertRouteCurrent();
         }
       },
       itemCompleted: (params) => {
+        if (harnessCompaction && params.turnId === harnessCompaction.turnId) {
+          if (params.item.type === 'contextCompaction') {
+            harnessCompaction.boundary = true;
+            translateItemNotification('completed', params, eventQueue,
+              { rt: translatorRt, log, onCompactBoundary: handleCompactBoundary });
+          }
+          return;
+        }
         const reservedChildThreadIds = reserveSubagentSpawnLineage(params.item);
         if (enqueueIfBufferedTurn(params.turnId, () => handlers.itemCompleted?.(params), {
           modelWork: itemRepresentsModelWork(params.item),
@@ -12900,7 +12978,22 @@ assertRouteCurrent();
         // warning for diagnostics to avoid rendering a duplicate error card.
         log.warn('Codex Guardian warning', { threadId: params.threadId, message: params.message });
       },
+      warning: (params) => {
+        if (params.message.startsWith(CODEX_HTTPS_FALLBACK_WARNING_PREFIX)) {
+          log.info('codex fell back to HTTPS transport; reconnect deadline cleared', { threadId });
+          clearReconnectStall();
+        }
+      },
       error: (params) => {
+        if (harnessCompaction && params.scope !== 'transport') {
+          if ((!params.turnId || params.turnId === harnessCompaction.turnId) && params.willRetry !== true)
+            harnessCompaction.failed = true;
+          return;
+        }
+        if (params.scope === 'transport') {
+          nativeHarnessHooks?.invalidate();
+          finishHarnessCompaction(new Error('Codex compaction connection lost'));
+        }
         // buffered turn 的 error (含终态) 同样进队列等对账 (greptile R11 P1 +
         // codex R12 P1): 合法 → 激活后重放走正常终端路径收口 send; 孤儿 →
         // 丢弃, 不得让孤儿 error 终结合法 send。
@@ -13206,6 +13299,17 @@ assertRouteCurrent();
       releaseHostBindingLeaseIfNeeded();
     }
 
+    if (nativeHarnessHooks?.hasConfiguredHooks) {
+      try {
+        const report = await readCodexThreadMcpServerTools(
+          (method, params, requestOpts) => host.request(method, params, requestOpts),
+          threadId, 'cindy', 2_000,
+        );
+        nativeHarnessHooks.setTransportReady(report.state === 'connected' &&
+          report.tools.some(tool => tool.name === 'harness_hook'));
+      } catch { /* Native startup may still be pending; a real callback can attest readiness. */ }
+    }
+
     function resubscribeAfterTransportErrorIfNeeded(): void {
       if (!subscriptionInvalidatedByTransport) return;
       assertCurrentHost('resubscribe');
@@ -13217,6 +13321,8 @@ assertRouteCurrent();
       opts: { retireHostOnCleanupFailure?: boolean } = {},
     ): Promise<void> {
       if (closed) return;
+      nativeHarnessHooks?.close();
+      finishHarnessCompaction(new Error('Codex compaction runtime closed'));
       closed = true;
       cancelInteractionContinuation('session_closed', true);
       translatorRt.samplingSegments.clear();
@@ -13260,6 +13366,43 @@ assertRouteCurrent();
     }
     // ── AgentSessionHandle ──────────────────────────────────────────────────
     const handle: AgentSessionHandle = {
+      get runtimeVersion() { return host.getNativeRuntimeVersion?.() ?? undefined; },
+      get harnessHooks() { return nativeHarnessHooks?.names ?? []; },
+      ...(nativeHarnessHooks ? { setHarnessHookHandler: nativeHarnessHooks.setHandler } : {}),
+      ...(!reviewMode && !hosted && !opts.remoteHostId && host.getNativeRuntimeVersion?.() === '0.159.2' ? {
+        requestHarnessCompaction: async () => {
+          if (closed || sessionHostForceRetired || subscriptionInvalidatedByTransport || harnessCompaction ||
+              isTurnInFlight || isTurnStartPending || currentTurnId || turnStartFailedWithoutTurnId ||
+              overloadRetryPending() || yieldContinuationInFlight || interactionContinuation) {
+            throw new Error('SESSION_RUNNING: Codex is not idle for compaction');
+          }
+          // In 0.159.2 automatic compaction runs inside the active native turn.
+          // Reserve its existing task lane before the one control dispatch.
+          let resolveCompletion!: (value: { noop?: boolean }) => void;
+          let rejectCompletion!: (error: Error) => void;
+          const completion = new Promise<{ noop?: boolean }>((resolve, reject) => {
+            resolveCompletion = resolve;
+            rejectCompletion = reject;
+          });
+          const pending = { turnId: null as string | null, boundary: false, failed: false,
+            resolve: resolveCompletion, reject: rejectCompletion };
+          harnessCompaction = pending;
+          void completion.catch(() => {});
+          isTurnInFlight = true;
+          try {
+            await host.request('thread/compact/start', { threadId });
+          } catch (error) {
+            const failure = error instanceof Error ? error : new Error('Codex compaction dispatch failed');
+            // A numeric RPC error before any turn is an authoritative rejection.
+            // A lost ACK may still have dispatched; keep the lane reserved until
+            // native completion/close, and never resend the operation.
+            if (typeof (error as { code?: unknown })?.code === 'number' && pending.turnId === null && harnessCompaction === pending) {
+              finishHarnessCompaction(failure);
+            } else pending.reject(failure);
+          }
+          return completion;
+        },
+      } : {}),
       disabledSkillPaths: disabledSkillSnapshot,
       getAutoReviewOwner: () => currentApprovalConfig().approvalsReviewer === 'auto_review' ? 'native' : 'cindy',
       reviewAutoPermissionAction: async (action) => {

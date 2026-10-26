@@ -15,6 +15,14 @@ Renderer 均保留它。导航先与本机设备 ID 比较；远端链接先登�
 回归入口：`deepLink.test.ts`、`deepLinkIslandEntryBridge.test.ts`、
 `botSessionOwners.test.ts`、`orcaSessionIdentity.test.ts`。
 
+## 失败自动任务的人工续跑依据
+
+既有输入队列投影增量携带可选 `errorCanContinue: true`：只由宿主确认当前错误属于
+已落库且已释放恢复记录的自动任务输入。新控制端不再从历史用户消息推断，旧宿主缺省
+该字段时不提供此 fallback；原有 retry token 与历史错误卡仍沿用旧路径。
+旧控制端忽略新增字段。标记仅随当前错误存在，清错、下一轮输入和控制操作失败都会清除，
+不落盘、不保留旧 run，不新增 channel、权限、服务端或原生指纹变更。
+
 ## 手机经电脑确认群消息已读
 
 群 Remote Resource 投影新增可选 `supportsReadReceipts`，仅云端群声明。

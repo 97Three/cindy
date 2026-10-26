@@ -47,13 +47,14 @@ export const pluginUsageSubjects = sqliteTable('plugin_usage_subjects', {
   byBinding: index('plugin_usage_subjects_binding_idx').on(t.ghostId, t.bindingRevision),
 }));
 
-/** Dispatch facts only: no arguments, response bodies, credentials or title snapshots. */
+/** Host-confirmed invocation facts; no content, credentials or title snapshots. */
 export const pluginUsageEvents = sqliteTable('plugin_usage_events', {
   callId: text('call_id').primaryKey(),
   subjectId: text('subject_id').notNull().references(() => pluginUsageSubjects.id),
   historyGeneration: integer('history_generation').notNull(),
   occurredAt: integer('occurred_at').notNull(),
   toolName: text('tool_name').notNull(),
+  entryKind: text('entry_kind').notNull().default('tool'),
   sessionId: text('session_id'),
   version: text('version'),
   releaseId: text('release_id'),
@@ -182,12 +183,10 @@ export const sessions = sqliteTable(
     providerId: text('provider_id'),
     /**
      * 用户最近一次"按下发送"的时刻（unix ms，NULL = 从未发过）。
-     * Sidebar Project / 组内 session 排序唯一时间轴：
-     *   - 首条消息发出时由 renderer 通过 touchUserSend IPC 立刻 bump
-     *   - NULL ⟺ 草稿，由 projectGrouping 直接归到未分类
-     * 不被 model/effort/title 改动等"字段类"修改触发——updatedAt 才是。
+     * 保留真人发送语义及现有写入点；列表排序使用 lastActivityAt，旧数据回落到此列。
      */
     userSendAt: integer('user_send_at'), // unix ms
+    lastActivityAt: integer('last_activity_at'),
     /**
      * Agent 来源标识——session 级别。决定本 session 内 messages.agent_meta 的 JSON 形态。
      * 默认 'cc'（Claude Code）。未来扩展 'codex' 等时新建 session 即可，老 session 不动。

@@ -324,7 +324,7 @@ beforeEach(() => {
       maker: {
         chatServer: { thread: mocks.thread, reply: mocks.reply, shareToMain: mocks.shareToMain, reactors: vi.fn(async () => ({ ok: true, reactors: [] })) },
         listBotGroups: vi.fn(async () => ({ ok: true, groups: [] })),
-        getBotGroup: (...args: unknown[]) => mocks.getBotGroup(...args),
+        getBotGroup: (...args: unknown[]) => (args[1] as { cacheOnly?: boolean } | undefined)?.cacheOnly ? Promise.resolve({ ok: false, errorCode: 'NOT_FOUND' }) : mocks.getBotGroup(...args),
         sendBotGroupMessage: (...args: unknown[]) => mocks.sendBotGroupMessage(...args),
         stopBotGroupRound: (...args: unknown[]) => mocks.stopBotGroupRound(...args),
         continueBotGroupRound: (...args: unknown[]) => mocks.continueBotGroupRound(...args),
