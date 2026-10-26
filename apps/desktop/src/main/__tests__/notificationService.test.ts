@@ -23,6 +23,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Session } from '@cindy/maker-core';
 
 type IpcHandler = (event: unknown, payload: unknown) => Promise<void> | void;
 
@@ -102,6 +103,11 @@ vi.mock('../device-link', () => ({
   getMobileNotifyGeneration,
 }));
 
+const pendingHandoffSessions = new Set<string>();
+vi.mock('../input-handoff/service', () => ({
+  getInputHandoffService: () => ({ hasPending: (id: string) => pendingHandoffSessions.has(id) }),
+}));
+
 // mobile 正文素材:最近一条 assistant 内容(真实实现走 localDb)。默认空 = 无摘要,
 // 既有用例的调用断言不带 detail;内容用例单独 mockResolvedValueOnce。
 const latestMessageText = vi.fn<
@@ -155,6 +161,7 @@ async function freshService() {
   markSessionNeedsAttention.mockClear();
   sendMobileSessionNotify.mockReset().mockReturnValue(true);
   getMobileNotifyGeneration.mockClear();
+  pendingHandoffSessions.clear();
   latestMessageText.mockClear();
   readSessionNotificationPreview.mockReset().mockImplementation(async (sessionId, includeReply = true) => {
     if (!includeReply) return {};
@@ -196,6 +203,57 @@ describe('notificationService — channels 分发', () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  // #6754 / input-handoff §2.4 / unit: the real notification IPC must not
+  // duplicate Main's channel pointer on successive steps. Both bot tasks have
+  // the same source; only the live route plus pending request distinguishes them.
+  it('deduplicates channel-owned handoff steps while preserving desktop bot fallback and other notices', async () => {
+    const { initNotificationService } = await freshService();
+    const { bindInputHandoffChannelNotice, clearInputHandoffChannelNotices } =
+      await import('../im/shared/inputHandoffChannelNotice');
+    const feishuIm = makeFeishuIm('owner');
+    initNotificationService(baseDeps(feishuIm));
+    const statusListeners = new Set<(status: string) => void>();
+    bindInputHandoffChannelNotice({
+      id: 'im-bot',
+      onStatusChange: (listener: (status: string) => void) => {
+        statusListeners.add(listener);
+        return () => statusListeners.delete(listener);
+      },
+    } as unknown as Session, async () => true);
+    const notify = (sessionId: string, kind = 'needs-reply') => invokeHandler({
+      sessionId, title: 'Bot', kind, channels: { desktop: true, feishu: true, mobile: false },
+    });
+    try {
+      pendingHandoffSessions.add('im-bot');
+      await notify('im-bot'); // first actionable step
+      await notify('im-bot'); // next step of the same request
+      expect(feishuIm.sendMarkdownText).not.toHaveBeenCalled();
+      expect(notificationCtor).toHaveBeenCalledTimes(2);
+      expect(markSessionNeedsAttention).toHaveBeenCalledWith('im-bot');
+      expect(sendMobileSessionNotify).not.toHaveBeenCalled();
+
+      pendingHandoffSessions.add('desktop-bot');
+      await notify('desktop-bot'); // ordinary bot: no channel route
+      expect(feishuIm.sendMarkdownText).toHaveBeenCalledOnce();
+
+      pendingHandoffSessions.delete('im-bot');
+      await notify('im-bot'); // channel route alone must not hide a question
+      expect(feishuIm.sendMarkdownText).toHaveBeenCalledTimes(2);
+      pendingHandoffSessions.add('im-bot'); // a new handoff request is also owned by Main
+      await notify('im-bot');
+      expect(feishuIm.sendMarkdownText).toHaveBeenCalledTimes(2);
+      await notify('im-bot', 'error');
+      await notify('im-bot', 'done');
+      expect(feishuIm.sendMarkdownText).toHaveBeenCalledTimes(4);
+
+      statusListeners.forEach(listener => listener('closed'));
+      await notify('im-bot'); // a removed route cannot suppress a fallback
+      expect(feishuIm.sendMarkdownText).toHaveBeenCalledTimes(5);
+    } finally {
+      clearInputHandoffChannelNotices();
+    }
   });
 
   it('hands off delegated completion on every external channel while preserving task attention and consuming retries', async () => {

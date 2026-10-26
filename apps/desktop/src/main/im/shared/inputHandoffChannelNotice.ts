@@ -16,6 +16,11 @@ interface Route {
 
 const routes = new Map<string, Route>();
 
+/** Main-only routing truth; a bot's persisted source does not identify its active channel. */
+export function hasInputHandoffChannelNotice(sessionId: string): boolean {
+  return routes.has(sessionId);
+}
+
 export function bindInputHandoffChannelNotice(
   session: Session,
   deliver: (text: string) => Promise<unknown>,

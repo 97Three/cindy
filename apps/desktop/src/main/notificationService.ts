@@ -34,6 +34,8 @@ import { drainSessionActiveTurnWrites, getSessionNotificationTurnSignal } from '
 import { captureDataOwnerBroadcastScope, isDataOwnerBroadcastScopeCurrent } from './device-link/broadcast-tap';
 import { latestMessageText } from './localDb/latestMessageText';
 import { drainPersistQueue } from './messagePersistBroadcaster';
+import { getInputHandoffService } from './input-handoff/service';
+import { hasInputHandoffChannelNotice } from './im/shared/inputHandoffChannelNotice';
 import { createLogger } from './logger';
 import {
   getSessionExternalNotificationText,
@@ -389,7 +391,13 @@ export function initNotificationService(deps: NotificationServiceDeps): void {
         }
       })().catch((err) => log.warn('[notification] reply notification failed (non-fatal)', err));
 
-      if (wantFeishu && kind !== 'done') {
+      // Channel-driven handoffs already receive Main's fixed pointer once per
+      // request. Bot tasks share source='bot' with ordinary Desktop bot tasks,
+      // so decide from the live request and route instead of Renderer metadata.
+      const channelOwnsHandoff = kind === 'needs-reply'
+        && getInputHandoffService()?.hasPending(sessionId)
+        && hasInputHandoffChannelNotice(sessionId);
+      if (wantFeishu && kind !== 'done' && !channelOwnsHandoff) {
         await sendFeishuMessage(feishuIm, safeTitle, kind);
       }
     },
