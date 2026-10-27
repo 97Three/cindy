@@ -210,18 +210,18 @@ function buildMessageHtml(
   if (readable !== redactSensitiveText(readable)) {
     message = { ...message, body: readable, richValues: undefined };
   }
-  const body = (
+  // Rich part keys are source offsets into the unmodified conversation body.
+  const body =
     message.kind === "assistant"
       ? message.body
-      : redactSensitiveText(message.body)
-  ).trim();
+      : redactSensitiveText(message.body).trim();
   const renderBody = (source: string) =>
     message.kind === "assistant"
       ? splitRichAnswer(source)
           .map((part) => {
             if (part.kind === "markdown")
               return buildSelectableMarkdownFragmentHtml(
-                redactSensitiveText(part.source),
+                redactSensitiveText(part.source).trim(),
                 markdownOptions,
               );
             return conversationShareRichHtml(
@@ -254,7 +254,7 @@ function buildMessageHtml(
     : "";
   const bodyHtml = message.bodyParts
     ? buildBodyPartsHtml(message.bodyParts, markdownOptions)
-    : body
+    : body.trim()
       ? renderBody(body)
       : "";
   const secondaryHtml = secondaryBody ? renderBody(secondaryBody) : "";

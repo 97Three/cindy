@@ -53,6 +53,14 @@ export type ShareMarkdownLayout = (
   width: number,
 ) => ShareRichLayout;
 
+// Match the live icon title, including legal nodes that only supply a name.
+function shareRichTitle(node: RichNode): string {
+  return (
+    richString(node, "label") ||
+    (node.kind === "icon" ? richString(node, "name") : "")
+  );
+}
+
 /** Read the same document and local values as the conversation. Hidden tabs/details stay hidden. */
 export function shareRichDocument(source: string, edited?: RichValues) {
   const doc = new RichAnswerStream().update(source, true);
@@ -102,7 +110,7 @@ export function conversationShareReadableBody(
                     ),
                   ].join("\n")
                 : [
-                    richString(node, "label"),
+                    shareRichTitle(node),
                     richString(node, "text"),
                     richString(node, "alt"),
                   ]
@@ -244,7 +252,7 @@ export function layoutConversationShareRichAnswer(
       innerY = top + margin + pt,
       innerWidth = Math.max(1, outerWidth - pl - pr);
     const gap = number("gap", spacing.sm);
-    const label = richString(node, "label"),
+    const label = shareRichTitle(node),
       current = values[richString(node, "bind", id)];
     const color =
       typeof visual.color === "string" ? visual.color : colors.textPrimary;
@@ -625,7 +633,7 @@ export function conversationShareRichHtml(
           })
           .join(";"),
       );
-    const label = richString(node, "label"),
+    const label = shareRichTitle(node),
       current = values[richString(node, "bind", id)];
     let content = "";
     if (richCalculationUnavailable(node, values))

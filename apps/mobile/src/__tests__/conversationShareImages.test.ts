@@ -471,6 +471,109 @@ it("exports composed images, values, charts and vectors on both capture paths wi
   expect(user[0]!.images!.size).toBe(0); // User-authored examples remain code.
 });
 
+// Regression: trimming before splitting shifted local-state keys in the iOS exporter.
+// The real media preparation and both output builders must agree on visible content (unit).
+it("keeps leading-whitespace component keys aligned with edited values and image visibility", async () => {
+  const nodes = [
+    {
+      id: "months",
+      kind: "range",
+      props: { label: "Months", min: 1, max: 12, default: 1 },
+    },
+    {
+      id: "plan",
+      kind: "select",
+      props: {
+        label: "Plan",
+        default: "basic",
+        options: [
+          { label: "Basic", value: "basic" },
+          { label: "Selected plan", value: "chosen" },
+        ],
+      },
+    },
+    { id: "details", kind: "details", props: { label: "More", default: false } },
+    {
+      id: "photo",
+      kind: "image",
+      parent: "details",
+      props: { src: "cindy-media://blobs/edited.png", alt: "Visible photo" },
+    },
+  ];
+  const body =
+    "\n```cindy-ui\n" +
+    nodes.map((node, index) =>
+      JSON.stringify({ version: 1, seq: index + 1, op: "create", ...node }),
+    ).join("\n") +
+    "\n```\n";
+  const load = vi.fn(async () => image);
+  const messages = await prepareConversationShareImages(
+    [{ clientId: "edited", kind: "assistant", body,
+      richValues: { 1: { months: 6, plan: "chosen", details: true } } }],
+    load,
+  );
+  expect(load.mock.calls).toEqual([["cindy-media://blobs/edited.png"]]);
+  const colors = {
+    ...lightColors, background: lightColors.surface,
+    codeSurface: lightColors.chatCodeSurface,
+    inlineCode: lightColors.chatInlineCodeText, syntax: {},
+  };
+  const html = buildConversationShareHtml({
+    selectedMessages: messages, allShareableIds: ["edited"], contentWidth: 390, colors,
+  });
+  const layout = buildConversationShareSvgLayout({
+    messages, allShareableIds: ["edited"], width: 390, colors,
+  });
+  const text = layout.bubbles
+    .flatMap((b) => b.textBlocks.flatMap((b) => b.lines)).join("\n");
+  for (const output of [html, text]) {
+    expect(output).toContain("Months  6");
+    expect(output).toContain("Selected plan");
+    expect(output).not.toContain("Basic");
+  }
+  expect(html).toContain(image.uri);
+  expect(layout.images).toHaveLength(1);
+});
+
+// Regression: a legal name-only icon disappeared from both export paths (unit).
+it("exports icon names as fallback titles and preserves explicit labels and text", async () => {
+  const nodes = [
+    { id: "named", kind: "icon", props: { name: "Info" } },
+    {
+      id: "labelled", kind: "icon",
+      props: { name: "Star", label: "Custom title", text: "Supporting text" },
+    },
+  ];
+  const body =
+    "```cindy-ui\n" +
+    nodes.map((node, index) =>
+      JSON.stringify({ version: 1, seq: index + 1, op: "create", ...node }),
+    ).join("\n") +
+    "\n```";
+  const messages = await prepareConversationShareImages(
+    [{ clientId: "icons", kind: "assistant", body }], vi.fn(async () => image),
+  );
+  const colors = {
+    ...lightColors, background: lightColors.surface,
+    codeSurface: lightColors.chatCodeSurface,
+    inlineCode: lightColors.chatInlineCodeText, syntax: {},
+  };
+  const html = buildConversationShareHtml({
+    selectedMessages: messages, allShareableIds: ["icons"], contentWidth: 390, colors,
+  });
+  const layout = buildConversationShareSvgLayout({
+    messages, allShareableIds: ["icons"], width: 390, colors,
+  });
+  const text = layout.bubbles
+    .flatMap((b) => b.textBlocks.flatMap((b) => b.lines)).join("\n");
+  for (const output of [html, text]) {
+    expect(output).toContain("Info");
+    expect(output).toContain("Custom title");
+    expect(output).toContain("Supporting text");
+    expect(output).not.toContain("Star");
+  }
+});
+
 // A selected option label is visible output, even though its stored value is harmless.
 // Regression guard for the new component projection crossing the existing redaction boundary.
 it("redacts resolved component content before either capture path renders it", () => {
