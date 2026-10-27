@@ -925,16 +925,37 @@ describe('Cindy durable PI Subagent runner', () => {
       const rules = JSON.stringify([{ provider: 'fixture', id: 'wire', routeKey: 'a'.repeat(64) }]);
       await writeFile(sourceFile, rules);
       const launchRunner = vi.fn(async () => {});
-      const id = await resumePiSubagentRun(fixture.root, first.runId, 'continue', { ...resumeLaunch(fixture), launchRunner });
+      const id = await resumePiSubagentRun(fixture.root, first.runId, 'continue', { ...resumeLaunch(fixture), runtimeSnapshot: undefined, launchRunner });
       if (!id) throw new Error('Expected a resumed generation');
       expect(await readFile(path.join(fixture.root, id, 'pi-home', 'pi-cache-compatibility.json'), 'utf8')).toBe(rules);
       expect(launchRunner).toHaveBeenCalledOnce();
       // This unlaunched queued generation would otherwise block the second attempt.
       await rm(path.join(fixture.root, id), { recursive: true, force: true });
       await writeFile(sourceFile, 'x'.repeat(256 * 1024 + 1));
-      await expect(resumePiSubagentRun(fixture.root, first.runId, 'continue', { ...resumeLaunch(fixture), launchRunner }))
+      await expect(resumePiSubagentRun(fixture.root, first.runId, 'continue', { ...resumeLaunch(fixture), runtimeSnapshot: undefined, launchRunner }))
         .rejects.toThrow('cache rules escaped');
       expect(launchRunner).toHaveBeenCalledOnce();
+    });
+
+    it.each([true, false])('keeps resumed cache rules in the current model generation (rules present: %s)', async hasRules => {
+      const { fixture, first } = await resumableFixture();
+      const rules = (endpoint: string, digest: string) => JSON.stringify([{
+        provider: 'fixture', id: 'wire', api: 'openai-completions', providerId: 'connection',
+        baseUrl: endpoint, routeKey: digest.repeat(64),
+      }]);
+      await writeFile(path.join(fixture.root, first.runId, 'pi-home', 'pi-cache-compatibility.json'), rules('https://old.invalid/v1', 'a'));
+      const currentRules = Buffer.from(rules('https://current.invalid/v1', 'b'));
+      const launch = resumeLaunch(fixture);
+      const currentModels = Buffer.from('{"providers":{"fixture":{"baseUrl":"https://current.invalid/v1"}}}');
+      const runtimeSnapshot = { ...launch.runtimeSnapshot, modelsJson: currentModels, cacheRulesJson: hasRules ? currentRules : undefined };
+      const id = await resumePiSubagentRun(fixture.root, first.runId, 'continue', {
+        ...launch, runtimeSnapshot, launchRunner: vi.fn(async () => {}),
+      });
+      if (!id) throw new Error('Expected a resumed generation');
+      await expect(readFile(path.join(fixture.root, id, 'pi-home', 'models.json'))).resolves.toEqual(currentModels);
+      const savedRules = readFile(path.join(fixture.root, id, 'pi-home', 'pi-cache-compatibility.json'));
+      if (hasRules) await expect(savedRules).resolves.toEqual(currentRules);
+      else await expect(savedRules).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
     it('refuses when a live instance already holds the claim', async () => {

@@ -2292,6 +2292,7 @@ interface PiSubagentResumeLaunch {
     modelsJson: Buffer;
     bridgeSource: Buffer;
     runnerSource: Buffer;
+    cacheRulesJson?: Buffer;
   };
 }
 
@@ -2724,18 +2725,25 @@ async function resumeClaimedPiSubagentRun(
         fs.readFile(selectedRunnerFile),
       ]);
   JSON.parse(modelsJson.toString('utf8'));
-  // Optional for older durable snapshots; apply the same artifact boundary as models.json.
-  let cacheRules: Buffer | undefined;
-  try {
-    const sourceCacheRules = path.join(sourceConfigHome, 'pi-cache-compatibility.json');
-    const [info, canonical] = await Promise.all([fs.lstat(sourceCacheRules), fs.realpath(sourceCacheRules)]);
-    if (info.isSymbolicLink() || !info.isFile() || info.size > 256 * 1024
-      || path.dirname(canonical) !== canonicalConfigHome) {
-      throw new Error('PI Subagent resume cache rules escaped their source run');
+  // Rules and models must come from the same generation. An older caller's
+  // current snapshot without rules must not inherit a historical route digest.
+  let cacheRules = launch.runtimeSnapshot?.cacheRulesJson;
+  if (cacheRules && cacheRules.byteLength > 256 * 1024) {
+    throw new Error('PI Subagent resume cache rules escaped their source run');
+  }
+  if (!launch.runtimeSnapshot) {
+    try {
+      const sourceCacheRules = path.join(sourceConfigHome, 'pi-cache-compatibility.json');
+      const [info, canonical] = await Promise.all([fs.lstat(sourceCacheRules), fs.realpath(sourceCacheRules)]);
+      if (info.isSymbolicLink() || !info.isFile() || info.size > 256 * 1024
+        || path.dirname(canonical) !== canonicalConfigHome) {
+        throw new Error('PI Subagent resume cache rules escaped their source run');
+      }
+      cacheRules = await fs.readFile(sourceCacheRules);
+    } catch (error) {
+      // Optional for older durable snapshots; preserve their missing-file compatibility.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
-    cacheRules = await fs.readFile(sourceCacheRules);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
   const runId = randomUUID();
   const runDir = path.join(root, runId);

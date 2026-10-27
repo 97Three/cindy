@@ -116,6 +116,20 @@ function installCindyCacheRecovery(pi) {
       data = data.error;
     }
     if (/api.?key|unauthori[sz]ed|authentication|permission denied|quota|rate.?limit|model.{0,30}(?:not found|does not exist)|context.{0,25}(?:length|limit)|content.?filter|content.?policy|invalid.{0,15}value|鉴权|认证失败|额度|限流|模型不存在|上下文.{0,8}(?:超|长)|内容审核|参数值/i.test(body)) return;
+    // A named rejection is evidence even when a gateway omits structured param.
+    // Parse the field relationship, never a list of vendor or parameter names.
+    for (const pattern of [
+      /(?:unsupported|unknown|unrecognized|unexpected)\s+(?:parameters?|fields?|arguments?|properties|property|options?)(?:\(s\))?[\s:=]*(\[[^\]]+\]|['"\x60]?[a-z_][\w.-]*)/gi,
+      /(?:parameter|field|argument|property|option)\s*[:=]?\s*['"\x60]?([a-z_][\w.-]*)['"\x60]?\s+(?:is\s+)?(?:unsupported|unknown|unrecognized|unexpected|not\s+(?:supported|allowed|permitted))/gi,
+      /(?:未知|不支持|不接受|无法识别)(?:的)?(?:请求)?(?:参数|字段|属性|选项)[\s:：=]*(\[[^\]]+\]|['"\x60]?[a-z_][\w.-]*)/gi,
+      /(?:参数|字段|属性|选项)\s*[:：=]?\s*['"\x60]?([a-z_][\w.-]*)['"\x60]?\s*(?:不支持|不被支持|未知|无法识别)/gi,
+    ]) {
+      for (const match of body.matchAll(pattern)) {
+        for (const field of match[1].matchAll(/[a-z_][\w.-]*/gi)) {
+          if (!fields.includes(field[0].replace(/\.+$/, '').toLowerCase())) return;
+        }
+      }
+    }
     return /(?:unsupported|not supported|unknown|未知|不支持).{0,80}prompt_cache_(?:key|retention)|prompt_cache_(?:key|retention).{0,80}(?:unsupported|not supported|unknown|未知|不支持)/i.test(body) ? 'explicit' : 'opaque';
   }
   pi.on('input', (event, ctx) => {

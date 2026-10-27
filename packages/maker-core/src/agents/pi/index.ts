@@ -5505,10 +5505,11 @@ export class PiAgent extends BaseAgent {
       const operation = (async () => {
         await permissionWriteChain;
         if (closed) throw new Error('PI session is closed');
-        const [modelsJson, bridgeSource, runnerSource] = await Promise.all([
+        const [modelsJson, bridgeSource, runnerSource, cacheRulesJson] = await Promise.all([
           fs.readFile(path.join(configHome, 'models.json')),
           fs.readFile(bridgeExtensionPath),
           fs.readFile(subagentRunnerPath),
+          fs.readFile(path.join(configHome, 'pi-cache-compatibility.json')),
         ]);
         const runId = await resumePiSubagentRun(subagentRunRoot, taskId, message, {
           launchRunner: (request) => this.launchSubagentRunner(request),
@@ -5522,7 +5523,7 @@ export class PiAgent extends BaseAgent {
             ...reviewPathSnapshot,
           },
           runnerFallbackFile: subagentRunnerPath,
-          runtimeSnapshot: { modelsJson, bridgeSource, runnerSource },
+          runtimeSnapshot: { modelsJson, bridgeSource, runnerSource, cacheRulesJson },
         }, childId);
         if (!runId) throw new Error('No terminal PI Subagent run is available to resume.');
         await requestPiSubagentRefresh();

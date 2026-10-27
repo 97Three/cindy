@@ -106,6 +106,34 @@ describe('Pi native cache recovery', () => {
     expect(h.sent).toHaveLength(1); expect(h.record()).toBeUndefined();
   });
 
+  it.each([
+    'Validation: Unsupported parameter(s): temperature',
+    'Unknown field: future_vendor_option',
+    "Unsupported parameter(s): ['temperature']",
+    "Unsupported parameter(s): ['prompt_cache_key', 'temperature']",
+    "The parameter 'temperature' is not supported",
+    '未知请求字段：temperature',
+    '参数 temperature 不支持',
+    'Unsupported parameter: prompt_cache_key; unsupported parameter: temperature',
+  ])('does not trial an explicitly rejected other field without structured param: %s', async message => {
+    const h = fixture(); h.fresh();
+    await h.request([failure('400: ' + JSON.stringify({ error: { type: 'invalid_request_error', param: null, message } })), success]);
+    expect(h.sent).toHaveLength(1);
+    expect(h.record()).toBeUndefined();
+  });
+
+  it.each(['Validation: Unsupported parameter(s): prompt_cache_key',
+    'Unsupported parameter: prompt_cache_retention.',
+    "The parameter 'prompt_cache_key' is not supported",
+    '未知请求字段：prompt_cache_retention',
+    "Unsupported parameter(s): ['prompt_cache_key', 'prompt_cache_retention']",
+  ])('still learns explicit cache rejection: %s', async message => {
+    const h = fixture(); h.fresh();
+    await h.request([failure('400: ' + JSON.stringify({ error: { param: null, message } })), success]);
+    expect(h.sent).toHaveLength(2);
+    expect(h.record()).toMatchObject({ evidence: 'explicit', expiresAt: 1604800000 });
+  });
+
   it.each(['start', 'thinking_delta', 'toolcall_start'])('never retries after %s or a prior tool', async type => {
     const h = fixture(); h.fresh(); await h.request([[{ type }, failure()]]);
     expect(h.sent).toHaveLength(1); expect(h.record()).toBeUndefined();
