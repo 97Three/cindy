@@ -259,6 +259,19 @@ function toReferenceMessage(row: Record<string, unknown>): MobileSessionReferenc
   };
 }
 
+function sliceFromCodePointBoundary(text: string, start: number): string {
+  const code = text.charCodeAt(start);
+  const previous = text.charCodeAt(start - 1);
+  // 截点落在低代理项时连同高代理项一起丢弃；向后包含它可能超出预算，
+  // 还会让已带省略号的内容在序列化预算循环中不再缩短。
+  const safeStart = start > 0 &&
+    code >= 0xdc00 && code <= 0xdfff &&
+    previous >= 0xd800 && previous <= 0xdbff
+    ? start + 1
+    : start;
+  return text.slice(safeStart);
+}
+
 function sliceTailToTokenBudget(text: string, budget: number): string {
   if (budget <= 0) return '';
   if (estimateMobileReferenceTokens(text) <= budget) return text;
@@ -271,7 +284,7 @@ function sliceTailToTokenBudget(text: string, budget: number): string {
     if (estimateMobileReferenceTokens(text.slice(text.length - middle)) <= payloadBudget) low = middle;
     else high = middle - 1;
   }
-  return `…${text.slice(text.length - low)}`;
+  return `…${sliceFromCodePointBoundary(text, text.length - low)}`;
 }
 
 function fitMessagesToTokenBudget(
@@ -412,7 +425,7 @@ function fitSerializedPayloadBudget(
     if (targetMessage) {
       const excess = tokens - FINAL_REFERENCE_PAYLOAD_TOKENS;
       const drop = Math.min(targetMessage.content.length - 1, Math.max(1, excess));
-      targetMessage.content = `…${targetMessage.content.slice(drop + 1)}`;
+      targetMessage.content = `…${sliceFromCodePointBoundary(targetMessage.content, drop + 1)}`;
       if (targetContext) targetContext.truncated = true;
     } else {
       const titled = contexts.find((context) => context.title);
