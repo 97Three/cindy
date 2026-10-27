@@ -144,7 +144,7 @@ export function toDeviceListItem<TDevice extends DeviceListDeviceLike>(
   return {
     device,
     state,
-    canOpen: state === 'ready' || state === 'busy',
+    canOpen: isControllableDevice(device) && (state === 'ready' || state === 'busy'),
     statusLabel: deviceStatusLabel(state, localizer),
     statusDetail: deviceStatusDetail(device, state, now, localizer),
   };

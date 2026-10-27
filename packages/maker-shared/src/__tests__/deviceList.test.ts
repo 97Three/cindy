@@ -5,6 +5,7 @@ import {
   deviceDisplayName,
   isControllableDevice,
   platformLabel,
+  toDeviceListItem,
   toDeviceListItems,
   type DeviceListDeviceLike,
   visibleDeviceListItems,
@@ -52,6 +53,15 @@ describe('shared device list presentation model', () => {
     expect(deviceAccessState(device({ online: false, remoteControlEnabled: false }))).toBe('offline');
     expect(deviceAccessState(device({ remoteControlEnabled: false }))).toBe('remote_disabled');
     expect(deviceAccessState(device({ isSelf: true }))).toBe('self');
+  });
+
+  // Regression: the singular projection must reuse controllability so ready mobile clients cannot be opened.
+  // Minimal unit inputs: online, remote-enabled iOS/Android; desktop ready/busy retain their existing projection.
+  it('keeps ready mobile clients closed while preserving desktop ready and busy projections', () => {
+    expect(toDeviceListItem(device({ platform: 'ios' }))).toMatchObject({ state: 'ready', canOpen: false });
+    expect(toDeviceListItem(device({ platform: 'android' }))).toMatchObject({ state: 'ready', canOpen: false });
+    expect(toDeviceListItem(device())).toMatchObject({ state: 'ready', canOpen: true });
+    expect(toDeviceListItem(device({ busy: true }))).toMatchObject({ state: 'busy', canOpen: true });
   });
 
   it('omits the current mobile device and other mobile clients while keeping unavailable peers with actionable details', () => {
