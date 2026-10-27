@@ -13,6 +13,19 @@ const fix = { supportsLongCacheRetention: false };
 afterAll(() => fs.rmSync(root.path, { recursive: true, force: true }));
 beforeEach(() => { fs.rmSync(file, { force: true }); });
 describe('learned cache compatibility', () => {
+  it('expires untimed legacy learning from stable file time and preserves its deadline across writes', async () => {
+    const writtenAt = Date.now() - 86400000;
+    const key = JSON.stringify(['a', 'model', a]);
+    fs.writeFileSync(file, JSON.stringify({ routes: { [key]: fix } }));
+    fs.utimesSync(file, writtenAt / 1000, writtenAt / 1000);
+    const learnedAt = fs.statSync(file).mtimeMs;
+    expect(read('a', 'model', a)).toEqual(fix);
+    await record('b', 'other', fix, b);
+    const migrated = JSON.parse(fs.readFileSync(file, 'utf8')).routes[key];
+    expect(migrated).toMatchObject({ evidence: 'explicit', learnedAt, expiresAt: learnedAt + 7 * 86400000 });
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(learnedAt + 7 * 86400000 + 1);
+    try { expect(read('a', 'model', a)).toBeUndefined(); } finally { clock.mockRestore(); }
+  });
   it('persists only the permitted fix and isolates connection, wire model and route', async () => {
     expect(await record('a', 'model', { ...fix, supportsStore: true }, a)).toBe(true);
     expect(read('a', 'model', a)).toEqual(fix);

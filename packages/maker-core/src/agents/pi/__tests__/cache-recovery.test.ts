@@ -17,7 +17,7 @@ const success = { type: 'done', message: { stopReason: 'stop', content: [{ type:
 function fixture() {
   let now = 1000000000;
   const files = new Map<string, string>();
-  const handlers = new Map<string, (...args: any[]) => void>();
+  const handlers = new Map<string, (...args: any[]) => any>();
   const rules = [{ ...model, providerId: 'connection', routeKey }];
   files.set('/agent/pi-cache-compatibility.json', JSON.stringify(rules));
   let writeFails = false;
@@ -34,7 +34,8 @@ function fixture() {
   const api = runInNewContext(PI_CACHE_RECOVERY_SOURCE + '\ninstallCindyCacheRecovery(pi)', {
     pi: { on: (name: string, fn: (...args: any[]) => void) => handlers.set(name, fn) },
     process: { env: { PI_CODING_AGENT_DIR: '/agent', CINDY_PI_CACHE_COMPAT_FILE: '/compat.json' } },
-    ...fs, path, createHash, randomUUID, Buffer, Date: { now: () => now }, homedir: () => '/home/fixture',
+    // The in-memory filesystem uses POSIX keys on every host, including Windows.
+    ...fs, path: path.posix, createHash, randomUUID, Buffer, Date: { now: () => now }, homedir: () => '/home/fixture',
   });
   const fresh = () => handlers.get('input')!({ source: 'rpc' }, { isIdle: () => true });
   const interrupt = () => handlers.get('input')!({ source: 'rpc', streamingBehavior: 'steer' }, { isIdle: () => false });
@@ -63,6 +64,50 @@ function fixture() {
 }
 
 describe('Pi native cache recovery', () => {
+  it.each(['openai-completions', 'openai-responses'])('keeps learned payload recovery without taking provider ownership on an older %s registry', api => {
+    const h = fixture();
+    const selected = { ...model, api };
+    const rules = [{ ...selected, providerId: 'connection', routeKey }];
+    h.files.set('/agent/pi-cache-compatibility.json', JSON.stringify(rules));
+    h.fresh();
+    const record = { supportsLongCacheRetention: false, learnedAt: 1000000000,
+      expiresAt: 1086400000, evidence: 'opaque' };
+    // Another session can learn after the last RPC input. Native continuation
+    // has no new RPC input event, but must still consume the durable record.
+    h.files.set('/compat.json', JSON.stringify({ routes: { [key]: record } }));
+    const ctx = { model: selected, modelRegistry: { getProvider: vi.fn() } };
+    const hook = h.handlers.get('before_provider_request')!;
+    const payload = { ...body, service_tier: 'priority' };
+    expect(hook?.({ payload }, ctx) ?? payload).toEqual({ model: 'wire', messages: body.messages, service_tier: 'priority' });
+    expect(ctx.modelRegistry.getProvider).not.toHaveBeenCalled();
+    expect(payload).toHaveProperty('prompt_cache_key', 'cache');
+    // A newly loaded bridge reads the same durable record, not process memory.
+    const restarted = fixture();
+    restarted.files.set('/agent/pi-cache-compatibility.json', JSON.stringify(rules));
+    restarted.files.set('/compat.json', h.files.get('/compat.json')!);
+    restarted.fresh();
+    const recovered = restarted.handlers.get('before_provider_request')!;
+    expect(recovered({ payload }, ctx)).not.toHaveProperty('prompt_cache_key');
+    expect(recovered({ payload }, { ...ctx, model: { ...selected, baseUrl: selected.baseUrl + '/other' } })).toBeUndefined();
+    expect(recovered({ payload }, { ...ctx, modelRegistry: { ...ctx.modelRegistry, getRegisteredNativeProvider: vi.fn() } })).toBeUndefined();
+    restarted.clock(1086400001);
+    expect(recovered({ payload }, ctx)).toBeUndefined();
+    expect(restarted.record()).toEqual(record);
+  });
+
+  it('preserves normal caching and bounds legacy records in the older registry payload hook', () => {
+    const h = fixture();
+    const ctx = { model, modelRegistry: {} };
+    const hook = () => h.handlers.get('before_provider_request')?.({ payload: body }, ctx);
+    h.fresh();
+    expect(hook()).toBeUndefined();
+    h.files.set('/compat.json', JSON.stringify({ routes: { [key]: { supportsLongCacheRetention: false } } }));
+    h.clock(1001); h.fresh();
+    expect(hook()).toEqual({ model: 'wire', messages: body.messages });
+    h.clock(1000 + 7 * 86400000 + 1); h.fresh();
+    expect(hook()).toBeUndefined();
+  });
+
   it('does one final-payload comparison, learns only after generation, and preserves usage', async () => {
     const h = fixture(); h.fresh();
     const hook = vi.fn((payload: any) => ({ ...payload, third_party: 'preserved', service_tier: 'priority' }));

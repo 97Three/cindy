@@ -1387,6 +1387,37 @@ describe("Pi provider-aware model routing", () => {
     await handle.close();
   });
 
+  it.each([false, true])('freezes per-input cache learning across expiry and relearning, native continuation: %s', async (native) => {
+    let active = true;
+    const deps = byomDeps(async () => ({ providers: [{
+      id: 'native-a', name: 'Native A', baseUrl: 'https://cache.example/v1', api: 'openai-completions',
+      models: [{ id: 'local-model' }],
+    }], env: {} }));
+    deps.resolvePiNativeCompatOverride = () => active ? { supportsLongCacheRetention: false } : undefined;
+    const handle = await new PiAgent(deps).startSession({
+      sessionId: 'cache-expiry-receipt', workingDir: cwd, model: 'local-model', providerId: 'native-a',
+    });
+    const events = handle.events()[Symbol.asyncIterator]();
+    try {
+      for (const expected of [true, false, true]) {
+        active = expected;
+        if (!native) await handle.send({ type: 'user', content: 'try cache' });
+        captured.onEvent!({ type: 'agent_start' });
+        // Expiry or another session's learning during the request must not
+        // change whether this input actually started with the override.
+        active = !expected;
+        captured.onEvent!({ type: 'auto_retry_end', success: false,
+          finalError: '400: unsupported parameter: prompt_cache_retention' });
+        let event;
+        do { event = await events.next(); } while (!event.done && event.value.type !== 'error');
+        expect(event.value?.data).toMatchObject({ piCacheCompatibility: { applied: expected,
+          providerId: 'native-a', wireModelId: 'local-model',
+          routeKey: piCacheRouteKey('https://cache.example/v1', 'openai-completions') } });
+        captured.onEvent!({ type: 'agent_end', messages: [] });
+      }
+    } finally { await handle.close(); }
+  });
+
   it("routes a persisted BYOM id through its namespaced PI runtime provider", async () => {
     const authProviderIds: Array<string | null | undefined> = [];
     const deps: AgentDeps = {

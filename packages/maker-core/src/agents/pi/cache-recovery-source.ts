@@ -167,6 +167,19 @@ function installCindyCacheRecovery(pi) {
   for (const name of ['tool_call', 'tool_execution_start', 'model_select', 'session_switch', 'session_shutdown']) {
     pi.on(name, () => { if (turn) { turn.safe = false; turn.valid = false; } });
   }
+  pi.on('before_provider_request', (event, ctx) => {
+    // Older registries cannot safely restore an extension provider's ownership.
+    // Keep their existing host recovery usable without registering a provider;
+    // modern registries leave all payload handling to the final stream wrapper.
+    if (typeof ctx.modelRegistry?.getProvider === 'function'
+      && typeof ctx.modelRegistry?.getRegisteredNativeProvider === 'function') return;
+    const key = route(ctx.model);
+    // Native continuation need not emit a new RPC input. Read current learning
+    // here as well, rather than reuse the previous RPC input's snapshot.
+    if (!key || !active(load()?.routes[key], Date.now())) return;
+    const payload = event.payload;
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) return withoutCache(payload);
+  });
   return {
     refreshRules,
     accepts: model => Boolean(route(model)),

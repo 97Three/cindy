@@ -4202,10 +4202,16 @@ export class PiAgent extends BaseAgent {
     // null/订阅来源会归一到 cindy，setModel 未显式传来源时也必须跟随本次解析结果。
     let mutablePiProviderId = initialProvider;
     let mutableProviderId: string | null | undefined = opts.providerId ?? authProviderId;
-    ctx.getCacheCompatibility = () => {
+    const readCacheCompatibility = () => {
       const route = appliedCacheRoutes.get(JSON.stringify([mutablePiProviderId, mutableWireModel]));
-      return route ? { ...route, modelId: mutableModel ?? route.modelId } : undefined;
+      if (!route) return undefined;
+      const compat = remote ? undefined : this.deps.resolvePiNativeCompatOverride?.(
+        route.providerId, route.wireModelId, route.routeKey);
+      return { ...route, modelId: mutableModel ?? route.modelId,
+        applied: compat?.supportsLongCacheRetention === false };
     };
+    let inputCacheCompatibility: PiCacheCompatibility | undefined;
+    ctx.getCacheCompatibility = () => inputCacheCompatibility;
     let activeEffortSnapshot = initialEffortSnapshot;
     let mutableEffort: Effort | null = startupEffort ?? null;
     // 用户明确关掉思考（setThinkingEnabled(false) / 切模显式 thinkingEnabled:false /
@@ -5743,6 +5749,11 @@ export class PiAgent extends BaseAgent {
         transport,
         logger: this.deps.logger,
         onEvent: (event: PiRpcEvent) => {
+          if (event.type === 'agent_start') {
+            // Includes native Execute/Refine and queued follow-ups. Freeze the
+            // active record for this input, even if it expires during the call.
+            inputCacheCompatibility = readCacheCompatibility();
+          }
           if (event.type === 'agent_start' && !ctx.pendingHostTurnStartToken) {
             syncNativePlanMode?.();
           }
@@ -7676,7 +7687,7 @@ export class PiAgent extends BaseAgent {
         if (sendOpts) handle.validateSendOptions?.(sendOpts);
         const expectedCompat = sendOpts?.[PI_CACHE_RECOVERY_EXPECTATION];
         if (expectedCompat) {
-          const applied = ctx.getCacheCompatibility?.();
+          const applied = readCacheCompatibility();
           if (!sendOpts?.retryTranscriptUserEntryId || !applied?.applied || applied.routeKey !== expectedCompat.routeKey
             || applied.providerId !== expectedCompat.providerId || applied.wireModelId !== expectedCompat.wireModelId) {
             throw new TurnDispatchRejectedError('Pi cache compatibility was not applied to the expected route');
