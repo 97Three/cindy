@@ -78,7 +78,7 @@ beforeEach(() => {
   });
   api.getAndroidStatus.mockResolvedValue(androidUnavailable);
   api.getBackendState.mockResolvedValue({ active: 'rsb-webview' });
-  api.setBackendKind.mockImplementation(async (kind: 'external' | 'rsb-webview') => ({
+  api.setBackendKind.mockImplementation(async (kind: 'external' | 'rsb-webview' | 'user-browser') => ({
     active: kind,
   }));
   api.recoverBackend.mockResolvedValue({

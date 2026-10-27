@@ -490,7 +490,7 @@ describe('createBrowserMcpServer', () => {
   });
 
   it('switches modes in the same MCP instance and immediately updates backend capabilities', async () => {
-    let backend: 'external' | 'rsb-webview' = 'external';
+    let backend: 'external' | 'rsb-webview' | 'user-browser' = 'external';
     const switched: string[] = [];
     const h = await makeHarness({
       setBackend: async (next) => { switched.push(next); backend = next; return backend; },
@@ -1718,5 +1718,62 @@ describe('recipe on-use maintenance', () => {
       expect((await invoke(next, { action: 'saveRecipe', site: 'example.com', recipeDraft: draft })).ok).toBe(true);
       expect(stored.validation.state).toBe('active');
     } finally { await next.cleanup(); }
+  });
+});
+
+describe('browser · backend capability gating (user browser via extension)', () => {
+  const caps = () => ({ evaluate: false, screenshot: false, network: false, upload: false, dialog: false, console: false, pdf: false, focus: false, close: false, trustedInput: false });
+
+  it.each([
+    { action: 'screenshot', targetId: 't1' },
+    { action: 'requests', targetId: 't1' },
+    { action: 'upload', targetId: 't1', paths: ['/tmp/x'] },
+    { action: 'dialog', targetId: 't1', dialogId: 'd', accept: true },
+    { action: 'focus', targetId: 't1' },
+    { action: 'act', targetId: 't1', request: { kind: 'evaluate', fn: '() => 1' } },
+    { action: 'act', targetId: 't1', request: { kind: 'drag', startRef: 'a', endRef: 'b' } },
+  ])('refuses unsupported work before dispatch and points the agent to the user: %j', async (args) => {
+    const h = await makeHarness({ backendCapabilities: caps });
+    try {
+      const result = await h.client.callTool({ name: 'call_tool', arguments: { name: 'browser', args } });
+      expect(result.isError).toBe(true);
+      expect((result.content as Array<{ text: string }>)[0].text).toContain('不要自行切换');
+      expect(h.calls).toEqual([]);
+    } finally { await h.cleanup(); }
+  });
+
+  it('still routes extract through the declarative DOM read and leaves other backends unaffected', async () => {
+    const h = await makeHarness({ backendCapabilities: caps });
+    try {
+      await h.client.callTool({ name: 'call_tool', arguments: { name: 'browser', args: { action: 'extract', targetId: 't1', extract: { fields: { title: 'h1' } } } } });
+      expect(h.calls).toHaveLength(1);
+      expect(h.calls[0]).toMatchObject({ action: 'act', request: { kind: 'evaluate', domRead: { kind: 'extract' } } });
+    } finally { await h.cleanup(); }
+    const open = await makeHarness({ backendCapabilities: () => ({}) });
+    try {
+      await open.client.callTool({ name: 'call_tool', arguments: { name: 'browser', args: { action: 'screenshot', targetId: 't1' } } });
+      expect(open.calls).toHaveLength(1);
+    } finally { await open.cleanup(); }
+  });
+
+  it('refuses recipes that need guards, scripts or network capture on a backend without them', async () => {
+    const recipe: Recipe = {
+      id: 'guarded', match: ['example.test'], inputs: {},
+      steps: [
+        { action: 'navigate', url: 'https://example.test/' },
+        { action: 'extract', as: 'rows', guard: { url: 'https://example.test/' }, expect: { minCount: 1 }, extract: { fields: { title: 'h1' } } },
+      ],
+      output: '{{rows}}',
+    } as unknown as Recipe;
+    const h = await makeHarness({
+      backendCapabilities: caps,
+      getUserRecipes: async () => ({ recipes: new Map([[recipe.id, recipe]]), siteGuides: new Map(), version: 'v1' }),
+    });
+    try {
+      const result = await h.client.callTool({ name: 'call_tool', arguments: { name: 'browser', args: { action: 'recipe', recipeId: 'guarded' } } });
+      expect(result.isError).toBe(true);
+      expect((result.content as Array<{ text: string }>)[0].text).toContain('页面脚本能力');
+      expect(h.calls).toEqual([]);
+    } finally { await h.cleanup(); }
   });
 });

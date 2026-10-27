@@ -39,7 +39,7 @@ export function createBrowserBackendIpcHandlers<Event>(deps: BrowserBackendIpcDe
     async setKind(event: Event, payload: unknown) {
       deps.assertTrusted(event);
       const obj = requireObject(payload, 'set-kind payload');
-      const kind = requireEnum(obj.kind, ['external', 'rsb-webview'] as const, 'kind');
+      const kind = requireEnum(obj.kind, ['external', 'rsb-webview', 'user-browser'] as const, 'kind');
       return { ok: true as const, active: await deps.setKind(kind) };
     },
     async setUseRealProfile(event: Event, payload: unknown) {

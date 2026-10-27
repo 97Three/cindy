@@ -20,7 +20,7 @@ import type {
   BrowserBackendHealthReason,
 } from '../../../shared/browserBackend';
 
-type BackendKind = 'external' | 'rsb-webview';
+type BackendKind = 'external' | 'rsb-webview' | 'user-browser';
 
 interface BrowserBackendSubsectionProps {
   active: BackendKind;
@@ -41,6 +41,8 @@ function healthReasonKey(reason: BrowserBackendHealthReason | undefined): string
       return 'settings.computerUse.browserBackend.health.reasons.startFailed';
     case 'recovery-failed':
       return 'settings.computerUse.browserBackend.health.reasons.recoveryFailed';
+    case 'extension-disconnected':
+      return 'settings.computerUse.browserBackend.health.reasons.extensionDisconnected';
     case 'status-failed':
     default:
       return 'settings.computerUse.browserBackend.health.reasons.statusFailed';
@@ -58,6 +60,9 @@ export function BrowserBackendSubsection({
   const { t } = useTranslation();
   const embeddedHealth =
     active === 'rsb-webview' && health?.active === 'rsb-webview' ? health : null;
+  // 「我的浏览器」只有连接状态可报,没有可恢复的宿主侧控制连接。
+  const userBrowserHealth =
+    active === 'user-browser' && health?.active === 'user-browser' ? health : null;
   return (
     <div className="border-t border-[var(--settings-theme-card-border)]">
       <div className="cindy-segmented-row px-4 py-[14px]">
@@ -80,6 +85,10 @@ export function BrowserBackendSubsection({
               label: t('settings.computerUse.browserBackend.rsbWebview.title'),
             },
             { value: 'external', label: t('settings.computerUse.browserBackend.external.title') },
+            {
+              value: 'user-browser',
+              label: t('settings.computerUse.browserBackend.userBrowser.title'),
+            },
           ]}
         />
       </div>
@@ -119,6 +128,30 @@ export function BrowserBackendSubsection({
               ? t('settings.computerUse.browserBackend.health.recover')
               : t('settings.computerUse.browserBackend.health.reconnect')}
           </Button>
+        </div>
+      ) : null}
+      {userBrowserHealth ? (
+        <div
+          className={cn(
+            'flex items-start gap-2 border-t border-[var(--settings-theme-card-border)] px-4 py-[14px] text-12 leading-[1.5]',
+            userBrowserHealth.status === 'error'
+              ? 'text-[var(--error-fg)]'
+              : 'text-[var(--settings-section-desc)]',
+          )}
+          role={userBrowserHealth.status === 'error' ? 'alert' : 'status'}
+        >
+          {userBrowserHealth.status === 'error' ? (
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          ) : (
+            <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
+          )}
+          <span>
+            {userBrowserHealth.status === 'error'
+              ? t('settings.computerUse.browserBackend.health.userBrowserError', {
+                  reason: t(healthReasonKey(userBrowserHealth.reason)),
+                })
+              : t('settings.computerUse.browserBackend.health.userBrowserReady')}
+          </span>
         </div>
       ) : null}
     </div>

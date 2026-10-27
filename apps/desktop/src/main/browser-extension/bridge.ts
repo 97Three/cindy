@@ -724,7 +724,14 @@ export class BrowserExtensionBridge {
         this.authenticatedCredential(client) &&
         this.normalizePublicKey(this.header(req, 'x-my-browser-key')) === client.publicKey &&
         this.verifyProof(client.publicKey, payload, proof);
-      if (!valid)
+      if (!valid) {
+        this.options.log?.warn('browser extension relay signature rejected', {
+          url: req.url,
+          method: req.method,
+          clientId: clientId.slice(0, 8),
+          pending: !!pending,
+          authenticated: this.authenticatedCredential(client),
+        });
         return this.send(
           res,
           failure(
@@ -733,6 +740,7 @@ export class BrowserExtensionBridge {
           ),
           403,
         );
+      }
       this.relayChallenges.delete(challenge);
     }
     if (req.method === 'POST' && req.url === '/learning/start') {
@@ -795,6 +803,11 @@ export class BrowserExtensionBridge {
         progress: { stage: 'accepted', startedAt: created, updatedAt: created, attempt: 1 },
       };
       this.relays.set(b.id, item);
+      this.options.log?.info('browser extension relay accepted', {
+        id: b.id,
+        op: payload.op,
+        clientId: clientId.slice(0, 8),
+      });
       try {
         this.options.onRelay?.({ id: b.id, clientId, request: payload });
       } catch (err) {
@@ -817,6 +830,7 @@ export class BrowserExtensionBridge {
           404,
         );
       if (req.url === '/learning/cancel') {
+        this.options.log?.info('browser extension relay cancelled', { id: item.id });
         this.relays.delete(item.id);
         return this.send(res, { ok: true });
       }
@@ -1141,6 +1155,10 @@ export class BrowserExtensionBridge {
     if (!found.item.result) {
       found.item.result = result;
       found.item.expiresAt = this.now() + RELAY_TIMING.resultRetention;
+      this.options.log?.info('browser extension relay answered', {
+        id,
+        ok: (result as { ok?: unknown } | null)?.ok === true,
+      });
     }
     return { ok: true };
   }

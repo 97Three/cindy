@@ -14,7 +14,7 @@ function buildHandlers() {
       isOverride: true,
       useRealProfile: false,
     })),
-    setKind: vi.fn(async (kind: 'external' | 'rsb-webview') => kind),
+    setKind: vi.fn(async (kind: 'external' | 'rsb-webview' | 'user-browser') => kind),
     setUseRealProfile: vi.fn(async (enabled: boolean) => enabled),
     reset: vi.fn(async () => 'external' as const),
     getHealth: vi.fn(async () => ({

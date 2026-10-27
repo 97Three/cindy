@@ -22,6 +22,11 @@ import type { BrowserMcpDeps } from '@cindy/mcps';
 import { createLogger } from '../logger.js';
 import { genericOAuthSecretIo } from '../secrets/providerSecretStore.js';
 import { createRecipeFileBroker } from './browser-backend/rsb-webview-upload-policy.js';
+import {
+  USER_BROWSER_CAPABILITIES,
+  UserBrowserBackend,
+  type UserBrowserPageControl,
+} from './browser-backend/user-browser-backend.js';
 import { artifactSessionRoot } from './browser-backend/rsb-webview-artifacts.js';
 import { extractBrowserAvailability, type BrowserAvailability } from './browser-availability.js';
 import { loadUserBrowserRecipes, userRecipesDir, type UserRecipesResult } from '../browser-recipes/loader.js';
@@ -29,6 +34,7 @@ import { writeUserRecipe, type WriteUserRecipeResult } from '../browser-recipes/
 import { browserExperienceStore } from '../browser-recipes/experience.js';
 import {
   BrowserBackendController,
+  resolveBackendProfile,
   BrowserBackendHealthService,
   ExternalChromeBackend,
   RsbWebviewBackend,
@@ -322,10 +328,26 @@ const initialKind = readBrowserBackendSettings().kind;
  * The controller implements `BrowserControlRuntime` (its `.call` matches the
  * contract verbatim) so @cindy/mcps consumes it as the runtime with no adapter.
  */
+/**
+ * Page-control provider for the user's own browser: the browserExtension plugin
+ * slot owns the bridge; bootstrap wires the accessor so this module never
+ * imports cindy-brain. Default = no page-control plugin installed.
+ */
+let userBrowserPageControlProvider: () => UserBrowserPageControl | null = () => null;
+
+export function setUserBrowserPageControlProvider(provider: () => UserBrowserPageControl | null): void {
+  userBrowserPageControlProvider = provider;
+}
+
+function createUserBrowserBackend(): UserBrowserBackend {
+  return new UserBrowserBackend({ getPageControl: () => userBrowserPageControlProvider(), logger });
+}
+
 const backendController = new BrowserBackendController({
   initialKind,
   externalBackend,
   createRsbBackend,
+  createUserBrowserBackend,
   persistKind: writeBrowserBackendKind,
   logger,
 });
@@ -474,6 +496,7 @@ export function getBrowserMcpDeps(): {
   setBackend(kind: BackendKind): Promise<BackendKind>;
   supportsResourceDownloads(): boolean;
   supportsSemanticQueries(): boolean;
+  backendCapabilities: NonNullable<BrowserMcpDeps['backendCapabilities']>;
   logger: typeof logger;
   getUserRecipes(): Promise<UserRecipesResult>;
   saveUserRecipe(input: Parameters<typeof writeUserRecipe>[0]): Promise<WriteUserRecipeResult>;
@@ -511,8 +534,8 @@ export function getBrowserMcpDeps(): {
     // the backend split. Swapping the active backend (Phase 5) is invisible from
     // @cindy/mcps' perspective.
     getRuntime: () => backendController,
-    resolveProfile: (profile) => backendController.kind === 'rsb-webview'
-      ? 'rsb' : profile || activeManagedProfileName(readBrowserBackendSettings().useRealProfile),
+    resolveProfile: (profile) => resolveBackendProfile(backendController.kind, profile, () =>
+      activeManagedProfileName(readBrowserBackendSettings().useRealProfile)),
     getBackendScope: () => backendController.getBackendScope(),
     resolveScreenshot: (result) =>
       resolveBrowserScreenshot(result, {
@@ -521,6 +544,10 @@ export function getBrowserMcpDeps(): {
     compressInlineImage,
     supportsResourceDownloads: () => backendController.kind === 'rsb-webview',
     supportsSemanticQueries: () => backendController.kind === 'rsb-webview',
+    // The user's browser is driven by a fixed-function extension: no scripts,
+    // screenshots, network reads, uploads or dialogs. The MCP layer refuses
+    // those before dispatch instead of letting a page job fail opaquely.
+    backendCapabilities: () => (backendController.kind === 'user-browser' ? USER_BROWSER_CAPABILITIES : {}),
     // 代输入: pause page-state reads on a tab still showing a page where the owner typed a secret.
     pageReadsRestricted: async ({ profile, targetId }) => {
       if (!hasSecretPages()) return false;

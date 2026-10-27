@@ -1,4 +1,4 @@
-export type BrowserBackendKind = 'external' | 'rsb-webview';
+export type BrowserBackendKind = 'external' | 'rsb-webview' | 'user-browser';
 
 /** Optional profile stores; warning payloads never carry paths or native errors. */
 export const OPTIONAL_BROWSER_PROFILE_DATABASES = [
@@ -76,7 +76,13 @@ export function browserOpenForLoginErrorCodeFromData(
 }
 
 export type BrowserBackendHealthReason =
-  'disposing' | 'host-unavailable' | 'start-failed' | 'status-failed' | 'recovery-failed';
+  | 'disposing'
+  | 'host-unavailable'
+  | 'start-failed'
+  | 'status-failed'
+  | 'recovery-failed'
+  /** user-browser:没有已启用的页面控制扩展插件,或扩展尚未连接。 */
+  | 'extension-disconnected';
 
 export interface BrowserBackendHealth {
   active: BrowserBackendKind;

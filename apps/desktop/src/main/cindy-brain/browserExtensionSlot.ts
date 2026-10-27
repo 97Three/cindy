@@ -221,6 +221,11 @@ export class GhostBrowserExtensionSlot {
         });
       }
     }
+    if (delivered)
+      this.deps.log?.info('browser extension relay delivered to plugin', {
+        instanceId,
+        id: notice.id,
+      });
     if (!delivered) {
       this.deps.log?.warn('browser extension relay undeliverable; plugin logic page offline', {
         instanceId,

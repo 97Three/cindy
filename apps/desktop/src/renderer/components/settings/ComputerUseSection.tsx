@@ -95,7 +95,9 @@ const ACTION_BUTTON_CLASS = cn(
 );
 const ANDROID_AUTO_DEVICE_VALUE = '__auto__';
 
-function browserBackendHealthFallback(active: 'external' | 'rsb-webview'): BrowserBackendHealth {
+function browserBackendHealthFallback(
+  active: 'external' | 'rsb-webview' | 'user-browser',
+): BrowserBackendHealth {
   return {
     active,
     status: 'error',
@@ -430,7 +432,7 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
   const { value: backendConfig, setValue: setBackendConfig } = backendRead;
   const browserBackendKind = backendConfig?.active ?? null;
   const setBrowserBackendKind = useCallback(
-    (active: 'external' | 'rsb-webview' | null) => {
+    (active: 'external' | 'rsb-webview' | 'user-browser' | null) => {
       setBackendConfig((current) => (current && active ? { ...current, active } : current));
     },
     [setBackendConfig],
@@ -583,7 +585,7 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
 
   // Phase 5: 用户点 segmented chip 切换 backend。乐观更新 + IPC 失败回滚。
   const handleSelectBackend = useCallback(
-    async (kind: 'external' | 'rsb-webview') => {
+    async (kind: 'external' | 'rsb-webview' | 'user-browser') => {
       if (browserBackendPending) return;
       if (browserBackendKind === kind) return;
       const prev = browserBackendKind;
