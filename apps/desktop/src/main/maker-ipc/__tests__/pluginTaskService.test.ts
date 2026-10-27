@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
-import { pluginTaskSelectionIsOpen } from '../pluginTaskDefaultRoute.js';
+import { pluginTaskRouteAttempts, pluginTaskSelectionIsOpen } from '../pluginTaskDefaultRoute.js';
 import { createSessionExecutionResolver } from '../sessionExecutionSelection.js';
 import { Session } from '@cindy/maker-core';
 import { fastModeToStorage } from '@cindy/maker-shared';
@@ -1423,14 +1423,17 @@ it('an open plugin selection without a source session follows the auxiliary chai
       activeOwnerScopeKey: () => 'owner', assertPlugin: () => {}, getPluginTaskSourceSessionId: () => sourceSessionId,
       resolveSessionExecution: resolver, PluginTaskError, routeUnavailable: () => { throw Error('unavailable'); },
       getEffectiveAuxiliaryModelRefs: () => ['chain'], getEffectiveAuxiliaryModelChainSnapshot: () => 'chain',
-      auxiliaryChainSessionCandidates: () => candidates, pluginTaskSelectionIsOpen };
+      auxiliaryChainSessionCandidates: () => candidates, pluginTaskRouteAttempts, pluginTaskSelectionIsOpen };
     const js = ts.transpileModule(`${resolve}\nreturn resolveRoute;`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
     return new Function(...Object.keys(deps), js)(...Object.values(deps))('p') as Promise<{ model: string; effort: string }>;
   };
   // First usable candidate wins, at low effort.
   await expect(run([{ agentKind: 'codex', providerId: f.route.providerId, model: 'missing' }, { agentKind: 'codex', providerId: f.route.providerId, model: 'cheap' }]))
     .resolves.toMatchObject({ model: 'cheap', effort: 'low' });
-  // A model without a low effort level still routes, at its default effort.
+  // A chain head without a light effort level yields to the next candidate that has one.
+  await expect(run([{ agentKind: 'codex', providerId: f.route.providerId, model: 'nolow' }, { agentKind: 'codex', providerId: f.route.providerId, model: 'cheap' }]))
+    .resolves.toMatchObject({ model: 'cheap', effort: 'low' });
+  // Only when no candidate offers a light level does a model route at its default effort.
   await expect(run([{ agentKind: 'codex', providerId: f.route.providerId, model: 'nolow' }])).resolves.toMatchObject({ model: 'nolow' });
   // No usable candidate: the new-task selection remains the last resort.
   await expect(run([{ agentKind: 'codex', providerId: f.route.providerId, model: 'missing' }])).resolves.toMatchObject({ model: 'next', effort: 'high' });
@@ -1498,7 +1501,7 @@ it.each([
     resolveSessionExecution: resolver, PluginTaskError, routeUnavailable: () => { throw Error('unavailable'); },
     // No auxiliary chain configured in this scenario: the new-task selection stays the inherited default.
     getEffectiveAuxiliaryModelRefs: () => [], getEffectiveAuxiliaryModelChainSnapshot: () => '',
-    auxiliaryChainSessionCandidates: () => [], pluginTaskSelectionIsOpen };
+    auxiliaryChainSessionCandidates: () => [], pluginTaskRouteAttempts, pluginTaskSelectionIsOpen };
   const js = ts.transpileModule(`${resolve}\nreturn {${preference} resolveRoute};`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   }).outputText;

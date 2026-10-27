@@ -663,7 +663,7 @@ import { createBotGroupWorkDir } from './botGroupWorkDir.js';
 import { createBotGroupAttachmentStore } from './botGroupAttachments.js';
 import { requestUtilityText } from '../utility-model/oneShotCandidates.js';
 import { getEffectiveAuxiliaryModelChainSnapshot, getEffectiveAuxiliaryModelRefs } from '../utility-model/resolveAuxiliaryModelChain.js';
-import { auxiliaryChainSessionCandidates, pluginTaskSelectionIsOpen } from './pluginTaskDefaultRoute.js';
+import { auxiliaryChainSessionCandidates, pluginTaskRouteAttempts, pluginTaskSelectionIsOpen } from './pluginTaskDefaultRoute.js';
 import { validateExistingLocalProjectDirectory } from '../mcp-integrations/createProject.js';
 import { gitExec } from '../worktree/gitExec.js';
 import { BOT_GROUP_CLIENT_ID_PREFIX } from '../../shared/botGroupChat.js';
@@ -4433,11 +4433,13 @@ async function syncLibraryReadonlyExtraDir(
       visible, new Set(getMaker().listActiveSessions().map((session) => session.id)), focused,
     );
     let granted = false;
+    let focusedLocal = false;
     for (const sessionId of targets) {
       if (generation !== libraryExtraDirSyncGeneration) return 'superseded';
       const remote = await sessionIsRemote(sessionId);
       if (generation !== libraryExtraDirSyncGeneration) return 'superseded';
       const nextRoot = !remote && grantRoot && sessionId === focused ? grantRoot : null;
+      if (nextRoot) focusedLocal = true;
       // 没有 Library 槽可撤、这次也不给：什么都不变，不碰运行中的会话。否则每次切换焦点都要把每个开着的任务的附加
       // 目录重新下发一遍，远程 Agent 那台恰好连不上时回滚失败、会话被关，正在跑的一轮就此中断(2026-10-11 实测)。
       // 运行时的 Library 槽只会来自已落库的那份(启动从库里读，改动先改运行时再落库，落库失败回滚)，库里没有即运行时没有。
@@ -4458,6 +4460,10 @@ async function syncLibraryReadonlyExtraDir(
       }
       if (generation !== libraryExtraDirSyncGeneration) return 'superseded';
     }
+    // A plugin writing its library with no local agent session focused (a hidden
+    // background task, or the plugin panel open on its own) has nobody to grant to;
+    // that is an ordinary not-granted, not a failure to warn about on every write.
+    if (grantRoot && !granted && !focusedLocal) return 'not-granted';
     if (grantRoot && !granted) {
       throw new Error('library extraDirs not granted to focused session');
     }
@@ -14177,17 +14183,15 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         let execution: Awaited<ReturnType<typeof resolveSessionExecution>> | undefined;
         if (!sourceSessionId && pluginTaskSelectionIsOpen(selection)) {
           // A plugin's own task with no originating session follows the auxiliary
-          // chain at low effort; an unavailable candidate falls through to the next,
-          // and the new-task selection remains the last resort.
-          for (const candidate of auxiliaryChainSessionCandidates(getEffectiveAuxiliaryModelRefs())) {
-            for (const effort of ['low', undefined] as const) {
-              try {
-                execution = await resolveSessionExecution({ ...selection, ...candidate, ...(effort ? { effort } : {}) });
-                assertPlugin(pluginId);
-                break;
-              } catch { execution = undefined; }
-            }
-            if (execution) break;
+          // chain at the lightest effort any candidate offers; only when none has a
+          // light level do candidates run at their default, and the new-task
+          // selection remains the last resort.
+          for (const { candidate, effort } of pluginTaskRouteAttempts(auxiliaryChainSessionCandidates(getEffectiveAuxiliaryModelRefs()))) {
+            try {
+              execution = await resolveSessionExecution({ ...selection, ...candidate, ...(effort ? { effort } : {}) });
+              assertPlugin(pluginId);
+              break;
+            } catch { execution = undefined; }
           }
         }
         execution ??= await resolveSessionExecution(selection, sourceSessionId);

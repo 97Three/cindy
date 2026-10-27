@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { encodeCatalogModelPin } from '../../../shared/catalogModelPin.js';
-import { auxiliaryChainSessionCandidates, pluginTaskSelectionIsOpen } from '../pluginTaskDefaultRoute.js';
+import { auxiliaryChainSessionCandidates, pluginTaskRouteAttempts, pluginTaskSelectionIsOpen } from '../pluginTaskDefaultRoute.js';
 
 describe('auxiliaryChainSessionCandidates', () => {
   // Rule: a plugin's own persistent task (no originating session) follows the
@@ -18,6 +18,16 @@ describe('auxiliaryChainSessionCandidates', () => {
       { agentKind: 'codex', providerId: 'xd', model: 'deepseek/deepseek-v4-flash' },
       { agentKind: 'codex', providerId: 'openai', model: 'gpt-5.4-mini' },
       { agentKind: 'codex', providerId: 'xd', model: 'gpt-5.4-mini' },
+    ]);
+  });
+
+  // Rule: a chain head without a light effort level yields to a later candidate
+  // that has one; default efforts are only a last pass. tier: unit.
+  it('tries every candidate at a light effort before any candidate at its default', () => {
+    expect(pluginTaskRouteAttempts(['a', 'b'])).toEqual([
+      { candidate: 'a', effort: 'low' }, { candidate: 'a', effort: 'medium' },
+      { candidate: 'b', effort: 'low' }, { candidate: 'b', effort: 'medium' },
+      { candidate: 'a', effort: undefined }, { candidate: 'b', effort: undefined },
     ]);
   });
 

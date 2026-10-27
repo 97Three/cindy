@@ -44,6 +44,24 @@ export function auxiliaryChainSessionCandidates(refs: readonly string[]): Plugin
   return out;
 }
 
+/** Reasoning levels light enough for a plugin's background work, cheapest first. */
+export const PLUGIN_TASK_LIGHT_EFFORTS = ['low', 'medium'] as const;
+
+/**
+ * Route attempts in order: every candidate at a light effort before any candidate
+ * at its default. A chain head that only offers high/xhigh (deepseek-v4-flash on
+ * xd) therefore yields to the next candidate that has low, instead of running
+ * subtitle passages at high reasoning.
+ */
+export function pluginTaskRouteAttempts<T>(
+  candidates: readonly T[],
+): Array<{ candidate: T; effort: (typeof PLUGIN_TASK_LIGHT_EFFORTS)[number] | undefined }> {
+  return [
+    ...candidates.flatMap(candidate => PLUGIN_TASK_LIGHT_EFFORTS.map(effort => ({ candidate, effort }))),
+    ...candidates.map(candidate => ({ candidate, effort: undefined })),
+  ];
+}
+
 /** The plugin left the route open when none of the identifying fields is set. */
 export function pluginTaskSelectionIsOpen(selection: { agentKind?: unknown; model?: unknown; providerId?: unknown }): boolean {
   return !selection.agentKind && !selection.model && !selection.providerId;
