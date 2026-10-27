@@ -919,6 +919,24 @@ describe('Cindy durable PI Subagent runner', () => {
       };
     }
 
+    it('freezes cache route rules into a resumed generation and rejects oversized artifacts', async () => {
+      const { fixture, first } = await resumableFixture();
+      const sourceFile = path.join(fixture.root, first.runId, 'pi-home', 'pi-cache-compatibility.json');
+      const rules = JSON.stringify([{ provider: 'fixture', id: 'wire', routeKey: 'a'.repeat(64) }]);
+      await writeFile(sourceFile, rules);
+      const launchRunner = vi.fn(async () => {});
+      const id = await resumePiSubagentRun(fixture.root, first.runId, 'continue', { ...resumeLaunch(fixture), launchRunner });
+      if (!id) throw new Error('Expected a resumed generation');
+      expect(await readFile(path.join(fixture.root, id, 'pi-home', 'pi-cache-compatibility.json'), 'utf8')).toBe(rules);
+      expect(launchRunner).toHaveBeenCalledOnce();
+      // This unlaunched queued generation would otherwise block the second attempt.
+      await rm(path.join(fixture.root, id), { recursive: true, force: true });
+      await writeFile(sourceFile, 'x'.repeat(256 * 1024 + 1));
+      await expect(resumePiSubagentRun(fixture.root, first.runId, 'continue', { ...resumeLaunch(fixture), launchRunner }))
+        .rejects.toThrow('cache rules escaped');
+      expect(launchRunner).toHaveBeenCalledOnce();
+    });
+
     it('refuses when a live instance already holds the claim', async () => {
       const { fixture, first } = await resumableFixture();
       // process.ppid is certainly alive and is not us.

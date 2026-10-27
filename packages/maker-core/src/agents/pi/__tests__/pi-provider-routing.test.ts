@@ -1366,24 +1366,22 @@ describe("Pi provider-aware model routing", () => {
           supportsStore: false,
           supportsDeveloperRole: false,
           maxTokensField: "max_tokens",
-          supportsLongCacheRetention: false,
         }),
       }),
       // The learned wire model is distinct from the public model alias.
       expect.objectContaining({
         id: "glm-5.3-wire",
-        compat: { supportsLongCacheRetention: false },
       }),
     ]);
     // BYOM 命名空间 provider 用 sourceProviderId 命中同一条学习结果。
     expect(models.providers["cindy-byom-opencode-go"]?.models).toEqual([
       expect.objectContaining({
         id: "glm-5.3-flash",
-        compat: { supportsLongCacheRetention: false },
       }),
     ]);
     const rules = JSON.parse(readFileSync(path.join(captured.env.PI_CODING_AGENT_DIR as string, 'pi-cache-compatibility.json'), 'utf8'));
-    expect(rules).toContainEqual({ provider: 'opencode-go', id: 'glm-5.3-wire', baseUrl: proxied ? 'http://127.0.0.1:19988/v1' : 'https://opencode.ai/zen/go/v1' });
+    expect(rules).toContainEqual(expect.objectContaining({ provider: 'opencode-go', id: 'glm-5.3-wire', api: 'openai-completions', providerId: 'opencode-go', routeKey: piCacheRouteKey('https://opencode.ai/zen/go/v1', 'openai-completions'), baseUrl: proxied ? 'http://127.0.0.1:19988/v1' : 'https://opencode.ai/zen/go/v1' }));
+    for (const model of models.providers['opencode-go']!.models!) expect(model.compat ?? {}).not.toHaveProperty('supportsLongCacheRetention', false);
     await handle.close();
   });
 
@@ -2634,7 +2632,7 @@ describe("Pi provider-aware model routing", () => {
   });
 
   it("does not live-refresh xAI when the caller pins the gateway with providerId null", async () => {
-    let resolves = 0;
+    const resolvedProviders: Array<string | null | undefined> = [];
     captured.requestHandler = async (command) =>
       command.type === "get_state"
         ? {
@@ -2682,8 +2680,8 @@ describe("Pi provider-aware model routing", () => {
       },
       resolvePiGatewayModelApi: () => "openai-responses",
       resolvePiAgentHome: () => agentHome,
-      resolvePiNativeProviders: async () => {
-        resolves += 1;
+      resolvePiNativeProviders: async (selection) => {
+        resolvedProviders.push(selection?.providerId);
         return {
           providers: [
             {
@@ -2704,10 +2702,11 @@ describe("Pi provider-aware model routing", () => {
       model: "local-model",
       providerId: "native-a",
     });
-    expect(resolves).toBe(1);
+    expect(resolvedProviders).toEqual(["native-a"]);
     captured.requests.length = 0;
     await handle.setModel!("xai/grok-4.6", { providerId: null });
-    expect(resolves).toBe(2);
+    // Changing the gateway connection identity may refresh its cache route rules.
+    expect(resolvedProviders.slice(1).every(id => id === null)).toBe(true);
     expect(captured.requests).toContainEqual({
       type: "set_model",
       provider: "cindy",
@@ -3362,7 +3361,7 @@ describe("Pi provider-aware model routing", () => {
         runtimeConfig: {
           endpoint: "http://127.0.0.1:9988/",
           get remoteEndpoint() {
-            if (api !== 'openai-completions') throw new Error('Unrelated protocol must not read cache identity');
+            if (api !== 'openai-completions' && api !== 'openai-responses') throw new Error('Unrelated protocol must not read cache identity');
             return 'https://gateway.example.test/v1';
           },
         },
@@ -3565,7 +3564,7 @@ describe("Pi provider-aware model routing", () => {
     await handle.close();
   });
 
-  it('merges a learned compat override into the gateway models.json block', async () => {
+  it('keeps gateway caching native and emits exact dynamic recovery rules', async () => {
     const deps: AgentDeps = {
       auth: {
         getState: async () => ({ authenticated: true, identity: 'test', authSource: 'api-key' as const }),
@@ -3613,10 +3612,12 @@ describe("Pi provider-aware model routing", () => {
         id: 'z-ai/glm-5.3-flash',
         compat: expect.objectContaining({
           supportsStore: false,
-          supportsLongCacheRetention: false,
         }),
       }),
     ]);
+    expect(models.providers.cindy?.models?.[0].compat).not.toHaveProperty('supportsLongCacheRetention', false);
+    const rules = JSON.parse(readFileSync(path.join(captured.env.PI_CODING_AGENT_DIR as string, 'pi-cache-compatibility.json'), 'utf8'));
+    expect(rules).toContainEqual(expect.objectContaining({ provider: 'cindy', id: 'z-ai/glm-5.3-flash', providerId: 'xd', api: 'openai-completions' }));
     await handle.close();
   });
 
@@ -8318,6 +8319,10 @@ describe("Pi provider-aware model routing", () => {
     )?.[1];
     expect(modelsJson).toBeTruthy();
     expect(settingsJson).toBeTruthy();
+    const cacheRules = [...written.entries()].find(([filePath]) =>
+      filePath.endsWith("pi-cache-compatibility.json"),
+    )?.[1];
+    expect(cacheRules).toBeTruthy();
     const modelsOnlyHash = createHash("sha256")
       .update(modelsJson!)
       .digest("hex");
@@ -8325,6 +8330,8 @@ describe("Pi provider-aware model routing", () => {
       .update(modelsJson!)
       .update("\n")
       .update(settingsJson!)
+      .update("\n")
+      .update(cacheRules!)
       .digest("hex");
     expect(launchHash).not.toBe(modelsOnlyHash);
     expect(capturedRemoteEnvs).toHaveLength(1);

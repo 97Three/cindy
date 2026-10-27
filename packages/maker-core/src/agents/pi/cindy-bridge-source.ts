@@ -1,3 +1,4 @@
+import { PI_CACHE_RECOVERY_SOURCE } from './cache-recovery-source.js';
 import { PI_NATIVE_PROVIDER_ADAPTER_SOURCE } from './native-provider-adapter-source.js';
 /**
  * cindy-bridge —— 写进 pi agentHome/extensions/ 的扩展源码(字符串常量)。
@@ -69,7 +70,8 @@ import {
   closeSync, globSync, lstatSync, openSync, opendirSync, readFileSync, realpathSync,
   renameSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
 import { stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -4068,6 +4070,8 @@ async function nativeFastPayload(payload, model, ctx) {
   return out;
 }
 
+${PI_CACHE_RECOVERY_SOURCE}
+
 ${PI_NATIVE_PROVIDER_ADAPTER_SOURCE}
 
 // ─── 设备托管：执行器操作 ───────────────────────────────────────────
@@ -4261,7 +4265,8 @@ export default async function cindyBridge(piApi: any) {
     });
   }
   installTextOnlyTurnPolicy(pi);
-  const nativeProviderAdapters = await registerCindyNativeProviderAdapters(pi);
+  const cacheRecovery = installCindyCacheRecovery(pi);
+  const nativeProviderAdapters = await registerCindyNativeProviderAdapters(pi, cacheRecovery);
   const initialNativeSettings = typeof pi.getSettings === 'function' ? undefined
     : (() => {
       try {
@@ -4312,22 +4317,9 @@ export default async function cindyBridge(piApi: any) {
     },
   });
   if (!currentPermissionState().reviewOnly) registerCindyQuestionTool(pi);
-  function learnedCachePayload(payload, model) {
-    if (model?.api !== 'openai-completions' || !payload || typeof payload !== 'object' || Array.isArray(payload)) return payload;
-    try {
-      const file = path.join(process.env.PI_CODING_AGENT_DIR || '', 'pi-cache-compatibility.json');
-      if (!process.env.PI_CODING_AGENT_DIR || statSync(file).size > 256 * 1024) return payload;
-      const rules = JSON.parse(readFileSync(file, 'utf8'));
-      if (!Array.isArray(rules) || !rules.some((rule) => rule.provider === model.provider && rule.id === model.id && rule.baseUrl === model.baseUrl)) return payload;
-      const next = { ...payload };
-      delete next.prompt_cache_key;
-      delete next.prompt_cache_retention;
-      return next;
-    } catch { return payload; }
-  }
   pi.on('before_provider_request', async (event, ctx) => {
     const payload = astraResponsesPayload(event.payload, ctx.model) ?? event.payload;
-    return learnedCachePayload((await nativeFastPayload(payload, ctx.model, ctx)) ?? payload, ctx.model);
+    return (await nativeFastPayload(payload, ctx.model, ctx)) ?? payload;
   });
   const mcpGateway = new CindyMcpGateway();
   // bash 隔离 home 经 resolveBashPackageHome 解析(首次加载读删 + 防篡改 stash,

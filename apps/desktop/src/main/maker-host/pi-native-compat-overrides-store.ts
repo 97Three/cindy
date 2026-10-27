@@ -7,7 +7,7 @@ import path from 'node:path';
 import { desktopMakerLogger } from './logger-adapter.js';
 import { createOverrideSettingsFile } from './override-settings-file.js';
 
-type CacheOverride = { supportsLongCacheRetention: false };
+type CacheOverride = { supportsLongCacheRetention: false; learnedAt?: number; expiresAt?: number; evidence?: 'explicit' | 'opaque' };
 interface PiNativeCompatOverrides { routes: Record<string, CacheOverride> }
 const log = desktopMakerLogger.child('pi-native-compat-overrides-store');
 const DEFAULTS: PiNativeCompatOverrides = { routes: {} };
@@ -27,7 +27,14 @@ function normalize(raw: unknown): PiNativeCompatOverrides {
       if (!Array.isArray(parts) || parts.length !== 3 || !parts.every((v) => typeof v === 'string')
         || identity(parts[0], parts[1], parts[2]) !== key) continue;
       if (value && typeof value === 'object' && (value as CacheOverride).supportsLongCacheRetention === false) {
-        routes[key] = { supportsLongCacheRetention: false };
+        const record = value as CacheOverride;
+        const timed = Number.isFinite(record.learnedAt) && Number.isFinite(record.expiresAt)
+          && record.expiresAt! > record.learnedAt!
+          && record.expiresAt! <= record.learnedAt! + (record.evidence === 'opaque' ? 1 : 7) * 86400000
+          && (record.evidence === 'explicit' || record.evidence === 'opaque');
+        if (!timed && (record.learnedAt !== undefined || record.expiresAt !== undefined || record.evidence !== undefined)) continue;
+        routes[key] = { supportsLongCacheRetention: false,
+          ...(timed ? { learnedAt: record.learnedAt, expiresAt: record.expiresAt, evidence: record.evidence } : {}) };
       }
     } catch { /* Invalid identities are not executable configuration. */ }
   }
@@ -43,7 +50,9 @@ export function readPiNativeCompatOverride(providerId: string, modelId: string, 
   const key = identity(providerId, modelId, routeKey);
   if (!key) return undefined;
   store.invalidateIfChanged();
-  return store.read().routes[key] ? { supportsLongCacheRetention: false } : undefined;
+  const record = store.read().routes[key];
+  return record && (record.expiresAt === undefined || (record.expiresAt > Date.now() && record.learnedAt! <= Date.now()))
+    ? { supportsLongCacheRetention: false } : undefined;
 }
 export async function recordPiNativeCompatOverride(providerId: string, modelId: string,
   compat: Record<string, unknown>, routeKey?: string): Promise<boolean> {

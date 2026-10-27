@@ -22,10 +22,27 @@ describe('learned cache compatibility', () => {
     expect(read('a', 'model')).toBeUndefined();
     expect(fs.readFileSync(file, 'utf8')).not.toContain('supportsStore');
   });
+  it('preserves native trial expiry metadata when another route is recorded', async () => {
+    const learnedAt = Date.now();
+    const timed = { ...fix, learnedAt, expiresAt: learnedAt + 86400000, evidence: 'opaque' };
+    const key = JSON.stringify(['a', 'model', a]);
+    fs.writeFileSync(file, JSON.stringify({ routes: { [key]: timed } }));
+    await record('b', 'other', fix, b);
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).routes[key]).toEqual(timed);
+    fs.writeFileSync(file, JSON.stringify({ routes: { [key]: { ...timed, expiresAt: learnedAt - 1, learnedAt: learnedAt - 86400000 } } }));
+    expect(read('a', 'model', a)).toBeUndefined();
+  });
   it('merges concurrent updates without losing another model', async () => {
     expect(await Promise.all([record('a', 'one', fix, a), record('a', 'two', fix, a)])).toEqual([true, true]);
     expect(read('a', 'one', a)).toEqual(fix);
     expect(read('a', 'two', a)).toEqual(fix);
+  });
+  it('does not turn invalid timed metadata into a permanent legacy override', async () => {
+    const key = JSON.stringify(['a', 'model', a]);
+    fs.writeFileSync(file, JSON.stringify({ routes: { [key]: { ...fix, learnedAt: 1, evidence: 'opaque' } } }));
+    expect(read('a', 'model', a)).toBeUndefined();
+    await record('b', 'other', fix, b);
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).routes[key]).toBeUndefined();
   });
   it('does not overwrite malformed files or report an unpersisted success', async () => {
     fs.writeFileSync(file, '{bad-json');
