@@ -5505,12 +5505,18 @@ export class PiAgent extends BaseAgent {
       const operation = (async () => {
         await permissionWriteChain;
         if (closed) throw new Error('PI session is closed');
-        const [modelsJson, bridgeSource, runnerSource, cacheRulesJson] = await Promise.all([
-          fs.readFile(path.join(configHome, 'models.json')),
-          fs.readFile(bridgeExtensionPath),
-          fs.readFile(subagentRunnerPath),
-          fs.readFile(path.join(configHome, 'pi-cache-compatibility.json')),
-        ]);
+        // Model refresh writes and rolls back these files in the RPC lane. Read
+        // the snapshot there too, so a child never freezes a mixed generation.
+        // Launch/refresh below stay outside: they may enqueue their own RPC.
+        const [modelsJson, bridgeSource, runnerSource, cacheRulesJson] = await runExclusivePiRpc(() => {
+          if (closed) throw new Error('PI session is closed');
+          return Promise.all([
+            fs.readFile(path.join(configHome, 'models.json')),
+            fs.readFile(bridgeExtensionPath),
+            fs.readFile(subagentRunnerPath),
+            fs.readFile(path.join(configHome, 'pi-cache-compatibility.json')),
+          ]);
+        });
         const runId = await resumePiSubagentRun(subagentRunRoot, taskId, message, {
           launchRunner: (request) => this.launchSubagentRunner(request),
           env: durableSpawnEnv,

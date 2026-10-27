@@ -111,6 +111,9 @@ describe('Pi native cache recovery', () => {
     'Unknown field: future_vendor_option',
     "Unsupported parameter(s): ['temperature']",
     "Unsupported parameter(s): ['prompt_cache_key', 'temperature']",
+    'Unsupported parameters: prompt_cache_key, temperature',
+    "Unsupported parameter(s): 'prompt_cache_key', 'future_vendor_option'",
+    '未知请求字段：prompt_cache_key，temperature',
     "The parameter 'temperature' is not supported",
     '未知请求字段：temperature',
     '参数 temperature 不支持',
@@ -127,6 +130,11 @@ describe('Pi native cache recovery', () => {
     "The parameter 'prompt_cache_key' is not supported",
     '未知请求字段：prompt_cache_retention',
     "Unsupported parameter(s): ['prompt_cache_key', 'prompt_cache_retention']",
+    'Unsupported parameters: prompt_cache_key, prompt_cache_retention',
+    "Unsupported parameter(s): 'prompt_cache_key', 'prompt_cache_retention'",
+    'Unsupported parameter: prompt_cache_key, use prompt_cache_options instead',
+    'Unsupported parameter: prompt_cache_key, please use a supported option',
+    '未知请求字段：prompt_cache_key，请改用 prompt_cache_options',
   ])('still learns explicit cache rejection: %s', async message => {
     const h = fixture(); h.fresh();
     await h.request([failure('400: ' + JSON.stringify({ error: { param: null, message } })), success]);

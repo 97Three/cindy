@@ -1,6 +1,7 @@
 import ts from "typescript";
 import { createHash } from "node:crypto";
 import {
+  promises as fs,
   mkdirSync,
   existsSync,
   mkdtempSync,
@@ -19,6 +20,7 @@ vi.setConfig({ testTimeout: 30_000 });
 import { CINDY_BRIDGE_EXTENSION_SOURCE } from "../cindy-bridge-source.js";
 import { CINDY_SUBAGENT_EXTENSION_SOURCE } from "../cindy-subagent-source.js";
 import { piCacheRouteKey } from '../cache-compatibility.js';
+import * as piSubagentRuns from '../pi-subagent-runs.js';
 
 const captured = vi.hoisted(() => ({
   args: [] as string[],
@@ -5605,6 +5607,76 @@ describe("Pi provider-aware model routing", () => {
     expect(captured.requests.filter((request) => request.type === 'get_available_models')).toHaveLength(1);
     expect(captured.requests.some((request) => request.type === 'switch_session')).toBe(false);
     await handle.close();
+  });
+
+  it.each(['ok', 'invalid'] as const)('captures a coherent resume snapshot after a concurrent model refresh: %s', async (ack) => {
+    let endpoint = 'http://a.test';
+    const deps = byomDeps(async () => ({ providers: [{
+      id: 'native-a', name: 'Native A', adapterProvider: 'openai',
+      baseUrl: endpoint, api: 'openai-completions',
+      models: [{ id: 'local-model', contextWindow: 200_000 }],
+    }], env: {} }));
+    const handle = await new PiAgent(deps).startSession({
+      sessionId: 'resume-during-refresh', workingDir: cwd,
+      model: 'local-model', providerId: 'native-a',
+    });
+    const config = captured.env.PI_CODING_AGENT_DIR!;
+    const rulesFile = path.join(config, 'pi-cache-compatibility.json');
+    const modelsFile = path.join(config, 'models.json');
+    const write = fs.writeFile.bind(fs);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void;
+    const writingRules = new Promise<void>(resolve => { entered = resolve; });
+    let blocked = false;
+    const writer = vi.spyOn(fs, 'writeFile').mockImplementation(async (file, ...args) => {
+      if (String(file) === rulesFile && !blocked) {
+        blocked = true;
+        entered();
+        await gate;
+      }
+      return write(file, ...args);
+    });
+    const reader = vi.spyOn(fs, 'readFile');
+    const resumeSpy = vi.spyOn(piSubagentRuns, 'resumePiSubagentRun')
+      .mockResolvedValue('123e4567-e89b-42d3-a456-426614174098');
+    let switching: Promise<unknown> | undefined;
+    let resuming: Promise<unknown> | undefined;
+    try {
+      endpoint = 'http://b.test';
+      captured.refreshAckMode = ack;
+      switching = handle.setModel!('local-model', { providerId: 'native-a' })
+        .then(() => undefined, error => error);
+      await writingRules;
+      expect(readFileSync(modelsFile, 'utf8')).toContain('http://b.test');
+      expect(readFileSync(rulesFile, 'utf8')).toContain('http://a.test');
+      reader.mockClear();
+      resuming = handle.resumeBackgroundTask!('terminal-task', 'continue')
+        .then(runId => runId, error => error);
+      // Let the resume reach its read boundary while refresh is held mid-write.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(reader.mock.calls.some(([file]) => String(file) === modelsFile)).toBe(false);
+      expect(resumeSpy).not.toHaveBeenCalled();
+      release();
+      const result = await switching;
+      if (ack === 'invalid') expect(result).toBeInstanceOf(Error);
+      else expect(result).toBeUndefined();
+      expect(await resuming).toBeUndefined();
+      expect(resumeSpy).toHaveBeenCalledOnce();
+      const snapshot = resumeSpy.mock.calls[0][3]!.runtimeSnapshot!;
+      const expected = ack === 'ok' ? 'http://b.test' : 'http://a.test';
+      expect(JSON.parse(snapshot.modelsJson.toString()).providers['native-a'].baseUrl).toBe(expected);
+      expect(JSON.parse(snapshot.cacheRulesJson!.toString())).toContainEqual(expect.objectContaining({
+        provider: 'native-a', baseUrl: expected,
+      }));
+    } finally {
+      release();
+      await Promise.allSettled([switching, resuming]);
+      await handle.close();
+      writer.mockRestore();
+      reader.mockRestore();
+      resumeSpy.mockRestore();
+    }
   });
 
   it.each(['provider', 'model'] as const)('retains only the running credential when its %s disappears during catalog refresh', async (removed) => {
