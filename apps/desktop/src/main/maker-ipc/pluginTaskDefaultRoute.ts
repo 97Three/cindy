@@ -1,0 +1,50 @@
+/**
+ * Default model for a plugin's own persistent tasks (created without a source
+ * session): follow the system auxiliary-model chain at low reasoning effort.
+ *
+ * The plugin settings page has always described the model row as "follows the
+ * system auxiliary model"; routes created from inside a user's session still
+ * inherit that session's model (resolveRoute with a sourceSessionId). Only the
+ * no-source path used to borrow the new-task composer selection, which made a
+ * subtitle translation cost whatever model the user last picked for coding.
+ */
+import type { AgentKind } from '@cindy/maker-core';
+import { getUtilityModelProfile } from '../../shared/utilityModelProfiles.js';
+import { parsedAuxiliaryModelRefs } from '../utility-model/resolveAuxiliaryModelChain.js';
+
+export interface PluginTaskDefaultCandidate {
+  agentKind: AgentKind;
+  providerId: string;
+  model: string;
+}
+
+/** Lightweight profiles run through the same gateways as one-shot utility calls. */
+function profileRoute(id: Parameters<typeof getUtilityModelProfile>[0]): PluginTaskDefaultCandidate {
+  const profile = getUtilityModelProfile(id);
+  return {
+    agentKind: 'codex',
+    providerId: profile.transport === 'codex-responses' ? 'openai' : 'xd',
+    model: profile.model,
+  };
+}
+
+/** Ordered, de-duplicated session routes derived from the auxiliary chain refs. */
+export function auxiliaryChainSessionCandidates(refs: readonly string[]): PluginTaskDefaultCandidate[] {
+  const out: PluginTaskDefaultCandidate[] = [];
+  const seen = new Set<string>();
+  for (const ref of parsedAuxiliaryModelRefs(refs)) {
+    const candidate = ref.kind === 'catalog'
+      ? { agentKind: ref.route.agentKind as AgentKind, providerId: ref.route.providerId, model: ref.route.model }
+      : profileRoute(ref.id);
+    const key = `${candidate.agentKind}\u0000${candidate.providerId}\u0000${candidate.model}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(candidate);
+  }
+  return out;
+}
+
+/** The plugin left the route open when none of the identifying fields is set. */
+export function pluginTaskSelectionIsOpen(selection: { agentKind?: unknown; model?: unknown; providerId?: unknown }): boolean {
+  return !selection.agentKind && !selection.model && !selection.providerId;
+}

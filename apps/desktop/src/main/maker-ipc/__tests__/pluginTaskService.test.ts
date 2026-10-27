@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
+import { pluginTaskSelectionIsOpen } from '../pluginTaskDefaultRoute.js';
 import { createSessionExecutionResolver } from '../sessionExecutionSelection.js';
 import { Session } from '@cindy/maker-core';
 import { fastModeToStorage } from '@cindy/maker-shared';
@@ -1399,6 +1400,44 @@ it('rechecks saved preferences at the runtime mutation boundary', async () => {
   expect(apply).not.toHaveBeenCalled();
 });
 
+it('an open plugin selection without a source session follows the auxiliary chain at low effort', async () => {
+  // Rule: a plugin's own persistent task must not borrow the new-task composer
+  // model; the settings copy says it follows the system auxiliary model. tier: unit.
+  const f = fixture();
+  const selected = { harness: 'codex' as const, model: 'next', providerId: f.route.providerId, effort: 'high' as const, fastMode: false };
+  const resolver = createSessionExecutionResolver({
+    captureOwner: () => () => {}, readCaller: async () => { throw Error('unexpected caller'); },
+    readDefault: () => ({ agentKind: selected.harness, model: selected.model, providerId: selected.providerId, effort: selected.effort, fastMode: selected.fastMode }),
+    availableAgents: () => ['codex'],
+    availableModels: () => [{ id: 'next', efforts: ['high'] }, { id: 'cheap', efforts: ['low', 'high'] }, { id: 'nolow', efforts: ['high'] }],
+    hasCindyAiApiKey: () => true,
+    readProviderRouting: async () => ({ availability: { 'claude-code': [], pi: [],
+      codex: [{ id: f.route.providerId, name: 'provider', models: ['next', 'cheap', 'nolow'] }] },
+      resolveDefaultProviderIdForModel: () => f.route.providerId }),
+  });
+  const source = readFileSync(new URL('../register.ts', import.meta.url), 'utf8');
+  const resolveStart = source.indexOf('    const resolveRoute = async');
+  const resolve = source.slice(resolveStart, source.indexOf('    const readExecution', resolveStart));
+  const run = (candidates: Array<{ agentKind: 'codex'; providerId: string; model: string }>, config = {}, sourceSessionId?: string) => {
+    const deps = { readPluginTaskConfig: () => config, getSelectedNewMakerRoute: () => selected,
+      activeOwnerScopeKey: () => 'owner', assertPlugin: () => {}, getPluginTaskSourceSessionId: () => sourceSessionId,
+      resolveSessionExecution: resolver, PluginTaskError, routeUnavailable: () => { throw Error('unavailable'); },
+      getEffectiveAuxiliaryModelRefs: () => ['chain'], getEffectiveAuxiliaryModelChainSnapshot: () => 'chain',
+      auxiliaryChainSessionCandidates: () => candidates, pluginTaskSelectionIsOpen };
+    const js = ts.transpileModule(`${resolve}\nreturn resolveRoute;`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+    return new Function(...Object.keys(deps), js)(...Object.values(deps))('p') as Promise<{ model: string; effort: string }>;
+  };
+  // First usable candidate wins, at low effort.
+  await expect(run([{ agentKind: 'codex', providerId: f.route.providerId, model: 'missing' }, { agentKind: 'codex', providerId: f.route.providerId, model: 'cheap' }]))
+    .resolves.toMatchObject({ model: 'cheap', effort: 'low' });
+  // A model without a low effort level still routes, at its default effort.
+  await expect(run([{ agentKind: 'codex', providerId: f.route.providerId, model: 'nolow' }])).resolves.toMatchObject({ model: 'nolow' });
+  // No usable candidate: the new-task selection remains the last resort.
+  await expect(run([{ agentKind: 'codex', providerId: f.route.providerId, model: 'missing' }])).resolves.toMatchObject({ model: 'next', effort: 'high' });
+  // An explicit plugin model never consults the chain.
+  await expect(run([{ agentKind: 'codex', providerId: f.route.providerId, model: 'cheap' }], { model: 'next' })).resolves.toMatchObject({ model: 'next' });
+});
+
 it.each([
   ['provider', 'reset'], ['provider', 'partial'],
   ['mutation', 'reset'], ['mutation', 'partial'],
@@ -1437,7 +1476,10 @@ it.each([
   const resolve = source.slice(resolveStart, source.indexOf('    const readExecution', resolveStart));
   const deps = { getPluginTaskDefaults: () => config, getSelectedNewMakerRoute: () => selected,
     activeOwnerScopeKey: () => 'owner', assertPlugin: () => {}, getPluginTaskSourceSessionId: () => undefined,
-    resolveSessionExecution: resolver, PluginTaskError, routeUnavailable: () => { throw Error('unavailable'); } };
+    resolveSessionExecution: resolver, PluginTaskError, routeUnavailable: () => { throw Error('unavailable'); },
+    // No auxiliary chain configured in this scenario: the new-task selection stays the inherited default.
+    getEffectiveAuxiliaryModelRefs: () => [], getEffectiveAuxiliaryModelChainSnapshot: () => '',
+    auxiliaryChainSessionCandidates: () => [], pluginTaskSelectionIsOpen };
   const js = ts.transpileModule(`${resolve}\nreturn {${preference} resolveRoute};`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   }).outputText;

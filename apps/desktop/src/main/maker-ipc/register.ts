@@ -662,6 +662,8 @@ import { readSessionNotificationPreview } from '../localDb/sessionNotificationPr
 import { createBotGroupWorkDir } from './botGroupWorkDir.js';
 import { createBotGroupAttachmentStore } from './botGroupAttachments.js';
 import { requestUtilityText } from '../utility-model/oneShotCandidates.js';
+import { getEffectiveAuxiliaryModelChainSnapshot, getEffectiveAuxiliaryModelRefs } from '../utility-model/resolveAuxiliaryModelChain.js';
+import { auxiliaryChainSessionCandidates, pluginTaskSelectionIsOpen } from './pluginTaskDefaultRoute.js';
 import { validateExistingLocalProjectDirectory } from '../mcp-integrations/createProject.js';
 import { gitExec } from '../worktree/gitExec.js';
 import { BOT_GROUP_CLIENT_ID_PREFIX } from '../../shared/botGroupChat.js';
@@ -14172,7 +14174,23 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       const sourceSessionId = getPluginTaskSourceSessionId(pluginId, callId);
       if (callId && !sourceSessionId && !(selection.agentKind && selection.model && selection.providerId)) throw new PluginTaskError('ROUTE_UNAVAILABLE', '发起任务已不可用，请重新调用，或在面板选择模型后创建任务');
       try {
-        const execution = await resolveSessionExecution(selection, sourceSessionId);
+        let execution: Awaited<ReturnType<typeof resolveSessionExecution>> | undefined;
+        if (!sourceSessionId && pluginTaskSelectionIsOpen(selection)) {
+          // A plugin's own task with no originating session follows the auxiliary
+          // chain at low effort; an unavailable candidate falls through to the next,
+          // and the new-task selection remains the last resort.
+          for (const candidate of auxiliaryChainSessionCandidates(getEffectiveAuxiliaryModelRefs())) {
+            for (const effort of ['low', undefined] as const) {
+              try {
+                execution = await resolveSessionExecution({ ...selection, ...candidate, ...(effort ? { effort } : {}) });
+                assertPlugin(pluginId);
+                break;
+              } catch { execution = undefined; }
+            }
+            if (execution) break;
+          }
+        }
+        execution ??= await resolveSessionExecution(selection, sourceSessionId);
         assertPlugin(pluginId);
         if (!execution.providerId) return routeUnavailable();
         return { ...execution, agentKind: execution.agentKind === 'claude-code' ? 'cc' : execution.agentKind,
@@ -14199,8 +14217,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         // inherit the new-task selection; partial/reset settings can do so.
         const fallback = config.agentKind && config.model && config.providerId
           ? undefined : getSelectedNewMakerRoute(activeOwnerScopeKey());
-        return { ...config, inheritedDefault: fallback ? JSON.stringify([
-          fallback.harness, fallback.model, fallback.providerId, fallback.effort, fallback.fastMode,
+        // An open selection also follows the auxiliary chain; its snapshot is part of the fingerprint.
+        const chain = pluginTaskSelectionIsOpen(config) ? getEffectiveAuxiliaryModelChainSnapshot() : undefined;
+        return { ...config, inheritedDefault: fallback || chain ? JSON.stringify([
+          fallback?.harness, fallback?.model, fallback?.providerId, fallback?.effort, fallback?.fastMode, chain,
         ]) : undefined };
       },
       readPermissionMode: pluginId => {
