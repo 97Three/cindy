@@ -127,7 +127,16 @@ Library 请求同时绑定迁移代次和安装批准，根解析、排队及开
   `minCindyVersion`。Manifest schema 不设置统一的 Cindy 版本下限；具体版本只属于插件包元数据。
   v3 **没有** `slots`；
   `tools`、`card`、`panel`、`mainView`、`taskView`、`subscribe`、`skill`、`cindy`、`agent`、`node`、`network`、
-  `preview` 等顶层字段本身就是插件贡献项或自主 Host 能力的直接声明。
+  `preview`、`browserExtension` 等顶层字段本身就是插件贡献项或自主 Host 能力的直接声明。
+- `browserExtension` 是宿主承接随包浏览器扩展连接的直接字段（2026-10-27 由 Cindy Chrome
+  插件自带接线进程迁入宿主）：`protocol` 必须是当前宿主实现的 `cindy-browser-extension/3`，
+  `extensionIds` 是允许连接的扩展 id（装入时逐条展示并钉死），可选 `nativeHost{name,binary}`
+  由宿主复制包内平台二进制并注册 Native Messaging，可选 `pageControl: true` 表示扩展实现
+  页面控制契约、可作为 Browser Use 的「我的浏览器」执行端。宿主代码里不得出现具体插件名
+  或专有协议：桥接按声明启停（`cindy-brain/browserExtensionSlot.ts`），扩展发起的请求经
+  `browser-extension-relay` 事件转交给声明插件，插件经 `browser-extension-request` 投递作业、
+  推送站点策略与配对身份。站点策略归插件所有，宿主只缓存到 owner 私有目录并在每个作业上
+  强制；新增 id 或新增 `pageControl` 视为权限变多，删减视为收权。
 - 无配置的布尔能力只接受字面量 `true`：`notify`、`badge`、`confirm`、`fs`、`library`、
   `sessionContext`、`pick`、`workspace`。不用就省略，写 `false` 是无效清单。
 - `card: {}` 与 `agent: {}` 分别表示基础卡片能力和由真实用户点击触发 Agent 回合；

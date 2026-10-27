@@ -5242,7 +5242,7 @@
       },
       "browserBackend": {
         "title": "浏览器自动化目标",
-        "description": "选择 Agent 自动化操作时实际控制哪个浏览器。两种模式登录态相互独立。",
+        "description": "选择 Agent 自动化操作时默认控制哪个浏览器。三种目标的登录态相互独立；任务里明确指定时按指定来。",
         "defaultTag": "默认",
         "resetToDefault": "恢复默认",
         "toggleFailed": "切换浏览器目标失败",
@@ -5254,13 +5254,16 @@
             "hostUnavailable": "内置浏览器界面尚未就绪或连接已中断",
             "startFailed": "浏览器连接未能启动",
             "statusFailed": "无法检查浏览器连接状态",
-            "recoveryFailed": "控制连接未能重建"
+            "recoveryFailed": "控制连接未能重建",
+            "extensionDisconnected": "没有已连接的浏览器扩展（安装并启用 Cindy Chrome 插件与扩展）"
           },
           "reconnect": "重新连接浏览器",
           "recover": "恢复浏览器",
           "recovering": "正在恢复浏览器…",
           "recovered": "内置浏览器已重新连接",
-          "recoverFailed": "恢复内置浏览器失败，请根据错误原因重试"
+          "recoverFailed": "恢复内置浏览器失败，请根据错误原因重试",
+          "userBrowserReady": "我的浏览器已连接：Agent 可以操作你正在使用的浏览器。",
+          "userBrowserError": "我的浏览器不可用：{{reason}}。"
         },
         "rsbWebview": {
           "title": "侧边栏内置浏览器",
@@ -5269,6 +5272,10 @@
         "external": {
           "title": "独立外置浏览器",
           "description": "Agent 操作 {{appName}} 专用的独立 Chrome 窗口（vendored Playwright）。"
+        },
+        "userBrowser": {
+          "title": "我的浏览器",
+          "description": "Agent 通过 Cindy 扩展直接操作你正在使用的 Chrome / Edge，登录态现成；不支持截图、网络读取和任意脚本。"
         }
       },
       "android": {
@@ -7328,6 +7335,9 @@
         "sessionContextDetail": "只在它为当前任务干活时告知位置信息(任务编号与项目文件夹路径)，不包含文件内容，也不因此获得文件访问权。",
         "preview": "可在右侧栏浏览器中打开以下网站的预览页面",
         "previewDetail": "只能打开下方列出的网站；每次打开都会提示是哪个插件打开的。",
+        "browserExtension": "可让它自带的浏览器扩展连接到 Cindy",
+        "browserExtensionDetail": "只有下方列出的扩展能连接；连接经本机回环地址，由 Cindy 把扩展发起的请求转交给这个插件。",
+        "browserExtensionPageControlDetail": "只有下方列出的扩展能连接。该扩展还实现页面控制：选择「我的浏览器」后，Agent 可经它读取和操作你正在使用的浏览器页面，受插件的站点权限约束。",
         "nodeChildSpawn": "Node 程序可请宿主再启动包内申报过的子进程",
         "nodeChildSpawnDetail": "只能启动它自己包里申报过的 JS 文件(与主程序同样的本机权限)，不能执行任意命令；插件停用或退出时子进程一并关闭。",
         "skill": "为 AI 助手添加技能「{{name}}」",

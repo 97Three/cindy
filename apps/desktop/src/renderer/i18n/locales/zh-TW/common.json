@@ -5242,7 +5242,7 @@
       },
       "browserBackend": {
         "title": "瀏覽器自動化目標",
-        "description": "選擇 Agent 自動化操作時實際控制哪個瀏覽器。兩種模式登入態相互獨立。",
+        "description": "選擇 Agent 自動化操作時預設控制哪個瀏覽器。三種目標的登入態相互獨立；任務裡明確指定時按指定來。",
         "defaultTag": "預設",
         "resetToDefault": "恢復預設",
         "toggleFailed": "切換瀏覽器目標失敗",
@@ -5254,13 +5254,16 @@
             "hostUnavailable": "內建瀏覽器介面尚未就緒或連線已中斷",
             "startFailed": "瀏覽器連線未能啟動",
             "statusFailed": "無法檢查瀏覽器連線狀態",
-            "recoveryFailed": "控制連線未能重建"
+            "recoveryFailed": "控制連線未能重建",
+            "extensionDisconnected": "沒有已連線的瀏覽器擴充功能（安裝並啟用 Cindy Chrome 插件與擴充功能）"
           },
           "reconnect": "重新連線瀏覽器",
           "recover": "恢復瀏覽器",
           "recovering": "正在恢復瀏覽器…",
           "recovered": "內建瀏覽器已重新連線",
-          "recoverFailed": "恢復內建瀏覽器失敗，請根據錯誤原因重試"
+          "recoverFailed": "恢復內建瀏覽器失敗，請根據錯誤原因重試",
+          "userBrowserReady": "我的瀏覽器已連線：Agent 可以操作你正在使用的瀏覽器。",
+          "userBrowserError": "我的瀏覽器無法使用：{{reason}}。"
         },
         "rsbWebview": {
           "title": "側邊欄內建瀏覽器",
@@ -5269,6 +5272,10 @@
         "external": {
           "title": "獨立外接瀏覽器",
           "description": "Agent 操作 {{appName}} 專用的獨立 Chrome 視窗（vendored Playwright）。"
+        },
+        "userBrowser": {
+          "title": "我的瀏覽器",
+          "description": "Agent 透過 Cindy 擴充功能直接操作你正在使用的 Chrome / Edge，登入態現成；不支援截圖、網路讀取和任意指令碼。"
         }
       },
       "android": {
@@ -7328,6 +7335,9 @@
         "sessionContextDetail": "只在它為當前任務幹活時告知位置資訊(任務編號與專案資料夾路徑)，不包含檔案內容，也不因此獲得檔案訪問權。",
         "preview": "可在右側欄瀏覽器中開啟以下網站的預覽頁面",
         "previewDetail": "只能開啟下方列出的網站；每次開啟都會提示是哪個插件開啟的。",
+        "browserExtension": "可讓它自帶的瀏覽器擴充功能連線到 Cindy",
+        "browserExtensionDetail": "只有下方列出的擴充功能能連線；連線經本機回環位址，由 Cindy 把擴充功能發起的請求轉交給這個插件。",
+        "browserExtensionPageControlDetail": "只有下方列出的擴充功能能連線。該擴充功能還實作頁面控制：選擇「我的瀏覽器」後，Agent 可經它讀取和操作你正在使用的瀏覽器頁面，受插件的站點權限約束。",
         "nodeChildSpawn": "Node 程式可請宿主再啟動包內申報過的子處理程序",
         "nodeChildSpawnDetail": "只能啟動它自己包裡申報過的 JS 檔案(與主程式同樣的本機權限)，不能執行任意命令；插件停用或退出時子處理程序一併關閉。",
         "skill": "為 AI 助手新增技能「{{name}}」",

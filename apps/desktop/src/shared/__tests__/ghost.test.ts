@@ -4976,3 +4976,73 @@ describe('ghostPermissionProjectionFingerprint', () => {
     );
   });
 });
+
+describe('ghost · browserExtension 槽(2026-10-27 浏览器扩展经宿主桥接连接)', () => {
+  const base = {
+    schemaVersion: 3, minCindyVersion: '0.1.0', id: 'ext-ghost', name: 'Ext Ghost', version: '1.0.0', entry: 'main.js',
+  };
+  const chromeId = 'a'.repeat(32);
+  const edgeId = 'b'.repeat(32);
+  const good = {
+    protocol: 'cindy-browser-extension/3',
+    extensionIds: [chromeId, edgeId],
+    nativeHost: { name: 'com.example.browser', binary: 'native-host/bin' },
+    pageControl: true,
+  };
+  const withNeeds = (browserExtension: unknown) => validateGhostManifest({ ...base, browserExtension });
+
+  it('协议、扩展 id、native host 与 pageControl 都按合同校验;未知扩展字段原样保留', () => {
+    const ok = withNeeds({ ...good, future: { mode: 1 } });
+    expect(ok.ok, JSON.stringify(ok)).toBe(true);
+    if (!ok.ok) return;
+    expect(ok.manifest.browserExtension).toEqual({ ...good, future: { mode: 1 } });
+    expect(validateGhostManifest(ok.manifest)).toEqual(ok);
+    // 没有 native host、没有 pageControl 也是合法的纯通道声明。
+    expect(withNeeds({ protocol: good.protocol, extensionIds: [chromeId] }).ok).toBe(true);
+    for (const bad of [
+      'string',
+      {},
+      { ...good, protocol: 'cindy-browser-extension/4' },
+      { ...good, extensionIds: [] },
+      { ...good, extensionIds: ['not-an-id'] },
+      { ...good, extensionIds: ['A'.repeat(32)] },
+      { ...good, extensionIds: [chromeId, chromeId] },
+      { ...good, extensionIds: Array.from({ length: 9 }, (_, i) => String.fromCharCode(97 + i).repeat(32)) },
+      { ...good, nativeHost: 'com.example.browser' },
+      { ...good, nativeHost: { name: 'Com.Example', binary: 'native-host/bin' } },
+      { ...good, nativeHost: { name: 'com.example.browser', binary: '../outside' } },
+      { ...good, pageControl: false },
+      { ...good, pageControl: 'yes' },
+    ]) {
+      expect(withNeeds(bad).ok, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it('装入前展示为一项权限;页面控制用单独说明;id 子集与去掉页面控制是收权,新增 id 是扩权', () => {
+    const reviewed = withNeeds(good);
+    expect(reviewed.ok).toBe(true);
+    if (!reviewed.ok) return;
+    expect(ghostPermissionItems(reviewed.manifest)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'browser-extension', kind: 'browser-extension', labelKey: 'browserExtension',
+          detailKey: 'browserExtensionPageControlDetail', detail: `${chromeId}\n${edgeId}`,
+        }),
+      ]),
+    );
+    const channelOnly = withNeeds({ protocol: good.protocol, extensionIds: [chromeId] });
+    if (!channelOnly.ok) throw new Error('fixture');
+    expect(ghostPermissionItems(channelOnly.manifest)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: 'browser-extension', detailKey: 'browserExtensionDetail' })]),
+    );
+    expect(unreviewedGhostPermissionItems(reviewed.manifest, undefined, channelOnly.manifest)).toEqual([]);
+    const expanded = withNeeds({ ...good, extensionIds: [chromeId, edgeId, 'c'.repeat(32)] });
+    if (!expanded.ok) throw new Error('fixture');
+    expect(unreviewedGhostPermissionItems(reviewed.manifest, undefined, expanded.manifest).map((item) => item.key)).toEqual(['browser-extension']);
+    const controlAdded = withNeeds({ ...good });
+    if (!controlAdded.ok) throw new Error('fixture');
+    expect(unreviewedGhostPermissionItems(channelOnly.manifest, undefined, controlAdded.manifest).map((item) => item.key)).toEqual(['browser-extension']);
+    // 既有安装基线已批准页面控制时,市场清单收窄也不算扩权。
+    expect(unreviewedGhostPermissionItems(channelOnly.manifest, reviewed.manifest, controlAdded.manifest)).toEqual([]);
+  });
+});

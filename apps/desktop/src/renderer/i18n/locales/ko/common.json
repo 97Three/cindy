@@ -5242,7 +5242,7 @@
       },
       "browserBackend": {
         "title": "자동화 브라우저 대상",
-        "description": "에이전트가 실제로 제어할 브라우저를 선택합니다. 두 모드는 로그인 상태가 서로 독립적입니다.",
+        "description": "자동화 시 에이전트가 기본으로 제어할 브라우저를 선택합니다. 세 대상의 로그인 상태는 서로 독립적이며, 작업에서 명시하면 그 선택이 우선합니다.",
         "defaultTag": "기본",
         "resetToDefault": "기본값으로 재설정",
         "toggleFailed": "브라우저 대상 전환에 실패했습니다",
@@ -5254,13 +5254,16 @@
             "hostUnavailable": "내장 브라우저 화면이 준비되지 않았거나 연결이 끊어졌습니다",
             "startFailed": "새 제어 프로세스를 시작하지 못했습니다",
             "statusFailed": "제어 프로세스 상태 확인에 실패했습니다",
-            "recoveryFailed": "제어 연결을 다시 구성하지 못했습니다"
+            "recoveryFailed": "제어 연결을 다시 구성하지 못했습니다",
+            "extensionDisconnected": "연결된 브라우저 확장이 없습니다 (Cindy Chrome 플러그인과 확장을 설치하고 활성화하세요)"
           },
           "reconnect": "내장 브라우저 다시 연결",
           "recover": "내장 브라우저 복구",
           "recovering": "내장 브라우저 복구 중…",
           "recovered": "내장 브라우저가 다시 연결되었습니다",
-          "recoverFailed": "내장 브라우저 복구에 실패했습니다. 오류 원인을 확인하고 다시 시도하세요."
+          "recoverFailed": "내장 브라우저 복구에 실패했습니다. 오류 원인을 확인하고 다시 시도하세요.",
+          "userBrowserReady": "내 브라우저가 연결되었습니다: 에이전트가 사용 중인 브라우저를 조작할 수 있습니다.",
+          "userBrowserError": "내 브라우저를 사용할 수 없습니다: {{reason}}."
         },
         "rsbWebview": {
           "title": "사이드바 내장 브라우저",
@@ -5269,6 +5272,10 @@
         "external": {
           "title": "독립 외부 브라우저",
           "description": "에이전트가 전용 Chrome 창을 제어합니다 (vendored Playwright)."
+        },
+        "userBrowser": {
+          "title": "내 브라우저",
+          "description": "에이전트가 Cindy 확장을 통해 사용 중인 Chrome / Edge를 로그인 상태 그대로 조작합니다. 스크린샷, 네트워크 읽기, 임의 스크립트는 지원하지 않습니다."
         }
       },
       "android": {
@@ -7328,6 +7335,9 @@
         "sessionContextDetail": "현재 세션을 위해 작동할 때만 위치 정보(세션 ID와 프로젝트 폴더 경로)를 전달합니다. 파일 내용은 포함되지 않으며 파일 접근 권한도 부여되지 않습니다.",
         "preview": "아래 사이트의 미리보기 페이지를 사이드바 브라우저에서 열 수 있습니다",
         "previewDetail": "아래에 나열된 사이트만 열 수 있으며, 페이지를 열 때마다 어떤 플러그인이 열었는지 표시됩니다.",
+        "browserExtension": "함께 제공되는 브라우저 확장을 Cindy에 연결할 수 있습니다",
+        "browserExtensionDetail": "아래에 나열된 확장만 연결할 수 있으며, 연결은 로컬 루프백 주소를 통해 이루어집니다. 확장이 보낸 요청은 Cindy가 이 플러그인에 전달합니다.",
+        "browserExtensionPageControlDetail": "아래에 나열된 확장만 연결할 수 있습니다. 이 확장은 페이지 제어도 구현하므로 「내 브라우저」를 선택하면 에이전트가 플러그인의 사이트 권한 범위 안에서 사용 중인 브라우저의 페이지를 읽고 조작할 수 있습니다.",
         "nodeChildSpawn": "Node 프로그램이 패키지에 신고된 하위 프로세스 시작을 호스트에 요청할 수 있습니다",
         "nodeChildSpawnDetail": "자신의 패키지 안에 신고된 JS 파일만 시작할 수 있으며(메인 프로그램과 동일한 로컬 권한), 임의의 명령은 실행할 수 없습니다. 플러그인이 비활성화되거나 종료되면 하위 프로세스도 함께 종료됩니다.",
         "skill": "AI 어시스턴트에 스킬 \"{{name}}\"을(를) 추가합니다",

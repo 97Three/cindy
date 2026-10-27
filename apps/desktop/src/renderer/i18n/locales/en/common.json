@@ -5274,7 +5274,7 @@
       },
       "browserBackend": {
         "title": "Automation browser target",
-        "description": "Pick which browser the agent actually drives during automation. Login state is independent between the two modes.",
+        "description": "Pick which browser the agent drives by default during automation. Sign-ins are independent across the three targets; an explicit choice in a task wins.",
         "defaultTag": "Default",
         "resetToDefault": "Reset to default",
         "toggleFailed": "Failed to switch browser target",
@@ -5286,13 +5286,16 @@
             "hostUnavailable": "the embedded browser interface is not ready or its connection was lost",
             "startFailed": "the replacement controller could not start",
             "statusFailed": "the controller status check failed",
-            "recoveryFailed": "the control connection could not be rebuilt"
+            "recoveryFailed": "the control connection could not be rebuilt",
+            "extensionDisconnected": "no browser extension is connected (install and enable the Cindy Chrome plugin and its extension)"
           },
           "reconnect": "Reconnect Browser",
           "recover": "Recover Browser",
           "recovering": "Recovering Browser…",
           "recovered": "Embedded browser reconnected",
-          "recoverFailed": "Failed to recover the embedded browser. Review the reason and try again."
+          "recoverFailed": "Failed to recover the embedded browser. Review the reason and try again.",
+          "userBrowserReady": "Your browser is connected: the agent can operate the browser you are using.",
+          "userBrowserError": "Your browser is unavailable: {{reason}}."
         },
         "rsbWebview": {
           "title": "Sidebar embedded browser",
@@ -5301,6 +5304,10 @@
         "external": {
           "title": "Standalone external browser",
           "description": "Agent drives a dedicated Chrome window (vendored Playwright)."
+        },
+        "userBrowser": {
+          "title": "My browser",
+          "description": "Agent operates the Chrome / Edge you are using through the Cindy extension, with your sign-ins. No screenshots, network reads or arbitrary scripts."
         }
       },
       "android": {
@@ -7360,6 +7367,9 @@
         "sessionContextDetail": "Shares only location facts (session ID and project folder path) while it works for the current session — no file contents, and no file access is granted.",
         "preview": "Can open preview pages from the sites below in the sidebar browser",
         "previewDetail": "Only the sites listed below can be opened; every page it opens is attributed to this plugin.",
+        "browserExtension": "Lets its bundled browser extension connect to Cindy",
+        "browserExtensionDetail": "Only the extensions listed below can connect, over the local loopback address; Cindy hands requests the extension makes to this plugin.",
+        "browserExtensionPageControlDetail": "Only the extensions listed below can connect. The extension also implements page control: with “My browser” selected, the agent can read and operate pages in the browser you are using, within the plugin's site permissions.",
         "nodeChildSpawn": "Its Node program can ask the host to start declared sub-processes from its package",
         "nodeChildSpawnDetail": "Only JS files declared inside its own package can be started (same local permissions as the main program); arbitrary commands cannot be executed. Sub-processes are closed together when the plugin is disabled or exits.",
         "skill": "Adds the skill \"{{name}}\" to your AI assistants",
