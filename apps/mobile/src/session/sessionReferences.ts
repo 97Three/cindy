@@ -284,7 +284,9 @@ function sliceTailToTokenBudget(text: string, budget: number): string {
     if (estimateMobileReferenceTokens(text.slice(text.length - middle)) <= payloadBudget) low = middle;
     else high = middle - 1;
   }
-  return `…${sliceFromCodePointBoundary(text, text.length - low)}`;
+  // 估算按 code point 计数，补上低代理项前的高代理项不增加 token，
+  // 二分得到的最长后缀因此不会从代理对中间开始。
+  return `…${text.slice(text.length - low)}`;
 }
 
 function fitMessagesToTokenBudget(

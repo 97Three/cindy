@@ -690,9 +690,9 @@ describe('resolveMobileSessionReferences', () => {
   });
 
   it.each([
-    { cutPoint: 'binary tail', payloadBody: '😀"' },
-    { cutPoint: 'serialized payload', payloadBody: '"😀' },
-  ])('keeps emoji whole at the $cutPoint multi-reference budget cut', async ({ payloadBody }) => {
+    { layout: 'emoji before quote', payloadBody: '😀"' },
+    { layout: 'quote before emoji', payloadBody: '"😀' },
+  ])('keeps emoji whole when the serialized payload cut trims $layout content', async ({ payloadBody }) => {
     const invoke = asInvoke(async (_deviceId, channel, args) => {
       if (channel === 'local-db:sessions:get') return { id: args[0] };
       const request = args[0] as { sessionId: string };
