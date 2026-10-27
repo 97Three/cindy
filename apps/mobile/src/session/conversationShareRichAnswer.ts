@@ -396,7 +396,7 @@ export function layoutConversationShareRichAnswer(
             y: tick.y + 4,
             text: tick.label,
             textAnchor: "end",
-            fontSize: 12,
+            fontSize: typeScale.caption,
             fill: "secondary",
           });
         }
@@ -423,7 +423,7 @@ export function layoutConversationShareRichAnswer(
               y: point.y - 10,
               text: String(point.value),
               textAnchor: "middle",
-              fontSize: 12,
+              fontSize: typeScale.caption,
             });
         }
         for (const item of plot.labels)
@@ -433,7 +433,7 @@ export function layoutConversationShareRichAnswer(
             y: plot.labelY,
             text: item.label,
             textAnchor: "middle",
-            fontSize: 12,
+            fontSize: typeScale.caption,
           });
         const vector = richVector(
           {
