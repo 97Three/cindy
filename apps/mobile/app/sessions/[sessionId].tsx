@@ -1,3 +1,4 @@
+import { snapshotRichAnswerValues } from '@/session/RichAnswer';
 import { deviceDisplayName } from '@/device-link/deviceName';
 import { SessionQuickSendProvider } from '@/session/SessionQuickSendContext';
 import { incomingShareSlotOrder } from '@/session/mobileLocalAttachmentUpload';
@@ -6305,6 +6306,7 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
   );
   const conversationShareWidth = buildConversationShareContentWidth(detailViewport);
   const conversationShareColors = useMemo<ConversationShareWebViewColors>(() => ({
+    success: colors.statusDone, warning: colors.warningFg, danger: colors.statusError,
     background: colors.surface,
     border: colors.border,
     ownUserBubble: userBubbleColors,
@@ -6325,7 +6327,10 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
     textTertiary: colors.textTertiary,
     dark: mode === 'dark',
   }), [colors, mode, userBubbleColors]);
+  const snapshotShareRichValues = useCallback((message: ConversationShareMessage) => snapshotRichAnswerValues(message.body,
+    `${auth.user?.id ?? 'signed-out'}:${deviceId}:${sessionId}:${message.richStateKey ?? message.clientId}`), [auth.user?.id, deviceId, sessionId]);
   const shareImages = useConversationShareImages(selectedShareMessages, resolveRemoteMedia, {
+    snapshotRichValues: snapshotShareRichValues,
     workdir: currentSession?.workingDir ?? undefined,
     remoteHostId: currentSession?.remoteHostId ?? undefined,
     sessionId,
@@ -6389,6 +6394,7 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
       && shareSelectionRevisionRef.current === operationSelectionRevision;
     let localUri: string | null = null;
     let shareCompleted = false;
+    let restoreShareSelection: (() => boolean) | undefined;
     setConversationShareBusy(true);
     try {
       // 成功分享的 PNG 要保留给系统扩展读取；回收更早的产物，限制 cache
@@ -6402,14 +6408,16 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
       if (!localUri) throw new Error(t('session.screen.shareNoLocalImage'));
       const sharing = await import('expo-sharing');
       if (!isShareOperationActive()) return;
+      // 系统面板的 Promise 在关闭后才返回，交接时就收起选择栏。
+      // expo-sharing 不区分取消与完成；只有打开失败才恢复原勾选。
+      restoreShareSelection = shareSelectionStore.exitForShare();
       await sharing.shareAsync(localUri, { mimeType: 'image/png' });
       // shareAsync 成功后系统扩展仍可能读取该 URL；即使当前操作随即失活，
       // 也必须交给下一次有界清理，不能在 finally 中提前删除。
       shareCompleted = true;
-      if (!isShareOperationActive()) return;
-      shareSelectionStore.exit();
     } catch (error) {
-      if (!isShareOperationActive()) return;
+      if (shareOperationSeqRef.current !== operationSeq) return;
+      if (restoreShareSelection ? !restoreShareSelection() : !isShareOperationActive()) return;
       console.warn('[conversation-share] failed to generate or open share image', error);
       Alert.alert(t('session.screen.shareFailedTitle'), t('session.screen.shareImageFailed'));
     } finally {

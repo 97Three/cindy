@@ -62,6 +62,8 @@ import {
   type ThemeColors,
 } from "@/theme";
 import {
+  splitRichAnswer,
+  type RichValues,
   richVisualStyle,
   richColor,
   richVector,
@@ -120,6 +122,18 @@ const memory = new RichInteractionMemory({
     await AsyncStorage.setItem("cindy.richAnswer.viewState.v1", value);
   },
 });
+/** Click-time copy: an export never changes the conversation's local controls. */
+export function snapshotRichAnswerValues(
+  source: string,
+  stateKey: string,
+): Readonly<Record<number, RichValues>> {
+  return Object.fromEntries(
+    splitRichAnswer(source)
+      .filter((part) => part.kind === "rich")
+      .map((part) => [part.key, { ...memory.get(`${stateKey}:${part.key}`) }]),
+  );
+}
+
 const submissions = new RichSubmissionController(memory);
 
 function RichSendAction({ node, text, receiptKey, ready, style, buttonTextStyle }: {
