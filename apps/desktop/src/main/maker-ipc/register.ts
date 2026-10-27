@@ -1336,7 +1336,7 @@ import {
   closeRejectedRuntimeAndRestoreControlStores,
   isRemoteModelSwitchRouteChangeError,
 } from './runtimeSetModel.js';
-import { updateSessionInDb } from '../localDb/ipc/sessions.js';
+import { patchSessionMetaInDb, updateSessionInDb } from '../localDb/ipc/sessions.js';
 import { codexThreadTransferSourcePredicate, commitCodexThreadTransfer, relinkCodexProviderThread } from './codexProviderThreadRelink.js';
 import {
   codexCustomProviderConfigSignature,
@@ -14316,6 +14316,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       setHidden: async (taskId, hidden, assertAllowed) => {
         await setSessionHidden({ sessionId: taskId, hidden, db: snapshot.client, assertCurrent: assertAllowed });
       },
+      // Same archive path as the sidebar and remote archive: status persisted plus sessions:patched broadcast.
+      archive: async (taskId, assertAllowed) => {
+        await patchSessionMetaInDb(taskId, { status: 'archived' }, { beforeWrite: assertAllowed });
+      },
       revealPluginTasks: async pluginId => {
         // 不受详情页列表的展示上限约束：分批恢复全部，避免卸载撤销归属后仍有任务隐藏。
         await revealAllPluginHiddenTasks(snapshot.client, pluginId, taskId =>
@@ -14680,6 +14684,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       case 'create': return service.create(pluginId, request);
       case 'get': return service.get(pluginId, request.taskId);
       case 'setHidden': return service.setHidden(pluginId, request);
+      case 'archive': return service.archive(pluginId, request);
       case 'list': return service.list(pluginId, request.after, request.limit);
       case 'send': return service.send(pluginId, request);
       case 'readMessages': {

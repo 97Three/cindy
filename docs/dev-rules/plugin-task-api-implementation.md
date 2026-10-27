@@ -183,7 +183,8 @@ Claude Code 适配层 `toSdkModelString` 会按目录窗口自动追加 `[1m]`�
 
 ## 已接入
 
-- `capabilities/models/create/list/get/setModel/send/getRun/listRuns/readMessages/cancel/setHidden`。
+- `capabilities/models/create/list/get/setModel/send/getRun/listRuns/readMessages/cancel/setHidden/archive`。
+- `archive({taskId})` 归档本插件自建的空闲本地任务（有执行中或排队输入时返回 `TASK_BUSY`），走与侧栏归档相同的 `patchSessionMetaInDb` 路径；可逆（用户可恢复），不提供删除。归档后的任务由「存储空间 → 数据库清理」按既有规则处理。
 - create 可传 `hidden:true`、`setHidden({taskId, hidden})` 切换，`get`/`list` 快照恒返回 `hidden` 布尔值；仅身份卡声明 `agent.hiddenTasks: true`（必须同时 `agent.tasks: true`）时可用，见下文「后台任务」。
 - create 可传 isolatedWorkspace:true，由宿主分配独立空作答目录；返回本任务 workingDir 与实际 permissionMode，按次选择不得超过用户授予插件的权限。
 - 默认创建用户可见的普通本地 Session（声明 hiddenTasks 后可在同一次 INSERT 中创建后台任务）；工作目录及权限来自用户配置，不接受插件传入绕过权限、任意目录或另一插件身份。普通任务创建前复用 Worker 的目录身份判据：配置路径必须仍为原规范路径，改链、缺失或非目录拒绝；异步解析后复核账号、tasks 批准及配置。缺省/isolatedWorkspace 仍由宿主分配目录，旧 errand 路径不变。旧别名配置没有原目标证据，不自动授权当前目标；这不解决校验后的目录置换窗口。

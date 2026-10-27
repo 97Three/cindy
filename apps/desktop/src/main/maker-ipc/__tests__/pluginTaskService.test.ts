@@ -1438,6 +1438,25 @@ it('an open plugin selection without a source session follows the auxiliary chai
   await expect(run([{ agentKind: 'codex', providerId: f.route.providerId, model: 'cheap' }], { model: 'next' })).resolves.toMatchObject({ model: 'next' });
 });
 
+it('archives only its own idle task through the host writer and treats archived tasks as done', async () => {
+  // Rule: plugins rotate per-video tasks and archive the previous one; a working task is never cut off. tier: unit.
+  const f = fixture(), task = await f.create();
+  f.deps.archive = vi.fn(async (taskId: string, assertAllowed: () => void) => {
+    assertAllowed();
+    f.tasks.set(taskId, { ...f.tasks.get(taskId)!, status: 'archived' });
+  });
+  (f.deps.inspect as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ execution: f.execution, pending: [] });
+  await expect(f.service.archive('p', { taskId: task.taskId })).rejects.toMatchObject({ code: 'TASK_BUSY' });
+  expect(f.deps.archive).not.toHaveBeenCalled();
+  expect((await f.service.archive('p', { taskId: task.taskId })).status).toBe('archived');
+  expect((await f.service.archive('p', { taskId: task.taskId })).status).toBe('archived');
+  expect(f.deps.archive).toHaveBeenCalledTimes(1);
+  await expect(f.service.archive('other', { taskId: task.taskId })).rejects.toMatchObject({ code: 'TASK_NOT_FOUND' });
+  await expect(f.service.send('p', { taskId: task.taskId, requestKey: 'late', expectedRevision: task.revision, text: 'x' })).rejects.toMatchObject({ code: 'TASK_BUSY' });
+  const bare = fixture(), plain = await bare.create();
+  await expect(bare.service.archive('p', { taskId: plain.taskId })).rejects.toMatchObject({ code: 'HOST_NOT_READY' });
+});
+
 it.each([
   ['provider', 'reset'], ['provider', 'partial'],
   ['mutation', 'reset'], ['mutation', 'partial'],
