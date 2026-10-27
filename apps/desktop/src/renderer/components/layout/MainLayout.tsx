@@ -766,6 +766,10 @@ export function MainLayout() {
         navigate(`/plugins?market=${encodeURIComponent(payload.pluginId)}`);
         return;
       }
+      if (payload.type === 'installed-plugin') {
+        navigate(payload.ghostId ? `/plugins?ghost=${encodeURIComponent(payload.ghostId)}` : '/plugins');
+        return;
+      }
       if (payload.type === 'session') {
         navigateToSession(payload.id, payload.messageClientId, payload.islandEntryId, payload.deviceId);
         return;
