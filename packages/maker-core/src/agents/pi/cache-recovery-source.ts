@@ -134,10 +134,24 @@ function installCindyCacheRecovery(pi) {
       if (typeof data.message === 'string') body = data.message;
       // Exclude known unrelated categories; unfamiliar gateway types stay opaque.
       if ([data.code, data.type].some(value => typeof value === 'string'
-        && /auth|permission|forbidden|quota|billing|rate.?limit|model.?not.?found|context|length|content.?filter|policy|invalid.?value/i.test(value))) return;
+        && /auth|permission|forbidden|quota|billing|rate.?limit|model.?not.?found|context|length|content.?filter|policy|invalid.?(?:value|type)|missing.?required/i.test(value))) return;
       data = data.error;
     }
     if (/api.?key|unauthori[sz]ed|authentication|permission denied|quota|rate.?limit|model.{0,30}(?:not found|does not exist)|context.{0,25}(?:length|limit)|content.?filter|content.?policy|invalid.{0,15}value|鉴权|认证失败|额度|限流|模型不存在|上下文.{0,8}(?:超|长)|内容审核|参数值/i.test(body)) return;
+    // Removing optional cache fields cannot supply a required value or repair
+    // an explicitly invalid type. A generic invalid_parameter code alone does
+    // not establish either condition and must retain its bounded contrast.
+    if (/missing\s+required|(?:field|parameter|property|argument)\s+(?:is\s+)?required|required\s+(?:field|parameter|property|argument).{0,80}missing|invalid\s+type/i.test(body)) return;
+    for (const pattern of [
+      /invalid\s+(?:parameters?|fields?|arguments?|properties|property|options?)(?:\(s\))?[\s:=]*/gi,
+      /(?:parameter|field|argument|property|option)\s*[:=]?\s*['"\x60]?([a-z_][\w.-]*)['"\x60]?\s+(?:is\s+)?invalid/gi,
+    ]) {
+      for (const match of body.matchAll(pattern)) {
+        const invalid = match[1] ? [match[1].toLowerCase()]
+          : rejectedFieldList(body.slice(match.index + match[0].length));
+        if (invalid.some(field => !fields.includes(field))) return;
+      }
+    }
     // A named rejection is evidence even when a gateway omits structured param.
     // Parse the field relationship, never a list of vendor or parameter names.
     let cacheRejected = false;

@@ -275,6 +275,36 @@ describe('Pi native cache recovery', () => {
   });
 
   it.each([
+    { code: 'missing_required_parameter', message: 'Request validation failed' },
+    { type: 'invalid_type', message: 'Request validation failed' },
+    { code: 'invalid_type', param: null, message: 'Request validation failed' },
+    { message: "Missing required parameter: 'messages'." },
+    { message: 'messages: Field required' },
+    { message: 'Required field messages is missing' },
+    { message: 'Invalid type for messages' },
+    { message: 'Invalid parameter: temperature' },
+    { code: 'invalid_parameter', param: null, message: 'Invalid parameter: future_option' },
+    { message: "Parameter 'temperature' is invalid" },
+    { message: 'Invalid parameters: prompt_cache_key, temperature' },
+  ])('does not trial explicit required/type/other-field validation: %j', async error => {
+    const h = fixture(); h.fresh();
+    const event = failure('400: ' + JSON.stringify({ error }));
+    expect(await h.request([event, success])).toEqual([expect.objectContaining({ error: expect.objectContaining({ errorMessage: event.error.errorMessage }) })]);
+    expect(h.sent).toHaveLength(1); expect(h.record()).toBeUndefined();
+  });
+
+  it.each([
+    { code: 'invalid_parameter', message: 'Request validation failed' },
+    { type: 'invalid_parameter', param: null, message: 'Request validation failed' },
+    { message: 'Invalid parameter: prompt_cache_key' },
+  ])('keeps a non-specific validation label eligible for bounded contrast: %j', async error => {
+    const h = fixture(); h.fresh();
+    await h.request([failure('400: ' + JSON.stringify({ error })), success]);
+    expect(h.sent).toHaveLength(2);
+    expect(h.record()).toMatchObject({ evidence: 'opaque', expiresAt: 1086400000 });
+  });
+
+  it.each([
     'Validation: Unsupported parameter(s): temperature',
     'Unknown field: future_vendor_option',
     "Unsupported parameter(s): ['temperature']",
