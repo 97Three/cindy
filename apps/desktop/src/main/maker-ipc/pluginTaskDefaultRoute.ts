@@ -63,6 +63,6 @@ export function pluginTaskRouteAttempts<T>(
 }
 
 /** The plugin left the route open when none of the identifying fields is set. */
-export function pluginTaskSelectionIsOpen(selection: { agentKind?: unknown; model?: unknown; providerId?: unknown }): boolean {
+export function pluginTaskSelectionIsOpen(selection: { agentKind?: unknown; model?: unknown; providerId?: unknown; effort?: unknown; fastMode?: unknown }): boolean {
   return !selection.agentKind && !selection.model && !selection.providerId;
 }

@@ -401,7 +401,8 @@ export class BrowserExtensionBridge {
         if (typeof value === 'string') {
           const limit = Math.min(remaining, FIELD_VALUE_MAX);
           if (value.length > limit) {
-            finalValue = isHttp(value) ? null : value.slice(0, limit);
+            // A URL cut mid-way would still be a URL to the model; drop it instead.
+            finalValue = /^https?:\/\//i.test(value) ? null : value.slice(0, limit);
             truncated = true;
           }
           remaining -= (finalValue as string | null)?.length || 0;
@@ -449,12 +450,13 @@ export class BrowserExtensionBridge {
     >;
     job.resolve({
       ...safe,
+      ok: safe.ok === true,
       browser: job.clientId,
       timing: { ...timing, totalMs: this.now() - job.created },
       ...(isBrowserExtensionReadAction(job.action) && job.action !== 'tabs'
         ? { untrusted_content: true }
         : {}),
-    } as BrowserExtensionJobResult);
+    });
   }
 
   private jobFailure(job: Job, error: string, message: string): BrowserExtensionFailure {
@@ -1204,7 +1206,7 @@ export class BrowserExtensionBridge {
     }
     const kind = action as BrowserExtensionAction;
     const gate = checkBrowserExtensionPolicy(this.policy, kind, payload.url);
-    if (!gate.ok) return gate;
+    if (!gate.ok) return { ...gate };
     const until = this.now() + (this.options.connectWait ?? 6000);
     while (!this.connected().length && this.now() < until)
       await new Promise((r) => setTimeout(r, 100));

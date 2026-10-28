@@ -669,8 +669,12 @@ export interface BrowserMcpDeps {
   /** Local structural observations only; no URLs, scripts, selectors or input values. */
   experienceStore?: import('./browser/experience.js').BrowserExperienceStore;
   getRuntime(): BrowserControlRuntime;
-  /** Resolve the actual host profile before validation, discovery and execution. */
-  resolveProfile?(profile?: string): string;
+  /**
+   * Resolve the actual host profile before validation, discovery and execution.
+   * undefined keeps the agent's own choice (the user-browser backend picks the
+   * only connected browser, or asks for one when several are connected).
+   */
+  resolveProfile?(profile?: string): string | undefined;
   /** Existing host lifecycle/backend identities; changes invalidate session evidence. */
   getBackendScope?(): { lifecycle: object; backend: object };
   /**

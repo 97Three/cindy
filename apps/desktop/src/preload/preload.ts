@@ -4066,6 +4066,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         | { type: 'provider-import'; importId: string }
         | { type: 'plugin'; pluginId: string }
         | { type: 'local-plugin-share'; snapshotId: string }
+        | { type: 'installed-plugin'; ghostId?: string }
         | { type: 'shared-task-join'; invitation: string; server: string }
         | { type: 'provider-share-join'; link: string }
         | { type: 'chat-invite'; token: string }
@@ -4184,6 +4185,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     | { type: 'provider-import'; importId: string }
     | { type: 'plugin'; pluginId: string }
         | { type: 'local-plugin-share'; snapshotId: string }
+        | { type: 'installed-plugin'; ghostId?: string }
     | { type: 'shared-task-join'; invitation: string; server: string }
     | { type: 'provider-share-join'; link: string }
     | { type: 'chat-invite'; token: string }

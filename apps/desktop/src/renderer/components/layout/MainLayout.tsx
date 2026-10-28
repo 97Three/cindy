@@ -733,6 +733,7 @@ export function MainLayout() {
         | { type: 'provider-share-join'; link: string }
         | { type: 'plugin'; pluginId: string }
         | { type: 'local-plugin-share'; snapshotId: string }
+        | { type: 'installed-plugin'; ghostId?: string }
         | { type: 'settings'; tab: 'voice-input' | 'providers' | 'billing' | 'remote-control'; connect?: string; intent?: 'topup' },
     ) => {
       if (payload.type === 'chat-message') {
