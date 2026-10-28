@@ -23,7 +23,7 @@ import { createLogger } from '../logger.js';
 import { genericOAuthSecretIo } from '../secrets/providerSecretStore.js';
 import { createRecipeFileBroker } from './browser-backend/rsb-webview-upload-policy.js';
 import {
-  USER_BROWSER_CAPABILITIES,
+  userBrowserCapabilities,
   UserBrowserBackend,
   type UserBrowserPageControl,
 } from './browser-backend/user-browser-backend.js';
@@ -340,7 +340,15 @@ export function setUserBrowserPageControlProvider(provider: () => UserBrowserPag
 }
 
 function createUserBrowserBackend(): UserBrowserBackend {
-  return new UserBrowserBackend({ getPageControl: () => userBrowserPageControlProvider(), logger });
+  return new UserBrowserBackend({
+    getPageControl: () => userBrowserPageControlProvider(),
+    // Same upload roots as the sidebar browser: the session's own folders plus its artifacts.
+    resolveUploadRoots: async (sessionId) => [
+      artifactSessionRoot(nodePath.join(app.getPath('temp'), 'cindy-browser-artifacts'), sessionId),
+      ...(await resolveSessionUploadRoots(sessionId)),
+    ],
+    logger,
+  });
 }
 
 const backendController = new BrowserBackendController({
@@ -544,10 +552,11 @@ export function getBrowserMcpDeps(): {
     compressInlineImage,
     supportsResourceDownloads: () => backendController.kind === 'rsb-webview',
     supportsSemanticQueries: () => backendController.kind === 'rsb-webview',
-    // The user's browser is driven by a fixed-function extension: no scripts,
-    // screenshots, network reads, uploads or dialogs. The MCP layer refuses
-    // those before dispatch instead of letting a page job fail opaquely.
-    backendCapabilities: () => (backendController.kind === 'user-browser' ? USER_BROWSER_CAPABILITIES : {}),
+    // The user's browser matches the dedicated one from extension 0.4.42 on, except what needs the
+    // debugger (PDF, trusted input). Older extensions only read and do basic input; the MCP layer
+    // refuses the rest before dispatch instead of letting a page job fail opaquely.
+    backendCapabilities: () =>
+      backendController.kind === 'user-browser' ? userBrowserCapabilities(userBrowserPageControlProvider()) : {},
     // 代输入: pause page-state reads on a tab still showing a page where the owner typed a secret.
     pageReadsRestricted: async ({ profile, targetId }) => {
       if (!hasSecretPages()) return false;

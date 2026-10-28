@@ -495,7 +495,7 @@ function unsupportedByBackend(args: Record<string, unknown>, deps: BrowserMcpDep
   if (action === 'focus' && caps.focus === false) return deny('切换活动标签页');
   if (action === 'close' && caps.close === false) return deny('关闭标签页');
   if (action === 'act' && kind === 'evaluate' && caps.evaluate === false) return deny('任意页面脚本(evaluate)');
-  if (action === 'act' && caps.trustedInput === false && (kind === 'clickCoords' || kind === 'drag' || kind === 'resize')) return deny(`act:${kind}`);
+  if (action === 'act' && (caps.pointer ?? caps.trustedInput) === false && (kind === 'clickCoords' || kind === 'drag' || kind === 'resize')) return deny(`act:${kind}`);
   return undefined;
 }
 
@@ -507,6 +507,7 @@ function recipeUnsupportedByBackend(recipe: Recipe, deps: BrowserMcpDeps): strin
   const needsScript = (recipe as { adapter?: unknown }).adapter !== undefined
     || steps.some((step) => step.action === 'evaluate' || step.guard !== undefined || (step.action === 'wait' && typeof step.fn === 'string'));
   if (needsScript && caps.evaluate === false) return `配方需要页面脚本能力(guard / evaluate / 适配器):${BACKEND_SWITCH_HINT}`;
+  if ((recipe as { adapter?: unknown }).adapter !== undefined && caps.rawProtocol === false) return `配方适配器需要浏览器调试协议:${BACKEND_SWITCH_HINT}`;
   if (steps.some((step) => step.action === 'requests' || step.action === 'responseBody') && caps.network === false) return `配方需要读取网络请求:${BACKEND_SWITCH_HINT}`;
   return undefined;
 }

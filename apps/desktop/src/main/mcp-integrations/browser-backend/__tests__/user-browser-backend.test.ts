@@ -16,11 +16,20 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { BrowserControlRequest } from '@cindy/browser-control-runtime';
 
-import { UserBrowserBackend, type UserBrowserPageControl } from '../user-browser-backend';
+import {
+  USER_BROWSER_CAPABILITIES,
+  USER_BROWSER_PARITY_CAPABILITIES,
+  UserBrowserBackend,
+  extensionSupportsParity,
+  userBrowserCapabilities,
+  type UserBrowserPageControl,
+} from '../user-browser-backend';
 
 type Tab = { id: number; url: string; title?: string; active?: boolean; redacted?: boolean };
 
-function fakeControl(options: { clients?: string[]; tabs?: Record<string, Tab[]> } = {}) {
+function fakeControl(
+  options: { clients?: string[]; tabs?: Record<string, Tab[]>; version?: string } = {},
+) {
   const clients = options.clients ?? ['client-aaaaaaaa'];
   const tabs = options.tabs ?? {
     [clients[0]]: [{ id: 7, url: 'https://example.test/a', title: 'A', active: true }],
@@ -35,7 +44,7 @@ function fakeControl(options: { clients?: string[]; tabs?: Record<string, Tab[]>
       clients.map((id) => ({
         id,
         browser: 'chrome',
-        version: '0.4.23',
+        version: options.version ?? '0.4.23',
         protocolVersion: '0.4.13',
         connected: true,
       })),
@@ -47,7 +56,7 @@ function fakeControl(options: { clients?: string[]; tabs?: Record<string, Tab[]>
       clients: clients.map((id) => ({
         id,
         browser: 'chrome',
-        version: '0.4.23',
+        version: options.version ?? '0.4.23',
         protocolVersion: '0.4.13',
         connected: true,
       })),
@@ -69,9 +78,13 @@ function fakeControl(options: { clients?: string[]; tabs?: Record<string, Tab[]>
   return { control, jobs, responses, tabs };
 }
 
-function backend(control: UserBrowserPageControl | null) {
+function backend(
+  control: UserBrowserPageControl | null,
+  resolveUploadRoots?: (sessionId: string) => Promise<string[]>,
+) {
   return new UserBrowserBackend({
     getPageControl: () => control,
+    ...(resolveUploadRoots ? { resolveUploadRoots } : {}),
     logger: { info: vi.fn(), warn: vi.fn() },
   });
 }
@@ -448,5 +461,173 @@ describe('UserBrowserBackend · 读取与动作', () => {
           action === 'extract' && (payload.fields as Record<string, unknown>).password,
       ),
     ).toEqual([]);
+  });
+
+  it('能力表按扩展版本给出:0.4.42 起完整,旧版只有基础能力', () => {
+    expect(extensionSupportsParity('0.4.42')).toBe(true);
+    expect(extensionSupportsParity('0.5.0')).toBe(true);
+    expect(extensionSupportsParity('0.4.41')).toBe(false);
+    expect(extensionSupportsParity(null)).toBe(false);
+    expect(userBrowserCapabilities(fakeControl().control)).toBe(USER_BROWSER_CAPABILITIES);
+    expect(userBrowserCapabilities(fakeControl({ version: '0.4.42' }).control)).toBe(
+      USER_BROWSER_PARITY_CAPABILITIES,
+    );
+    expect(userBrowserCapabilities(null)).toBe(USER_BROWSER_CAPABILITIES);
+  });
+
+  it('新版扩展:open 开到后台窗口并按 tabId 寻址,不再逐次列标签页', async () => {
+    const fake = fakeControl({ version: '0.4.42' });
+    fake.responses.set('open', (payload) => ({
+      ok: true,
+      tabId: 42,
+      window: 500,
+      url: payload.url,
+      title: 'New',
+    }));
+    const b = backend(fake.control);
+    const opened = await call(b, { action: 'open', url: 'https://example.test/new', label: 'n' });
+    expect(opened).toMatchObject({ ok: true, data: { suggestedTargetId: 'n', title: 'New' } });
+    expect(fake.jobs.at(-1)).toEqual([
+      'open',
+      { url: 'https://example.test/new', browser: 'client-aaaaaaaa' },
+    ]);
+    await call(b, { action: 'act', targetId: 'n', request: { kind: 'click', ref: 'r1' } });
+    expect(fake.jobs.at(-1)).toEqual([
+      'click',
+      { url: 'https://example.test/new', browser: 'client-aaaaaaaa', tabId: 42, ref: 'r1' },
+    ]);
+    await call(b, { action: 'navigate', targetId: 'n', url: 'https://example.test/next' });
+    expect(fake.jobs.at(-1)).toEqual([
+      'navigate',
+      { url: 'https://example.test/next', browser: 'client-aaaaaaaa', tabId: 42 },
+    ]);
+    expect(fake.jobs.filter(([action]) => action === 'tabs')).toEqual([]);
+  });
+
+  it('新版扩展:截图、控制台、网络、弹窗、切换与关闭映射成标签页作业', async () => {
+    const fake = fakeControl({ version: '0.4.42' });
+    fake.responses.set('screenshot', () => ({
+      ok: true,
+      tabId: 7,
+      mimeType: 'image/png',
+      data: 'iVBORw0KGgo=',
+      bytes: 8,
+    }));
+    fake.responses.set('console', () => ({ ok: true, messages: [{ level: 'log', text: 'x' }] }));
+    fake.responses.set('requests', () => ({ ok: true, requests: [{ url: 'https://example.test/api' }] }));
+    fake.responses.set('responseBody', () => ({ ok: true, response: { status: 200, body: '{}' } }));
+    const b = backend(fake.control);
+    await call(b, { action: 'tabs' });
+    const base = { url: 'https://example.test/a', browser: 'client-aaaaaaaa', tabId: 7 };
+    expect(await call(b, { action: 'screenshot', targetId: 't1', fullPage: true })).toMatchObject({
+      ok: true,
+      data: { mimeType: 'image/png', data: 'iVBORw0KGgo=', note: expect.stringContaining('可视区域') },
+    });
+    expect(fake.jobs.at(-1)).toEqual(['screenshot', { ...base, type: 'png' }]);
+    expect(await call(b, { action: 'console', targetId: 't1' })).toMatchObject({
+      data: { messages: [{ level: 'log', text: 'x' }] },
+    });
+    await call(b, { action: 'requests', targetId: 't1', filter: 'api', clear: true });
+    expect(fake.jobs.at(-1)).toEqual(['requests', { ...base, filter: 'api', clear: true }]);
+    expect(
+      await call(b, { action: 'responseBody', targetId: 't1', url: 'https://example.test/api' }),
+    ).toMatchObject({ data: { response: { status: 200 } } });
+    expect(fake.jobs.at(-1)).toEqual([
+      'responseBody',
+      { ...base, requestUrl: 'https://example.test/api' },
+    ]);
+    await call(b, { action: 'dialog', targetId: 't1', accept: true, promptText: 'y' });
+    expect(fake.jobs.at(-1)).toEqual(['dialog', { ...base, accept: true, promptText: 'y' }]);
+    await call(b, { action: 'focus', targetId: 't1' });
+    expect(fake.jobs.at(-1)).toEqual(['focus', base]);
+    expect(await call(b, { action: 'close', targetId: 't1' })).toMatchObject({ ok: true });
+    expect(await call(b, { action: 'snapshot', targetId: 't1' })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining('未知 targetId'),
+    });
+    expect(await call(b, { action: 'pdf', targetId: 't1' })).toMatchObject({ ok: false });
+  });
+
+  it('新版扩展:脚本、坐标、拖拽、调整大小、双击与等待都交给扩展', async () => {
+    const fake = fakeControl({ version: '0.4.42' });
+    let polls = 0;
+    fake.responses.set('evaluate', (payload) =>
+      payload.fn === '() => ready'
+        ? { ok: true, result: ++polls >= 2 }
+        : { ok: true, result: { title: 'A' } },
+    );
+    const b = backend(fake.control);
+    await call(b, { action: 'tabs' });
+    const base = { url: 'https://example.test/a', browser: 'client-aaaaaaaa', tabId: 7 };
+    const act = (request: Record<string, unknown>) =>
+      call(b, { action: 'act', targetId: 't1', request });
+    expect(await act({ kind: 'evaluate', fn: '() => ({title: document.title})' })).toMatchObject({
+      ok: true,
+      data: { result: { title: 'A' } },
+    });
+    await act({ kind: 'clickCoords', x: 10, y: 20, button: 'right' });
+    expect(fake.jobs.at(-1)).toEqual(['clickCoords', { ...base, x: 10, y: 20, button: 'right' }]);
+    await act({ kind: 'click', ref: 'r1', doubleClick: true, modifiers: ['Shift'] });
+    expect(fake.jobs.at(-1)).toEqual([
+      'clickCoords',
+      { ...base, ref: 'r1', doubleClick: true, modifiers: ['Shift'] },
+    ]);
+    await act({ kind: 'drag', startRef: 'a', endRef: 'b' });
+    expect(fake.jobs.at(-1)).toEqual(['drag', { ...base, startRef: 'a', endRef: 'b' }]);
+    await act({ kind: 'resize', width: 800, height: 600 });
+    expect(fake.jobs.at(-1)).toEqual(['resize', { ...base, width: 800, height: 600 }]);
+    await act({ kind: 'wait', textGone: 'Loading', url: '/done', timeoutMs: 5000 });
+    expect(fake.jobs.at(-1)).toEqual([
+      'wait',
+      { ...base, textGone: 'Loading', urlIncludes: '/done', timeoutMs: 5000 },
+    ]);
+    expect(await act({ kind: 'wait', fn: '() => ready', timeoutMs: 5000 })).toMatchObject({
+      ok: true,
+      data: { kind: 'wait', result: true },
+    });
+    expect(polls).toBe(2);
+    expect(await act({ kind: 'evaluate', domRead: { kind: 'login-wall' } })).toMatchObject({
+      ok: true,
+    });
+    expect(fake.jobs.at(-1)?.[0]).toBe('evaluate');
+  });
+
+  it('新版扩展:上传只读会话允许目录里的文件,并以字节交给扩展', async () => {
+    const os = await import('node:os');
+    const fsp = await import('node:fs/promises');
+    const pathMod = await import('node:path');
+    const root = await fsp.mkdtemp(pathMod.join(os.tmpdir(), 'cindy-upload-'));
+    try {
+      const file = pathMod.join(root, 'a.png');
+      await fsp.writeFile(file, Buffer.from([1, 2, 3]));
+      const fake = fakeControl({ version: '0.4.42' });
+      fake.responses.set('upload', () => ({ ok: true, files: [{ name: 'a.png', size: 3 }] }));
+      const b = backend(fake.control, async () => [root]);
+      await call(b, { action: 'tabs' });
+      expect(
+        await call(b, {
+          action: 'upload',
+          targetId: 't1',
+          paths: [file],
+          inputRef: 'r9',
+          __mcpSessionId: 's1',
+        }),
+      ).toMatchObject({ ok: true, data: { files: [{ name: 'a.png', size: 3 }] } });
+      expect(fake.jobs.at(-1)?.[1]).toMatchObject({
+        tabId: 7,
+        ref: 'r9',
+        files: [{ name: 'a.png', data: 'AQID', mimeType: 'image/png' }],
+      });
+      expect(
+        await call(b, {
+          action: 'upload',
+          targetId: 't1',
+          paths: ['/etc/hosts'],
+          __mcpSessionId: 's1',
+        }),
+      ).toMatchObject({ ok: false });
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
   });
 });

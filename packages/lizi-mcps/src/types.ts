@@ -662,6 +662,10 @@ export interface BrowserBackendCapabilities {
   focus?: boolean;
   close?: boolean;
   trustedInput?: boolean;
+  /** Coordinate clicks, drags and viewport resize (synthetic events are enough). */
+  pointer?: boolean;
+  /** Raw protocol commands that recipe adapters drive (needs a debugger attachment). */
+  rawProtocol?: boolean;
 }
 
 /** Browser automation MCP host deps. Core browser execution is injected by host. */

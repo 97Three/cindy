@@ -5275,7 +5275,7 @@
         },
         "userBrowser": {
           "title": "我的瀏覽器",
-          "description": "Agent 透過 Cindy 擴充功能直接操作你正在使用的 Chrome / Edge，登入態現成；不支援截圖、網路讀取和任意指令碼。"
+          "description": "Agent 透過 Cindy 擴充功能操作你正在使用的 Chrome / Edge，登入態現成；新頁面開在獨立的背景視窗，不打擾你正在看的頁面。"
         }
       },
       "android": {

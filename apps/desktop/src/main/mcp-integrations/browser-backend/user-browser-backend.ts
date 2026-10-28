@@ -4,21 +4,26 @@
  *
  * 与另外两个后端的差别:
  * - 页面活在用户自己的 Chrome / Edge 里,带着用户本人的登录态;Cindy 不启停它;
- * - 执行端是扩展在隔离世界里的固定函数,没有 debugger、任意脚本、网络读取、截图、
- *   上传与原生弹窗。不支持的 action 明确拒绝并指向专用浏览器,绝不悄悄换目标;
- * - 每个作业都经桥接按插件保存的站点策略守门(读默认开放公网,交互按站点授权,
- *   本机与私网一律拒绝),结果脱敏后才回到这里。
+ * - 用哪个浏览器是用户的选择,所以能力与专用浏览器对齐(扩展 0.4.42 起):截图、
+ *   上传、页面脚本、控制台、网络、弹窗、坐标与拖拽都可用。底线是不打扰用户自己的
+ *   使用:新页面开在 Cindy 自己的后台窗口,不抢焦点,不切换用户正在看的标签页;
+ * - 只有 debugger 才能做的(导出 PDF、可信输入、原始协议命令)仍明确拒绝并指向专用
+ *   浏览器,绝不悄悄换目标;旧版扩展只有基础读取与交互,同样明确拒绝并提示更新;
+ * - 每个作业都经桥接按插件保存的站点策略守门,结果脱敏后才回到这里。
  *
- * 寻址:扩展当前按精确 URL 寻址标签页,这里维护 targetId ↔ {连接, tabId, url} 的
- * 映射,把 Browser Use 的 targetId / 别名 / label 翻译成作业的 url;页面在
- * 两次调用之间跳转时,扩展报 PAGE_CHANGED,这里刷新映射后原样上报,不猜新页。
+ * 寻址:这里维护 targetId ↔ {连接, tabId, url} 的映射。新版扩展按 tabId 寻址;
+ * 旧版扩展按精确 URL 寻址,页面在两次调用之间跳转时报 PAGE_CHANGED,不猜新页。
  */
 
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { buildDomReadSource } from '@cindy/browser-control-runtime/dom-read';
 import type {
   BrowserExtensionBridge,
   BrowserExtensionClientInfo,
   BrowserExtensionJobResult,
 } from '../../browser-extension/bridge.js';
+import { resolveUploadFiles } from './rsb-webview-upload-policy.js';
 import type { BackendRequest, BackendResult, BrowserBackend } from './types.js';
 
 export interface UserBrowserPageControl {
@@ -30,6 +35,8 @@ export interface UserBrowserPageControl {
 export interface UserBrowserBackendOptions {
   /** 声明 browserExtension.pageControl 的插件桥接;null = 没有这样的插件(或未启用)。 */
   getPageControl(): UserBrowserPageControl | null;
+  /** 上传可读取的本地目录(按会话);没有则上传不可用。 */
+  resolveUploadRoots?(sessionId: string): Promise<string[]>;
   logger: {
     info(message: string, meta?: unknown): void;
     warn(message: string, meta?: unknown): void;
@@ -50,7 +57,7 @@ interface TargetRecord {
 export const USER_BROWSER_UNSUPPORTED_HINT =
   '用户浏览器执行端不支持此操作;需要时请明确告知用户并改用 Cindy 专用浏览器(external),不要自行切换。';
 
-/** 用户浏览器执行端的能力表(供 MCP 层在调用前拒绝,与 status 一并告知模型)。 */
+/** 旧版扩展的能力表(供 MCP 层在调用前拒绝,与 status 一并告知模型)。 */
 export const USER_BROWSER_CAPABILITIES = Object.freeze({
   evaluate: false,
   screenshot: false,
@@ -62,7 +69,46 @@ export const USER_BROWSER_CAPABILITIES = Object.freeze({
   focus: false,
   close: false,
   trustedInput: false,
+  pointer: false,
+  rawProtocol: false,
 });
+
+/** 扩展从这个版本起与专用浏览器对齐;只有需要 debugger 的 pdf 与可信输入仍不提供。 */
+export const USER_BROWSER_PARITY_VERSION = '0.4.42';
+export const USER_BROWSER_PARITY_CAPABILITIES = Object.freeze({
+  evaluate: true,
+  screenshot: true,
+  network: true,
+  upload: true,
+  dialog: true,
+  console: true,
+  pdf: false,
+  focus: true,
+  close: true,
+  trustedInput: false,
+  pointer: true,
+  rawProtocol: false,
+});
+
+export function extensionSupportsParity(version: string | null | undefined): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version ?? '');
+  if (!match) return false;
+  const want = USER_BROWSER_PARITY_VERSION.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const diff = Number(match[i + 1]) - want[i];
+    if (diff) return diff > 0;
+  }
+  return true;
+}
+
+/** 任一已连接的扩展是新版就给完整能力;具体作业落到旧版连接时再逐个拒绝。 */
+export function userBrowserCapabilities(
+  control: UserBrowserPageControl | null,
+): Readonly<Record<keyof typeof USER_BROWSER_CAPABILITIES, boolean>> {
+  return control?.bridge.connectedClients().some((c) => extensionSupportsParity(c.version))
+    ? USER_BROWSER_PARITY_CAPABILITIES
+    : USER_BROWSER_CAPABILITIES;
+}
 
 function actionFailed(
   action: BackendRequest['action'],
@@ -83,6 +129,46 @@ function unsupported(action: BackendRequest['action'], what: string): BackendRes
     'BROWSER_RUNTIME_INVALID_REQUEST',
   );
 }
+
+function outdated(action: BackendRequest['action'], what: string): BackendResult {
+  return actionFailed(
+    action,
+    `${what}需要 Cindy 浏览器扩展 ${USER_BROWSER_PARITY_VERSION} 或更新版本:请告知用户在扩展管理页更新或重新加载 Cindy 扩展;也可以改用 Cindy 专用浏览器(external),不要自行切换。`,
+    'BROWSER_RUNTIME_INVALID_REQUEST',
+  );
+}
+
+const UPLOAD_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain',
+  '.csv': 'text/csv',
+  '.json': 'application/json',
+  '.html': 'text/html',
+  '.zip': 'application/zip',
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.mp3': 'audio/mpeg',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
+
+const TAB_ACTION_LABEL: Partial<Record<BackendRequest['action'], string>> = {
+  focus: '切换活动标签页',
+  close: '关闭标签页',
+  screenshot: '截图',
+  console: '读取控制台',
+  requests: '读取网络请求',
+  responseBody: '读取网络响应',
+  dialog: '处理原生弹窗',
+  upload: '上传文件',
+};
 
 const NOT_CONFIGURED_MESSAGE =
   '没有已启用的浏览器扩展插件提供页面控制(安装并启用 Cindy Chrome 插件后再选择「我的浏览器」)。';
@@ -150,22 +236,17 @@ export class UserBrowserBackend implements BrowserBackend {
       case 'act':
         return this.handleAct(req);
       case 'focus':
-        return unsupported(req.action, '切换活动标签页');
       case 'close':
-        return unsupported(req.action, '关闭标签页');
       case 'screenshot':
-        return unsupported(req.action, '截图');
-      case 'pdf':
-        return unsupported(req.action, '导出 PDF');
       case 'console':
-        return unsupported(req.action, '读取控制台');
-      case 'upload':
-        return unsupported(req.action, '上传文件');
-      case 'dialog':
-        return unsupported(req.action, '处理原生弹窗');
       case 'requests':
       case 'responseBody':
-        return unsupported(req.action, '读取网络请求');
+      case 'dialog':
+        return this.handleTabAction(req);
+      case 'upload':
+        return this.handleUpload(req);
+      case 'pdf':
+        return unsupported(req.action, '导出 PDF(需要浏览器调试权限)');
       case 'recipeCommand':
         return unsupported(req.action, '原始协议命令(OpenCLI 适配器)');
       default:
@@ -193,6 +274,35 @@ export class UserBrowserBackend implements BrowserBackend {
 
   private connectedClients(control: UserBrowserPageControl): BrowserExtensionClientInfo[] {
     return control.bridge.connectedClients();
+  }
+
+  /** 这条连接的扩展是否已与专用浏览器对齐(按 tabId 寻址、提供完整动作)。 */
+  private parity(control: UserBrowserPageControl, clientId: string): boolean {
+    return extensionSupportsParity(
+      this.connectedClients(control).find((c) => c.id === clientId)?.version,
+    );
+  }
+
+  /** 对一个已登记的标签页发作业:新版扩展按 tabId 寻址;结果里的地址回写映射。 */
+  private async pageJob(
+    control: UserBrowserPageControl,
+    record: TargetRecord,
+    kind: string,
+    extra: Record<string, unknown> = {},
+  ): Promise<BrowserExtensionJobResult> {
+    const job = await control.bridge.act(kind, {
+      url: record.url,
+      browser: record.clientId,
+      ...(this.parity(control, record.clientId) ? { tabId: record.tabId } : {}),
+      ...extra,
+    });
+    if (job.ok) {
+      if (typeof job.url === 'string') record.url = job.url;
+      if (typeof job.title === 'string') record.title = job.title;
+    } else if (job.error === 'TAB_CLOSED') {
+      this.targets.delete(record.targetId);
+    }
+    return job;
   }
 
   /** 选连接:显式 profile(连接 id)优先;只有一条连接时直接用;多条且未指定时拒绝,不猜账号。 */
@@ -332,6 +442,8 @@ export class UserBrowserBackend implements BrowserBackend {
         ),
       };
     }
+    // 新版扩展按 tabId 寻址并自己核对标签页,不必为每个作业列一遍所有标签页。
+    if (this.parity(control, record.clientId)) return { ok: true, record };
     const listed = await control.bridge.act('tabs', { browser: record.clientId, limit: 100 });
     if (listed.ok && Array.isArray(listed.tabs)) {
       const current = (
@@ -389,7 +501,7 @@ export class UserBrowserBackend implements BrowserBackend {
         running: false,
         configured: false,
         message: NOT_CONFIGURED_MESSAGE,
-        capabilities: USER_BROWSER_CAPABILITIES,
+        capabilities: userBrowserCapabilities(null),
       });
     }
     const status = await control.bridge.status();
@@ -402,7 +514,7 @@ export class UserBrowserBackend implements BrowserBackend {
         plugin: control.ghostId,
         error: status.error,
         message: status.message,
-        capabilities: USER_BROWSER_CAPABILITIES,
+        capabilities: userBrowserCapabilities(null),
       });
     }
     const clients = status.clients
@@ -412,7 +524,9 @@ export class UserBrowserBackend implements BrowserBackend {
         browser: c.browser,
         version: c.version,
         protocolVersion: c.protocolVersion,
+        fullFeatures: extensionSupportsParity(c.version),
       }));
+    const outdatedClients = clients.filter((c) => !c.fullFeatures);
     return actionOk(req.action, {
       ready: clients.length > 0,
       running: clients.length > 0,
@@ -423,7 +537,13 @@ export class UserBrowserBackend implements BrowserBackend {
       connected: clients.length > 0,
       clients,
       ...(clients.length === 0 ? { message: DISCONNECTED_MESSAGE } : {}),
-      capabilities: USER_BROWSER_CAPABILITIES,
+      ...(outdatedClients.length
+        ? {
+            updateNote: `有 ${outdatedClients.length} 个连接的 Cindy 扩展低于 ${USER_BROWSER_PARITY_VERSION},只支持基础读取与交互;更新扩展后可用截图、上传、页面脚本等完整能力。`,
+          }
+        : {}),
+      capabilities: userBrowserCapabilities(control),
+      note: '用户自己的浏览器:新页面开在 Cindy 的后台窗口里,不抢焦点;不要关闭、重排或切换用户自己的标签页,除非任务需要。',
       ...(doctor
         ? {
             port: status.port,
@@ -537,6 +657,27 @@ export class UserBrowserBackend implements BrowserBackend {
     const existing = req.action === 'navigate' ? this.resolveTarget(req.targetId) : null;
     const picked = this.pickClient(req.action, gate.control, req.profile ?? existing?.clientId);
     if (!picked.ok) return picked.result;
+    const label = typeof req.label === 'string' ? req.label : undefined;
+    if (this.parity(gate.control, picked.clientId)) {
+      // navigate 带 targetId:在原标签页跳转;否则新页开在 Cindy 自己的后台窗口,不碰用户的窗口。
+      const job =
+        existing && existing.clientId === picked.clientId
+          ? await this.pageJob(gate.control, existing, 'navigate', { url })
+          : await gate.control.bridge.act('open', { url, browser: picked.clientId });
+      if (!job.ok) return this.failureResult(req.action, job);
+      if (typeof job.tabId !== 'number')
+        return actionFailed(req.action, '扩展没有返回标签页;用 tabs 重新选择 targetId');
+      const record = this.register(
+        picked.clientId,
+        {
+          id: job.tabId,
+          url: typeof job.url === 'string' ? job.url : url,
+          title: typeof job.title === 'string' ? job.title : undefined,
+        },
+        label,
+      );
+      return actionOk(req.action, { backend: this.kind, ...this.describe(record) });
+    }
     const navigated = await gate.control.bridge.act('navigate', { url, browser: picked.clientId });
     if (!navigated.ok) return this.failureResult(req.action, navigated);
     const actualUrl = typeof navigated.url === 'string' ? navigated.url : url;
@@ -567,7 +708,7 @@ export class UserBrowserBackend implements BrowserBackend {
     const record = this.register(
       picked.clientId,
       { id: tab.id, url: tab.url, title: typeof tab.title === 'string' ? tab.title : undefined },
-      typeof req.label === 'string' ? req.label : undefined,
+      label,
     );
     return actionOk(req.action, {
       backend: this.kind,
@@ -588,16 +729,12 @@ export class UserBrowserBackend implements BrowserBackend {
     if (!located.ok) return located.result;
     if (req.frame) return unsupported(req.action, '按 frame 快照');
     const maxChars = Math.min(30000, Math.max(256, req.maxChars ?? 6000));
-    const job = await gate.control.bridge.act('snapshot', {
-      url: located.record.url,
-      browser: located.record.clientId,
+    const job = await this.pageJob(gate.control, located.record, 'snapshot', {
       maxChars,
       ...(typeof req.selector === 'string' ? { selector: req.selector } : {}),
     });
     if (!job.ok) return this.failureResult(req.action, job);
     const record = located.record;
-    if (typeof job.url === 'string') record.url = job.url;
-    if (typeof job.title === 'string') record.title = job.title;
     const refs: Record<string, { role: string; name?: string }> = {};
     const elementLines: string[] = [];
     for (const line of String(job.elements ?? '').split('\n')) {
@@ -659,8 +796,25 @@ export class UserBrowserBackend implements BrowserBackend {
     const located = await this.locate(req.action, gate.control, targetId);
     if (!located.ok) return located.result;
     const record = located.record;
-    const bridge = gate.control.bridge;
-    const base = { url: record.url, browser: record.clientId };
+    const control = gate.control;
+    const parity = this.parity(control, record.clientId);
+    const done = (job: BrowserExtensionJobResult, extra: Record<string, unknown> = {}) =>
+      job.ok
+        ? actionOk(req.action, {
+            backend: this.kind,
+            targetId: record.targetId,
+            kind: request.kind,
+            execution: job.execution ?? 'executed',
+            url: record.url,
+            ...(job.note ? { note: job.note } : {}),
+            ...extra,
+          })
+        : this.failureResult(req.action, job);
+    const pointerExtra = {
+      ...(request.button ? { button: request.button } : {}),
+      ...(request.doubleClick ? { doubleClick: true } : {}),
+      ...(request.modifiers?.length ? { modifiers: request.modifiers } : {}),
+    };
     switch (request.kind) {
       case 'click':
       case 'hover':
@@ -668,16 +822,24 @@ export class UserBrowserBackend implements BrowserBackend {
       case 'select':
       case 'type':
       case 'fill': {
+        if (request.query) return unsupported(req.action, '语义元素查询(query)');
         if (
           request.kind === 'click' &&
           (request.doubleClick ||
-            request.button ||
+            (request.button && request.button !== 'left') ||
             request.modifiers?.length ||
             request.x !== undefined)
         ) {
-          return unsupported(req.action, '双击、右键、修饰键或坐标点击');
+          // 双击、右键、修饰键与坐标点击都走合成指针事件;元素点在它的中心。
+          if (!parity) return outdated(req.action, '双击、右键、修饰键或坐标点击');
+          const job = await this.pageJob(control, record, 'clickCoords', {
+            ...(request.ref ? { ref: request.ref } : {}),
+            ...(request.selector ? { selector: request.selector } : {}),
+            ...(request.x !== undefined ? { x: request.x, y: request.y } : {}),
+            ...pointerExtra,
+          });
+          return done(job);
         }
-        if (request.query) return unsupported(req.action, '语义元素查询(query)');
         if (
           (request.kind === 'type' || request.kind === 'fill') &&
           typeof request.text !== 'string'
@@ -689,8 +851,7 @@ export class UserBrowserBackend implements BrowserBackend {
           );
         }
         const kind = request.kind === 'fill' ? 'type' : request.kind;
-        const job = await bridge.act(kind, {
-          ...base,
+        const job = await this.pageJob(control, record, kind, {
           ...(request.ref ? { ref: request.ref } : {}),
           ...(request.selector ? { selector: request.selector } : {}),
           ...(typeof request.text === 'string' ? { text: request.text } : {}),
@@ -698,26 +859,59 @@ export class UserBrowserBackend implements BrowserBackend {
           ...(request.key ? { key: request.key } : {}),
           ...(request.values ? { values: request.values } : {}),
         });
-        if (!job.ok) return this.failureResult(req.action, job);
-        if (typeof job.url === 'string') record.url = job.url;
-        return actionOk(req.action, {
-          backend: this.kind,
-          targetId: record.targetId,
-          kind: request.kind,
-          execution: job.execution ?? 'executed',
-          url: record.url,
-          note: job.note,
-        });
+        return done(job);
       }
       case 'wait':
-        return this.handleWait(req, record, bridge);
-      case 'evaluate':
-        return this.handleDomRead(req, record, bridge);
-      case 'clickCoords':
-      case 'drag':
-      case 'resize':
+        return parity
+          ? this.handleWaitInPage(req, record, control)
+          : this.handleWait(req, record, control.bridge);
+      case 'evaluate': {
+        const domRead = (req.request as { domRead?: unknown }).domRead;
+        if (domRead || !parity) return this.handleDomRead(req, record, control);
+        if (typeof request.fn !== 'string' || !request.fn.trim())
+          return actionFailed(req.action, 'evaluate.fn required', 'BROWSER_RUNTIME_INVALID_REQUEST');
+        const job = await this.pageJob(control, record, 'evaluate', { fn: request.fn });
+        const as = (request as { as?: unknown }).as;
+        return done(job, {
+          ...(typeof as === 'string' ? { as } : {}),
+          result: job.result,
+          untrusted_content: true,
+        });
+      }
+      case 'clickCoords': {
+        if (!parity) return outdated(req.action, '坐标点击');
+        const job = await this.pageJob(control, record, 'clickCoords', {
+          x: request.x,
+          y: request.y,
+          ...pointerExtra,
+        });
+        return done(job);
+      }
+      case 'drag': {
+        if (!parity) return outdated(req.action, '拖拽');
+        if (!request.startRef || !request.endRef)
+          return actionFailed(req.action, 'drag requires startRef and endRef', 'BROWSER_RUNTIME_INVALID_REQUEST');
+        const job = await this.pageJob(control, record, 'drag', {
+          startRef: request.startRef,
+          endRef: request.endRef,
+        });
+        return done(job);
+      }
+      case 'resize': {
+        if (!parity) return outdated(req.action, '调整窗口大小');
+        const job = await this.pageJob(control, record, 'resize', {
+          width: request.width,
+          height: request.height,
+        });
+        return done(job, { width: job.width, height: job.height });
+      }
+      case 'close': {
+        if (!parity) return outdated(req.action, '关闭标签页');
+        const job = await this.pageJob(control, record, 'close');
+        if (job.ok) this.targets.delete(record.targetId);
+        return done(job);
+      }
       case 'saveResource':
-      case 'close':
         return unsupported(req.action, `act:${request.kind}`);
       default:
         return actionFailed(
@@ -726,6 +920,180 @@ export class UserBrowserBackend implements BrowserBackend {
           'BROWSER_RUNTIME_INVALID_REQUEST',
         );
     }
+  }
+
+  /** 新版扩展在页面里轮询等待条件;wait.fn 由这里轮询页面脚本。 */
+  private async handleWaitInPage(
+    req: BackendRequest,
+    record: TargetRecord,
+    control: UserBrowserPageControl,
+  ): Promise<BackendResult> {
+    const request = req.request!;
+    const timeoutMs = Math.min(120000, Math.max(100, request.timeoutMs ?? 30000));
+    const now = this.opts.now ?? Date.now;
+    const started = now();
+    const result = (extra: Record<string, unknown> = {}) =>
+      actionOk(req.action, {
+        backend: this.kind,
+        targetId: record.targetId,
+        kind: 'wait',
+        url: record.url,
+        waitedMs: now() - started,
+        ...extra,
+      });
+    const conditions = {
+      ...(request.selector ? { selector: request.selector } : {}),
+      ...(typeof request.text === 'string' ? { text: request.text } : {}),
+      ...(request.textGone ? { textGone: request.textGone } : {}),
+      ...(request.url ? { urlIncludes: request.url } : {}),
+      ...(request.loadState ? { loadState: request.loadState } : {}),
+    };
+    const hasConditions = Object.keys(conditions).length > 0;
+    if (!hasConditions && typeof request.timeMs !== 'number' && !request.fn)
+      return actionFailed(
+        req.action,
+        'wait requires selector、text、textGone、url、loadState、fn 或 timeMs',
+        'BROWSER_RUNTIME_INVALID_REQUEST',
+      );
+    if (hasConditions || typeof request.timeMs === 'number') {
+      const job = await this.pageJob(control, record, 'wait', {
+        ...conditions,
+        ...(typeof request.timeMs === 'number'
+          ? { timeMs: Math.min(120000, Math.max(0, request.timeMs)) }
+          : {}),
+        timeoutMs,
+      });
+      if (!job.ok) return this.failureResult(req.action, job);
+    }
+    if (!request.fn) return result();
+    const deadline = started + timeoutMs;
+    for (;;) {
+      const job = await this.pageJob(control, record, 'evaluate', { fn: request.fn });
+      if (!job.ok) return this.failureResult(req.action, job);
+      if (job.result) return result({ result: job.result });
+      if (now() >= deadline)
+        return actionFailed(req.action, `等待 ${timeoutMs}ms 后 wait.fn 仍未返回真值`);
+      await sleep(250);
+    }
+  }
+
+  /** 标签页级动作:截图、切换、关闭、控制台、网络与弹窗。 */
+  private async handleTabAction(req: BackendRequest): Promise<BackendResult> {
+    const gate = this.control(req.action);
+    if (!gate.ok) return gate.result;
+    const located = await this.locate(req.action, gate.control, req.targetId);
+    if (!located.ok) return located.result;
+    const record = located.record;
+    if (!this.parity(gate.control, record.clientId))
+      return outdated(req.action, TAB_ACTION_LABEL[req.action] ?? req.action);
+    let extra: Record<string, unknown> = {};
+    let note: string | undefined;
+    switch (req.action) {
+      case 'screenshot':
+        extra = { type: req.type === 'jpeg' ? 'jpeg' : 'png' };
+        if (req.fullPage || req.ref || req.element)
+          note = '用户浏览器只能截取可视区域:这是当前视口的截图;需要页面其他部分时先滚动再截。';
+        break;
+      case 'requests':
+        extra = {
+          ...(typeof req.filter === 'string' ? { filter: req.filter } : {}),
+          ...(req.clear ? { clear: true } : {}),
+        };
+        break;
+      case 'responseBody':
+        if (typeof req.url !== 'string' || !req.url.trim())
+          return actionFailed(req.action, 'responseBody.url required', 'BROWSER_RUNTIME_INVALID_REQUEST');
+        extra = {
+          requestUrl: req.url,
+          ...(req.maxChars ? { maxChars: Math.min(30000, Math.max(256, req.maxChars)) } : {}),
+        };
+        break;
+      case 'dialog':
+        extra = {
+          ...(typeof req.accept === 'boolean' ? { accept: req.accept } : {}),
+          ...(typeof req.promptText === 'string' ? { promptText: req.promptText } : {}),
+        };
+        break;
+    }
+    const job = await this.pageJob(gate.control, record, req.action, extra);
+    if (!job.ok) return this.failureResult(req.action, job);
+    const base = { backend: this.kind, targetId: record.targetId };
+    switch (req.action) {
+      case 'close':
+        this.targets.delete(record.targetId);
+        return actionOk(req.action, base);
+      case 'focus':
+        return actionOk(req.action, {
+          ...base,
+          note: '只在标签页所在窗口内切到前台,不抢窗口焦点。',
+        });
+      case 'screenshot':
+        return actionOk(req.action, {
+          ...base,
+          mimeType: job.mimeType,
+          data: job.data,
+          bytes: job.bytes,
+          ...(note ? { note } : {}),
+        });
+      case 'console':
+        return actionOk(req.action, {
+          ...base,
+          messages: Array.isArray(job.messages) ? job.messages : [],
+          ...(job.note ? { note: job.note } : {}),
+          untrusted_content: true,
+        });
+      case 'requests':
+        return actionOk(req.action, {
+          ...base,
+          requests: Array.isArray(job.requests) ? job.requests : [],
+          ...(job.truncated ? { truncated: true } : {}),
+          ...(job.note ? { note: job.note } : {}),
+          untrusted_content: true,
+        });
+      case 'responseBody':
+        return actionOk(req.action, { ...base, response: job.response, untrusted_content: true });
+      default:
+        return actionOk(req.action, {
+          ...base,
+          ...(job.armed !== undefined ? { armed: job.armed } : {}),
+          ...(Array.isArray(job.recent) ? { recent: job.recent } : {}),
+          ...(job.note ? { note: job.note } : {}),
+        });
+    }
+  }
+
+  /** 上传:按会话允许的目录解析本地文件,读成字节交给扩展放进页面的文件输入框。 */
+  private async handleUpload(req: BackendRequest): Promise<BackendResult> {
+    const gate = this.control(req.action);
+    if (!gate.ok) return gate.result;
+    const located = await this.locate(req.action, gate.control, req.targetId);
+    if (!located.ok) return located.result;
+    const record = located.record;
+    if (!this.parity(gate.control, record.clientId)) return outdated(req.action, '上传文件');
+    const sessionId = (req as { __mcpSessionId?: unknown }).__mcpSessionId;
+    const roots =
+      typeof sessionId === 'string' && sessionId && this.opts.resolveUploadRoots
+        ? await this.opts.resolveUploadRoots(sessionId)
+        : [];
+    const paths = await resolveUploadFiles(req.paths, roots);
+    const files = await Promise.all(
+      paths.map(async (file) => ({
+        name: path.basename(file),
+        data: (await fs.readFile(file)).toString('base64'),
+        mimeType: UPLOAD_MIME[path.extname(file).toLowerCase()] ?? '',
+      })),
+    );
+    const ref = req.inputRef ?? req.ref;
+    const job = await this.pageJob(gate.control, record, 'upload', {
+      ...(ref ? { ref } : req.selector ? { selector: req.selector } : { selector: 'input[type=file]' }),
+      files,
+    });
+    if (!job.ok) return this.failureResult(req.action, job);
+    return actionOk(req.action, {
+      backend: this.kind,
+      targetId: record.targetId,
+      files: job.files,
+    });
   }
 
   private async handleWait(
@@ -809,16 +1177,39 @@ export class UserBrowserBackend implements BrowserBackend {
     );
   }
 
-  /** evaluate 只接受声明式读取(extract / login-wall);任意 fn 不进用户浏览器。 */
+  /** 声明式读取(extract / login-wall);旧版扩展只支持这一种 evaluate。 */
   private async handleDomRead(
     req: BackendRequest,
     record: TargetRecord,
-    bridge: BrowserExtensionBridge,
+    control: UserBrowserPageControl,
   ): Promise<BackendResult> {
     const domRead = (
       req.request as { domRead?: { kind?: string; extract?: Record<string, unknown> } }
     ).domRead;
-    if (!domRead) return unsupported(req.action, '任意页面脚本(evaluate.fn)');
+    if (!domRead) return outdated(req.action, '任意页面脚本(evaluate.fn)');
+    const html =
+      domRead.kind === 'extract' &&
+      Object.values(
+        ((domRead.extract as { fields?: Record<string, unknown> } | undefined)?.fields ?? {}) as Record<
+          string,
+          unknown
+        >,
+      ).some((f) => typeof f === 'object' && f !== null && (f as { type?: unknown }).type === 'html');
+    if ((domRead.kind === 'login-wall' || html) && this.parity(control, record.clientId)) {
+      // 页面脚本能读出扩展固定读取看不到的(密码框是否存在、html 字段);页面 CSP 禁止时再退回。
+      const job = await this.pageJob(control, record, 'evaluate', {
+        fn: buildDomReadSource(domRead),
+      });
+      if (job.ok)
+        return actionOk(req.action, {
+          backend: this.kind,
+          targetId: record.targetId,
+          url: record.url,
+          result: job.result,
+          untrusted_content: true,
+        });
+      if (job.error !== 'EVAL_BLOCKED_BY_PAGE') return this.failureResult(req.action, job);
+    }
     if (domRead.kind === 'login-wall') {
       // The extension refuses to read password / one-time-code fields at all (they are sensitive
       // fields), so a declarative probe cannot tell "absent" from "present but withheld". Report
@@ -869,9 +1260,7 @@ export class UserBrowserBackend implements BrowserBackend {
       : spec.from
         ? { selector: spec.from }
         : {};
-    const job = await bridge.act('extract', {
-      url: record.url,
-      browser: record.clientId,
+    const job = await this.pageJob(control, record, 'extract', {
       fields,
       ...scope,
       ...(spec.limit ? { limit: Math.min(100, Math.max(1, spec.limit)) } : {}),
@@ -893,7 +1282,6 @@ export class UserBrowserBackend implements BrowserBackend {
       }
       return this.failureResult(req.action, job);
     }
-    if (typeof job.url === 'string') record.url = job.url;
     const records = spec.multiple
       ? Array.isArray(job.records)
         ? job.records

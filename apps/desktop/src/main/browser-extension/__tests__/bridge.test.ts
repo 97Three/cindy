@@ -173,7 +173,7 @@ async function fixture(
 }
 
 describe('policy · 站点策略与 URL 脱敏(与扩展侧同判据)', () => {
-  it('默认策略开放公网读写;本机/私网/带凭证地址一律拒绝;主机名规范化', () => {
+  it('默认策略开放读写(含本机与私网);带凭证地址与非网页协议拒绝;主机名规范化', () => {
     const p = defaultBrowserExtensionPolicy();
     expect(checkBrowserExtensionPolicy(p, 'text', 'https://example.test').ok).toBe(true);
     expect(checkBrowserExtensionPolicy(p, 'click', 'https://example.test').ok).toBe(true);
@@ -182,19 +182,14 @@ describe('policy · 站点策略与 URL 脱敏(与扩展侧同判据)', () => {
     for (const url of [
       'https://blocked.test',
       'https://child.blocked.test',
-      'http://127.0.0.2',
-      'http://2130706433',
-      'http://[::1]',
-      'http://[::ffff:127.0.0.1]',
-      'http://[fc00::1]',
-      'http://[fe80::1]',
-      'http://10.2.3.4',
-      'http://192.168.1.2',
-      'http://localhost.',
       'file:///etc/passwd',
       'https://a:b@example.test',
     ]) {
       expect(checkBrowserExtensionPolicy(p, 'text', url).ok, url).toBe(false);
+    }
+    // Local and private pages are the user's own: reachable like in the dedicated browser.
+    for (const url of ['http://127.0.0.2', 'http://[::1]', 'http://10.2.3.4', 'http://localhost.']) {
+      expect(checkBrowserExtensionPolicy(p, 'text', url).ok, url).toBe(true);
     }
     expect(checkBrowserExtensionPolicy(p, 'text', 'https://[2606:4700:4700::1111]/').ok).toBe(true);
     p.interact.allow = ['example.test', 'blocked.test'];

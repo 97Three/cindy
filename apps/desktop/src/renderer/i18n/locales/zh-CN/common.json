@@ -5275,7 +5275,7 @@
         },
         "userBrowser": {
           "title": "我的浏览器",
-          "description": "Agent 通过 Cindy 扩展直接操作你正在使用的 Chrome / Edge，登录态现成；不支持截图、网络读取和任意脚本。"
+          "description": "Agent 通过 Cindy 扩展操作你正在使用的 Chrome / Edge，登录态现成；新页面开在单独的后台窗口，不打扰你正在看的页面。"
         }
       },
       "android": {

@@ -5,8 +5,8 @@
  * 查一遍,两侧都必须对同一 URL 给出同样的结论。改动任何判据时两侧一起改。
  *
  * - READ 动作默认开放公网,INTERACT 动作按 interact.allow / block 守门;
- * - 只接受无内嵌凭证的公网 http(s) URL,本机与私网地址一律拒绝(扩展不是
- *   内网入口;Browser Use 的专用浏览器才允许本机可达的内网);
+ * - 只接受无内嵌凭证的 http(s) URL;本机与私网地址同样允许(2026-10-28 决定:用户自己的
+ *   浏览器本来就能访问这些地址,能力与专用浏览器对齐,不另设防线);
  * - 交给模型之前的每个 URL 都过 redactUrl:OAuth code、重置令牌、implicit-flow
  *   fragment 与 Basic Auth userinfo 不离开本机。
  */
@@ -14,10 +14,16 @@
 export const BROWSER_EXTENSION_READ_ACTIONS = [
   'tabs',
   'navigate',
+  'open',
   'snapshot',
   'extract',
   'text',
   'content',
+  'screenshot',
+  'console',
+  'requests',
+  'responseBody',
+  'wait',
 ] as const;
 export const BROWSER_EXTENSION_INTERACT_ACTIONS = [
   'click',
@@ -26,6 +32,14 @@ export const BROWSER_EXTENSION_INTERACT_ACTIONS = [
   'select',
   'hover',
   'scroll',
+  'focus',
+  'close',
+  'upload',
+  'evaluate',
+  'clickCoords',
+  'drag',
+  'dialog',
+  'resize',
 ] as const;
 export const BROWSER_EXTENSION_EXTRACT_ATTRIBUTES = [
   'href',
@@ -203,16 +217,8 @@ export function checkBrowserExtensionPolicy(
   } catch {
     return deny('INVALID_URL', 'Provide a full HTTP or HTTPS URL.');
   }
-  if (
-    !['http:', 'https:'].includes(u.protocol) ||
-    u.username ||
-    u.password ||
-    isLocalBrowserHost(u.hostname.replace(/\.$/, ''))
-  ) {
-    return deny(
-      'URL_NOT_ALLOWED',
-      'Only public HTTP/HTTPS URLs without embedded credentials are supported.',
-    );
+  if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password) {
+    return deny('URL_NOT_ALLOWED', 'Only HTTP/HTTPS URLs without embedded credentials are supported.');
   }
   const host = u.hostname.toLowerCase().replace(/\.$/, '');
   if (policy.read.block.some((p) => browserExtensionHostMatches(host, p))) {
@@ -255,7 +261,73 @@ export interface BrowserExtensionJobPayload {
   fields?: Record<string, string | { selector: string; attr?: string }>;
   multiple?: boolean;
   submit?: boolean;
+  /** Tab addressed by id (from tabs / open); the extension resolves the tab's current URL itself. */
+  tabId?: number;
   [key: string]: unknown;
+}
+
+const TAB_ADDRESSED_ACTIONS = [
+  'focus', 'close', 'screenshot', 'console', 'requests', 'responseBody',
+  'evaluate', 'clickCoords', 'drag', 'dialog', 'resize', 'wait',
+];
+
+/** 与扩展侧同判据:对齐专用浏览器后新增动作的参数。 */
+function validateParityPayload(action: string, payload: BrowserExtensionJobPayload): void {
+  const finite = (v: unknown, lo: number, hi: number) =>
+    typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
+  const str = (v: unknown, max: number) => typeof v === 'string' && v.length <= max;
+  if (payload.tabId != null && (!Number.isInteger(payload.tabId) || (payload.tabId as number) < 0))
+    throw new Error('Invalid tab id.');
+  if (TAB_ADDRESSED_ACTIONS.includes(action) && payload.tabId == null)
+    throw new Error('This action needs the tab id from tabs or open.');
+  if (
+    action === 'clickCoords' &&
+    !payload.ref &&
+    !payload.selector &&
+    (!finite(payload.x, 0, 100000) || !finite(payload.y, 0, 100000))
+  )
+    throw new Error('clickCoords needs x and y in CSS pixels, or a ref or selector.');
+  if (
+    payload.modifiers != null &&
+    (!Array.isArray(payload.modifiers) ||
+      payload.modifiers.length > 4 ||
+      payload.modifiers.some((m) => !['Alt', 'Control', 'ControlOrMeta', 'Meta', 'Shift'].includes(m as string)))
+  )
+    throw new Error('modifiers must be Alt, Control, ControlOrMeta, Meta or Shift.');
+  if (action === 'drag') {
+    const end = (ref: unknown, selector: unknown, x: unknown, y: unknown) =>
+      !!ref || !!selector || (finite(x, 0, 100000) && finite(y, 0, 100000));
+    if (!end(payload.startRef, payload.startSelector, payload.startX, payload.startY))
+      throw new Error('drag needs a start ref, selector or coordinates.');
+    if (!end(payload.endRef, payload.endSelector, payload.endX, payload.endY))
+      throw new Error('drag needs an end ref, selector or coordinates.');
+  }
+  if (action === 'resize' && (!finite(payload.width, 200, 10000) || !finite(payload.height, 200, 10000)))
+    throw new Error('resize needs width and height of 200–10000.');
+  if (action === 'evaluate' && (typeof payload.fn !== 'string' || !payload.fn.trim() || payload.fn.length > 200000))
+    throw new Error('evaluate needs fn source of at most 200000 characters.');
+  if (action === 'responseBody' && !str(payload.requestUrl, 8192))
+    throw new Error('responseBody needs the request URL.');
+  if (action === 'dialog' && payload.promptText != null && !str(payload.promptText, 16000))
+    throw new Error('Invalid promptText.');
+  if (action === 'upload') {
+    const files = payload.files as Array<{ name?: unknown; data?: unknown; mimeType?: unknown }> | undefined;
+    if (
+      !Array.isArray(files) ||
+      !files.length ||
+      files.length > 20 ||
+      files.some((f) => !f || !str(f.name, 255) || !f.name || typeof f.data !== 'string' || (f.mimeType != null && !str(f.mimeType, 200)))
+    )
+      throw new Error('upload needs 1–20 files with name and base64 data.');
+    if (files.reduce((n, f) => n + (f.data as string).length, 0) > 40_000_000)
+      throw new Error('Upload files must total at most about 30 MB.');
+  }
+  for (const key of ['timeMs', 'timeoutMs'] as const)
+    if (payload[key] != null && !finite(payload[key], 0, 120000)) throw new Error(key + ' must be 0–120000.');
+  if (payload.loadState != null && !['load', 'domcontentloaded', 'networkidle'].includes(payload.loadState as string))
+    throw new Error('loadState must be load, domcontentloaded or networkidle.');
+  for (const key of ['textGone', 'urlIncludes', 'filter', 'startRef', 'endRef', 'startSelector', 'endSelector', 'button'] as const)
+    if (payload[key] != null && !str(payload[key], 8192)) throw new Error('Invalid ' + key + '.');
 }
 
 /** 校验一个作业载荷(与扩展侧 validate 同判据);非法时抛出人话错误。 */
@@ -315,8 +387,9 @@ export function validateBrowserExtensionJob(
       throw new Error('Invalid ' + key + '.');
     }
   }
+  validateParityPayload(action as string, payload);
   if (
-    ['click', 'type', 'select', 'hover'].includes(action as string) &&
+    ['click', 'type', 'select', 'hover', 'upload'].includes(action as string) &&
     !payload.ref &&
     !payload.selector
   ) {

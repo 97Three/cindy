@@ -78,19 +78,23 @@
 
 #### 三种浏览器目标(先认环境,再谈登录)
 
-宿主用三种后端之一承接本工具。专用浏览器与侧边栏**顶层 action 集合一致**(都支持 snapshot / act 各 kind / requests / upload / dialog 等),差别在少数参数级能力与"页面呈现在哪里";用户浏览器(user-browser)只支持页面读取与基本交互,`status.data.capabilities` 列出不支持项。判别依据是 `action: "status"` 返回结果里的 **`data.backend`**(工具结果的外层是 `{ ok, action, status, data }`,`status` 是数字状态码——**别去读 `status.backend`**,那是 undefined):
+宿主用三种后端之一承接本工具。专用浏览器与侧边栏**顶层 action 集合一致**(都支持 snapshot / act 各 kind / requests / upload / dialog 等),差别在少数参数级能力与"页面呈现在哪里";用户浏览器(user-browser)与专用浏览器能力基本一致,`status.data.capabilities` 列出不支持项。判别依据是 `action: "status"` 返回结果里的 **`data.backend`**(工具结果的外层是 `{ ok, action, status, data }`,`status` 是数字状态码——**别去读 `status.backend`**,那是 undefined):
 
 - **`data.backend === "rsb-webview"` = Cindy 侧边栏内置浏览器**:页面活在 Cindy 的会话侧边栏里,不是一个常规浏览器窗口。侧边栏本身可能内嵌在主窗口、也可能被用户开成独立子窗口,`status` **不区分**这两种承载方式——所以请用户看页面时说"Cindy 的侧边栏(若你把侧边栏开成了独立窗口,就是那个窗口)",不要断言窗口存在或不存在。系统默认的自动化后端是独立外置浏览器,不是侧边栏。
   - 仅此模式支持:`act:saveResource`(托管下载)、以及 `query` 语义元素查询(role / name / text / label / placeholder / testId / css)。在外置模式下用这两个会被 schema 或运行时门控直接拒掉,别当通用能力使。
 - **`data.backend === "external"` = 独立外置浏览器**:一个专属持久自动化浏览器窗口(profile 显示为 "Cindy")。`act:saveResource` 与语义 `query` 在此模式不可用,元素定位改用 snapshot 的 `ref` 或 `selector`。旧宿主可能省略该字段,不要把缺少模式信息当成已使用内置浏览器。
   - 此模式的 `status.data.proxy` 报告当前启动路由:`direct`、`proxied`(带脱敏 `server`)或无法确认继承进程路由时的 `unknown`。需要指定代理时必须重新调用 `start` 并检查结果,不要从已有 tab 猜测出口。代理模式下只有 `proxyAllowedHostnames` 列出的公网域名可导航,内网地址不在其中。
-- **`data.backend === "user-browser"` = 用户正在使用的浏览器(经 Cindy 扩展)**:页面活在用户自己的 Chrome / Edge 里,带着用户本人的登录态;Cindy 不启停它,也不要关闭或重排用户的标签页。执行端是扩展里的固定函数,**只支持** tabs / open / navigate / snapshot / extract / act(click / type / fill / press / hover / select / wait)。不支持:截图、`evaluate`、`requests` / `responseBody`、上传、原生弹窗、`focus` / `close`、坐标点击与拖拽、需要 guard / evaluate / 适配器的配方。遇到不支持的操作先告诉用户,由用户决定是否改用专用浏览器,**不要自行 setBackend 切换**。
-  - 站点策略归 Cindy Chrome 插件:读取默认开放公网,交互按站点授权(作业报 `INTERACT_NOT_ALLOWED` 时用该插件的 `browser_policy` 工具请求授权,需用户确认),本机与私网地址一律拒绝。`profile` 是浏览器连接 id(一个浏览器用户配置一条),多条连接时必须指定,不要猜账号。
-  - 扩展按 URL 寻址:页面在两次调用之间跳转会报 `PAGE_CHANGED`,先 `tabs` / `snapshot` 再继续,不沿用旧 ref;`navigate` 可能落在另一个标签页并返回新的 targetId。`status.data.connected === false` 时请用户在自己的浏览器里安装并启用 Cindy 扩展,不要反复重试。
+- **`data.backend === "user-browser"` = 用户正在使用的浏览器(经 Cindy 扩展)**:页面活在用户自己的 Chrome / Edge 里,带着用户本人的登录态;Cindy 不启停它。`open` 的新页面开在 Cindy 自己的后台窗口里,不抢焦点;用户自己的标签页只在任务需要时操作,不要关闭、重排或切换它们。截图、`evaluate`、`requests` / `responseBody`、上传、原生弹窗、`focus` / `close`、坐标点击、拖拽与 `resize` 都可用,但有这些差别:
+    - 截图只截可视区域(无 `fullPage` / 元素截图);用户窗口里的后台标签页无法截图,先 `open` 到 Cindy 窗口再截;`resize` 只作用于 Cindy 自己的窗口。
+    - 点击、坐标与拖拽是合成事件(非可信输入),个别要求可信输入的站点会忽略;页面 CSP 禁止脚本时 `evaluate` 报 `EVAL_BLOCKED_BY_PAGE`,改用 snapshot / extract。
+    - 控制台从第一次 `console` 调用开始捕获;`requests` 来自页面资源计时(无方法与请求头);`responseBody` 以页面身份重新请求该地址;`dialog` 预先应答页面下一个 alert / confirm / prompt,已经弹出的原生弹窗需要用户自己处理。
+    - 不支持:导出 PDF、需要适配器(原始协议命令)的配方、`saveResource` 与语义 `query`。`status.data.updateNote` 出现时说明扩展是旧版,只有基础读取与交互,请用户更新 Cindy 扩展。遇到不支持的操作先告诉用户,由用户决定是否改用专用浏览器,**不要自行 setBackend 切换**。
+  - 站点策略归 Cindy Chrome 插件:读取默认开放,交互按站点授权(作业报 `INTERACT_NOT_ALLOWED` 时用该插件的 `browser_policy` 工具请求授权,需用户确认)。`profile` 是浏览器连接 id(一个浏览器用户配置一条),多条连接时必须指定,不要猜账号。
+  - 页面跳转后旧 ref 失效(报 `STALE_REF`),先 `snapshot` 再继续;旧版扩展按 URL 寻址,跳转会报 `PAGE_CHANGED`,`navigate` 也可能落在另一个标签页并返回新的 targetId。`status.data.connected === false` 时请用户在自己的浏览器里安装并启用 Cindy 扩展,不要反复重试。
 
 `setBackend` 与设置页修改同一个**全局、持久**选择,会影响其他正在使用浏览器的任务,旧模式的操作可能中断。仅按用户明确的模式要求切换,无需重复确认;不要因页面报错自行换模式。切换后重新 `tabs` / `snapshot`,不沿用旧模式的 targetId、ref 或登录态。宿主不支持切换或返回失败时如实说明,不能声称切换成功。
 
-专用浏览器与侧边栏允许访问本机网络可达的内网 HTTP(S) 地址;用户浏览器(user-browser)不允许本机与私网地址。遇到失败按实际连接、DNS、证书或登录错误诊断,不要仅因私有 IP 推断“禁止内网访问”,也不要让用户把内网服务暴露到公网。
+三种目标都允许访问本机网络可达的内网 HTTP(S) 地址。遇到失败按实际连接、DNS、证书或登录错误诊断,不要仅因私有 IP 推断“禁止内网访问”,也不要让用户把内网服务暴露到公网。
 
 **三种目标彼此隔离**。侧边栏始终是独立身份。外置浏览器默认也是独立的 `Cindy` profile;仅当用户在设置里打开「使用我的浏览器登录态」且 `status.data.realProfile.applied === true` 时,外置窗口才带着系统 Chrome / Edge / Brave 的登录拷贝(可撤销,Agent 以用户身份访问)。专用浏览器与侧边栏**不要传 `profile`**,也不要自行 attach 用户日常使用的 Chrome;要操作用户正在用的浏览器,只能走用户在设置里选的「我的浏览器」(user-browser)目标。
 

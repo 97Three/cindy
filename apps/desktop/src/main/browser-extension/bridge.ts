@@ -499,13 +499,14 @@ export class BrowserExtensionBridge {
 
   private async readBody(
     req: http.IncomingMessage,
+    maxBytes = 512000,
   ): Promise<{ raw: string; value: Record<string, unknown> }> {
     const chunks: Buffer[] = [];
     let bytes = 0;
     for await (const c of req) {
       const chunk = c as Buffer;
       bytes += chunk.length;
-      if (bytes > 512000) throw new Error('Too large');
+      if (bytes > maxBytes) throw new Error('Too large');
       chunks.push(chunk);
     }
     const raw = Buffer.concat(chunks).toString('utf8');
@@ -871,7 +872,8 @@ export class BrowserExtensionBridge {
     if (req.method !== 'POST' || !['/ack', '/authorize', '/result'].includes(req.url ?? '')) {
       return this.send(res, failure('NOT_FOUND', 'Unknown endpoint.'), 404);
     }
-    const b = (await this.readBody(req)).value;
+    // Screenshots come back as base64 images, well beyond the default request budget.
+    const b = (await this.readBody(req, req.url === '/result' ? 32_000_000 : 512000)).value;
     const jobId = String(b.id);
     const job = this.jobs.get(jobId);
     // 迟到的完成只消除不确定性,绝不复活或返回过期结果。
@@ -1248,7 +1250,13 @@ export class BrowserExtensionBridge {
               'Verify an unknown operation; it will not be replayed.',
             ),
           ),
-        this.options.jobTimeout ?? 45000,
+        // A wait may legitimately run up to its own timeout; give it room beyond the default.
+        Math.max(
+          this.options.jobTimeout ?? 45000,
+          kind === 'wait'
+            ? (Number(payload.timeMs) || 0) + (typeof payload.timeoutMs === 'number' ? payload.timeoutMs : 30000) + 15000
+            : 0,
+        ),
       );
       this.jobs.set(job.id, job);
       this.waiting.get(client.id)?.();

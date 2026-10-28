@@ -5307,7 +5307,7 @@
         },
         "userBrowser": {
           "title": "My browser",
-          "description": "Agent operates the Chrome / Edge you are using through the Cindy extension, with your sign-ins. No screenshots, network reads or arbitrary scripts."
+          "description": "Agent operates the Chrome / Edge you are using through the Cindy extension, with your sign-ins. New pages open in a separate background window, so what you are viewing stays put."
         }
       },
       "android": {

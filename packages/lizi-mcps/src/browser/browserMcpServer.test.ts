@@ -1742,6 +1742,14 @@ describe('browser · backend capability gating (user browser via extension)', ()
     } finally { await h.cleanup(); }
   });
 
+  it('lets synthetic pointer work through when the backend declares pointer support', async () => {
+    const h = await makeHarness({ backendCapabilities: () => ({ ...caps(), pointer: true }) });
+    try {
+      await h.client.callTool({ name: 'call_tool', arguments: { name: 'browser', args: { action: 'act', targetId: 't1', request: { kind: 'drag', startRef: 'a', endRef: 'b' } } } });
+      expect(h.calls).toHaveLength(1);
+    } finally { await h.cleanup(); }
+  });
+
   it('still routes extract through the declarative DOM read and leaves other backends unaffected', async () => {
     const h = await makeHarness({ backendCapabilities: caps });
     try {
