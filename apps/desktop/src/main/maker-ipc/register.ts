@@ -332,7 +332,11 @@ import {
   RenameSessionsConfirmBridge,
   type RenameSessionsConfirmInteractionSnapshot,
 } from '../session-title-rename/index.js';
-import { getBrowserAvailability, openBrowserForLogin } from '../mcp-integrations/browser.js';
+import {
+  clearUserBrowserMarksForSession,
+  getBrowserAvailability,
+  openBrowserForLogin,
+} from '../mcp-integrations/browser.js';
 import { readComputerStatusForSettings, type ComputerStatusRequest } from './computerStatusHandler.js';
 import { isBrowserOpenForLoginError } from '../../shared/browserBackend.js';
 import {
@@ -11572,6 +11576,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   const leaseReporter = providerGroupLeaseReporter;
   setProviderGroupApplicationLoadListener((id) => leaseReporter.notify(id));
   sessionTurnActivityTracker.setSessionTurnChangeListener((sessionId) => leaseReporter.notify(sessionId));
+  // 「我的浏览器」:任务真正停下(稍等确认没有紧接着的续跑)后清掉它在用户浏览器里的操作标记。
+  sessionTurnActivityTracker.addSessionTurnObserver((sessionId) => {
+    if (sessionTurnActivityTracker.isSessionInTurn(sessionId)) return;
+    const settle = setTimeout(() => {
+      if (!sessionTurnActivityTracker.isSessionInTurn(sessionId)) clearUserBrowserMarksForSession(sessionId);
+    }, 1500);
+    (settle as { unref?: () => void }).unref?.();
+  });
   // 经另一台电脑的组用掉的用量：启动后(账号确定之后)与之后换了账号时，把当前账号还没送到的整份报一次。
   const usageReportTimer = setInterval(() => ensureProviderGroupUsageReporter(), PROVIDER_GROUP_USAGE_ENSURE_INTERVAL_MS);
   (usageReportTimer as { unref?: () => void }).unref?.();

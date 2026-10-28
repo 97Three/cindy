@@ -1742,6 +1742,16 @@ describe('browser · backend capability gating (user browser via extension)', ()
     } finally { await h.cleanup(); }
   });
 
+  it('ignores a browser name passed as target instead of failing schema validation', async () => {
+    const h = await makeHarness({ backendCapabilities: () => ({ ...caps(), pointer: true }) });
+    try {
+      const result = await h.client.callTool({ name: 'call_tool', arguments: { name: 'browser', args: { action: 'status', target: 'user-browser' } } });
+      expect(result.isError).toBeFalsy();
+      expect(h.calls).toHaveLength(1);
+      expect(h.calls[0]).not.toHaveProperty('target');
+    } finally { await h.cleanup(); }
+  });
+
   it('lets synthetic pointer work through when the backend declares pointer support', async () => {
     const h = await makeHarness({ backendCapabilities: () => ({ ...caps(), pointer: true }) });
     try {

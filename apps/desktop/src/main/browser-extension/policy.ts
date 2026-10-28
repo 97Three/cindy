@@ -26,6 +26,7 @@ export const BROWSER_EXTENSION_READ_ACTIONS = [
   'wait',
   'pdf',
   'debuggerAccess',
+  'unmark',
 ] as const;
 export const BROWSER_EXTENSION_INTERACT_ACTIONS = [
   'click',
@@ -45,7 +46,7 @@ export const BROWSER_EXTENSION_INTERACT_ACTIONS = [
   'cdp',
 ] as const;
 /** Actions that address no page: listing tabs, and checking or granting the on-demand debugger. */
-const UNADDRESSED_ACTIONS: readonly unknown[] = ['tabs', 'debuggerAccess'];
+const UNADDRESSED_ACTIONS: readonly unknown[] = ['tabs', 'debuggerAccess', 'unmark'];
 export const BROWSER_EXTENSION_EXTRACT_ATTRIBUTES = [
   'href',
   'src',
@@ -273,7 +274,7 @@ export interface BrowserExtensionJobPayload {
 
 const TAB_ADDRESSED_ACTIONS = [
   'focus', 'close', 'screenshot', 'console', 'requests', 'responseBody',
-  'evaluate', 'clickCoords', 'drag', 'dialog', 'resize', 'wait', 'pdf', 'cdp',
+  'evaluate', 'clickCoords', 'drag', 'dialog', 'resize', 'wait', 'pdf', 'cdp', 'unmark',
 ];
 
 /** 与扩展侧同判据:对齐专用浏览器后新增动作的参数。 */

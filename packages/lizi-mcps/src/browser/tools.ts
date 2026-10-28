@@ -601,7 +601,10 @@ export function registerBrowserTools(registry: BrowserToolRegistry, deps: Browse
         'action=start 且启用代理时允许导航的公网 DNS 名称或 *.example.com 模式；代理模式默认禁止导航',
       ),
       profile: z.string().optional().describe('浏览器 profile 名;省略则使用默认隔离 profile'),
-      target: z.enum(['sandbox', 'host', 'node']).optional(),
+      // Agents often read "my browser" as this field; backend names are accepted and ignored here.
+      target: z.enum(['sandbox', 'host', 'node', 'user-browser', 'external', 'rsb-webview']).optional().describe(
+        '运行位置(高级,通常省略)。不是浏览器选择:当前浏览器模式看 status.data.backend,切换浏览器用 setBackend',
+      ),
       node: z.string().optional(),
       targetUrl: z.string().optional(),
       url: z.string().optional().describe('navigate/open/wait 等操作使用的 URL'),
@@ -699,6 +702,10 @@ export function registerBrowserTools(registry: BrowserToolRegistry, deps: Browse
     },
     handler: async (args) => {
       try {
+        if (args.target === 'user-browser' || args.target === 'external' || args.target === 'rsb-webview') {
+          const { target: _browserName, ...rest } = args;
+          args = rest as typeof args;
+        }
         const scope = syncBackendScope();
         const scopeIsCurrent = () => syncBackendScope() === scope;
         const profile = deps.resolveProfile?.(args.profile);

@@ -185,6 +185,8 @@ export class UserBrowserBackend implements BrowserBackend {
   readonly kind = 'user-browser' as const;
   private readonly targets = new Map<string, TargetRecord>();
   private readonly recipeSessions = new RecipeBrowserSessions();
+  /** 任务(会话)→ 它操作过的标签页;任务停下时清掉这些页面上的「Cindy 正在操作」标记。 */
+  private readonly sessionTabs = new Map<string, Map<string, { clientId: string; tabId: number }>>();
   /** 配方会话 id → 取回扩展缓存的网络事件(事件随每条命令回传,读取抓包前再取一次)。 */
   private readonly recipePumps = new Map<string, () => Promise<void>>();
   private nextAlias = 1;
@@ -200,7 +202,9 @@ export class UserBrowserBackend implements BrowserBackend {
         'BROWSER_RUNTIME_UNAVAILABLE',
       );
     try {
-      return await this.dispatch(request);
+      const result = await this.dispatch(request);
+      this.noteSessionTab(request, result);
+      return result;
     } catch (err) {
       this.opts.logger.warn('user-browser backend call threw', {
         action: request.action,
@@ -214,6 +218,29 @@ export class UserBrowserBackend implements BrowserBackend {
     this.disposed = true;
     this.recipeSessions.dispose();
     this.targets.clear();
+  }
+
+  private noteSessionTab(request: BackendRequest, result: BackendResult): void {
+    const sessionId = (request as { __mcpSessionId?: unknown }).__mcpSessionId;
+    const targetId = (result.data as { targetId?: unknown } | undefined)?.targetId;
+    if (!result.ok || typeof sessionId !== 'string' || !sessionId || typeof targetId !== 'string') return;
+    const record = this.targets.get(targetId);
+    if (!record) return;
+    let tabs = this.sessionTabs.get(sessionId);
+    if (!tabs) this.sessionTabs.set(sessionId, (tabs = new Map()));
+    tabs.set(record.targetId, { clientId: record.clientId, tabId: record.tabId });
+  }
+
+  /** 任务停下:清掉它在用户浏览器里留下的操作标记(不等标记自然淡出)。尽力而为,失败不影响任何事。 */
+  async clearSessionMarks(sessionId: string): Promise<void> {
+    const tabs = this.sessionTabs.get(sessionId);
+    this.sessionTabs.delete(sessionId);
+    const control = this.opts.getPageControl();
+    if (!tabs || !control) return;
+    for (const { clientId, tabId } of tabs.values()) {
+      if (!this.parity(control, clientId)) continue;
+      await control.bridge.act('unmark', { browser: clientId, tabId }).catch(() => undefined);
+    }
   }
 
   // ── 分发 ────────────────────────────────────────────────────────────────
@@ -673,6 +700,22 @@ export class UserBrowserBackend implements BrowserBackend {
     if (!picked.ok) return picked.result;
     const label = typeof req.label === 'string' ? req.label : undefined;
     if (this.parity(gate.control, picked.clientId)) {
+      // 已知的同站点标签页(用户或之前的任务开着的,常常已在正确账号下):提示模型优先复用。
+      let host = '';
+      try {
+        host = new URL(url).hostname;
+      } catch {
+        // validated by the bridge below
+      }
+      const sameSite = existing
+        ? []
+        : [...this.targets.values()].filter((r) => {
+            try {
+              return r.clientId === picked.clientId && new URL(r.url).hostname === host;
+            } catch {
+              return false;
+            }
+          });
       // navigate 带 targetId:在原标签页跳转;否则新页开在 Cindy 自己的后台窗口,不碰用户的窗口。
       const job =
         existing && existing.clientId === picked.clientId
@@ -690,7 +733,21 @@ export class UserBrowserBackend implements BrowserBackend {
         },
         label,
       );
-      return actionOk(req.action, { backend: this.kind, ...this.describe(record) });
+      const others = sameSite.filter((r) => r.targetId !== record.targetId).slice(0, 5);
+      return actionOk(req.action, {
+        backend: this.kind,
+        ...this.describe(record),
+        ...(others.length
+          ? {
+              sameSiteTabs: others.map((r) => ({
+                targetId: r.label ?? r.alias,
+                url: r.url,
+                ...(r.title ? { title: r.title } : {}),
+              })),
+              note: '已有同一网站的页面开着(往往已经在正确的账号和位置):优先复用它们,不要从入口重新找;新开的这页不需要时可以 close。',
+            }
+          : {}),
+      });
     }
     const navigated = await gate.control.bridge.act('navigate', { url, browser: picked.clientId });
     if (!navigated.ok) return this.failureResult(req.action, navigated);
@@ -749,22 +806,32 @@ export class UserBrowserBackend implements BrowserBackend {
     });
     if (!job.ok) return this.failureResult(req.action, job);
     const record = located.record;
-    const refs: Record<string, { role: string; name?: string }> = {};
     const elementLines: string[] = [];
     for (const line of String(job.elements ?? '').split('\n')) {
       const match = /^\[([a-f0-9]{32})\] (\S+) ?(.*)$/.exec(line);
       if (!match) continue;
       const [, ref, role, name] = match;
-      refs[ref] = { role, ...(name ? { name } : {}) };
       elementLines.push(`- ${role}${name ? ` "${name}"` : ''} [ref=${ref}]`);
     }
-    const text = typeof job.text === 'string' ? job.text : '';
-    const lines = [
-      ...(record.title ? [`# ${record.title}`] : []),
-      ...(text ? text.split('\n') : []),
-      ...(elementLines.length ? ['', '## interactive', ...elementLines] : []),
-    ];
-    const snapshot = lines.join('\n');
+    // maxChars bounds the whole observation: action refs come first, page text gets what is left, and
+    // interactive:true returns refs only. Refs live in the snapshot lines alone (no duplicate map).
+    const head = record.title ? `# ${record.title}` : '';
+    let elementsBlock = elementLines.length ? ['', '## interactive', ...elementLines].join('\n') : '';
+    let cut = job.truncated === true;
+    if (elementsBlock.length > maxChars) {
+      elementsBlock = elementsBlock.slice(0, elementsBlock.lastIndexOf('\n', maxChars));
+      cut = true;
+    }
+    let text = req.interactive === true ? '' : typeof job.text === 'string' ? job.text : '';
+    // Two newlines join title, text and refs.
+    const textBudget = Math.max(0, maxChars - head.length - elementsBlock.length - 2);
+    if (text.length > textBudget) {
+      text = text.slice(0, textBudget);
+      cut = true;
+    }
+    const snapshot = [head, text, elementsBlock].filter(Boolean).join('\n');
+    const lines = snapshot.split('\n');
+    const refCount = (elementsBlock.match(/\[ref=/g) ?? []).length;
     return actionOk(req.action, {
       format: 'ai',
       backend: this.kind,
@@ -772,14 +839,8 @@ export class UserBrowserBackend implements BrowserBackend {
       url: record.url,
       ...(record.title ? { title: record.title } : {}),
       snapshot,
-      refs,
-      stats: {
-        lines: lines.length,
-        chars: snapshot.length,
-        refs: Object.keys(refs).length,
-        interactive: Object.keys(refs).length,
-      },
-      truncated: job.truncated === true,
+      stats: { lines: lines.length, chars: snapshot.length, refs: refCount, interactive: refCount },
+      truncated: cut,
       untrusted_content: true,
     });
   }
@@ -1041,7 +1102,10 @@ export class UserBrowserBackend implements BrowserBackend {
       case 'focus':
         return actionOk(req.action, {
           ...base,
-          note: '只在标签页所在窗口内切到前台,不抢窗口焦点。',
+          note:
+            job.broughtToFront === true
+              ? '已把 Cindy 窗口带到用户面前:请告诉用户在这个页面上完成需要亲手做的事(例如登录),完成后再继续。'
+              : '只在标签页所在窗口内切到前台,不抢窗口焦点。',
         });
       case 'screenshot':
       case 'pdf':

@@ -261,7 +261,7 @@ describe('UserBrowserBackend · 读取与动作', () => {
         format: 'ai',
         targetId: 'client-a:7',
         url: 'https://example.test/a',
-        refs: { [ref]: { role: 'button', name: 'Submit' }, ['d'.repeat(32)]: { role: 'a' } },
+        stats: { refs: 2 },
         untrusted_content: true,
       },
     });
@@ -278,6 +278,15 @@ describe('UserBrowserBackend · 读取与动作', () => {
         selector: 'main',
       },
     ]);
+    expect(snap.data).not.toHaveProperty('refs');
+    // maxChars bounds the whole observation (refs first); interactive:true drops the page text.
+    fake.responses.set('snapshot', () => ({ ok: true, title: 'A', text: 'x'.repeat(5000), elements: `[${ref}] button Submit` }));
+    const bounded = await call(b, { action: 'snapshot', targetId: 'client-a:7', maxChars: 600 });
+    expect((bounded.data as { snapshot: string }).snapshot.length).toBeLessThanOrEqual(600);
+    expect(bounded.data).toMatchObject({ truncated: true });
+    expect((bounded.data as { snapshot: string }).snapshot).toContain(`[ref=${ref}]`);
+    const interactive = await call(b, { action: 'snapshot', targetId: 'client-a:7', interactive: true });
+    expect((interactive.data as { snapshot: string }).snapshot).not.toContain('xxxx');
   });
 
   it('click / type / press / select / wait 翻译成扩展作业;不支持的 kind 明确拒绝', async () => {
@@ -698,5 +707,34 @@ describe('UserBrowserBackend · 读取与动作', () => {
       'cdp',
       { url: 'https://example.test/a', browser: 'client-aaaaaaaa', tabId: 7, op: 'end' },
     ]);
+  });
+
+  it('打开页面时提示已开着的同站点页面;任务停下时清掉它操作过的页面上的标记', async () => {
+    const fake = fakeControl({ version: '0.4.43' });
+    fake.responses.set('open', (payload) => ({ ok: true, tabId: 42, url: payload.url, title: 'New' }));
+    const b = backend(fake.control);
+    await call(b, { action: 'tabs', __mcpSessionId: 's1' });
+    const opened = await call(b, { action: 'open', url: 'https://example.test/other', __mcpSessionId: 's1' });
+    expect(opened).toMatchObject({
+      ok: true,
+      data: { sameSiteTabs: [{ targetId: 't1', url: 'https://example.test/a' }], note: expect.stringContaining('复用') },
+    });
+    await call(b, { action: 'act', targetId: 't1', request: { kind: 'click', ref: 'r' }, __mcpSessionId: 's1' });
+    await b.clearSessionMarks('s1');
+    const unmarked = fake.jobs.filter(([action]) => action === 'unmark').map(([, payload]) => payload.tabId as number).sort((x, y) => x - y);
+    expect(unmarked).toEqual([7, 42]);
+    await b.clearSessionMarks('s1');
+    expect(fake.jobs.filter(([action]) => action === 'unmark')).toHaveLength(2);
+  });
+
+  it('focus 把 Cindy 窗口带到用户面前时,提示模型请用户去完成', async () => {
+    const fake = fakeControl({ version: '0.4.43' });
+    fake.responses.set('focus', () => ({ ok: true, broughtToFront: true }));
+    const b = backend(fake.control);
+    await call(b, { action: 'tabs' });
+    expect(await call(b, { action: 'focus', targetId: 't1' })).toMatchObject({
+      ok: true,
+      data: { note: expect.stringContaining('带到用户面前') },
+    });
   });
 });

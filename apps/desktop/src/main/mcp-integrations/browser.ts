@@ -339,8 +339,15 @@ export function setUserBrowserPageControlProvider(provider: () => UserBrowserPag
   userBrowserPageControlProvider = provider;
 }
 
+let currentUserBrowserBackend: UserBrowserBackend | null = null;
+/** A task's turn ended: clear the activity marks it left in the user's browser. */
+export function clearUserBrowserMarksForSession(sessionId: string): void {
+  if (backendController.kind !== 'user-browser') return;
+  void currentUserBrowserBackend?.clearSessionMarks(sessionId).catch(() => undefined);
+}
+
 function createUserBrowserBackend(): UserBrowserBackend {
-  return new UserBrowserBackend({
+  return (currentUserBrowserBackend = new UserBrowserBackend({
     getPageControl: () => userBrowserPageControlProvider(),
     // Same upload roots as the sidebar browser: the session's own folders plus its artifacts.
     resolveUploadRoots: async (sessionId) => [
@@ -348,7 +355,7 @@ function createUserBrowserBackend(): UserBrowserBackend {
       ...(await resolveSessionUploadRoots(sessionId)),
     ],
     logger,
-  });
+  }));
 }
 
 const backendController = new BrowserBackendController({
