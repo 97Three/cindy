@@ -1403,10 +1403,27 @@ describe("Pi provider-aware model routing", () => {
         active = expected;
         if (mode === 'send') await handle.send({ type: 'user', content: 'try cache' });
         if (mode !== 'queued') captured.onEvent!({ type: 'agent_start' });
-        captured.onEvent!({ type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'try cache' }] } });
+        if (mode === 'queued') {
+          captured.onEvent!({ type: 'queue_update', steering: [], followUp: ['try cache'] });
+          captured.onEvent!({ type: 'queue_update', steering: [], followUp: [] });
+        }
+        const message = { role: 'user', content: [{ type: 'text', text: 'try cache' }] };
+        captured.onEvent!({ type: 'message_start', message });
+        const key = createHash('sha256').update(JSON.stringify(message)).digest('hex');
+        captured.onEvent!({ type: 'extension_ui_request', method: 'input', title: 'cindy:cache-input',
+          id: 'cache-input', placeholder: JSON.stringify({ key, direct: mode !== 'queued' }) });
         // Expiry or another session's learning during the request must not
         // change whether this input actually started with the override.
         active = !expected;
+        // Consumed steer is another user message in the same execution. It
+        // must neither refresh the receipt nor treat an auto-retry as input.
+        captured.onEvent!({ type: 'queue_update', steering: ['steer'], followUp: [] });
+        captured.onEvent!({ type: 'queue_update', steering: [], followUp: [] });
+        const steer = { role: 'user', content: [{ type: 'text', text: 'steer' }] };
+        captured.onEvent!({ type: 'message_start', message: steer });
+        captured.onEvent!({ type: 'extension_ui_request', method: 'input', title: 'cindy:cache-input',
+          id: 'cache-steer', placeholder: JSON.stringify({ key: createHash('sha256').update(JSON.stringify(steer)).digest('hex'), direct: false }) });
+        captured.onEvent!({ type: 'agent_start' });
         captured.onEvent!({ type: 'message_start', message: { role: 'toolResult', content: [] } });
         captured.onEvent!({ type: 'auto_retry_end', success: false,
           finalError: '400: unsupported parameter: prompt_cache_retention' });

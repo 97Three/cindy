@@ -1,4 +1,5 @@
 import { getPiExtensionUiCapability } from './extension-ui-capabilities.js';
+import { createPiCacheInputTracker } from './cache-input.js';
 import { createHarnessHookBridge } from '../shared/harness-hooks.js';
 import { parsePiManagementArgs, parsePiManagementText } from './managed-command.js';
 import { canonicalSkillPath, snapshotDisabledSkillLaunch, currentDisabledSkillLaunchPaths, extendDisabledSkillLaunchPaths, type DisabledSkillLaunchSnapshot } from '../shared/skill-activation.js';
@@ -4211,6 +4212,8 @@ export class PiAgent extends BaseAgent {
         applied: compat?.supportsLongCacheRetention === false };
     };
     let inputCacheCompatibility: PiCacheCompatibility | undefined;
+    const cacheInputTracker = createPiCacheInputTracker(text => createHash('sha256').update(text).digest('hex'));
+    let pendingCacheCompatibility: { key: string; value: PiCacheCompatibility | undefined } | undefined;
     ctx.getCacheCompatibility = () => inputCacheCompatibility;
     let activeEffortSnapshot = initialEffortSnapshot;
     let mutableEffort: Effort | null = startupEffort ?? null;
@@ -5749,11 +5752,18 @@ export class PiAgent extends BaseAgent {
         transport,
         logger: this.deps.logger,
         onEvent: (event: PiRpcEvent) => {
-          if (event.type === 'agent_start'
-            || event.type === 'message_start' && (event.message as { role?: string } | undefined)?.role === 'user') {
-            // Native Execute/Refine starts an agent; queued follow-ups only
-            // start a user message. Freeze until the next input, not tool round.
-            inputCacheCompatibility = readCacheCompatibility();
+          const cacheInput = cacheInputTracker.observe(event);
+          if (cacheInput) pendingCacheCompatibility = { key: cacheInput.key, value: readCacheCompatibility() };
+          if (event.type === 'extension_ui_request' && event.method === 'input' && event.title === 'cindy:cache-input') {
+            let request: { key?: unknown; direct?: unknown } = {};
+            try { request = JSON.parse(typeof event.placeholder === 'string' ? event.placeholder : '{}'); } catch {}
+            const receipt = !closed && !proc.isClosed ? cacheInputTracker.read(request?.key) : undefined;
+            if (receipt && pendingCacheCompatibility?.key === receipt.key && (request.direct === true || receipt.followUp)) {
+              inputCacheCompatibility = pendingCacheCompatibility.value;
+              pendingCacheCompatibility = undefined;
+            }
+            proc.send({ type: 'extension_ui_response', id: event.id, value: JSON.stringify(receipt ?? {}) });
+            return;
           }
           if (event.type === 'agent_start' && !ctx.pendingHostTurnStartToken) {
             syncNativePlanMode?.();

@@ -35,9 +35,14 @@ function fixture() {
     pi: { on: (name: string, fn: (...args: any[]) => void) => handlers.set(name, fn) },
     process: { env: { PI_CODING_AGENT_DIR: '/agent', CINDY_PI_CACHE_COMPAT_FILE: '/compat.json' } },
     // The in-memory filesystem uses POSIX keys on every host, including Windows.
-    ...fs, path: path.posix, createHash, randomUUID, Buffer, Date: { now: () => now }, homedir: () => '/home/fixture',
+    ...fs, path: path.posix, createHash, randomUUID, Buffer, setTimeout, clearTimeout, Date: { now: () => now }, homedir: () => '/home/fixture',
   });
-  const startUser = () => handlers.get('message_start')?.({ message: { role: 'user', content: [{ type: 'text', text: 'OK' }] } });
+  const startUser = (direct = true, followUp = false) => {
+    if (direct) handlers.get('before_agent_start')?.({});
+    handlers.get('message_start')?.({ message: { role: 'user', content: [{ type: 'text', text: 'OK' }] } }, {
+      mode: 'rpc', ui: { input: async (_title: string, raw: string) => JSON.stringify({ key: JSON.parse(raw).key, followUp }) },
+    });
+  };
   const fresh = () => { handlers.get('input')!({ source: 'rpc' }, { isIdle: () => true }); startUser(); };
   const interrupt = () => handlers.get('input')!({ source: 'rpc', streamingBehavior: 'steer' }, { isIdle: () => false });
   const sent: any[] = [];
@@ -65,7 +70,7 @@ function fixture() {
 }
 
 describe('Pi native cache recovery', () => {
-  it.each(['openai-completions', 'openai-responses'])('keeps learned payload recovery without taking provider ownership on an older %s registry', api => {
+  it.each(['openai-completions', 'openai-responses'])('keeps learned payload recovery without taking provider ownership on an older %s registry', async api => {
     const h = fixture();
     const selected = { ...model, api };
     const rules = [{ ...selected, providerId: 'connection', routeKey }];
@@ -80,7 +85,7 @@ describe('Pi native cache recovery', () => {
     const ctx = { model: selected, modelRegistry: { getProvider: vi.fn() } };
     const hook = h.handlers.get('before_provider_request')!;
     const payload = { ...body, service_tier: 'priority' };
-    expect(hook?.({ payload }, ctx) ?? payload).toEqual({ model: 'wire', messages: body.messages, service_tier: 'priority' });
+    expect((await hook?.({ payload }, ctx)) ?? payload).toEqual({ model: 'wire', messages: body.messages, service_tier: 'priority' });
     expect(ctx.modelRegistry.getProvider).not.toHaveBeenCalled();
     expect(payload).toHaveProperty('prompt_cache_key', 'cache');
     // A newly loaded bridge reads the same durable record, not process memory.
@@ -89,29 +94,29 @@ describe('Pi native cache recovery', () => {
     restarted.files.set('/compat.json', h.files.get('/compat.json')!);
     restarted.fresh();
     const recovered = restarted.handlers.get('before_provider_request')!;
-    expect(recovered({ payload }, ctx)).not.toHaveProperty('prompt_cache_key');
-    expect(recovered({ payload }, { ...ctx, model: { ...selected, baseUrl: selected.baseUrl + '/other' } })).toBeUndefined();
-    expect(recovered({ payload }, { ...ctx, modelRegistry: { ...ctx.modelRegistry, getRegisteredNativeProvider: vi.fn() } })).toBeUndefined();
+    expect(await recovered({ payload }, ctx)).not.toHaveProperty('prompt_cache_key');
+    expect(await recovered({ payload }, { ...ctx, model: { ...selected, baseUrl: selected.baseUrl + '/other' } })).toBeUndefined();
+    expect(await recovered({ payload }, { ...ctx, modelRegistry: { ...ctx.modelRegistry, getRegisteredNativeProvider: vi.fn() } })).toBeUndefined();
     restarted.clock(1086400001);
     // Expiry cannot change a tool continuation in the already-started input.
     restarted.handlers.get('tool_execution_start')!();
-    expect(recovered({ payload }, ctx)).not.toHaveProperty('prompt_cache_key');
+    expect(await recovered({ payload }, ctx)).not.toHaveProperty('prompt_cache_key');
     restarted.startUser();
-    expect(recovered({ payload }, ctx)).toBeUndefined();
+    expect(await recovered({ payload }, ctx)).toBeUndefined();
     expect(restarted.record()).toEqual(record);
   });
 
-  it('preserves normal caching and bounds legacy records in the older registry payload hook', () => {
+  it('preserves normal caching and bounds legacy records in the older registry payload hook', async () => {
     const h = fixture();
     const ctx = { model, modelRegistry: {} };
     const hook = () => h.handlers.get('before_provider_request')?.({ payload: body }, ctx);
     h.fresh();
-    expect(hook()).toBeUndefined();
+    expect(await hook()).toBeUndefined();
     h.files.set('/compat.json', JSON.stringify({ routes: { [key]: { supportsLongCacheRetention: false } } }));
     h.clock(1001); h.fresh();
-    expect(hook()).toEqual({ model: 'wire', messages: body.messages });
+    expect(await hook()).toEqual({ model: 'wire', messages: body.messages });
     h.clock(1000 + 7 * 86400000 + 1); h.fresh();
-    expect(hook()).toBeUndefined();
+    expect(await hook()).toBeUndefined();
   });
 
   it('does one final-payload comparison, learns only after generation, and preserves usage', async () => {
@@ -149,7 +154,7 @@ describe('Pi native cache recovery', () => {
       h.handlers.get('input')!({ source: 'rpc', streamingBehavior: 'followUp' }, { isIdle: () => false });
     });
     expect(h.sent).toHaveLength(1); expect(h.record()).toBeUndefined();
-    h.startUser();
+    h.startUser(false, true);
     await h.request([failure()]);
     expect(h.sent).toHaveLength(3);
     expect(h.sent[1]).toHaveProperty('prompt_cache_key');
@@ -163,6 +168,78 @@ describe('Pi native cache recovery', () => {
     h.startUser(); await h.request([failure(), failure(), failure(), failure(), failure(), success]);
     expect(h.sent).toHaveLength(6);
     expect(h.record()).toMatchObject({ evidence: 'opaque' });
+  });
+
+  it('does not reopen recovery when an actual steer user message is consumed', async () => {
+    const h = fixture(); h.fresh();
+    h.handlers.get('tool_execution_start')!();
+    h.interrupt(); h.startUser(false);
+    await h.request([failure(), success]);
+    expect(h.sent).toHaveLength(1);
+    expect(h.sent[0]).toHaveProperty('prompt_cache_key');
+    expect(h.record()).toBeUndefined();
+    // A later independently consumed followUp still owns its budget.
+    h.startUser(false, true);
+    await h.request([failure(), failure(), success]);
+    expect(h.sent).toHaveLength(3);
+    expect(h.record()).toMatchObject({ evidence: 'opaque' });
+  });
+
+  it('keeps the continuing snapshot when steer is consumed across its TTL', async () => {
+    const h = fixture();
+    const record = { supportsLongCacheRetention: false, learnedAt: 1000000000, expiresAt: 1086400000, evidence: 'opaque' };
+    h.files.set('/compat.json', JSON.stringify({ routes: { [key]: record } }));
+    h.fresh();
+    h.handlers.get('tool_execution_start')!();
+    h.clock(1086400001); h.interrupt(); h.startUser(false);
+    await h.request([success]);
+    expect(h.sent[0]).not.toHaveProperty('prompt_cache_key');
+    const hook = h.handlers.get('before_provider_request')!;
+    expect(await hook({ payload: body }, { model, modelRegistry: {} })).not.toHaveProperty('prompt_cache_key');
+    h.startUser(false, true); await h.request([success]);
+    expect(h.sent[1]).toHaveProperty('prompt_cache_key');
+  });
+
+  it('does not arm from a stale receipt or a followUp cancelled while its receipt is pending', async () => {
+    for (const cancel of [false, true]) {
+      const h = fixture(); h.fresh(); h.interrupt();
+      h.handlers.get('message_start')!({ message: { role: 'user', content: [] } }, { mode: 'rpc', ui: {
+        input: async (_title: string, raw: string) => {
+          if (cancel) h.handlers.get('tool_execution_start')!();
+          return JSON.stringify({ key: cancel ? JSON.parse(raw).key : 'stale', followUp: true });
+        },
+      } });
+      await h.request([failure(), success]);
+      expect(h.sent).toHaveLength(1);
+      expect(h.record()).toBeUndefined();
+    }
+  });
+
+  it.each([true, false].flatMap(direct => [{ direct, mode: 'rpc' }, { direct, mode: undefined }]))(
+    'binds $direct input receipts before message_end replaces the message (mode: $mode)', async ({ direct, mode }) => {
+      const h = fixture(); h.fresh(); h.interrupt();
+      if (direct) h.handlers.get('before_agent_start')!({});
+      const message = { role: 'user', content: [{ type: 'text', text: 'accepted input' }], timestamp: 123 };
+      const key = createHash('sha256').update(JSON.stringify(message)).digest('hex');
+      const query = vi.fn(async () => JSON.stringify({ key, followUp: !direct }));
+      h.handlers.get('message_start')!({ message }, { mode, ui: { input: query } });
+      // Pi's message_end replacement mutates the same message object in place.
+      Object.assign(message, { content: [{ type: 'text', text: 'extension replacement' }], timestamp: 456 });
+      await h.request([failure(), success]);
+      expect(query).toHaveBeenCalledWith('cindy:cache-input', JSON.stringify({ key, direct }));
+      expect(h.sent).toHaveLength(2);
+      expect(h.record()).toMatchObject({ evidence: 'opaque' });
+    },
+  );
+
+  it('does not ask an interactive runtime to confirm queued provenance', async () => {
+    const h = fixture(); h.fresh(); h.interrupt();
+    const query = vi.fn();
+    h.handlers.get('message_start')!({ message: { role: 'user', content: [] } }, { mode: 'interactive', ui: { input: query } });
+    await h.request([failure(), success]);
+    expect(query).not.toHaveBeenCalled();
+    expect(h.sent).toHaveLength(1);
+    expect(h.record()).toBeUndefined();
   });
 
   // PR #7561 P1: freeze learned state across tool calls, including the case

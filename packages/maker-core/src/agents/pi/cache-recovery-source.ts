@@ -7,6 +7,9 @@ function installCindyCacheRecovery(pi) {
   const home = process.env.CINDY_PI_CACHE_COMPAT_FILE;
   const file = home && home.replace(/^\$HOME(?=\/)/, () => homedir());
   let turn;
+  let pendingInput;
+  let directInput = false;
+  let revision = 0;
   let sequence = 0;
   let memory = Object.create(null);
   let routeRules = new Map();
@@ -18,14 +21,15 @@ function installCindyCacheRecovery(pi) {
       return Array.isArray(value) ? value : [];
     } catch { return []; }
   }
-  function refreshRules() {
-    routeRules = new Map(rules().flatMap(rule => {
+  function readRules() {
+    return new Map(rules().flatMap(rule => {
       if (!rule || typeof rule !== 'object' || typeof rule.providerId !== 'string'
         || !/^[a-f0-9]{64}$/.test(rule.routeKey)) return [];
       return [[JSON.stringify([rule.provider, rule.id, rule.baseUrl, rule.api]),
         JSON.stringify([rule.providerId, rule.id, rule.routeKey])]];
     }));
   }
+  function refreshRules() { routeRules = readRules(); }
   refreshRules();
   function route(model) {
     if (!supported(model?.api)) return;
@@ -154,33 +158,78 @@ function installCindyCacheRecovery(pi) {
     }
     return cacheRejected || /(?:unsupported|not supported|unknown|未知|不支持).{0,80}prompt_cache_(?:key|retention)|prompt_cache_(?:key|retention).{0,80}(?:unsupported|not supported|unknown|未知|不支持)/i.test(body) ? 'explicit' : 'opaque';
   }
+  function invalidate() {
+    revision++;
+    if (turn) { turn.safe = false; turn.valid = false; }
+  }
   pi.on('input', () => {
     // Queuing/steering invalidates the old trial immediately. It cannot arm a
     // budget for the new input until Pi actually starts that user message.
-    if (turn) { turn.safe = false; turn.valid = false; }
+    directInput = false;
+    invalidate();
   });
-  pi.on('message_start', (event) => {
+  pi.on('before_agent_start', () => { directInput = true; });
+  pi.on('message_start', (event, ctx) => {
     if (event.message?.role !== 'user') return;
-    // Queued follow-ups do not emit agent_start. Tool continuations and native
-    // retries do not start a user message, so they retain this input's budget.
-    refreshRules();
+    // Pi represents both steer and followUp as user messages. Snapshot now,
+    // but decide ownership only after the supervisor sees the public event.
+    invalidate();
+    const inputRules = readRules();
     const records = load()?.routes ?? Object.create(null);
     for (const [key, record] of Object.entries(memory)) {
       if ((records[key]?.learnedAt ?? 0) < record.learnedAt) records[key] = record;
     }
     const startedAt = Date.now();
     const learned = new Set(Object.keys(records).filter(key => active(records[key], startedAt)));
-    turn = { sequence: ++sequence, safe: true, valid: true, attempted: false, learned };
+    // Pi's later message_end hooks may replace this object in place. Match
+    // the supervisor's message_start receipt, not a subsequently edited object.
+    const key = createHash('sha256').update(JSON.stringify(event.message)).digest('hex');
+    pendingInput = { key, ctx, direct: directInput, revision, learned, inputRules };
+    if (directInput) {
+      routeRules = inputRules;
+      turn = { sequence: ++sequence, safe: true, valid: true, attempted: false, learned };
+    }
+    directInput = false;
   });
-  for (const name of ['tool_call', 'tool_execution_start', 'model_select', 'session_switch', 'session_shutdown']) {
-    pi.on(name, () => { if (turn) { turn.safe = false; turn.valid = false; } });
+  async function settleInput() {
+    const input = pendingInput;
+    if (!input) return;
+    if (!input.promise) input.promise = (async () => {
+      let followUp = false;
+      let timer;
+      try {
+        // Older RPC ExtensionContext versions do not expose mode.
+        if (input.ctx?.mode && input.ctx.mode !== 'rpc') throw new Error('not RPC');
+        const key = input.key;
+        const raw = await Promise.race([
+          input.ctx.ui.input('cindy:cache-input', JSON.stringify({ key, direct: input.direct })),
+          new Promise(resolve => { timer = setTimeout(() => resolve(undefined), 5000); }),
+        ]);
+        if (typeof raw === 'string') {
+          const receipt = JSON.parse(raw);
+          followUp = receipt?.key === key && receipt.followUp === true;
+        }
+      } catch { /* Unconfirmed queued provenance must not reopen recovery. */ }
+      finally { if (timer) clearTimeout(timer); }
+      if (pendingInput !== input || input.revision !== revision || input.ctx?.signal?.aborted) return;
+      if (!input.direct && followUp) {
+        routeRules = input.inputRules;
+        turn = { sequence: ++sequence, safe: true, valid: true, attempted: false, learned: input.learned };
+      }
+      pendingInput = undefined;
+    })();
+    await input.promise;
   }
-  pi.on('before_provider_request', (event, ctx) => {
+  for (const name of ['tool_call', 'tool_execution_start', 'model_select', 'session_switch', 'session_shutdown']) {
+    pi.on(name, invalidate);
+  }
+  pi.on('before_provider_request', async (event, ctx) => {
     // Older registries cannot safely restore an extension provider's ownership.
     // Keep their existing host recovery usable without registering a provider;
     // modern registries leave all payload handling to the final stream wrapper.
     if (typeof ctx.modelRegistry?.getProvider === 'function'
       && typeof ctx.modelRegistry?.getRegisteredNativeProvider === 'function') return;
+    await settleInput();
     const key = route(ctx.model);
     // Use the same input snapshot as the modern wrapper, including tool rounds
     // across expiry. Before any input exists, preserve native preparation calls.
@@ -192,39 +241,40 @@ function installCindyCacheRecovery(pi) {
     refreshRules,
     accepts: model => Boolean(route(model)),
     wrap(model, options, invoke, provider = model.provider) {
-      const key = route(model);
-      if (!key || !turn) return invoke(options);
-      const owner = turn;
-      const startedAt = Date.now();
-      const learned = owner.learned.has(key);
-      let originalFingerprint;
-      let originalIdentity;
-      let hasCache = false;
-      let skipped = false;
-      const sameInput = () => turn === owner && owner.valid && owner.safe && !options?.signal?.aborted;
-      const requestOptions = (trial) => ({ ...options,
-        onPayload: async (payload, requestModel) => {
-          const replacement = await options?.onPayload?.(payload, requestModel);
-          const finalPayload = replacement === undefined ? payload : replacement;
-          if (!finalPayload || typeof finalPayload !== 'object' || Array.isArray(finalPayload)) return finalPayload;
-          if (trial) {
-            if (!sameInput() || fingerprint(finalPayload) !== originalFingerprint
-              || requestIdentity(requestModel, options) !== originalIdentity) {
-              skipped = true;
-              throw new Error('CINDY_CACHE_RETRY_CONTEXT_CHANGED');
-            }
-            return withoutCache(finalPayload);
-          }
-          hasCache = fields.some(field => Object.hasOwn(finalPayload, field));
-          if (hasCache && sameInput() && !owner.attempted && requestModel?.id === model.id
-            && requestModel?.api === model.api && requestModel?.baseUrl === model.baseUrl) {
-            originalFingerprint = fingerprint(finalPayload);
-            originalIdentity = requestIdentity(requestModel, options);
-          }
-          return learned || owner.trialKey === key ? withoutCache(finalPayload) : finalPayload;
-        },
-      });
       return (async function* () {
+        await settleInput();
+        const key = route(model);
+        if (!key || !turn) { yield* invoke(options); return; }
+        const owner = turn;
+        const startedAt = Date.now();
+        const learned = owner.learned.has(key);
+        let originalFingerprint;
+        let originalIdentity;
+        let hasCache = false;
+        let skipped = false;
+        const sameInput = () => turn === owner && owner.valid && owner.safe && !options?.signal?.aborted;
+        const requestOptions = (trial) => ({ ...options,
+          onPayload: async (payload, requestModel) => {
+            const replacement = await options?.onPayload?.(payload, requestModel);
+            const finalPayload = replacement === undefined ? payload : replacement;
+            if (!finalPayload || typeof finalPayload !== 'object' || Array.isArray(finalPayload)) return finalPayload;
+            if (trial) {
+              if (!sameInput() || fingerprint(finalPayload) !== originalFingerprint
+                || requestIdentity(requestModel, options) !== originalIdentity) {
+                skipped = true;
+                throw new Error('CINDY_CACHE_RETRY_CONTEXT_CHANGED');
+              }
+              return withoutCache(finalPayload);
+            }
+            hasCache = fields.some(field => Object.hasOwn(finalPayload, field));
+            if (hasCache && sameInput() && !owner.attempted && requestModel?.id === model.id
+              && requestModel?.api === model.api && requestModel?.baseUrl === model.baseUrl) {
+              originalFingerprint = fingerprint(finalPayload);
+              originalIdentity = requestIdentity(requestModel, options);
+            }
+            return learned || owner.trialKey === key ? withoutCache(finalPayload) : finalPayload;
+          },
+        });
         for await (const event of invoke(requestOptions(false))) {
           if (event.type !== 'error') {
             // A successful response start rules out retrying an in-stream failure.

@@ -34,6 +34,8 @@ describe.skipIf(!existsSync(binary))('Pi cache recovery over real native RPC/HTT
     // #7561: actual followUp start has no second agent_start. Exercise the
     // public send queue and outgoing HTTP, beyond the unit lifecycle fixture.
     { api, mode: 'queued', rejection: { error: { message: 'opaque refusal', type: 'invalid_request_error' } } },
+    { api, mode: 'steer', rejection: { error: { message: 'opaque refusal', type: 'invalid_request_error' } } },
+    { api, mode: 'mixed', rejection: { error: { message: 'opaque refusal', type: 'invalid_request_error' } } },
   ]))('preserves bounded recovery and native caching: $api / $mode', async ({ api, mode, rejection }) => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'cindy-cache-integration-'));
     const received: Array<Record<string, unknown>> = [];
@@ -47,9 +49,10 @@ describe.skipIf(!existsSync(binary))('Pi cache recovery over real native RPC/HTT
       expect(req.headers.authorization).toBe('Bearer fixture-key');
       let body = ''; for await (const chunk of req) body += chunk;
       const data = JSON.parse(body); received.push(data);
-      const held = mode === 'queued' && received.length === 1;
+      const held = ['queued', 'steer', 'mixed'].includes(mode) && received.length === 1;
       if (held) { firstArrived(); await firstReleased; }
-      if (!held && (persistentFailure || rejectCache && ('prompt_cache_key' in data || 'prompt_cache_retention' in data))) {
+      const successfulSteer = mode === 'mixed' && received.length === 2;
+      if (!held && !successfulSteer && (persistentFailure || rejectCache && ('prompt_cache_key' in data || 'prompt_cache_retention' in data))) {
         res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify(rejection)); return;
       }
       res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -77,9 +80,10 @@ describe.skipIf(!existsSync(binary))('Pi cache recovery over real native RPC/HTT
         const events: AgentEvent[] = [];
         const finish = (async () => { for await (const event of handle!.events()) { events.push(event); if (event.type === 'done') break; } })();
         await handle!.send({ type: 'user', content: 'Reply OK' });
-        if (mode === 'queued' && received.length <= 1) {
+        if (['queued', 'steer', 'mixed'].includes(mode) && received.length <= 1) {
           await firstRequest;
-          await handle!.send({ type: 'user', content: 'Reply OK to the queued message' });
+          if (mode !== 'steer') await handle!.send({ type: 'user', content: 'Reply OK to the queued message' });
+          if (mode !== 'queued') await handle!.steer({ type: 'user', content: 'Reply OK to the inserted steer' });
           releaseFirst();
         }
         await finish; return events;
@@ -87,11 +91,11 @@ describe.skipIf(!existsSync(binary))('Pi cache recovery over real native RPC/HTT
       const agent = new PiAgent(deps);
       handle = await agent.startSession({ ...opts, sessionId: 'first' });
       const first = await run();
-      expect(received).toHaveLength(mode === 'supported' ? 1 : mode === 'queued' ? 3 : 2);
+      expect(received).toHaveLength(mode === 'supported' ? 1 : mode === 'queued' ? 3 : mode === 'mixed' ? 4 : 2);
       expect(received[0]).toHaveProperty('prompt_cache_key');
       expect(received[0]).toHaveProperty('prompt_cache_retention', '24h');
-      if (mode !== 'supported') {
-        const original = mode === 'queued' ? 1 : 0;
+      if (mode !== 'supported' && mode !== 'steer') {
+        const original = mode === 'queued' ? 1 : mode === 'mixed' ? 2 : 0;
         expect(received[original]).toHaveProperty('prompt_cache_retention', '24h');
         const { prompt_cache_key: _key, prompt_cache_retention: _retention, ...without } = received[original];
         expect(received[original + 1]).toEqual(without);
@@ -100,9 +104,10 @@ describe.skipIf(!existsSync(binary))('Pi cache recovery over real native RPC/HTT
       const sessions = path.join(root, 'agent', 'sessions');
       const transcripts = readdirSync(sessions, { recursive: true }).map(name => path.join(sessions, name.toString())).filter(name => name.endsWith('.jsonl'));
       const entries = transcripts.flatMap(name => readFileSync(name, 'utf8').trim().split('\n').map(line => JSON.parse(line)));
-      expect(entries.filter(entry => entry.type === 'message' && entry.message?.role === 'user')).toHaveLength(mode === 'queued' ? 2 : 1);
-      expect(entries.filter(entry => entry.type === 'message' && entry.message?.role === 'assistant')).toHaveLength(mode === 'queued' ? 2 : 1);
-      if (mode === 'always-fails') {
+      const userInputs = mode === 'mixed' ? 3 : ['queued', 'steer'].includes(mode) ? 2 : 1;
+      expect(entries.filter(entry => entry.type === 'message' && entry.message?.role === 'user')).toHaveLength(userInputs);
+      expect(entries.filter(entry => entry.type === 'message' && entry.message?.role === 'assistant')).toHaveLength(userInputs);
+      if (mode === 'always-fails' || mode === 'steer') {
         expect(first.filter(e => e.type === 'error')).toHaveLength(1);
         expect(first.find(e => e.type === 'error')?.data).toMatchObject({ piCacheRecoveryHandled: true });
         expect(existsSync(storeFile)).toBe(false);
@@ -119,7 +124,7 @@ describe.skipIf(!existsSync(binary))('Pi cache recovery over real native RPC/HTT
       expect(records).toHaveLength(1);
       expect(records[0].expiresAt - records[0].learnedAt).toBe((mode === 'explicit' ? 7 : 1) * 86400000);
       expect(readFileSync(storeFile, 'utf8')).not.toContain(endpoint);
-      if (mode === 'queued') return;
+      if (mode === 'queued' || mode === 'mixed') return;
       await handle.close(); handle = await agent.startSession({ ...opts, sessionId: 'learned' });
       await run(); expect(received).toHaveLength(3); expect(received[2]).not.toHaveProperty('prompt_cache_key');
       // The same running Pi must restore real fields when its rule expires.
