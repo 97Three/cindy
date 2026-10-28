@@ -1,4 +1,4 @@
-import { isDisplayPricingTableRedundant } from '@/lib/displayPricingFormat';
+import { displayPricingComponent, isDisplayPricingTableRedundant } from '@/lib/displayPricingFormat';
 import { DisplayPricingDetails, DisplayPricingQuote } from '@/components/DisplayPricingDetails';
 import { Button } from '@/components/ui/button';
 import { localizedModelDescription } from '@/lib/modelDescriptions';
@@ -1009,10 +1009,14 @@ export function ModelAdvancedDrawer({
                         {(['input', 'output', 'cacheRead', 'cacheWrite'] as const).map((role) => {
                           const quotes = primaryModel.displayPricing?.summary?.[role];
                           if (!quotes?.length) return null;
+                          const components = quotes.map(quote => displayPricingComponent(quote.component));
+                          const component = components.every(value => value === components[0]) ? components[0] : undefined;
                           return (
                             <Row
                               key={role}
-                              label={t(`settings.providers.models.advanced.price.${role === 'cacheWrite' ? 'cacheCreate' : role}`)}
+                              label={component
+                                ? t(`newChat.modelSelector.displayPricing.roles.${component}.${role}`)
+                                : t(`settings.providers.models.advanced.price.${role === 'cacheWrite' ? 'cacheCreate' : role}`)}
                             >
                               <span className="flex flex-col items-end gap-1">
                                 {quotes.map((quote, index) => (
@@ -1021,6 +1025,9 @@ export function ModelAdvancedDrawer({
                                     quote={quote}
                                     currency={primaryModel.currency!}
                                     costDiscount={discount}
+                                    componentLabel={!component && components[index]
+                                      ? t(`newChat.modelSelector.displayPricing.components.${components[index]}`)
+                                      : undefined}
                                   />
                                 ))}
                               </span>
