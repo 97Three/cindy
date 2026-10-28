@@ -14,8 +14,27 @@ import {
   type BotGroupNoticeCode,
   type BotGroupPlanStepView,
   type BotGroupPlanView,
+  type BotGroupReplyMode,
   type BotGroupSummary,
 } from './botGroupChat.js';
+
+interface ChatGroupNamedMember {
+  id: string; kind: string; state: string; name: string; ownerActorId?: string; ownerName?: string;
+}
+
+/** The server's member.name already includes that room's nickname override. Display only; never infer ownership from names. */
+export function chatGroupOwnerName(member: ChatGroupNamedMember, members: readonly ChatGroupNamedMember[]): string {
+  const owner = member.kind === 'bot' && member.ownerActorId
+    ? members.find(candidate => candidate.id === member.ownerActorId && candidate.kind === 'human' && candidate.state === 'joined')
+    : undefined;
+  return owner?.name.trim() || member.ownerName?.trim() || '';
+}
+
+/** Group-scoped labels shared by Desktop and the direct phone client; raw member records stay unchanged. */
+export function chatGroupMemberName(member: ChatGroupNamedMember, members: readonly ChatGroupNamedMember[]): string {
+  const owner = chatGroupOwnerName(member, members);
+  return member.kind === 'bot' && owner ? `${member.name} (${owner})` : member.name;
+}
 
 /** Only active members can be mentioned, speak, or keep a group sendable. */
 export function isActiveBotGroupMember(member: Pick<BotGroupMemberView, 'status'>): boolean {
@@ -57,6 +76,19 @@ export function botGroupMemberNames(
 /** Collapse whitespace so a multi-line message fits a one-line preview. */
 export function botGroupPreviewLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
+}
+
+/** New arrivals below a reader's viewport, excluding history pages and repeat snapshots. */
+export function botGroupNewMessageCount(messages: readonly BotGroupMessageView[], seenThrough: number | string | null, threadRootId?: string): number {
+  if (seenThrough === null) return 0;
+  const incoming = new Set<string>();
+  for (const message of messages) {
+    if (BigInt(message.serverSequence ?? message.sequence) <= BigInt(seenThrough) || message.deleted || (message.threadRootId ?? undefined) !== threadRootId || message.isSelf === true
+      || (message.kind !== 'message' && message.kind !== 'plan')
+      || (message.authorKind !== 'bot' && message.isSelf !== false) || message.authorKind === 'system') continue;
+    incoming.add(message.id);
+  }
+  return incoming.size;
 }
 
 /**
@@ -222,13 +254,15 @@ export type BotGroupComposerPlanState =
   | { kind: 'running'; botName: string; talk?: boolean }
   | { kind: 'waiting'; botName: string; stepDone: boolean };
 
-export function botGroupComposerPlanState(plan: BotGroupPlanView | null): BotGroupComposerPlanState | null {
+export function botGroupComposerPlanState(plan: BotGroupPlanView | null, replyMode: BotGroupReplyMode = 'all'): BotGroupComposerPlanState | null {
   if (!plan) return null;
   if (plan.status === 'proposed') return { kind: 'proposed' };
   const current = currentBotGroupPlanStep(plan);
-  const botName = current?.botName.trim() ?? '';
-  // Someone who cannot add to a queue sends a new request: the composer must not promise otherwise.
-  if (plan.status === 'running' && plan.kind === 'talk') return plan.canAdd === false ? null : { kind: 'running', botName, talk: true };
+  // Keep the work-plan state for the division gate, but name a recipient only when
+  // ordinary text is actually forwarded to that worker (including legacy plans).
+  const botName = replyMode === 'mentioned' ? '' : current?.botName.trim() ?? '';
+  // Only promise additions when unmentioned words actually reach the speaking teammate.
+  if (plan.status === 'running' && plan.kind === 'talk') return plan.canAdd === false || replyMode === 'mentioned' ? null : { kind: 'running', botName, talk: true };
   if (plan.status === 'running') return { kind: 'running', botName };
   // A queue waiting for 继续 takes a new request, not changes to the last answer (bot-group-chat.md §4.0).
   if (plan.status === 'waiting' && plan.kind === 'talk') return null;
@@ -348,6 +382,18 @@ export function botGroupPathBasename(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
+/** Public media stay accessible without granting group bodies local media authority. */
+function publicMediaLink(src: string): string | null {
+  try {
+    const url = new URL(src);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    // Keep the URL inside one autolink; descriptions continue through literal text.
+    return `<${url.href.replace(/[<>\\]/g, char => encodeURIComponent(char))}>`;
+  } catch {
+    return null;
+  }
+}
+
 /** Display-only body fragments. Literal component text never becomes Markdown syntax. */
 export function botGroupBodyParts(content: string, authorKind?: BotGroupMessageView['authorKind']): Array<{ kind: 'text' | 'markdown'; content: string }> {
   if (authorKind !== 'bot') return [{ kind: 'markdown', content }];
@@ -370,7 +416,12 @@ export function botGroupBodyParts(content: string, authorKind?: BotGroupMessageV
       const label = richString(node, 'label');
       if (['image', 'video', 'audio', 'svg'].includes(node.kind)) {
         // Group body has no task-local media authority. Keep its description readable.
-        add([label, richString(node, 'alt'), richString(node, 'caption'), richString(node, 'src')].filter(Boolean).join('\n'));
+        const description = [label, richString(node, 'alt'), richString(node, 'caption')].filter(text => text.trim()).join('\n');
+        // A neutral type marker is not a promise that an attachment was delivered.
+        const placeholder = node.kind === 'image' ? '🖼' : node.kind === 'video' ? '🎞' : node.kind === 'audio' ? '♪' : '◇';
+        add(description || placeholder);
+        const link = publicMediaLink(richString(node, 'src'));
+        if (link) add(link, 'markdown');
       } else {
         const markdown = richMarkdown(node);
         if (markdown !== null) {

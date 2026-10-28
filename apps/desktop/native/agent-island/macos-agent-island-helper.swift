@@ -1376,6 +1376,7 @@ struct AgentIslandCompanion: Codable, Equatable {
 }
 
 struct AgentIslandSession: Codable, Equatable, Identifiable {
+  var groupChat: AgentIslandGroupChat? = nil
   let sessionId: String
   var completionToken: String? = nil
   let title: String
@@ -1397,6 +1398,11 @@ struct AgentIslandSession: Codable, Equatable, Identifiable {
   var id: String { sessionId }
   var displayTitle: String { title.isEmpty ? (projectName ?? title) : title }
   var subtitle: String { compactDetail }
+}
+
+struct AgentIslandGroupChat: Codable, Equatable {
+  let avatars: [AgentIslandCompanion]
+  let mentionLabel: String?
 }
 
 struct AgentIslandPillSnapshot: Codable {
@@ -1650,7 +1656,6 @@ private let expandedIslandBodySpacing: CGFloat = 4
 private let expandedIslandBottomPadding: CGFloat = 16
 private let compactIslandBaseWidth: CGFloat = 210
 private let compactIslandMinContentWidth: CGFloat = 80
-private let compactCollapseLeadingReservedWidth: CGFloat = 80
 private let compactCollapseTrailingReservedWidth: CGFloat = 100
 private let compactIslandBadgeCollapseContentThreshold: CGFloat = 152
 private let compactIslandDetailCollapseContentThreshold: CGFloat = 190
@@ -1696,6 +1701,8 @@ private let agentIslandDebugLoggingEnabled =
 private let agentIslandOrange = Color(red: 1.0, green: 0.4, blue: 0.0)
 private let agentIslandBlue = Color(red: 0.0, green: 0.851, blue: 0.773)
 private let agentIslandErrorRed = Color(red: 0.937, green: 0.267, blue: 0.267)
+// 滑动归档沿用手机版 swipeActionArchive 的蓝色（2026-10-24 用户裁决）。
+private let agentIslandArchiveBlue = Color(red: 59.0 / 255, green: 130.0 / 255, blue: 246.0 / 255)
 private let agentIslandUnreadGreen = Color(red: 0.133, green: 0.773, blue: 0.369)
 private let runningAgentGifFileName = "running-agent.gif"
 private let tararaMascotFileName = "tarara.png"
@@ -3485,7 +3492,9 @@ struct ExpandedSessionRow: View, Equatable {
   private var rowMainContent: some View {
     HStack(alignment: .center, spacing: 10) {
       Group {
-        if let companion = session.companion {
+        if let group = session.groupChat {
+          AgentIslandGroupAvatar(group: group, size: expandedRowLeadingSize)
+        } else if let companion = session.companion {
           AgentIslandCompanionStatusAvatar(session: session, companion: companion, size: expandedRowLeadingSize)
         } else {
           StatusDot(
@@ -3555,7 +3564,7 @@ struct CompletedSessionSwipeRow<Content: View>: View {
           .frame(width: reveal, height: geometry.size.height)
           // Lay out the label once behind the card. The opening clips it; it never reflows.
           .frame(width: geometry.size.width, alignment: right ? .leading : .trailing)
-          .background((right ? agentIslandBlue : Color.white.opacity(0.24)).opacity(armed ? 1 : 0.8))
+          .background((right ? agentIslandBlue : agentIslandArchiveBlue).opacity(armed ? 1 : 0.8))
           .mask(alignment: right ? .leading : .trailing) {
             Rectangle().frame(width: abs(offset))
           }
@@ -3745,12 +3754,15 @@ struct ExpandedSessionHeaderLine: View {
 
   /// A finished companion turn reads as a message: the reply is the content, no "Done" tag.
   private var isCompanionReply: Bool {
-    session.companion != nil && session.phase == "completed"
+    (session.companion != nil || session.groupChat != nil) && session.phase == "completed"
   }
 
   private var titleText: Text {
     let title = Text(expandedPrimaryTitle(for: session, strings: strings))
       .foregroundColor(Color.white.opacity(0.92))
+    if let mention = session.groupChat?.mentionLabel {
+      return title + Text(" · \(mention)").foregroundColor(Color.white.opacity(0.65))
+    }
     guard let group = companionGroupName else { return title }
     // The group yields first when the line is too narrow: the speaker stays readable.
     return title + Text(" · \(group)").foregroundColor(Color.white.opacity(0.42))
@@ -4237,7 +4249,9 @@ struct StatusDot: View {
   var body: some View {
     let accent = statusAccentColor(for: session)
     ZStack {
-      if let companion = session.companion {
+      if let group = session.groupChat {
+        AgentIslandGroupAvatar(group: group, size: side)
+      } else if let companion = session.companion {
         AgentIslandCompanionStatusAvatar(
           session: session,
           companion: companion,
@@ -4422,6 +4436,39 @@ final class AgentIslandCompanionAvatarStore {
     if cache.count >= 16 { cache.removeAll() }
     cache[base64] = image
     return image
+  }
+}
+
+/// Same first-five, first-member-in-front geometry as the teammate sidebar.
+struct AgentIslandGroupAvatar: View {
+  let group: AgentIslandGroupChat
+  let size: CGFloat
+
+  var body: some View {
+    let members = Array(group.avatars.prefix(5))
+    ZStack(alignment: .topLeading) {
+      if members.isEmpty {
+        Image(systemName: "person.2.fill")
+          .font(.system(size: size * 0.6))
+          .foregroundColor(.white.opacity(0.7))
+          .frame(width: size, height: size)
+      } else if members.count == 1 {
+        AgentIslandCompanionAvatar(companion: members[0], size: size)
+      } else {
+        let diameter = size * (members.count <= 3 ? 0.6 : members.count == 4 ? 0.55 : 0.5)
+        let radius = (size - diameter) / 2
+        ForEach(Array(members.indices.reversed()), id: \.self) { index in
+          let position = members.count - 1 - index
+          let angle = -3 * Double.pi / 4 + Double(position) * 2 * Double.pi / Double(members.count)
+          let x = members.count == 2 ? (index == 0 ? size - diameter : 0) : radius * (1 + CGFloat(cos(angle)))
+          let y = members.count == 2 ? (index == 0 ? size - diameter : 0) : radius * (1 + CGFloat(sin(angle)))
+          AgentIslandCompanionAvatar(companion: members[index], size: diameter)
+            .overlay(Circle().stroke(Color.black, lineWidth: max(1, size / 20)))
+            .offset(x: x, y: y)
+        }
+      }
+    }
+    .frame(width: size, height: size)
   }
 }
 
@@ -5821,9 +5868,8 @@ final class AgentIslandController {
       && abs(screenPoint.y - interaction.startMouseY) <= agentIslandClickDragTolerance
   }
 
-  /// The screen rectangle where the collapsed island sat. After expand, that
-  /// center strip is blank (hardware-notch Color.clear, or the top-bar spacer).
-  /// Clicking it should fold the island back; toolbar / title live outside it.
+  /// Keep the full compact footprint clickable, including its notch-side wings.
+  /// The leading title/mascot is passive; only the trailing toolbar owns clicks.
   private func isCompactFootprintClick(interaction: PanelDragInteraction) -> Bool {
     let layout = interaction.startLayout
     let footprintWidth = compactCollapseFootprintWidth(layout: layout)
@@ -5832,15 +5878,8 @@ final class AgentIslandController {
     guard clickX >= centerX - footprintWidth / 2 && clickX <= centerX + footprintWidth / 2 else {
       return false
     }
-    let visualMinX = centerX - layout.width / 2
     let visualMaxX = centerX + layout.width / 2
-    let sideChrome = layout.hasHardwareNotch
-      ? max(0, (layout.width - layout.notchWidth) / 2)
-      : 0
-    let leadingReserved = max(compactCollapseLeadingReservedWidth, sideChrome)
-    let trailingReserved = max(compactCollapseTrailingReservedWidth, sideChrome)
-    return clickX > visualMinX + leadingReserved
-      && clickX < visualMaxX - trailingReserved
+    return clickX < visualMaxX - compactCollapseTrailingReservedWidth
   }
 
   private func compactCollapseFootprintWidth(layout: AgentIslandLayout) -> CGFloat {

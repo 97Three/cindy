@@ -28,7 +28,7 @@ import type { InteractionDecision, InteractionRequest } from '@cindy/maker-core'
 import type { SharedPermission } from '../../maker-ipc/sharedPermission';
 import { INTERACTION_CHOICE_RECEIVED_TEXT, permissionOutcomeText } from '../shared/permissionPresentation';
 
-import { autoReviewUnavailablePromptLine } from '../shared/autoReviewUnavailablePrompt';
+import { autoReviewUnavailablePromptLine, permissionOperationPreview, permissionPromptDescription } from '../shared/autoReviewUnavailablePrompt';
 import { buildImReplyContextBlock } from '../shared/replyContext';
 import { captureImContext } from '../../../shared/imMessageSource';
 import type { ImSessionRepo } from '../shared/sessionRepo';
@@ -1021,6 +1021,9 @@ export class WechatIM extends BaseIM implements RichChannelIM {
         if (!committed.committed) return;
         cursor = result.cursor;
         failures = 0;
+        if (this.#state.phase === 'reconnecting') {
+          this.#setState({ ...this.#state, phase: 'connected', errorCode: undefined });
+        }
         if (result.messages.length > 0) {
           this.#setState({
             ...this.#state,
@@ -2111,8 +2114,8 @@ function formatWechatInteractionPrompt(request: InteractionRequest): string {
   if (request.kind === 'permission') {
     const unavailable = autoReviewUnavailablePromptLine(request);
     return `需要确认工具“${request.displayName ?? request.toolName}”。
-${request.description ?? ''}
-${unavailable ? `${unavailable}\n` : ''}回复“允许”执行一次，或回复“拒绝”取消本次操作。微信内不支持永久授权。`;
+${permissionPromptDescription(request) ?? ''}
+${unavailable ? `${unavailable}\n` : ''}${permissionOperationPreview(request) ? `操作：\n${permissionOperationPreview(request)}\n` : ''}回复“允许”执行一次，或回复“拒绝”取消本次操作。微信内不支持永久授权。`;
   }
   if (request.kind === 'plan_review') {
     const plan = request.plan.length > 6_000 ? `${request.plan.slice(0, 6_000)}…` : request.plan;

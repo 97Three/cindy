@@ -382,16 +382,24 @@ export interface Session {
    */
   hiddenAt?: string | null;
   /**
+   * 用户在该任务上开了「消息免打扰」：不发系统通知 / 灵动岛 / 手机推送 / IM 消息，
+   * 任务内的未读与角标照常。老 payload 缺失按未静音处理。
+   */
+  notificationsMuted?: boolean;
+  /**
    * 用户最近一次"按下发送"的时刻（ISO 8601，null = 从未发过）。
    * Sidebar 排序唯一时间轴：null ⟺ 草稿（归未分类），非 null 即按倒序上浮。
    * 与 updatedAt 解耦——改 model/effort/title 等字段不会动它。
    */
   userSendAt: string | null;
+  lastActivityAt?: string | null;
   status: SessionStatus;
   /** 当前 session 接的 agent。老 session DEFAULT 'cc'。 */
   agentKind: AgentKind;
   /** 会话来源。scheduler 表示由自动化任务创建；缺失时按 desktop 兼容旧 payload。 */
   source?: SessionSource;
+  /** Host-owned teammate link, also used by the existing history API. Display only. */
+  companion?: { id: string; role: string; channel?: string } | null;
   /** Orca split-session role marker. null/undefined means a regular Maker session. */
   orcaRole?: OrcaRole | null;
   /** fork-session：派生来源会话 id（self-FK，源被删 → SET NULL）。null = 顶层会话。 */

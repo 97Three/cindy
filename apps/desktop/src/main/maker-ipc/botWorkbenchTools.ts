@@ -8,7 +8,7 @@
  *   跨电脑 send_to_session 的同一条通路),由调用方注入;停止走通用的 stop_session_turn。
  * 项目关联只提供按需阅读的入口，不按目录发现候选任务或导入本机外部会话。
  */
-import { and, desc, eq, isNotNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { hasTaskActionAuthorization, assertTaskActionCurrent, captureTaskActionSyncGuard } from './taskActionAuthorization.js';
 
 import { getDbClient } from '../localDb/client/current.js';
@@ -20,6 +20,7 @@ import {
 } from '../appSessionState.js';
 import type { WorkbenchDelegationStatus, WorkbenchTranscriptItem } from '../../shared/botWorkbench.js';
 import { broadcastBotWorkbenchChanged } from './botWorkbenchService.js';
+import { broadcastBotRemoteResourceChanged } from './botRemoteResourceInvalidation.js';
 import { botLinkedProjectAccess } from './botLinkedProjects.js';
 import { boundTranscript, readSessionTranscript } from './botWorkbenchTranscripts.js';
 import { readTaskResponsibilities, responsibleSessionIds, setTaskResponsibility } from './botTaskResponsibility.js';
@@ -53,8 +54,14 @@ export async function resolveWorkbenchCaller(callerSessionId: string): Promise<W
   if (row.sessionStatus !== 'active' || row.profileStatus !== 'active' || row.linkArchivedAt !== null) {
     return { ok: false, errorCode: 'BOT_SESSION_INACTIVE', message: '伙伴或它的主任务已停用' };
   }
-  if (row.role !== 'canonical' && row.role !== 'thread') {
-    return { ok: false, errorCode: 'BOT_MAIN_TASK_REQUIRED', message: '只有伙伴的主任务可以使用工作台' };
+  if (row.role !== 'canonical' && row.role !== 'thread' && row.role !== 'routine') {
+    return {
+      ok: false,
+      errorCode: 'BOT_MAIN_TASK_REQUIRED',
+      message: '当前入口不是伙伴的私聊主任务或私聊话题，不能使用工作台、待办或项目关联工具。'
+        + '本次调用未读取或修改这些记录。请告知主人：在 Cindy 中打开这位伙伴的私聊主聊天（主任务），在那里提出本次请求；私聊话题也可用。'
+        + '不要在当前入口重试。',
+    };
   }
   if (row.remoteHostId) {
     return { ok: false, errorCode: 'REMOTE_WORKBENCH_UNAVAILABLE', message: '远端伙伴暂不支持工作台' };
@@ -165,13 +172,33 @@ export async function readBotResponsibilityScope(
   };
 }
 
+/** Creation attribution is not workbench authorization: channel/group conversations can create tasks too. */
+async function resolveBotTaskCreator(callerSessionId: string): Promise<string | null> {
+  const [row] = await getDbClient().drizzle
+    .select({ botId: botSessionLinks.botId })
+    .from(botSessionLinks)
+    .innerJoin(sessions, eq(sessions.id, botSessionLinks.sessionId))
+    .innerJoin(botProfiles, eq(botProfiles.id, botSessionLinks.botId))
+    .where(and(
+      eq(botSessionLinks.sessionId, callerSessionId),
+      inArray(botSessionLinks.role, ['canonical', 'thread', 'channel', 'group', 'routine']),
+      isNull(botSessionLinks.archivedAt),
+      eq(sessions.source, 'bot'),
+      eq(sessions.status, 'active'),
+      isNull(sessions.remoteHostId),
+      eq(botProfiles.status, 'active'),
+    ))
+    .limit(1);
+  return row?.botId ?? null;
+}
+
 /** Capture the creator before a generic create-mode handoff crosses async boundaries. */
 export async function captureBotCreatedTaskResponsibility(callerSessionId?: string) {
   if (!callerSessionId || isAppSessionBoundaryPending()) return null;
   const scope = activeOwnerScopeKey();
   const root = ownerScopedUserDataPath();
-  const caller = await resolveWorkbenchCaller(callerSessionId);
-  if (!caller.ok) return null;
+  const botId = await resolveBotTaskCreator(callerSessionId);
+  if (!botId) return null;
   const assertCurrent = () => {
     if (isAppSessionBoundaryPending() || activeOwnerScopeKey() !== scope) throw new Error('OWNER_SCOPE_CHANGED');
   };
@@ -181,8 +208,10 @@ export async function captureBotCreatedTaskResponsibility(callerSessionId?: stri
     const target = await readWorkbenchTarget(sessionId);
     if (!target || target.status !== 'active' || target.botLinked || target.remoteHostId || target.orcaRole === 'worker') return;
     assertCurrent();
-    await setTaskResponsibility(root, caller.botId, sessionId, true, assertCurrent);
-    broadcastBotWorkbenchChanged(caller.botId);
+    await setTaskResponsibility(root, botId, sessionId, true, assertCurrent);
+    broadcastBotWorkbenchChanged(botId);
+    // Remote task rows draw the same mark from the teammate roster's links.
+    broadcastBotRemoteResourceChanged(botId);
   };
 }
 
@@ -197,6 +226,12 @@ export interface BotWorkbenchHostDeps {
   sendToRemoteSession: BotWorkbenchAccessDeps['sendToRemoteSession'];
   /** 另一台电脑上一件任务最近的用户 / 助手文字(按时间正序)。 */
   readRemoteMessages(deviceId: string, sessionId: string): Promise<{ ok: true; items: WorkbenchTranscriptItem[] } | Failure>;
+}
+
+/** Desktop sidebar marks re-read the scopes; remote task rows re-read the teammate roster links. */
+function broadcastResponsibilityChanged(botId: string): void {
+  broadcastBotWorkbenchChanged(botId);
+  broadcastBotRemoteResourceChanged(botId);
 }
 
 /**
@@ -217,7 +252,7 @@ function createDesktopBotWorkbenchAccess(host: BotWorkbenchHostDeps): BotWorkben
       const result = await host.readRemoteMessages(deviceId, sessionId);
       return result.ok ? { ok: true as const, transcript: boundTranscript(result.items) } : result;
     },
-    notifyChanged: broadcastBotWorkbenchChanged,
+    notifyChanged: broadcastResponsibilityChanged,
     listDelegations: listBotDelegationChildren,
     readResponsibleSessionIds: (botId) => readBotResponsibleSessionIds(userDataDir, botId),
     saveResponsibility: (botId, sessionId, responsible) => setTaskResponsibility(
@@ -258,6 +293,15 @@ const NO_HOST: BotWorkbenchHostDeps = {
 };
 
 /** 工作台详情视图(主人自己的界面)读取一件任务的最近内容;与伙伴工具同一条授权规则。 */
+/** Host gate: a teammate acting on its own may only adjust tasks handed to it. */
+export async function canBotContinueWorkbenchTask(callerSessionId: string, taskId: string): Promise<boolean> {
+  const result = await runBotWorkbenchTool(NO_HOST, async (access) => ({
+    ok: true as const,
+    allowed: await access.canContinue({ callerSessionId, taskId }),
+  }));
+  return result.ok && result.allowed;
+}
+
 export async function readBotWorkbenchTaskForOwner(botId: string, taskId: string) {
   return runBotWorkbenchTool(NO_HOST, (access) => access.readForOwner({ botId, taskId }));
 }

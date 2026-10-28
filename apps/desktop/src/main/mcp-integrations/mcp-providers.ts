@@ -1,4 +1,7 @@
+import { reportTaskDelivery } from '../bot-autonomy/hub.js';
 import { todoForCaller } from '../maker-ipc/botTodoAccess.js';
+import { getDeviceId } from '../authManager.js';
+import { buildHistorySessionDeepLink } from '../deepLink.js';
 import { activeCompanionCloud } from '../companion-cloud/runtime.js';
 import { TodoError, queryTodoItems, type TodoListQuery, type TodoPatch, type preflightTodoEvents } from '@cindy/maker-shared/teammate-todo';
 import { t } from '../i18n.js';
@@ -84,6 +87,7 @@ import {
   saveBotSkillForSession,
 } from '../maker-ipc/botSkillService.js';
 import {
+  canBotContinueWorkbenchTask,
   captureBotCreatedTaskResponsibility,
   runBotWorkbenchTool,
   runBotProjectsTool,
@@ -122,6 +126,7 @@ import { createRemoteSessionsStatusSetter } from './sessionStatusRemote.js';
 import { isCindyLearnSkillEnabled } from '../skillhub/activationPreferences.js';
 import { botLearningTracker } from '../maker-ipc/botLearningTracker.js';
 import { getLearnController } from '../learn-host/index.js';
+import { HELP_KNOWLEDGE } from '../maker-ipc/helpKnowledge.generated.js';
 import { consumeLearnInvocationGrant } from '../learn-host/invocationGrant.js';
 import { createSkillhubAgentTools } from '../skillhub/agentTools.js';
 import { startGrokDeviceLogin, grokDeviceLoginStatus, cancelGrokDeviceLogin } from '../maker-host/grok-device-login-service.js';
@@ -307,6 +312,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     isScopeCurrent: (db) => !isAppSessionBoundaryPending() && db === tryGetDbClient(),
     authorizeAction: createDesktopTaskActionAuthorizer({
       input: getTaskActionInputState, getSession: getTaskActionSession, confirm: confirmTaskAction,
+      isEntrustedTask: canBotContinueWorkbenchTask,
     }),
   });
   // Companion history uses the same account scope as ordinary task history.
@@ -622,6 +628,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     // (LLM 调工具时) registerMakerIpc 早已执行完毕, holder 已 ready。
     xdtHelper: {
       runtimeCapabilities: deps.runtimeCapabilities,
+      productHelpDocs: HELP_KNOWLEDGE,
       // Install / auto-update requests become owner-only Host cards (see agent-app-update/).
       appUpdate: createAgentAppUpdateCallbacks((sessionId, sessionInstanceId) =>
         deps.isCurrentLocalSessionInstance?.(sessionId, sessionInstanceId) === true),
@@ -791,6 +798,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         getSessionRuntime: wrap((service, params) => service.getSessionRuntime(params)),
         setSessionRuntime: wrap((service, params) => service.setSessionRuntime(params)),
       },
+      taskDelivery: { report: reportTaskDelivery },
       setCurrentSessionTitle: async ({ sessionId, title }) => {
         if (!tryGetDbClient()) {
           return { ok: false, errorCode: 'HOST_NOT_READY', message: 'localDb not ready' };
@@ -1035,7 +1043,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
               eq(botSessionLinks.sessionId, callerSessionId),
               eq(sessions.source, 'bot'),
               // The owner's Bot Chat: the main Chat or one of its private-chat topics.
-              inArray(botSessionLinks.role, ['canonical', 'thread']),
+              inArray(botSessionLinks.role, ['canonical', 'thread', 'routine']),
             ))
             .limit(1);
           if (isAppSessionBoundaryPending() || activeOwnerScopeKey() !== scope) {
@@ -1078,7 +1086,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
               and(
                 eq(botSessionLinks.sessionId, callerSessionId),
                 eq(sessions.source, 'bot'),
-                inArray(botSessionLinks.role, ['canonical', 'thread']),
+                inArray(botSessionLinks.role, ['canonical', 'thread', 'routine']),
               ),
             )
             .limit(1);
@@ -1150,6 +1158,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         authorizePath: (request) => authorizeDesktopSessionPath(request, deps.getLiveSessionGrantState),
       }),
       history: {
+        sessionUrl: (sessionId) => buildHistorySessionDeepLink(sessionId, getDeviceId()),
         remote: deps.historyRemote,
         resolveSessionScope: async ({ callerSessionId, callerMemoryScopeKey }) => {
           try {
@@ -1200,7 +1209,22 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       createWorker: wrap((s, params) => s.createWorker(params)),
       listWorkers: wrap((s, params) => s.listWorkers(params)),
       switchFocus: wrap((s, params) => s.switchFocus(params)),
-      sendToWorker: wrap((s, params) => s.sendToWorker(params)),
+      sendToWorker: wrap(
+        (
+          s,
+          params: {
+            callerLeadSessionId: string;
+            targetSessionId: string;
+            message: string;
+            delivery?: 'queue' | 'steer';
+            /** MCP 工具层字段名; host service 内部叫 imagePaths。 */
+            images?: string[];
+          },
+        ) => {
+          const { images, ...rest } = params;
+          return s.sendToWorker({ ...rest, ...(images ? { imagePaths: images } : {}) });
+        },
+      ),
       interruptWorker: wrap((s, params) => s.interruptWorker(params)),
       listWorkerQueuedMessages: wrap((s, params) => s.listWorkerQueuedMessages(params)),
       updateWorkerQueuedMessage: wrap((s, params) => s.updateWorkerQueuedMessage(params)),
@@ -1211,6 +1235,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       idleWorker: wrap((s, params) => s.idleWorker(params)),
       endTeam: wrap((s, params) => s.endTeam(params)),
       archiveWorker: wrap((s, params) => s.archiveWorker(params)),
+      updateWorker: wrap((s, params) => s.updateWorker(params)),
       listAvailableModels: wrap((s, params) => s.listAvailableModels(params)),
       getWorkspaceInfo: wrap((s, params) => s.getWorkspaceInfo(params)),
       getWorkerStatus: wrap((s, params) => s.getWorkerStatus(params)),

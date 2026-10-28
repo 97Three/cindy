@@ -6,8 +6,13 @@ import { BotGroupSettingsDrawer } from '../../../src/renderer/features/bots/BotG
 import { BOT_GROUP_SETTINGS_PARAM } from '../../../src/renderer/features/bots/botGroupPresentation';
 import { refreshBotGroups } from '../../../src/renderer/features/bots/botGroupStore';
 import { ControlledBanner } from '../../../src/renderer/features/remote-device/ControlledBanner';
+import { applyRemoteSessionActivity } from '../../../src/renderer/features/device-link/remoteSessionActivityStore';
 
 interface GroupData {
+  workState?: 'thinking' | 'reading-file' | 'testing' | 'waiting' | 'stopping' | 'unknown';
+  workRemote?: boolean;
+  workParallel?: boolean;
+  workLastStopping?: boolean;
   bodyAnswer?: boolean;
   name: string;
   members: Array<{ botId: string; name: string }>;
@@ -18,6 +23,10 @@ interface GroupData {
   wrappedReactions?: boolean;
   /** A single-speaker server group: nobody was named, so everyone answers in turn (bot-group-chat.md §4.0/§7.0). */
   arrangement?: Queue;
+  /** A preserved work plan whose ordinary messages must stay quiet. */
+  workMentioned?: boolean;
+  /** A 分工 you started (bot-group-chat.md §7.4): stopped after step 1 waiting for 继续, or going on by itself. */
+  division?: Division;
   /** Open the group settings drawer as its owner. */
   settings?: boolean;
   /** Server read state: unread thread entries and the in-chat 话题 hint. */
@@ -47,6 +56,9 @@ function bodyMessages() {
     { seq: 1, version: 1, op: 'create', id: 'title', kind: 'heading', props: { text: '发布前检查' } },
     { seq: 2, op: 'create', id: 'literal', kind: 'text', props: { text: '保留 <name>、*literal* 和 & 符号' } },
     { seq: 3, op: 'create', id: 'list', kind: 'markdown', props: { text: '- 正文可以阅读\n- **重点**保持格式' } },
+    { seq: 4, op: 'create', id: 'image', kind: 'image', props: { src: 'cindy-media://blobs/fixture-image.png', alt: '图片说明保留', caption: '图片标题保留' } },
+    { seq: 5, op: 'create', id: 'unnamed-image', kind: 'image', props: { src: '/private/tmp/fixture-image.png' } },
+    ...['image', 'video', 'audio'].map((kind, index) => ({ seq: index + 6, op: 'create', id: `public-${kind}`, kind, props: { src: `https://example.test/public-${kind}` } })),
   ].map(item => JSON.stringify(item)).join('\n') + '\n```';
   return [
     message({ id: 'body-user', sequence: 1, content: '请整理发布前检查', createdAt: T0 }),
@@ -170,6 +182,30 @@ function arrangementPlan(state: Queue) {
     })),
   };
 }
+type Division = 'waiting' | 'auto';
+const DIVISION_ASK = '把发版说明整理好：先列出这周合进去的改动，再写成给用户看的说明';
+/** Your request, the organizer's card and Aster's finished first step. */
+function divisionMessages() {
+  return [
+    message({ id: 'q1', sequence: 1, isSelf: true, content: DIVISION_ASK, createdAt: T0 }),
+    message({ id: 'p2-card', sequence: 2, kind: 'plan', planId: 'p2', isSelf: true, content: '', createdAt: T0 }),
+    message({ id: 'a1', sequence: 3, authorKind: 'bot', authorBotId: 'a', authorName: 'Aster', planId: 'p2', createdAt: T0 + 4 * MINUTE,
+      content: '这周合进去 6 个改动：群聊分工入口回来了、仅 @ 模式不再误叫醒伙伴、负责人显示修好，另有 3 个小修复。' }),
+  ];
+}
+function divisionPlan(state: Division) {
+  const auto = state === 'auto';
+  return {
+    id: 'p2', status: auto ? 'running' : 'waiting', organizerBotId: 'a', organizerName: 'Aster', currentStep: auto ? 1 : 0,
+    kind: 'work', canManage: true, canAdd: true, autoContinue: auto, workDir: null, branch: null,
+    createdAt: T0, updatedAt: auto ? Date.now() - 40_000 : T0 + 4 * MINUTE,
+    steps: [
+      { position: 0, botId: 'a', botName: 'Aster', task: '列出这周合进去的改动', status: 'done', resultMessageId: 'a1' },
+      { position: 1, botId: 'b', botName: 'Nova', task: '写成给用户看的发版说明', status: auto ? 'running' : 'pending', resultMessageId: null },
+    ],
+  };
+}
+
 /**
  * Two Threads name the reader, one they follow is unread without naming them, one is read
  * (bot-group-chat.md §10「话题未读与提示」).
@@ -191,10 +227,11 @@ function threadSummaries() {
 
 function groupFrom(data: GroupData) {
   const bubbles = data.bubbles ? bubbleMessages(data.wrappedReactions) : null;
+  const planKind = data.workMentioned ? 'work' : 'talk';
   return {
     id: 'fixture-group',
     name: data.name,
-    replyMode: 'all',
+    replyMode: data.workMentioned ? 'mentioned' : 'all',
     speakingMode: 'auto',
     members: [...(data.settings ? [{ botId: '', actorId: 'me', actorKind: 'user', name: 'You', isSelf: true, isOwned: true, role: 'owner', avatar: '', avatarColor: 'gray', status: 'active' }] : []),
       ...data.members.map((member) => ({
@@ -213,14 +250,18 @@ function groupFrom(data: GroupData) {
     openPlan: null,
     createdAt: 1,
     updatedAt: 1,
-    plans: data.arrangement ? [arrangementPlan(data.arrangement)] : [],
+    plans: data.arrangement ? [{ ...arrangementPlan(data.arrangement), kind: planKind }] : data.division ? [divisionPlan(data.division)] : [],
+    ...(data.division ? { openPlan: { id: 'p2', status: data.division === 'auto' ? 'running' : 'waiting', currentStep: data.division === 'auto' ? 1 : 0,
+      stepCount: 2, currentBotName: data.division === 'auto' ? 'Nova' : 'Aster', currentStepStatus: data.division === 'auto' ? 'running' : 'done', kind: 'work' },
+      singleSpeaker: true, autoContinue: data.division === 'auto' } : {}),
     ...(data.arrangement ? { openPlan: data.arrangement === 'long'
-      ? { id: 'p1', status: 'waiting', currentStep: 4, stepCount: 7, currentBotName: 'Pax', currentStepStatus: 'done', kind: 'talk' }
-      : data.arrangement === 'running' ? { id: 'p1', status: 'running', currentStep: 1, stepCount: 2, currentBotName: 'Nova', currentStepStatus: 'running', kind: 'talk' } : null,
+      ? { id: 'p1', status: 'waiting', currentStep: 4, stepCount: 7, currentBotName: 'Pax', currentStepStatus: 'done', kind: planKind }
+      : data.arrangement === 'running' ? { id: 'p1', status: 'running', currentStep: 1, stepCount: 2, currentBotName: 'Nova', currentStepStatus: 'running', kind: planKind } : null,
       singleSpeaker: true } : {}),
-    ...(data.bubbles || data.arrangement ? { serverBacked: true } : {}),
+    ...(data.bubbles || data.arrangement || data.division ? { serverBacked: true } : {}),
+    ...(data.settings ? { autoContinue: false } : {}),
     ...(data.threadUnread ? { threads: threadSummaries() } : {}),
-    messages: data.bodyAnswer ? bodyMessages() : data.arrangement ? arrangementMessages(data.arrangement)
+    messages: data.bodyAnswer ? bodyMessages() : data.arrangement ? arrangementMessages(data.arrangement) : data.division ? divisionMessages()
       : bubbles ? bubbles.map(m => (data.threadUnread && UNREAD[m.id as string] ? { ...m, threadUnread: UNREAD[m.id as string] } : m))
       : Array.from({ length: data.messages }, (_, i) => ({
       id: `m${i}`,
@@ -229,7 +270,7 @@ function groupFrom(data: GroupData) {
       authorKind: 'user',
       authorBotId: null,
       authorName: '',
-      content: `Layout message ${i + 1}`,
+      content: data.workState ? ["帮我检查群聊里的工作状态和任务入口。", "过程放在下面的动态区，完成后告诉我结果。"][i % 2] : `Layout message ${i + 1}`,
       mentions: { all: false, botIds: [] },
       noticeCode: null,
       planId: null,
@@ -237,7 +278,9 @@ function groupFrom(data: GroupData) {
       createdAt: 1700000000000 + i,
     })),
     hasMoreBefore: false,
-    round: { status: 'idle', speakers: [], canContinue: false },
+    round: data.workState ? { status: 'running', speakers: [{ botId: 'a', executionId: 'fixture-execution', sessionId: data.workRemote || data.workState === 'unknown' ? null : 'fixture-work', activity: 'reply', executionStatus: data.workState === 'waiting' ? 'needs_input' : 'running', startedAt: Date.now() - 83_000, stopping: data.workState === 'stopping' },
+      ...(data.workParallel ? [{ botId: 'b', executionId: 'fixture-second', sessionId: 'fixture-second-work', activity: 'reply', startedAt: Date.now() - 41_000, stopping: !!data.workLastStopping, executionStatus: data.workLastStopping ? 'stopping' : 'running' }] : [])], canContinue: false }
+      : { status: 'idle', speakers: [], canContinue: false },
   };
 }
 
@@ -246,6 +289,7 @@ void mountPage({
   host: (ctx) => {
     const data = ctx.data as unknown as GroupData;
     const group = groupFrom(data);
+    if (data.workRemote) applyRemoteSessionActivity('fixture-mac', { sessionId: 'fixture-work', phase: 'running', workingPhase: 'testing', compactDetail: '正在运行群聊回归检查', attention: false });
     let following = false;
     const followThread = async (input: { following: boolean }) => {
       following = input.following;
@@ -260,7 +304,11 @@ void mountPage({
       return { ok: true, root, replies, hasMore: false, following };
     };
     return {
+      agentIsland: { onSessionActivity: subscription('sessionActivity') },
       maker: {
+        getCompanionCloudState: async () => ({ enabled: !!data.workRemote, selfDeviceId: null, humanActorId: null, actors: data.workRemote ? [{ id: 'a', externalId: 'a', name: 'Aster', avatar: null, homeDeviceId: 'fixture-mac', homeDevice: { deviceId: 'fixture-mac', name: 'Mac Studio', online: true, remoteControlEnabled: true, isSelf: false } }] : [], demotedBotIds: [] }),
+        onCompanionCloudChanged: subscription('companionCloudChanged'),
+        polishWorkingStatus: async () => null,
         listBotGroups: async () => ({ ok: true, groups: (ctx.data as unknown as GroupData).settings ? [group] : [] }),
         getBotGroup: async () => ({ ok: true, group }),
         onBotGroupChanged: subscription('botGroupChanged'),
@@ -276,6 +324,11 @@ void mountPage({
         updateBotGroup: forbid('maker.updateBotGroup'),
       },
       deviceLink: {
+        invoke: async (_device: string, _channel: string, args: Array<{ ref?: { collectionId?: string } }>) => args[0]?.ref?.collectionId === 'bot-groups' ? {
+          ref: { collectionId: 'bot-groups', kind: 'bot-group', id: group.id },
+          blocks: [{ primitive: 'bot-group-chat', data: { ...group, round: { ...group.round, speakers: [{ ...group.round.speakers[0], sessionId: 'fixture-work' }] } } }],
+        } : { blocks: [] },
+        onRemotePush: subscription('remotePush'),
         getState: async () => ({ controlledBy: [] }),
         onControlledState: subscription('controlledState'),
         revoke: forbid('deviceLink.revoke'),

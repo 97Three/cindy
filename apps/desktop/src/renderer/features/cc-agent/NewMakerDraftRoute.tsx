@@ -1,3 +1,4 @@
+import { deviceDisplayName } from '@/lib/deviceName';
 import { useRemoteDraftDefaults, useRemoteDraftSelection, useRemoteDraftPush } from './useRemoteDraftDefaults';
 import { isModelEnabled, useModelVisibilityVersion } from '@/state/modelVisibilityPrefs';
 /**
@@ -138,8 +139,8 @@ import {
   plainTextToTiptapDoc,
   restoreRemoteOptimisticDraft,
   saveDraft as saveComposerDraft,
-  subscribeDraftContent as subscribeComposerDraftContent,
 } from '@/lib/composerDraftStore';
+import { useProvisionalDraftEmptyCleanup } from './hooks/useProvisionalDraftEmptyCleanup';
 import {
   canOpenProvisionalDraftTask,
   composerDocPlainText,
@@ -301,7 +302,9 @@ import {
 import { isSubscriptionDirectModel } from '../../../shared/subscriptionModels';
 import {
   resolveDeviceLinkDraftDefaults,
+  resolveDeviceLinkWorktreeEnabled,
   type DeviceLinkDraftSelection,
+  type DeviceLinkWorktreeEnabledFrame,
   type RemoteDraftDefaults,
 } from './deviceLinkDraftDefaults';
 import { recallAgentDeviceSelection, rememberAgentDeviceSelection } from './agentDeviceDraftMemory';
@@ -1193,7 +1196,7 @@ export function NewMakerDraftRoute() {
       effectiveDeviceLinkDeviceId
         ? {
             deviceId: effectiveDeviceLinkDeviceId,
-            deviceName: effectiveDeviceLinkDeviceName ?? effectiveDeviceLinkDeviceId,
+            deviceName: deviceDisplayName(effectiveDeviceLinkDeviceId ?? '', effectiveDeviceLinkDeviceName),
             status:
               deviceLinkProjectsStatus === 'error'
                 ? 'error'
@@ -1647,20 +1650,24 @@ export function NewMakerDraftRoute() {
   // 记忆——不做 baseRepo/资格点亮门槛、没有任何自动开关。环境合格性只影响
   // checkbox 禁用态；用户已勾选且当前项目尚不能创建 worktree 时，handleSend
   // 必须保留草稿并提示，不能静默创建普通 session，也不能改写用户记忆。
+  // 切设备的重置与镜像必须在同一个 effect 里按帧判定(resolveDeviceLinkWorktreeEnabled):
+  // 设备域浏览器会在切设备的同一批更新里直接 seed 新设备快照，分成两个 effect 时
+  // 后执行的重置会把刚镜像的 true 压回 false，之后再无快照变化能恢复。
+  const wtEnabledFrameRef = useRef<DeviceLinkWorktreeEnabledFrame | null>(null);
   useEffect(() => {
+    const previous = wtEnabledFrameRef.current;
+    const frame: DeviceLinkWorktreeEnabledFrame = {
+      deviceId: effectiveDeviceLinkDeviceId ?? null,
+      remoteDraftState,
+    };
+    wtEnabledFrameRef.current = frame;
     if (!isDeviceLinkDraft) {
       setWtEnabled(draft.worktreeEnabled);
       return;
     }
-    if (remoteDraftState.status !== 'ready') return;
-    const remotePreference = remoteDraftState.value?.worktreeEnabled;
-    if (typeof remotePreference === 'boolean') setWtEnabled(remotePreference);
-  }, [isDeviceLinkDraft, draft.worktreeEnabled, remoteDraftState]);
-  // 放在同步 effect 后面:切设备的首帧 remoteDraftState 可能仍属于上一台设备，
-  // 先处理旧快照再重置，保证它不能把新设备的默认 false 覆盖回去。
-  useEffect(() => {
-    if (isDeviceLinkDraft) setWtEnabled(false);
-  }, [isDeviceLinkDraft, effectiveDeviceLinkDeviceId]);
+    const next = resolveDeviceLinkWorktreeEnabled(previous, frame);
+    if (next !== null) setWtEnabled(next);
+  }, [isDeviceLinkDraft, effectiveDeviceLinkDeviceId, draft.worktreeEnabled, remoteDraftState]);
 
   // A device-link checkbox write remains a create gate until the controlled
   // endpoint's defaults mirror confirms the requested boolean. A mismatching
@@ -2129,16 +2136,11 @@ export function NewMakerDraftRoute() {
         : null,
     );
   }, []);
-  const provisionalEmptyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** 输入一直是空的(清空了,或开始语音后什么都没说)就删掉未发送任务。 */
-  const armProvisionalEmptyCheck = useCallback((delayMs: number) => {
-    if (provisionalEmptyTimerRef.current) clearTimeout(provisionalEmptyTimerRef.current);
-    provisionalEmptyTimerRef.current = setTimeout(() => {
-      provisionalEmptyTimerRef.current = null;
-      if (!provisionalDraftTaskId() || getComposerDraftPresence(NEW_MAKER_DRAFT_KEY)) return;
-      void discardProvisionalDraftTask();
-    }, delayMs);
-  }, []);
+  const {
+    armEmptyCheck: armProvisionalEmptyCheck,
+    onVoiceBusyChange: onProvisionalVoiceBusyChange,
+    onVoiceDetached: onProvisionalVoiceDetached,
+  } = useProvisionalDraftEmptyCleanup(NEW_MAKER_DRAFT_KEY, refreshProvisionalTitle);
   /** 已为哪一次建出来的未发送任务做过一次性的初始化(按 key 区分重建)。 */
   const provisionalSeededKeyRef = useRef<string | null>(null);
   const openProvisionalDraftTask = useCallback(() => {
@@ -2173,29 +2175,6 @@ export function NewMakerDraftRoute() {
       // 粘贴图片 / 开始语音时输入框可能还是空的:给语音留出时间,之后仍为空再删掉。
       if (!getComposerDraftPresence(NEW_MAKER_DRAFT_KEY)) armProvisionalEmptyCheck(60_000);
     });
-  }, [armProvisionalEmptyCheck, refreshProvisionalTitle]);
-  useEffect(() => {
-    const unsubscribe = subscribeComposerDraftContent(NEW_MAKER_DRAFT_KEY, () => {
-      if (!provisionalDraftTaskId()) return;
-      refreshProvisionalTitle();
-      if (getComposerDraftPresence(NEW_MAKER_DRAFT_KEY)) {
-        if (provisionalEmptyTimerRef.current) clearTimeout(provisionalEmptyTimerRef.current);
-        provisionalEmptyTimerRef.current = null;
-      } else {
-        armProvisionalEmptyCheck(1_000);
-      }
-    });
-    return () => {
-      unsubscribe();
-      const pendingEmptyCheck = provisionalEmptyTimerRef.current;
-      if (pendingEmptyCheck) clearTimeout(pendingEmptyCheck);
-      provisionalEmptyTimerRef.current = null;
-      // Leaving the page while an empty-input delete is still pending: nothing will notify us
-      // again, so finish it now rather than leave an empty task behind.
-      if (pendingEmptyCheck && provisionalDraftTaskId() && !getComposerDraftPresence(NEW_MAKER_DRAFT_KEY)) {
-        void discardProvisionalDraftTask();
-      }
-    };
   }, [armProvisionalEmptyCheck, refreshProvisionalTitle]);
   // 草稿里影响任务本身的设置变了:按新设置重建(不再适合提前建任务就删掉)。
   const provisionalDraftKey = provisionalDraftArgs ? provisionalDraftArgsKey(provisionalDraftArgs) : null;
@@ -3780,7 +3759,7 @@ export function NewMakerDraftRoute() {
           // 运行目录(隧道侧 path guard 对「缺 workingDir」本来就是放行的,不放宽任何边界)。
           if (isDeviceLinkDraft && effectiveDeviceLinkDeviceId) {
             const deviceId = effectiveDeviceLinkDeviceId;
-            const deviceName = effectiveDeviceLinkDeviceName ?? deviceId;
+            const deviceName = deviceDisplayName(deviceId, effectiveDeviceLinkDeviceName);
             const invokeRemote = async (channel: string, args: unknown[]) => {
               if (!isCurrentDataOwner()) {
                 throw new RemotePrecreatedWorktreeOwnerChangedError();
@@ -4957,7 +4936,7 @@ export function NewMakerDraftRoute() {
             throw new Error(t('ccAgent.draft.createSessionFailed'));
           }
           const deviceId = effectiveDeviceLinkDeviceId;
-          const deviceName = effectiveDeviceLinkDeviceName ?? deviceId;
+          const deviceName = deviceDisplayName(deviceId, effectiveDeviceLinkDeviceName);
           const ownerAtGoal = dataOwnerAtGoal.dataOwnerId;
           const invokeRemote = async (channel: string, args: unknown[]) => {
             if (!isCurrentDataOwner()) {
@@ -5894,6 +5873,8 @@ export function NewMakerDraftRoute() {
                   <ChatInput
                     onSend={handleSend}
                     onComposerTyping={openProvisionalDraftTask}
+                    onComposerVoiceBusyChange={onProvisionalVoiceBusyChange}
+                    onComposerVoiceDetached={onProvisionalVoiceDetached}
                     // 创建在途期间锁住输入框:handleSend 立刻返回、真正的创建在后台跑,远程要经
                     // 几次隧道往返。锁定态即时告诉用户「已发出、处理中」,也免得这段时间补写的
                     // 内容在交接成功清空草稿时被一并丢掉;失败解锁后原文仍在。
@@ -6053,14 +6034,14 @@ export function NewMakerDraftRoute() {
                       {effectiveWorkingDir
                         ? t('ccAgent.draft.remoteProjectBanner', {
                             device:
-                              effectiveDeviceLinkDeviceName ?? effectiveDeviceLinkDeviceId ?? '',
+                              deviceDisplayName(effectiveDeviceLinkDeviceId ?? '', effectiveDeviceLinkDeviceName),
                             project:
                               effectiveWorkingDir.split(/[\\/]/).filter(Boolean).pop() ??
                               effectiveWorkingDir,
                           })
                         : t('ccAgent.draft.remoteDialogueBanner', {
                             device:
-                              effectiveDeviceLinkDeviceName ?? effectiveDeviceLinkDeviceId ?? '',
+                              deviceDisplayName(effectiveDeviceLinkDeviceId ?? '', effectiveDeviceLinkDeviceName),
                           })}
                     </span>
                   </div>
@@ -6081,7 +6062,7 @@ export function NewMakerDraftRoute() {
                         isDeviceLinkDraft
                           ? 'ccAgent.draft.agentDeviceElsewhereBanner'
                           : 'ccAgent.draft.agentDeviceBanner',
-                        { device: draft.agentDeviceName ?? effectiveAgentDeviceId ?? '' },
+                        { device: deviceDisplayName(effectiveAgentDeviceId ?? '', draft.agentDeviceName) },
                       )}
                     </span>
                   </div>

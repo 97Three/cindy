@@ -45,9 +45,10 @@ export async function startAskCardDictation(input: {
   isAppActive?: () => boolean;
   subscribeToAppState?: (listener: AppStateListener) => () => void;
   getText: () => string;
-  setText: (value: string) => void;
+  setText: (value: string, selection?: MobileVoiceSelection) => void;
   getSelection: () => MobileVoiceSelection;
   onListening: () => void;
+  onRunCreated?: (run: { stop: () => Promise<void>; cancel: () => Promise<void> }) => void;
   onError: (message: string) => void;
 }): Promise<{ stop: () => Promise<void>; cancel: () => Promise<void> }> {
   if (!isMobileRealtimeAudioAvailable()) {
@@ -104,24 +105,34 @@ export async function startAskCardDictation(input: {
     initialDraft,
     initialSelection: input.getSelection(),
     readCurrentDraft: input.getText,
-    onDraftChanged: (text) => input.setText(text),
+    onDraftChanged: (text, selection) => input.setText(text, selection),
     onStateChanged: (state) => {
       if (state === 'listening') input.onListening();
     },
     onError: input.onError,
     onReadyForEndCue: credential.settings?.playInteractionSound ? playMobileVoiceInputEndCue : undefined,
   });
-  await session.start();
+  const run = {
+    stop: () => session.stop().then(() => undefined),
+    cancel: () => session.cancel(),
+  };
+  if (input.signal?.aborted) throw new AskCardVoiceCancelledError();
+  // Publish the handle before awaiting the handshake. stop() closes native
+  // capture immediately and still flushes audio recorded before the press.
+  input.onRunCreated?.(run);
+  try {
+    await session.start();
+  } catch (error) {
+    await session.cancel().catch(() => undefined);
+    throw error;
+  }
   // The user may have stopped while the voice service was connecting: the
   // microphone is now open, so release it right away instead of leaving it on.
   if (input.signal?.aborted) {
     await session.cancel().catch(() => undefined);
     throw new AskCardVoiceCancelledError();
   }
-  return {
-    stop: () => session.stop().then(() => undefined),
-    cancel: () => session.cancel(),
-  };
+  return run;
 }
 
 function waitUntilActive(

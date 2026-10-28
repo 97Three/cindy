@@ -439,6 +439,8 @@ import type { TurnUsageDetails } from '../../../shared/turnUsageDetails';
 import { hasReviewableTurnChanges, type TurnChangeSetSummary } from '../../../shared/turnChangeSet';
 
 interface MessageStreamProps {
+  /** Content before history, sharing its scrolling and measured content height. */
+  header?: ReactNode;
   historyVisibleAfter?: number;
   onAskInSideChat?: (quote: string) => Promise<boolean>;
   /** Active session id — used to reset scroll state on session switch. */
@@ -2987,6 +2989,7 @@ export const WorkGroupRenderItemView = memo(function WorkGroupRenderItemView({
 });
 
 export function MessageStream({
+  header,
   onAskInSideChat,
   historyVisibleAfter,
   sessionId,
@@ -6469,6 +6472,7 @@ export function MessageStream({
                   maxWidth: contentWidth ?? 880,
                 }}
               >
+                {header ? <div className="mb-3.5">{header}</div> : null}
                 {historyLoaded && historyCleared && <HistoryClearedMarker />}
                 {/* Keep pagination feedback inside the existing top padding so
                     toggling it never changes message positions or scrollHeight. */}
@@ -6615,7 +6619,7 @@ export function MessageStream({
                           item={item}
                           context={workGroupRenderContext}
                           // 伙伴聊天与普通任务同一套工作过程：运行中露最近 5 条活动与计时，
-                          // 组头按内容宽；做完整块不再出现（simplifyBotRenderItems 丢弃完成组）。
+                          // 组头按内容宽；最终答复后保留折叠过程，按需展开。
                           compact={false}
                           replyColumnSpacer={botReplyColumnSpacer}
                         />

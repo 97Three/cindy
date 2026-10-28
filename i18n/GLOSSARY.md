@@ -295,6 +295,10 @@ device-link 里「可以选择在哪台机器上运行」这一维度，两端�
 
 OAuth 2.0 Device Authorization Grant 中由用户在另一设备验证页输入的一次性代码。当前先采用各语言直译，作为待产品裁决术语登记，避免后续界面出现“设备代码／配对码／认证码”等多套说法。
 
+### Device Simulator
+
+官方插件 cindy-simulator 的用户可见名称。2026-10-23 用户确认中文「设备模拟器」与英文 Device Simulator，为后续设备和平台扩展保留命名空间；名称不代表未发布的平台支持。原内置 iOS 模拟器的历史称呼不变。其余语言随迁移提示同步登记，译法整体暂保留 proposed。
+
 ### DingTalk
 
 钉钉机器人连接的产品名称，沿用官方品牌写法；先登记为 proposed，待产品术语评审后再决定是否固化。
@@ -373,7 +377,7 @@ Agent 遇到需要主人填写的界面（选择、文本、密码、验证码�
 
 ### iOS Simulator
 
-Apple Simulator 的用户可见名称，也用于原内置模拟器的下线说明。Cindy 已移除内置查看器能力。iOS 保留官方大小写；中文使用「模拟器」，日语使用「シミュレータ」，韩语使用「시뮬레이터」。译法仍为 proposed。
+Apple Simulator 的用户可见名称，也用于原内置 iOS 模拟器的历史与下线说明。Cindy 已移除内置查看器能力；替代插件 cindy-simulator 使用独立术语 Device Simulator。iOS 保留官方大小写；中文使用「模拟器」，日语使用「シミュレータ」，韩语使用「시뮬레이터」。译法仍为 proposed。
 
 ### Lark
 
@@ -423,6 +427,10 @@ V4 模型类型 audio_generation，包含通用声音生成；与 audio_speech �
 
 issue #882：模型管理/新对话选择器的分类标签，对应网关的文档压缩类模型（如 ai-gateway-doc）。此前被硬编码为笼统的 other 分类。
 
+### Decision
+
+模型分类 evaluation 对应 Decisions 接口，不进入 Agent 对话模型清单。日文沿用 Jev 开发者项目中的意思決定モデル，韩文沿用 IBM 韩文文档与 KAIST 文献中的 의사결정 모델，分类标签省略模型。
+
 ### Realtime Audio
 
 issue #882：模型管理/新对话选择器的分类标签，对应 Gateway mode=realtime 的实时多模态模型（如 gpt-realtime-2、gemini-omni-flash-preview）。
@@ -442,6 +450,14 @@ issue #882：模型管理/新对话选择器的分类标签，对应 Gateway mod
 ### Native API
 
 模型目录维护的权威协议；独立于各 Harness 的实际接入配置。设置面板用于简短对比原生支持与兼容模式。
+
+### Publish Plugin
+
+当前登录账号向公开市场发布插件、查看发布情况与发布记录的页面，个人和组织成员均可使用；区别于本机已安装插件和旧企业我的发布。
+
+### Nightly learning
+
+伙伴的内置例行任务：到点（默认每天 3:30，可改每周一 3:30）回看上次之后和主人的对话，整理伙伴自己的记忆与技能（合并、拆分、停用、把反复出现的做法转正为技能），每条改动可撤销；没有新对话时不调用模型（docs/product-rules/bot-routines.md「内置夜间学习」）。英文句中小写 nightly learning，故 checkCase 为 false。只出现过一次、等待再次出现的做法叫「在观察的做法 / approaches being watched」，不叫候选技能。先登记为 proposed，等 UI 走查后再定。
 
 ### Not signed in
 
@@ -482,6 +498,10 @@ WebAuthn 可发现凭证的用户可见名称，采用 Apple、Google 与 Micros
 ### Pin
 
 右侧栏插件面板页签的图钉:钉住 = 面板在所有对话中保留。动词对:Pin=钉住 / Unpin=取消钉住。2026-07-31 随图钉功能提出,待裁决。
+
+### Publish anonymously
+
+个人插件的公开署名开关，默认开启，原作者可随时修改；不改变固定账号归属，关闭后展示提审时保存的昵称。
 
 ### Main view
 
@@ -602,6 +622,14 @@ Orca Worker 创建卡上的命名字段。它只是派活用的名字，不改�
 ### Run records
 
 日志上报文案里对「App 自身运行日志」的用户可见说法。刻意不直接叫「日志」: 设置页同屏已有「日志目录」「Debug 日志」两处指本地文件, 而这里要表达的是被上报的那部分内容(基础设施运行记录, 不含对话)。proposed: 与「日志」的分工尚未产品裁决。
+
+### Scrolling Screenshot
+
+2026-10-26 用户指定截图功能统一称为滚动截图，突出滚动操作，不再使用长截图作为功能名称。
+
+### Mute notifications
+
+任务右键菜单里的通知开关，是普通句子不是品牌词，故 checkCase 为 false。开关两态成对出现：未静音时显示「消息免打扰」（点了就静音），已静音时显示「允许消息通知」（点了就恢复）；英文对为 Mute notifications / Allow notifications。与设置里的全局通知开关（ccAgent.settings.notifications）区分：这个是单个任务的。中文不用「免打扰模式」「静音」。「允许消息通知」是反面文案，未列入 translations，待五语用例变多后一并裁决。
 
 ### Share Link
 

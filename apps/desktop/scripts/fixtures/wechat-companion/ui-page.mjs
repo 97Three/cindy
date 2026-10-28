@@ -1,14 +1,18 @@
+import assert from 'node:assert/strict';
+
 export default {
   name: 'wechat-companion',
   entry: './wechat-companion-fixture.tsx',
   viewport: { width: 620, height: 900 },
   real: 'BotChannelsPage, WechatBotSection, useWechatBot, existing connection accordion and translations',
-  notCovered: 'Real account login, Tencent scan authorization, persisted binding and message delivery',
+  notCovered: 'Real account login, Tencent scan authorization, persisted binding, message delivery, full-app history navigation and live agent execution',
   cases: {
     default: { about: 'New WeChat connection for a teammate', data: {} },
     existing: { about: 'Reuse the already authorized personal WeChat connection', data: { bound: true } },
     assigned: { about: 'Connected teammate and remove-link action', data: { bound: true, companionBotId: 'fixture-cindy' } },
     other: { about: 'Another teammate owns this connection', data: { bound: true, companionBotId: 'fixture-other' } },
+    'feishu-hidden-tasks': { about: 'Clickable hidden IM records and independent restart action', data: { hiddenIm: true } },
+    'feishu-hidden-tasks-narrow': { about: 'Hidden IM records in a narrow window', data: { hiddenIm: true }, viewport: { width: 360, height: 900 } },
     'sidebar-394': {
       about: '#6706: 394px card in a wide window',
       viewport: { width: 1280, height: 900 },
@@ -61,6 +65,51 @@ export default {
   // Review regression: null summary at 320px; checking visibility alone misses
   // the wrapped status group jumping to the left. Measure the chevron's edge.
   async check(page, ui) {
+    if (ui.data.hiddenIm) {
+      const platform = await ui.t('bots.channels.platform.feishu');
+      const record = page.locator('[title="拉拉, 徐紫旎, 姚刘浏"]');
+      await page.getByRole('button', { name: await ui.t('bots.channels.lanes.expand', { platform }), exact: true }).waitFor({ state: 'visible' });
+      assert.equal(await record.isVisible(), false, 'task list is collapsed on entry');
+      await ui.capture('tasks-initial-collapsed');
+      await page.getByRole('button', { name: await ui.t('bots.channels.lanes.expand', { platform }), exact: true }).click();
+      await record.waitFor({ state: 'visible' });
+      const row = page.locator('button').filter({ hasText: '8c9b5c' });
+      await row.waitFor({ state: 'visible' });
+      const resting = await row.evaluate((el) => getComputedStyle(el).boxShadow);
+      assert.equal(resting, 'none', 'hidden record stays frameless at rest');
+      // Programmatic focus does not match :focus-visible; request the keyboard treatment.
+      await row.evaluate((el) => el.focus({ focusVisible: true }));
+      const focused = await row.evaluate((el) => {
+        const style = getComputedStyle(el);
+        return {
+          visible: el.matches(':focus-visible'),
+          boxShadow: style.boxShadow,
+          outlineStyle: style.outlineStyle,
+        };
+      });
+      assert.equal(focused.visible, true, 'keyboard focus must match :focus-visible');
+      assert.notEqual(focused.boxShadow, 'none', 'focus ring must survive the global outline suppression');
+      assert.equal(focused.outlineStyle, 'none');
+      await row.evaluate((el) => el.blur());
+      const collapse = page.getByRole('button', { name: await ui.t('bots.channels.lanes.collapse', { platform }), exact: true });
+      await ui.capture('tasks-expanded');
+      const archive = page.getByRole('button', { name: await ui.t('bots.channels.lanes.archiveAria', { lane: '拉拉, 徐紫旎, 姚刘浏' }), exact: true });
+      await archive.click();
+      const inlineConfirm = page.getByRole('button', { name: await ui.t('ccAgent.sidebar.sessionMenu.archived'), exact: true });
+      await inlineConfirm.waitFor({ state: 'visible' });
+      await ui.capture('tasks-archive-confirm');
+      await page.mouse.click(1, 1);
+      await archive.waitFor({ state: 'visible' });
+      assert.equal(await inlineConfirm.isVisible(), false, 'outside click cancels inline archive without a write');
+      await collapse.click();
+      await row.waitFor({ state: 'hidden' });
+      assert.equal(await row.isVisible(), false, 'task records collapse without invoking a write');
+      await ui.capture('tasks-collapsed');
+      await page.getByRole('button', { name: await ui.t('bots.channels.lanes.expand', { platform }), exact: true }).click();
+      await row.waitFor({ state: 'visible' });
+      assert.equal(await row.isVisible(), true, 'task records return after expanding');
+      return;
+    }
     const trigger = page.locator('#companion-im-wechat-trigger');
     await trigger.getByRole('status').waitFor();
     if (ui.data.companionBotId === 'fixture-cindy') {

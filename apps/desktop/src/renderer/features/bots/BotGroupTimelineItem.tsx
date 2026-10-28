@@ -244,6 +244,8 @@ export interface BotGroupTimelineItemProps {
   locale: string;
   shareScope: string;
   sharing: boolean;
+  /** Context-only roots have no action owner; do not offer sharing or mutations. */
+  showActions?: boolean;
   /** Server group id: reactions and the toolbar's reaction picker. */
   reactionGroupId?: string;
   /** The message's reaction version (`messageReactionRevision`): who reacted is re-read when it moves. */
@@ -276,6 +278,8 @@ export interface BotGroupTimelineItemProps {
   onPlanAction?: (action: 'start' | 'dismiss', planId: string) => void;
   readOnly?: boolean;
   onEditStep?: (planId: string, step: BotGroupPlanStepView, action: 'reassign' | 'remove', botId?: string) => void;
+  /** Present on the open 分工 card for whoever may press 继续 (§7.4). */
+  onPlanAutoContinue?: (planId: string, on: boolean) => void;
 }
 
 function Row({ message, highlighted, focusable, entering, block, children }: {
@@ -387,7 +391,7 @@ function BotGroupTimelineItemImpl(props: BotGroupTimelineItemProps) {
       attachments={<BotGroupMessageAttachments attachments={share.attachments} align="start" />}
       onOpenThread={props.onOpenThread ? () => props.onOpenThread!(share.threadRootId, share.messageId) : undefined} />
   </> : null;
-  const actions = shareable ? (
+  const actions = shareable && props.showActions !== false ? (
     <ChatMessageHoverActions
       groupId={props.reactionGroupId}
       shareScope={shareScope}
@@ -530,6 +534,8 @@ function BotGroupTimelineItemImpl(props: BotGroupTimelineItemProps) {
                     onStart={() => { if (message.planId) props.onPlanAction?.('start', message.planId); }}
                     onDismiss={() => { if (message.planId) props.onPlanAction?.('dismiss', message.planId); }}
                     onEditStep={(step, action, botId) => { if (message.planId) props.onEditStep?.(message.planId, step, action, botId); }}
+                    onAutoContinueChange={props.onPlanAutoContinue && message.planId
+                      ? (on) => props.onPlanAutoContinue?.(message.planId!, on) : undefined}
                   />
                 </div>
               ) : (

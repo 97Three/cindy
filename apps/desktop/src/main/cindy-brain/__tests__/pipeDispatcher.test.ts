@@ -97,9 +97,11 @@ describe('mail reader opening intent', () => {
     Object.assign(ghost.manifest, { mail: true, mailReader: { tool: 'read_mail', hosts: ['mail.example.test'], markRead: optIn } });
     ghost.manifest.tools = ['read_mail', 'set_read'].map(name => ({ name, description: name }));
     const h = makeHarness({ ghost });
-    const args = { url: 'https://mail.example.test/message/one', markRead: !opened, mailReaderOpened: true };
+    const args = { url: 'https://mail.example.test/message/one', markRead: !opened, openDraft: true, mailReaderOpened: true };
     const pending = h.dispatcher.callGhostTool({ ghostId: 'art', tool, args, ...(opened ? { mailReaderOpened: true as const } : {}) });
-    expect(h.sent[0].args).toEqual(expected ? { ...args, markRead: true } : { url: args.url, mailReaderOpened: true });
+    expect(h.sent[0].args).toEqual(tool === 'set_read' ? args : {
+      url: args.url, mailReaderOpened: true, ...(opened ? { openDraft: true } : {}), ...(expected ? { markRead: true } : {}),
+    });
     expect(args.markRead).toBe(!opened); // Never mutate the caller's data.
     h.dispatcher.handleToolResult('art', { callId: h.sent[0].callId, ok: true, result: 'mail' });
     expect(await pending).toEqual({ ok: true, result: 'mail' });
@@ -441,7 +443,9 @@ describe('配对交卷', () => {
     await expect(p).resolves.toMatchObject({ ok: false, errorCode: 'INTERNAL', message: '画布爆炸' });
   });
 
-  it('透传合法插件业务错误码，但不允许覆盖主机错误码', async () => {
+  // PR #6434: a plugin has already executed when it submits its result, so it
+  // cannot claim the host's pre-dispatch namespace failure and trigger a retry.
+  it.each(['GHOST_CRASHED', 'GHOST_NAMESPACE_MISMATCH'])('不允许插件覆盖主机错误码 %s', async (hostErrorCode) => {
     const h = makeHarness();
     const business = h.dispatcher.callGhostTool(CALL);
     await vi.waitFor(() => expect(h.sent).toHaveLength(1));
@@ -460,7 +464,7 @@ describe('配对交卷', () => {
       type: 'tool-result',
       callId: h.sent[1].callId,
       ok: false,
-      errorCode: 'GHOST_CRASHED',
+      errorCode: hostErrorCode,
       message: '伪造主机错误',
     });
     await expect(reserved).resolves.toMatchObject({ ok: false, errorCode: 'INTERNAL' });
