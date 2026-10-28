@@ -1,3 +1,4 @@
+import { outboundFetch } from '../maker-host/outbound-fetch.js';
 import { readTaskDeliveryNote } from '../bot-autonomy/hub.js';
 import { setVoiceTaskDispatch, setVoiceCallMemoryReader } from '../voice-conversation/taskBridge.js';
 import { buildBotMemoryScopeKey } from '@cindy/maker-core';
@@ -1231,6 +1232,9 @@ import { testProviderConnection } from '../maker-host/provider-diagnostics.js';
 import {
   readProviderAccountUsage,
   setAccountUsageKeyReader,
+  setAccountUsageOAuthReader,
+  invalidateKimiAccountUsage,
+  setAccountUsageFetch,
   setAccountUsageOwnerStampReader,
   setAccountUsageProviderReader,
 } from '../maker-host/provider-account-usage.js';
@@ -1259,6 +1263,8 @@ import {
   logoutGenericOAuth,
   removeGenericOAuthCredentialsReversibly,
   runGenericOAuthLogin,
+  readCachedGenericOAuthAccessToken,
+  refreshGenericOAuthIfNeeded,
 } from '../maker-host/generic-oauth.js';
 import {
   revokeCodexAccountUltrafast,
@@ -7530,6 +7536,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   setAccountUsageProviderReader((providerId) =>
     getActiveCatalog().providers.find((p) => p.id === providerId));
   setAccountUsageKeyReader((providerId, agent) => readCustomProviderKey(providerId, agent));
+  setAccountUsageFetch(outboundFetch);
+  setAccountUsageOAuthReader(
+    (id) => readCachedGenericOAuthAccessToken(storedCustomProviderId(id), undefined),
+    async (id) => {
+      const provider = getActiveCatalog().providers.find((p) => p.id === id);
+      if (provider?.auth.oauth) await refreshGenericOAuthIfNeeded(storedCustomProviderId(id), provider.auth.oauth);
+    },
+  );
   setAccountUsageOwnerStampReader(() => {
     const session = getActiveAppSession();
     return { dataOwnerId: session.dataOwnerId, generation: session.generation };
@@ -7564,7 +7578,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     finalizeCodexCustomProviderHostChange: finalizeCodexAfterAuthModeChange,
     cancelCodexCustomProviderHostChange: cancelCodexAuthModeChange,
     beginRouteMutation: (providerId) => beginProviderRouteMutation(providerId),
-    broadcastChanged: () => broadcastToAllWindows(MAKER_PUSH.PROVIDER_CHANGED, {}),
+    broadcastChanged: () => { invalidateKimiAccountUsage(); broadcastToAllWindows(MAKER_PUSH.PROVIDER_CHANGED, {}); },
     kickProviderGroupReshare: (reason) => providerGroupReshare.kick(reason),
     listProviderIds: () => getDesktopSelectableCatalog().providers.map((provider) => provider.id),
     setProviderOrder: (providerIds) => setProviderOrder(providerIds),
