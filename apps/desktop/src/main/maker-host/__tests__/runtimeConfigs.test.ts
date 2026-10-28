@@ -175,3 +175,27 @@ it('never treats a retired independent Claude account as a connected subscriptio
     vi.resetModules();
   }
 });
+
+it('wires the user ENABLE_TOOL_SEARCH override into local spawns only (issue #7524)', async () => {
+  vi.resetModules();
+  const readOverride = vi.fn(() => 'true');
+  vi.doMock('../active-catalog.js', () => ({ getActiveCatalog: () => ({ providers: [] }) }));
+  vi.doMock('../claude-native-auth.js', () => ({ hasClaudeNativeLogin: () => false }));
+  vi.doMock('../claude-user-tool-search.js', () => ({ readUserToolSearchOverride: readOverride }));
+  try {
+    const { buildDesktopClaudeRuntimeConfig } = await import('../runtime-configs.js');
+    const flags = buildDesktopClaudeRuntimeConfig(() => 'http://localhost').behaviorFlags;
+    if (typeof flags !== 'function') throw new Error('expected spawn flags');
+    const custom = { credentialMode: 'provider-oauth', sessionProviderId: 'openrouter-custom' };
+    expect(flags({ ...custom, spawnMode: 'local' } as never)).toMatchObject({ ENABLE_TOOL_SEARCH: 'true' });
+    // 远端 spawn 不读本机配置:回到来源默认值,且读取函数不被调用。
+    readOverride.mockClear();
+    expect(flags({ ...custom, spawnMode: 'remote' } as never)).toMatchObject({ ENABLE_TOOL_SEARCH: 'false' });
+    expect(readOverride).not.toHaveBeenCalled();
+  } finally {
+    vi.doUnmock('../active-catalog.js');
+    vi.doUnmock('../claude-native-auth.js');
+    vi.doUnmock('../claude-user-tool-search.js');
+    vi.resetModules();
+  }
+});

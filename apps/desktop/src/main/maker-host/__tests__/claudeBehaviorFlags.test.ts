@@ -132,6 +132,9 @@ describe('claudeBehaviorFlagsForSpawn', () => {
       expect(readUserToolSearchOverride({ ENABLE_TOOL_SEARCH: 'auto:10' }, home)).toBe('auto:10');
       write(JSON.stringify({ env: { ENABLE_TOOL_SEARCH: 'banana' } }));
       expect(readUserToolSearchOverride({}, home)).toBeUndefined();
+      // CLI 照常应用带 BOM / 注释 / 尾逗号的设置,这里也必须读到(否则显式 override 仍被覆盖)。
+      write(`\uFEFF{\n  // keep tool search on\n  "env": { /* note */ "ENABLE_TOOL_SEARCH": "true", },\n}`);
+      expect(readUserToolSearchOverride({}, home)).toBe('true');
       write('{ not json');
       expect(readUserToolSearchOverride({}, home)).toBeUndefined();
     } finally {

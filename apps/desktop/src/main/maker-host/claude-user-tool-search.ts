@@ -9,6 +9,10 @@
  * 优先级与终端里直接运行 claude 一致:宿主进程环境 > ~/.claude/settings.json 的 env。
  * 只读 `env.ENABLE_TOOL_SEARCH` 一个键,不读取、不记录该文件的其它内容;读不到、解析失败
  * 或值不合法一律视为未配置(回到 Cindy 默认)。
+ *
+ * 解析口径与 Claude CLI 一致:接受 BOM、注释与尾逗号(JSONC)。maker-core 的
+ * workspace-settings-guard 里有同样的 stripJsonc,但它没有从包里导出;为避免为此改动共享包
+ * 的 exports,这里保留一份同逻辑的小函数,两处改动时需同步。
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -17,6 +21,39 @@ import path from 'node:path';
 // Claude Code 接受 true / false / auto / auto:N(阈值百分比)。其它值按未配置处理,
 // 避免把任意字符串写进子进程环境。
 const TOOL_SEARCH_VALUE = /^(?:true|false|auto(?::\d{1,3})?)$/i;
+
+/** 去掉 JSONC 的注释与尾逗号(字符串里的内容原样保留)。 */
+function stripJsonc(text: string): string {
+  let out = '';
+  let inString = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (inString) {
+      out += ch;
+      if (ch === '\\') {
+        out += text[i + 1] ?? '';
+        i += 1;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+    } else if (ch === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i += 1;
+      out += '\n';
+    } else if (ch === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      i = end === -1 ? text.length : end + 1;
+      out += ' ';
+    } else {
+      out += ch;
+    }
+  }
+  return out.replace(/,(\s*[}\]])/g, '$1');
+}
 
 function normalize(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -32,7 +69,8 @@ export function readUserToolSearchOverride(
   if (fromEnv) return fromEnv;
   try {
     const raw = fs.readFileSync(path.join(homeDir, '.claude', 'settings.json'), 'utf8');
-    const parsed: unknown = JSON.parse(raw);
+    const text = raw.startsWith('\uFEFF') ? raw.slice(1) : raw;
+    const parsed: unknown = JSON.parse(stripJsonc(text));
     const settingsEnv = (parsed as { env?: Record<string, unknown> } | null)?.env;
     return normalize(settingsEnv?.ENABLE_TOOL_SEARCH);
   } catch {
