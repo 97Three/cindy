@@ -276,10 +276,12 @@ export async function putMobileAttachmentUploadFromFile(
   fileUri: string,
   mimeType: string | undefined,
   deps: UploadDeps = {},
-  opts: UploadRecoveryOptions = {},
+  opts: UploadRecoveryOptions & { signedHeaders?: Readonly<Record<string, string>> } = {},
 ): Promise<void> {
   const uploadFile = deps.uploadFile ?? uploadFileNative;
-  const headers = buildMobileAttachmentUploadHeaders(mimeType);
+  // Chat Server signs a different header set from device-link. Never add OSS
+  // headers to an already signed request; preserve the device-link default.
+  const headers = opts.signedHeaders ? { ...opts.signedHeaders } : buildMobileAttachmentUploadHeaders(mimeType);
   await putAttachmentWithRecovery((signal, onProgress) => uploadFile(putUrl, fileUri, headers, { signal, onProgress }), opts, true);
 }
 
