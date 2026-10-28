@@ -78,8 +78,9 @@ const DESCRIPTION = [
   '可以和其他 role 一起传(例如 roles=["user","error"]), 不要求 roles 只含 error 一项。',
   'error 行 content 在出口统一过 redactSensitiveTextDeep 递归脱敏(凭据值呈现为 [REDACTED]',
   '或 [REDACTED_KEY], Bearer 形态保留前缀如 "Bearer [REDACTED]"); 写入侧只脱敏过 message /',
-  'sdkError, reason 等其余字段是入库原样内容, 由出口这一层兜住。仍只用于判断"这轮是不是',
-  '技术性失败", 不应当作对话正文渲染给用户。',
+  'sdkError, reason 等其余字段是入库原样内容, 但出口这一层会把整条 content 连同它们一起脱敏,',
+  '所以这里拿到的 reason 等字段同样是脱敏后的结果, 不是入库原文, 没有任何路径能取回原始值。',
+  '仍只用于判断"这轮是不是技术性失败", 不应当作对话正文渲染给用户。',
   '',
   '【返回原始数据】content 是 JSON.parse 后的原始结构 (按 role 形态不同, 调用方自己解析),',
   '不做任何 markdown / 文本拼装。',
@@ -135,7 +136,8 @@ export function registerGetChatHistoryTool(
           '只返这些 role 的消息。不传 = 默认只返问答类(user/assistant/ask_user/plan_review),' +
             '排除 tool_use/tool_result/thinking/error 等技术性 role。需要技术 role 时, 在数组里显式列出。' +
             'role="error" 是终端错误诊断行(默认不返), 数组里包含 "error" 即返回, 可与其他 role 混合;' +
-            '其 content 在出口统一过 redactSensitiveTextDeep 递归脱敏(写入侧只脱敏过 message / sdkError)。',
+            '其 content 在出口统一过 redactSensitiveTextDeep 递归脱敏(写入侧只脱敏过 message / sdkError),' +
+            '返回的是脱敏结果而非入库原文, 不存在取回原始值的路径。',
         ),
       include_rewound: z
         .boolean()
