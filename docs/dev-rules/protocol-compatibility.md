@@ -3626,7 +3626,7 @@ Share Server 在创建时保存已验签的分享者 `membershipId` 与身份权
 公共 `kind=plugin`、`cindy://plugin/<pluginId>` 及其链接复用、版本选择和安装规则保留。
 本地分享另用 `kind=local-plugin`、随机 `snapshotId` 和
 `cindy://plugin-share/<snapshotId>`；只导航，拒绝 query、fragment、包 URL 和自动安装参数，
-沿原冷启动与登录续接进入独立分享详情，优先于本机／远程目录分支。接收者使用原设备选择器选择安装电脑；离线或不支持的目标不可安装，不自动切回本机。不新增 Mobile 入口。
+沿原冷启动与登录续接进入独立分享详情，优先于本机／远程目录分支。安装沿用当前所选电脑；仅在有其他候选电脑或已选远程电脑时显示原设备选择器，不额外要求选择。离线或不支持的目标不可安装，不自动切回本机。不新增 Mobile 入口。
 
 两仓 `packages/plugin-protocol/src/localSharing.ts` 同步维护上传、固定快照与交付校验，
 不修改已有 manifest、Release 或来源枚举。每次打开本地分享面板生成新操作；用户明确开始后，

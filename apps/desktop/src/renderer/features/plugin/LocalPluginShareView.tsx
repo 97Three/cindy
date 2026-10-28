@@ -77,8 +77,10 @@ export function LocalPluginShareView({ snapshotId, onBack, onInstalled, deviceCo
         {snapshot.description ? <p className="mt-6 whitespace-pre-wrap break-words text-14 leading-relaxed text-[var(--text-secondary)]">{snapshot.description}</p> : null}
         <p className="mt-6 text-13 leading-relaxed text-[var(--text-secondary)]">{t('sharing.localVersionNotice')}</p>
         <section className="mt-6 space-y-3" aria-label={t('sharing.localInstallTarget')}>
-          <p className="text-13 text-[var(--text-secondary)]">{t('sharing.localInstallTarget')}</p>
-          {deviceControl ? <div className="[&>button]:max-w-full"><PluginDevicePicker {...deviceControl} disabled={busy} /></div> : null}
+          {deviceControl && (deviceControl.selected || deviceControl.directory.candidates.length > 0) ? <>
+            <p className="text-13 text-[var(--text-secondary)]">{t('sharing.localInstallTarget')}</p>
+            <div className="[&>button]:max-w-full"><PluginDevicePicker {...deviceControl} disabled={busy} /></div>
+          </> : null}
           {deviceControl?.selected ? <RemoteShareInstall
             key={`${dataOwnerId}:${dataOwnerGeneration}:${snapshotId}:${deviceControl.selected.deviceId}`}
             snapshot={snapshot} device={deviceControl.selected} online={deviceControl.directory.online}

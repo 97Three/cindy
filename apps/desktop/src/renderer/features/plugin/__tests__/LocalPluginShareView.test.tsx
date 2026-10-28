@@ -70,6 +70,26 @@ it('does not show an old account response after a new account read finishes', as
 const target = { deviceId: 'target-computer', name: 'Office Computer' };
 const control = (online = true): CatalogDeviceControl => ({ selected: target, onSelect: vi.fn(),
   directory: { candidates: [], target: undefined, relayOnline: online, online } });
+
+// A signed-in recipient with only this computer must install without a redundant
+// device choice. Existing tests use no control or a selected remote target;
+// neither covers the real catalog control with selected=null (unit, fake IPC).
+it.each([false, true])('installs on this computer without requiring a device choice (alternative=%s)', async alternative => {
+  const selection: CatalogDeviceControl = { selected: null, onSelect: vi.fn(), directory: {
+    candidates: alternative ? [{ ...target, platform: 'darwin', appVersion: '0.0.0', lastSeenAt: null,
+      online: true, busy: false, remoteControlEnabled: true, controlEnabled: true, isSelf: false }] : [],
+    target: undefined, relayOnline: true, online: true,
+  } };
+  const installed = vi.fn(); render(view(installed, selection));
+  await screen.findByText('v1.0.0');
+  expect(!!screen.queryByRole('button', { name: 'settings.ghosts.remote.device' })).toBe(alternative);
+  fireEvent.click(screen.getByRole('button', { name: 'sharing.localInstallButton' }));
+  await waitFor(() => expect(installed).toHaveBeenCalledWith(ghost));
+  expect(io.install).toHaveBeenCalledWith(snapshotId, snapshot);
+  expect(selection.onSelect).not.toHaveBeenCalled();
+  expect(io.invoke).not.toHaveBeenCalled();
+});
+
 function remoteHost(supported = true) {
   io.invoke.mockImplementation(async (_device, channel, [request]) => {
     if (String(channel).includes('manifest')) return { collections: [{ id: 'plugins', actions: [{ id: 'management:snapshot' }] }] };
