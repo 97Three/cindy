@@ -194,14 +194,13 @@ describe('app badge projection lifecycle', () => {
     // 否则角标会永久停在最后一次推送的旧值（界面上已经没有未读了）。
     state.historyLoading = true;
     state.historyError = new Error('db busy');
-    render(<AppBadgeAttentionSync />);
+    const view = render(<AppBadgeAttentionSync />);
     expect(state.publish).toHaveBeenLastCalledWith(
       expect.objectContaining({ count: 3, sessionIds: ['a', 'b', 'c'] }),
     );
-    state.historyLoading = false;
-    state.historyError = null;
+    // 历史桶一直坏着，同一个组件在未读清零后也必须把 0 推下去。
     state.attention = new Map();
-    render(<AppBadgeAttentionSync />);
+    view.rerender(<AppBadgeAttentionSync />);
     expect(state.publish).toHaveBeenLastCalledWith(expect.objectContaining({ count: 0 }));
   });
 
