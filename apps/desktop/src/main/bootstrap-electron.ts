@@ -1156,6 +1156,7 @@ import { getGhostSetupChangeBus } from './cindy-brain/ghostSetupChangeBus.js';
 import { getGhostSetupInteractionBridge } from './cindy-brain/ghostSetupInteractionBridge.js';
 import { registerPluginMarketIpc, syncDefaultMarketPlugins, refreshForegroundMarketPlugins } from './plugin-market/registerIpc.js';
 import { getPluginMarketService } from './plugin-market/service.js';
+import { installLocalPluginShare } from './plugin-market/localSharing.js';
 import { StableOwnerPostCommitStep } from './stableOwnerPostCommit.js';
 import { registerPluginContributionsIpc } from './plugin-contributions/registerIpc.js';
 import { registerPluginPublisherIpc } from './plugin-publisher/registerIpc.js';
@@ -2546,6 +2547,9 @@ setCodexImageAuthBinding({
 configureMailAttachmentHost({ writeTempFile, materializeDirectSendOssAttachments });
 setRemotePluginManagementServices({
   isRelayOnline: () => getDeviceLinkStatus() === 'online',
+  installShare: async (snapshot, prompt, assertScope) => {
+    await installLocalPluginShare(snapshot.snapshotId, snapshot, prompt, assertScope);
+  },
   listProjects: listRecentWorkdirs,
   sidebar: {
     read: id => !loadSidebarSettingsSnapshot().hiddenMainViewGhostIds.includes(id),

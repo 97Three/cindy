@@ -59,7 +59,7 @@ import {
   WINDOW_BACKDROP_MATERIAL_CHANGED_CHANNEL,
 } from '../shared/windowBackdrop';
 import { isDeepLinkProviderConnectId } from '../shared/deepLinkSchemes';
-import { isValidPluginResourceId } from '@cindy/plugin-protocol';
+import { isLocalPluginSnapshotId, isValidPluginResourceId } from '@cindy/plugin-protocol';
 import {
   parseProjectOrderSnapshot,
   SIDEBAR_APPLY_PROJECT_ORDER_CHANNEL,
@@ -1631,6 +1631,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('plugin-market:detail', pluginId),
     prepareShare: (pluginId: string, options?: import('../shared/share').ShareOptions): Promise<import('../shared/share').ShareContent> =>
       ipcRenderer.invoke('plugin-market:prepare-share', pluginId, options),
+    prepareLocalShare: (instanceId: string, operationId: string, options: import('../shared/share').ShareOptions, expected: import('../shared/share').LocalPluginShareBinding, uploadConfirmed: boolean): Promise<import('../shared/share').SharePreparation> =>
+      ipcRenderer.invoke('plugin-market:prepare-local-share', instanceId, operationId, options, expected, uploadConfirmed),
+    releaseLocalShare: (operationId: string): Promise<void> =>
+      ipcRenderer.invoke('plugin-market:release-local-share', operationId),
+    localShareDetail: (snapshotId: string): Promise<import('@cindy/plugin-protocol').LocalPluginShareSnapshot> =>
+      ipcRenderer.invoke('plugin-market:local-share-detail', snapshotId),
+    installLocalShare: (snapshotId: string, expected: import('@cindy/plugin-protocol').LocalPluginShareSnapshot): Promise<{ ghost: import('../shared/ghost').InstalledGhost }> =>
+      ipcRenderer.invoke('plugin-market:install-local-share', snapshotId, expected),
     localIcons: (
       requests: import('../shared/pluginMarket').PluginMarketLocalIconRequest[],
     ): Promise<import('../shared/pluginMarket').PluginMarketLocalIconResult[]> =>
@@ -4045,6 +4053,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         | { type: 'share-import'; filePath: string }
         | { type: 'provider-import'; importId: string }
         | { type: 'plugin'; pluginId: string }
+        | { type: 'local-plugin-share'; snapshotId: string }
         | { type: 'shared-task-join'; invitation: string; server: string }
         | { type: 'provider-share-join'; link: string }
         | { type: 'chat-invite'; token: string }
@@ -4061,6 +4070,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         filePath?: unknown;
         importId?: unknown;
         pluginId?: unknown;
+        snapshotId?: unknown;
         invitation?: unknown;
         token?: unknown;
         server?: unknown;
@@ -4091,6 +4101,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         });
       } else if (p.type === 'plugin' && isValidPluginResourceId(p.pluginId)) {
         callback({ type: 'plugin', pluginId: p.pluginId });
+      } else if (p.type === 'local-plugin-share' && isLocalPluginSnapshotId(p.snapshotId)) {
+        callback({ type: 'local-plugin-share', snapshotId: p.snapshotId });
       } else if (p.type === 'chat-message' && typeof p.groupId === 'string' && typeof p.messageId === 'string'
         && [p.groupId, p.messageId, ...(p.threadRootId === undefined ? [] : [p.threadRootId])].every(value => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value))) {
         callback({ type: 'chat-message', groupId: p.groupId, messageId: p.messageId,
@@ -4159,6 +4171,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     | { type: 'share-import'; filePath: string }
     | { type: 'provider-import'; importId: string }
     | { type: 'plugin'; pluginId: string }
+        | { type: 'local-plugin-share'; snapshotId: string }
     | { type: 'shared-task-join'; invitation: string; server: string }
     | { type: 'provider-share-join'; link: string }
     | { type: 'chat-invite'; token: string }
