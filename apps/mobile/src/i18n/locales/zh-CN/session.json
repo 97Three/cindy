@@ -257,6 +257,7 @@
     "voiceSenderNotReady": "消息暂时无法发送，请返回后重新进入任务。",
     "voiceStopAndSend": "结束语音输入并发送",
     "sendMessage": "发送远程消息",
+    "inputSyncFailed": "未能读取完整输入，内容已保留，请重试。",
     "voiceStartInput": "开始语音输入",
     "stopSession": "停止远程任务",
     "sessionNotFoundResync": "未找到当前远程任务，请重新同步后再发送。",

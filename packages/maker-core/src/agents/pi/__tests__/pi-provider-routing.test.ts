@@ -1393,12 +1393,13 @@ describe("Pi provider-aware model routing", () => {
       id: 'native-a', name: 'Native A', baseUrl: 'https://cache.example/v1', api: 'openai-completions',
       models: [{ id: 'local-model' }],
     }], env: {} }));
-    deps.resolvePiNativeCompatOverride = () => active ? { supportsLongCacheRetention: false } : undefined;
+    deps.resolvePiNativeCompatOverride = vi.fn(() => active ? { supportsLongCacheRetention: false } : undefined);
     const handle = await new PiAgent(deps).startSession({
       sessionId: 'cache-expiry-receipt', workingDir: cwd, model: 'local-model', providerId: 'native-a',
     });
     const events = handle.events()[Symbol.asyncIterator]();
     try {
+      expect(deps.resolvePiNativeCompatOverride).not.toHaveBeenCalled();
       for (const expected of [true, false, true]) {
         active = expected;
         if (mode === 'send') await handle.send({ type: 'user', content: 'try cache' });
@@ -1410,13 +1411,17 @@ describe("Pi provider-aware model routing", () => {
         const message = { role: 'user', content: [{ type: 'text', text: 'try cache' }] };
         captured.onEvent!({ type: 'message_start', message });
         const key = createHash('sha256').update(JSON.stringify(message)).digest('hex');
+        // Older registries still acknowledge the exact direct-input snapshot.
         captured.onEvent!({ type: 'extension_ui_request', method: 'input', title: 'cindy:cache-input',
           id: 'cache-input', placeholder: JSON.stringify({ key, direct: mode !== 'queued' }) });
         // Expiry or another session's learning during the request must not
         // change whether this input actually started with the override.
         active = !expected;
+        captured.onEvent!({ type: 'agent_start' }); // Pi's native retry, no new user.
+        captured.onEvent!({ type: 'message_start', message: { role: 'assistant', content: [] } });
         // Consumed steer is another user message in the same execution. It
         // must neither refresh the receipt nor treat an auto-retry as input.
+        captured.onEvent!({ type: 'agent_start' }); // continue() may flush steering as its first message.
         captured.onEvent!({ type: 'queue_update', steering: ['steer'], followUp: [] });
         captured.onEvent!({ type: 'queue_update', steering: [], followUp: [] });
         const steer = { role: 'user', content: [{ type: 'text', text: 'steer' }] };

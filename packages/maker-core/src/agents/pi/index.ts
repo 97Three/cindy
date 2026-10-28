@@ -1,6 +1,5 @@
 import { getPiExtensionUiCapability } from './extension-ui-capabilities.js';
 import { createPiCacheInputTracker } from './cache-input.js';
-import { createHarnessHookBridge } from '../shared/harness-hooks.js';
 import { parsePiManagementArgs, parsePiManagementText } from './managed-command.js';
 import { canonicalSkillPath, snapshotDisabledSkillLaunch, currentDisabledSkillLaunchPaths, extendDisabledSkillLaunchPaths, type DisabledSkillLaunchSnapshot } from '../shared/skill-activation.js';
 /**
@@ -104,6 +103,8 @@ import {
   CINDY_PI_TEXT_ONLY_INPUT_PREFIX,
   CINDY_PI_TEXT_ONLY_READY_PREFIX,
   CINDY_PI_TEXT_ONLY_CLOSED_PREFIX,
+  CINDY_PI_REQUEST_DIAGNOSTICS_PREFIX,
+  projectPiRequestDiagnostics,
   CINDY_BRIDGE_EXTENSION_SOURCE } from './cindy-bridge-source.js';
 import { nativeProviderAdapterAliases } from './native-provider-adapter-source.js';
 import { parsePiNativeRuntimeSettings, resolvePiNativeReserve, type PiNativeRuntimeSettings } from './native-runtime-settings.js';
@@ -610,7 +611,7 @@ interface ConfigHomeCleanupLogger {
   debug(message: string, fields?: Record<string, unknown>): void;
 }
 
-type PiStartupStage = 'mcp-ready' | 'pi-spawn' | 'rpc-ready' | 'first-model-request';
+type PiStartupStage = 'mcp-ready' | 'pi-spawn' | 'rpc-ready' | 'first-prompt-rpc';
 
 function logPiStartupStage(
   logger: AgentDeps['logger'],
@@ -2328,23 +2329,18 @@ export class PiAgent extends BaseAgent {
     const gatewayApiByModel = new Map<string, PiGatewayApi>();
     const cacheRoutes = new Map<string, PiCacheCompatibility>();
     const cacheRequestRules: Array<{ provider: string; id: string; baseUrl: string; api: string; providerId: string; routeKey: string }> = [];
-    const learnedCompat = (providerId: string, modelId: string, wireModelId: string,
+    const registerCacheRoute = (providerId: string, modelId: string, wireModelId: string,
       runtimeProvider: string, baseUrl: string, api: string, runtimeBaseUrl = baseUrl) => {
-      // Unknown identities and SSH must not consume local learning records.
-      if (api !== 'openai-completions' && api !== 'openai-responses') return undefined;
+      if (api !== 'openai-completions' && api !== 'openai-responses') return;
       const routeKey = piCacheRouteKey(baseUrl, api);
-      if (!routeKey) return undefined;
-      const compat = opts.remote ? undefined : this.deps.resolvePiNativeCompatOverride?.(providerId, wireModelId, routeKey);
+      if (!routeKey) return;
       cacheRoutes.set(JSON.stringify([runtimeProvider, wireModelId]), {
         providerId, modelId, wireModelId, routeKey,
-        applied: compat?.supportsLongCacheRetention === false,
+        applied: false, // Sample the selected route's learning only when its input starts.
       });
       if (!cacheRequestRules.some((rule) => rule.provider === runtimeProvider && rule.id === wireModelId && rule.api === api)) {
         cacheRequestRules.push({ provider: runtimeProvider, id: wireModelId, baseUrl: runtimeBaseUrl, api, providerId, routeKey });
       }
-      // Keep native serialization enabled; the final payload wrapper applies
-      // learning dynamically, so expiry needs no model registry rebuild.
-      return undefined;
     };
     const models = runtimeModels.flatMap((publicModel: ModelDescriptor) => {
       // availableModels 为跨 provider 拍平的公开能力；BYOM 同 id 冲突时 effort
@@ -2388,12 +2384,11 @@ export class PiAgent extends BaseAgent {
         return [];
       }
       const modelBaseUrl = endpoint ? piGatewayModelBaseUrl(endpoint, api) : undefined;
-      const gatewayCompat = {
-        ...(resolvedSpec?.compat ?? {}),
-        ...((api === 'openai-completions' || api === 'openai-responses') ?
-          learnedCompat(gatewayProviderId ?? 'xd', m.id, m.id, PI_PROVIDER_ID,
-            this.deps.runtimeConfig.remoteEndpoint ?? modelBaseUrl ?? '', api, modelBaseUrl ?? '') ?? {} : {}),
-      };
+      if (api === 'openai-completions' || api === 'openai-responses') {
+        registerCacheRoute(gatewayProviderId ?? 'xd', m.id, m.id, PI_PROVIDER_ID,
+          this.deps.runtimeConfig.remoteEndpoint ?? modelBaseUrl ?? '', api, modelBaseUrl ?? '');
+      }
+      const gatewayCompat = resolvedSpec?.compat ?? {};
       gatewayApiByModel.set(m.id, api);
       // Missing capability metadata must not disable newly discovered vision models.
       // Explicit text-only declarations still take precedence over this default.
@@ -2461,8 +2456,8 @@ export class PiAgent extends BaseAgent {
         this.deps.logger.warn('pi: native provider id collides with gateway provider "cindy" — skipped', { id: np.id });
         continue;
       }
-      // Inherited bundled models need the same learning in modelOverrides.
-      for (const model of np.models) learnedCompat(np.sourceProviderId ?? np.id, model.id,
+      // Include inherited models; dynamic learning stays out of models.json.
+      for (const model of np.models) registerCacheRoute(np.sourceProviderId ?? np.id, model.id,
         model.wireId ?? model.id, np.id, model.cacheIdentityBaseUrl ?? np.cacheIdentityBaseUrl ?? model.baseUrl ?? np.baseUrl,
         model.api ?? np.api ?? '', model.baseUrl ?? np.baseUrl);
       const nativeModels = (
@@ -2474,12 +2469,7 @@ export class PiAgent extends BaseAgent {
         );
         // Explicit catalog compat stays native; learned cache hints expire in the payload wrapper.
         const wireModelId = m.wireId ?? m.id;
-        const compat = {
-          ...(m.compat ?? {}),
-          ...(learnedCompat(np.sourceProviderId ?? np.id, m.id, wireModelId, np.id,
-            m.cacheIdentityBaseUrl ?? np.cacheIdentityBaseUrl ?? m.baseUrl ?? np.baseUrl,
-            m.api ?? np.api ?? '', m.baseUrl ?? np.baseUrl) ?? {}),
-        };
+        const compat = m.compat ?? {};
         return {
           id: wireModelId,
           name: m.name ?? m.id,
@@ -3545,6 +3535,10 @@ export class PiAgent extends BaseAgent {
     };
     let activeToolsDisabled = false;
     let textOnlyPolicyReady = false;
+    let providerRequestSequence = 0;
+    let providerRequestObservedAt: number | undefined;
+    let providerTurnObservedAt: number | undefined;
+    let providerFirstOutputLogged = false;
     const textOnlyInput = (text: string): string => {
       if (!activeToolsDisabled) return text;
       if (!textOnlyPolicyReady) throw new Error('Pi text-only input policy is unavailable.');
@@ -4738,6 +4732,32 @@ export class PiAgent extends BaseAgent {
         }
         return;
       }
+      if (approval.method === 'input' && approval.title === 'cindy:harness-hook') {
+        // The harness hook bridge was reverted (2f2721a49b), so nothing on the
+        // host handles these any more, but a durable child started by an older
+        // bridge can still raise one. It is an internal sync hook, not an
+        // approval: answer `continue` (the native policy) instead of rendering
+        // a `Subagent: tool` card with `{}` input (#7494).
+        try {
+          // Park across an account switch rather than answer for the outgoing
+          // account, as the turn-change acknowledgement does.
+          if (accountBoundaryTeardown) return;
+          const controlled = await publishPiSubagentApproval(status.taskId, {
+            childId: task.childId,
+            approvalId: approval.id,
+            value: JSON.stringify({ action: 'continue' }),
+            runtimeOwnerId: controlOwnerId,
+          });
+          if (controlled > 0) piSubagentApprovalDeliveries.add(key);
+        } catch (error) {
+          this.deps.logger.warn('PI Subagent harness hook response failed', {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        } finally {
+          piSubagentApprovalRequests.delete(key);
+        }
+        return;
+      }
       let toolName = 'tool';
       let input: Record<string, unknown> = {};
       let resolvedWritePath: string | null | undefined;
@@ -5167,9 +5187,6 @@ export class PiAgent extends BaseAgent {
     // preparePiExtraSpawnConfig 注册、但 handle 尚未交出,close() 不会跑 → 单独
     // 兜底注销 ctx 再抛(构造失败没有 proc 可关)。catch 必抛,故其后 proc 恒已赋值。
     let proc: PiRpcProcess;
-    const harnessHookBridge = createHarnessHookBridge();
-    const harnessHooksEnabled = !remote && !hosted && !reviewMode;
-    let nativeCompactionActive = false;
     // Pi owns automatic threshold and overflow compaction. Cindy only records a
     // deterministic native failure so Desktop can rebuild before the next send.
     let nativeAutoCompactNeedsRollover = false;
@@ -5199,8 +5216,7 @@ export class PiAgent extends BaseAgent {
       const resp = await proc.request(command, { timeoutMs: PI_COMPACT_TIMEOUT_MS });
       if (!resp.success) {
         const err = (resp.error ?? '').toLowerCase();
-        // Native cancellation returns before appending a compaction entry.
-        if (err === 'compaction cancelled' || err.includes('nothing to compact') || err.includes('too small')) {
+        if (err.includes('nothing to compact') || err.includes('too small')) {
           return { noop: true };
         }
         throw new Error(`pi compact failed: ${resp.error ?? 'unknown'}`);
@@ -5655,7 +5671,6 @@ export class PiAgent extends BaseAgent {
         PI_CODING_AGENT_DIR: configHome,
         [PI_BASH_PACKAGE_HOME_ENV]: bashPackageHome,
         CINDY_PI_PERMISSION_FILE: permissionFile,
-        CINDY_PI_HARNESS_HOOKS: harnessHooksEnabled ? '1' : '0',
         ...(hosted ? { [DEVICE_HOSTED_PI_ENV]: deviceHostedPiEnvValue(hosted) } : {}),
         ...(fastModels.length > 0 ? { CINDY_PI_FAST_MODELS: JSON.stringify(fastModels) } : {}),
         CINDY_PI_TURN_TOOL_POLICY: remote ? '' : runtimeInstanceId,
@@ -5765,14 +5780,58 @@ export class PiAgent extends BaseAgent {
             proc.send({ type: 'extension_ui_response', id: event.id, value: JSON.stringify(receipt ?? {}) });
             return;
           }
+          // Native retries remain within one agent_start/settled lifecycle.
+          // A new start also recovers diagnostics if the previous turn omitted
+          // settled (abort/retry exhaustion), without changing turn execution.
+          if (event.type === 'agent_start') {
+            providerRequestObservedAt = undefined;
+            providerTurnObservedAt = undefined;
+            providerFirstOutputLogged = false;
+          }
+          if (!remote && event.type === 'extension_ui_request' && event.method === 'notify' &&
+              typeof event.message === 'string' && event.message.startsWith(CINDY_PI_REQUEST_DIAGNOSTICS_PREFIX)) {
+            const prefix = `${CINDY_PI_REQUEST_DIAGNOSTICS_PREFIX}${runtimeInstanceId}:`;
+            if (event.message.startsWith(prefix) && event.message.length <= prefix.length + 1024) {
+              try {
+                const metadata = projectPiRequestDiagnostics(JSON.parse(event.message.slice(prefix.length)));
+                providerRequestObservedAt = performance.now();
+                providerTurnObservedAt ??= providerRequestObservedAt;
+                providerFirstOutputLogged = false;
+                providerRequestSequence++;
+                this.deps.logger.debug('pi request stage', {
+                  startupTraceId, requestSequence: providerRequestSequence,
+                  stage: 'provider-request-prepared', ...metadata,
+                });
+              } catch { /* Invalid diagnostic frames never enter logs or user UI. */ }
+            }
+            return;
+          }
+          if (providerRequestObservedAt !== undefined) {
+            const update = event.assistantMessageEvent as { type?: unknown } | undefined;
+            if (!providerFirstOutputLogged && event.type === 'message_update' &&
+                ['text_delta', 'thinking_delta', 'toolcall_start', 'toolcall_delta'].includes(String(update?.type))) {
+              providerFirstOutputLogged = true;
+              this.deps.logger.debug('pi request stage', {
+                startupTraceId, requestSequence: providerRequestSequence, stage: 'first-output',
+                elapsedMs: Math.max(0, performance.now() - providerRequestObservedAt),
+              });
+            }
+            if (event.type === 'agent_settled') {
+              this.deps.logger.debug('pi request stage', {
+                startupTraceId, requestSequence: providerRequestSequence, stage: 'agent-settled',
+                elapsedMs: Math.max(0, performance.now() - providerRequestObservedAt),
+                turnElapsedMs: Math.max(0, performance.now() - providerTurnObservedAt!),
+              });
+              providerRequestObservedAt = undefined;
+              providerTurnObservedAt = undefined;
+            }
+          }
           if (event.type === 'agent_start' && !ctx.pendingHostTurnStartToken) {
             syncNativePlanMode?.();
           }
           if (event.type === 'agent_start' || event.type === 'agent_settled') {
             piAgentLifecycleSequence += 1;
           }
-          if (event.type === 'compaction_start') nativeCompactionActive = true;
-          if (event.type === 'compaction_end') nativeCompactionActive = false;
           if (!remote && event.type === 'extension_ui_request' && event.method === 'notify') {
             if (event.message === `${CINDY_PI_TEXT_ONLY_READY_PREFIX}${runtimeInstanceId}`) {
               textOnlyPolicyReady = true;
@@ -5784,27 +5843,6 @@ export class PiAgent extends BaseAgent {
             }
           }
           if (event.type === 'extension_ui_request') {
-            if (event.method === 'input' && event.title === 'cindy:harness-hook') {
-              const requestId = typeof event.id === 'string' ? event.id : '';
-              let payload: Record<string, unknown> = {};
-              try { payload = JSON.parse(typeof event.placeholder === 'string' ? event.placeholder : '{}'); }
-              catch { /* Invalid bridge input preserves the original native policy. */ }
-              const request = payload && typeof payload === 'object' ? payload : {};
-              const valid = harnessHooksEnabled && requestId && !closed && !proc.isClosed &&
-                (request.name === 'compaction.before' || request.name === 'tool.before' && typeof request.toolName === 'string');
-              void (valid ? harnessHookBridge.run({
-                name: request.name as 'tool.before' | 'compaction.before',
-                ...(request.name === 'tool.before' ? {
-                  toolName: request.toolName as string,
-                  toolUseId: typeof request.toolUseId === 'string' ? request.toolUseId : undefined,
-                  input: request.input,
-                } : {}),
-              }) : Promise.resolve({ action: 'continue' })).then(result => {
-                if (!requestId || closed || proc.isClosed) return;
-                proc.send({ type: 'extension_ui_response', id: requestId, value: JSON.stringify(result) });
-              }).catch(() => { /* Native timeout keeps the existing permission flow. */ });
-              return;
-            }
             if (event.method === 'input' &&
                 (event.title === 'cindy:provider-refresh' || event.title === 'cindy:provider-refresh-ack')) {
               const requestId = typeof event.id === 'string' ? event.id : '';
@@ -6678,7 +6716,7 @@ export class PiAgent extends BaseAgent {
 
     const deps = this.deps;
     const agentKind = this.kind;
-    let firstModelRequestLogged = false;
+    let firstPromptRpcLogged = false;
 
     // 取消边界:main 的队列协调器在 Stop/close 抢占时会 abort 传入的 signal 并撤下
     // steer 标记。send/steer 必须在**构建 prompt(读附件是 async)前后、投递 RPC 前**
@@ -7623,19 +7661,6 @@ export class PiAgent extends BaseAgent {
     };
 
     const handle: AgentSessionHandle = {
-      harnessHooks: harnessHooksEnabled ? ['tool.before', 'compaction.before'] : [],
-      setHarnessHookHandler: handler => harnessHookBridge.setHandler(handler),
-      ...(harnessHooksEnabled ? {
-        requestHarnessCompaction: () => runExclusivePiRpc(async () => {
-          // Pi 1.0.2 auto-compaction belongs to the agent run, whose terminal
-          // event is agent_settled (not agent_end). The same RPC lane orders
-          // all Cindy prompts and controls; recheck after acquiring that lane.
-          if (closed || proc.isClosed || ctx.isStreaming || nativeCompactionActive) {
-            throw new Error('SESSION_RUNNING: Pi is not idle for compaction');
-          }
-          return requestPiCompact();
-        }),
-      } : {}),
       reviewAutoPermissionAction: async (action) => {
         const decision = await reviewAutoAction(action);
         if (decision.unavailable) autoReviewUnavailableNotice.notify();
@@ -7846,9 +7871,6 @@ export class PiAgent extends BaseAgent {
             ? await readPiUserEntryIds()
             : null;
           if (!managedPackageRoute.accepted) rejectIfCancelled(sendOpts, 'send');
-          const firstModelRequestStartedAt = firstModelRequestLogged ? undefined : Date.now();
-          if (firstModelRequestStartedAt !== undefined) firstModelRequestLogged = true;
-          let firstModelRequestStatus: 'ok' | 'degraded' = 'degraded';
           try {
             doctorCommandActivity.enter(isDoctorCommand);
             const { resp, pendingTurnStartToken } = await runExclusivePiRpc(async () => {
@@ -7870,6 +7892,14 @@ export class PiAgent extends BaseAgent {
               }
               const pendingTurnStartToken = markPiHostTurnStartPending(ctx);
               promptRequestStarted = true;
+              const firstPromptRpcStartedAt = firstPromptRpcLogged ? undefined : Date.now();
+              firstPromptRpcLogged = true;
+              const logPromptResponse = (success: boolean) => {
+                if (firstPromptRpcStartedAt !== undefined) logPiStartupStage(
+                  deps.logger, startupTraceId, 'first-prompt-rpc', firstPromptRpcStartedAt,
+                  success ? 'ok' : 'degraded',
+                );
+              };
               const resp = await proc.request(command, {
                 timeoutMs: PI_PROMPT_ACCEPTANCE_TIMEOUT_MS,
                 // Prompt acceptance may legitimately span multiple compaction
@@ -7877,6 +7907,12 @@ export class PiAgent extends BaseAgent {
                 // preflight, so a healthy long compaction is not killed at 10m.
                 refreshTimeoutOnEvent: (event) =>
                   PI_PROMPT_ACCEPTANCE_PROGRESS_EVENTS.has(event.type),
+              }).then(response => {
+                logPromptResponse(response.success);
+                return response;
+              }, error => {
+                logPromptResponse(false);
+                throw error;
               });
               // Only consume the one-shot choice after acceptance. A confirmed
               // rejection must preserve it for a retry without a message snapshot.
@@ -7888,7 +7924,6 @@ export class PiAgent extends BaseAgent {
               }
               return { resp, pendingTurnStartToken };
             });
-            firstModelRequestStatus = resp.success ? 'ok' : 'degraded';
             if (!resp.success) {
               rollbackPiHostTurnStart(ctx, pendingTurnStartToken);
               if (managedPackageRoute.accepted) {
@@ -8014,15 +8049,6 @@ export class PiAgent extends BaseAgent {
               }
             }
           } finally {
-            if (firstModelRequestStartedAt !== undefined) {
-              logPiStartupStage(
-                deps.logger,
-                startupTraceId,
-                'first-model-request',
-                firstModelRequestStartedAt,
-                firstModelRequestStatus,
-              );
-            }
             if (activeExtensionCommandNotifications === capturedExtensionNotifications) {
               activeExtensionCommandNotifications = null;
             }
@@ -8251,7 +8277,6 @@ export class PiAgent extends BaseAgent {
       },
 
       async close(closeOpts?: AgentSessionTeardownOptions): Promise<void> {
-        harnessHookBridge.close();
         closed = true;
         // No reason means the caller could not identify its boundary; fail
         // closed to the account boundary rather than leaving a detached child

@@ -495,3 +495,17 @@ it('projects waiting and stopping executions without inventing task IDs or losin
     [id(30), 'needs_input', null], [id(31), 'stopping', null],
   ]);
 });
+
+// Unit: cross-device Cindy filters use profile identity, including exact legacy presets.
+it('reads Cindy preset identity without inferring from names and retains known IDs on transient failure', async () => {
+  const { CINDY_DEFAULT_IDENTITY } = await import('@cindy/maker-shared/bot-template-preset');
+  const request = vi.fn(async (_path: string, _method?: string, _body?: unknown, actorId?: string) => {
+    if (actorId === id(4)) throw new Error('offline');
+    return [{ key: 'companion.profile.v1', value: actorId === id(1) ? { templateId: 'cindy' }
+      : actorId === id(2) ? { soul: CINDY_DEFAULT_IDENTITY } : { name: 'Cindy', soul: 'custom' } }];
+  });
+  const actors = [1, 2, 3, 4].map(n => ({ id: id(n), externalId: `bot-${n}`, kind: 'bot', name: 'Cindy', avatar: null, homeDeviceId: 'mac' }));
+  const ids = await createChatServerClient(request as any).cindyCompanionIds(actors, ['bot-4']);
+  expect(ids).toEqual(['bot-1', 'bot-2', 'bot-4']);
+  expect(request.mock.calls.every(call => call[0] === '/preferences' && call[1] === 'GET')).toBe(true);
+});

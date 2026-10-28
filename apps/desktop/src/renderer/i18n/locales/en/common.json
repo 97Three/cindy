@@ -74,6 +74,11 @@
       "stopped": "The local connection has stopped"
     }
   },
+  "attachmentAccessConfirmation": {
+    "title": "Confirm Attachment Access",
+    "message": "Cindy cannot read this attachment. Select the original file to continue sending this message. Cancelling keeps your draft.",
+    "button": "Use Original File"
+  },
   "mailReader": {
     "showExternalImages": "Show External Images",
     "markReadFailed": "Could not sync read status. Check mailbox authorization and reopen this email.",
@@ -820,6 +825,8 @@
     },
     "rebalance": {
       "title": "Continue on {{label}}?",
+      "fallbackTitle": "Continue on {{label}} with a summary?",
+      "fallbackDescription": "The original conversation could not be fully restored. A summary may omit earlier details and tool results. Cancel to send on the original computer.",
       "description": "To use every account’s quota evenly, send this message from {{label}} ({{quota}}). The last few messages and a summary carry over; older details may be lost.",
       "quota": "{{left}}% left",
       "quotaReset": "{{left}}% left · {{reset}}",
@@ -855,6 +862,135 @@
       "addedAccounts_other": "Added {{count}} accounts to the {{provider}} provider group",
       "removed": "Removed {{name}} from the provider group",
       "deleted": "Deleted the {{provider}} provider group"
+    }
+  },
+  "regionScreenshot": {
+    "editor": { "fitWidth": "Fit width", "loading": "Loading image…" },
+    "moveToolbar": "Move toolbar left or right",
+    "hint": "Click to select a window or element, or drag to select an area · Scroll to change scope · Space: full screen · C: copy color · Esc: exit",
+    "hintWithLast": "Click to select a window or element, or drag to select an area · Scroll to change scope · Space: full screen · R: last area · C: copy color · Esc: exit",
+    "copy": "Copy",
+    "cancel": "Exit Screenshot",
+    "captureFailed": "Could not capture the screen",
+    "permission": {
+      "title": "Screen Recording Permission Required",
+      "detail": "To take screenshots, allow {{appName}} in System Settings > Privacy & Security > Screen & System Audio Recording, then reopen {{appName}}.",
+      "openSettings": "Open System Settings",
+      "later": "Not Now"
+    },
+    "undo": "Undo",
+    "redo": "Redo",
+    "pinToScreen": "Pin to Screen",
+    "pin": {
+      "copy": "Copy",
+      "save": "Save…",
+      "ask": "Ask {{appName}}",
+      "opacity": "Opacity",
+      "originalSize": "Original Size",
+      "passThrough": "Click Through",
+      "close": "Close",
+      "closeAll": "Close All Pins",
+      "unlock": "Restore Mouse Input"
+    },
+    "save": "Save",
+    "cindy": "Send to {{appName}}",
+    "tools": {
+      "rect": "Rectangle",
+      "ellipse": "Ellipse",
+      "line": "Line",
+      "arrow": "Arrow",
+      "pen": "Pen",
+      "marker": "Highlighter",
+      "text": "Text",
+      "mosaic": "Mosaic",
+      "blur": "Blur",
+      "step": "Number"
+    },
+    "ai": {
+      "ask": "Ask {{appName}}",
+      "translate": "Translate",
+      "explain": "Explain",
+      "extract": "Extract Text"
+    },
+    "size": {
+      "stroke": {
+        "0": "Thin",
+        "1": "Medium",
+        "2": "Thick"
+      },
+      "text": {
+        "0": "Small",
+        "1": "Medium",
+        "2": "Large"
+      },
+      "strength": {
+        "0": "Light",
+        "1": "Medium",
+        "2": "Strong"
+      }
+    },
+    "colors": {
+      "red": "Red",
+      "yellow": "Yellow",
+      "green": "Green",
+      "blue": "Blue",
+      "black": "Black",
+      "white": "White"
+    },
+    "magnifier": {
+      "copyHint": "C: copy color"
+    },
+    "saveFileName": "Screenshot",
+    "saveFailed": "Couldn't save the screenshot",
+    "prompt": {
+      "translate": "Recognize the text in this screenshot and translate it into English. Keep the original paragraphs and lists, and output only the translation. If the text is already in English, translate it into Simplified Chinese.",
+      "explain": "Explain what this screenshot shows. If it's an error, explain the cause and how to fix it. If it's a chart, code, or an interface, explain what it shows and the key points.",
+      "extract": "Extract the text from this screenshot exactly as written, keeping the original line breaks, paragraphs, and lists. Output tables as Markdown tables. Output only the extracted text."
+    },
+    "live": {
+      "scroll": "Scrolling Screenshot",
+      "video": "Record Screen",
+      "gif": "Record GIF",
+      "recording": "Recording…",
+      "preview": "Capture preview",
+      "cursor": "Show pointer",
+      "keys": "Show keys (includes typing)",
+      "start": "Start Recording",
+      "pause": "Pause",
+      "resume": "Resume",
+      "finish": "Finish",
+      "paused": "Recording paused",
+      "done": "Capture ready to save",
+      "saved": "Saved",
+      "copied": "Copied",
+      "copyFailed": "Could not copy. Try again or save the file.",
+      "scrollHint": "Scroll up or down in the selection, or choose Auto Scroll.",
+      "recordHint": "Draw on the preview to annotate the recording. No audio.",
+      "format": "Format",
+      "videoFormat": "Video (WebM)",
+      "prepareHint": "Starts after a 3-second countdown. No audio.",
+      "countdown": "Recording starts in {{count}}",
+      "countdownHint": "Starting shortly. Press Esc to cancel.",
+      "annotate": "Annotate",
+      "finishing": "Finishing…",
+      "replay": "Replay",
+      "previewUnavailable": "Preview unavailable. Save the clip or close the previous preview and try again.",
+      "playbackFailed": "Playback failed. You can still save the recording.",
+      "annotationNoRoom": "Leave more space beside the selection to open annotations.",
+      "overlap": "This part could not be joined. Scroll back a little, or finish with the captured content.",
+      "limit": "Capture limit reached. Finish and save this capture.",
+      "captureFailed": "Capture stopped. Resume to try again or save the captured portion.",
+      "encodeFailed": "Could not encode this recording. Close and start a new capture.",
+      "exportFailed": "Could not save this capture. Choose Save to try again.",
+      "keysUnavailable": "Key display is unavailable. On macOS, allow Input Monitoring for Cindy.",
+      "noRoom": "Cannot start. Select an area at least 32 × 32 pixels and leave room beside it for the preview.",
+      "image": "Screenshot",
+      "startScroll": "Start Scrolling Screenshot",
+      "autoScroll": "Auto Scroll",
+      "stopScroll": "Stop Scrolling",
+      "edit": "Edit",
+      "autoUnavailable": "Auto scrolling stopped. You can scroll manually in the selection.",
+      "autoPermission": "Auto scrolling needs Accessibility permission. Allow Cindy in System Settings and try again, or scroll manually in the selection."
     }
   },
   "privacyExit": {
@@ -5036,6 +5172,13 @@
       }
     },
     "computerUse": {
+      "configurationRead": {
+        "loading": "Loading {{section}}…",
+        "retrying": "Could not load {{section}}. Retrying automatically…",
+        "error": "Could not load {{section}}.",
+        "retry": "Reload Settings",
+        "browserDetection": "Browser detection"
+      },
       "title": "Automation",
       "description": "Let agents use your computer and connected devices to get things done for you. Browser automation uses an isolated browser; Android automation uses ADB; computer automation relies on a local driver.",
       "codexRefreshDeferred": "Setting saved, but Codex is busy. Restart the app to apply it to new Codex sessions.",
@@ -6216,12 +6359,26 @@
         "conflict": "Conflicts with \"{{name}}\"",
         "voiceConflict": "Conflicts with the voice input shortcut",
         "composerVoiceConflict": "Conflicts with the voice input shortcut. Change either the composer send shortcut or the voice input shortcut.",
-        "menuAccelerator": "This combination cannot be registered as a menu shortcut"
+        "menuAccelerator": "This combination cannot be registered as a menu shortcut",
+        "globalUnusable": "This combination cannot be used as a system-wide shortcut",
+        "globalOccupied": "Already in use by another app. Choose a different combination."
       },
       "items": {
+        "region-screenshot": {
+          "label": "Screenshot",
+          "description": "Take a screenshot in any app, then annotate it, pin it to the screen, or send it to {{appName}}"
+        },
         "toggle-sidebar": {
           "label": "Toggle sidebar",
           "description": "Collapse or expand the session list sidebar"
+        },
+        "session-history-back": {
+          "label": "Previous task",
+          "description": "Go back to the task you viewed before"
+        },
+        "session-history-forward": {
+          "label": "Next task",
+          "description": "Go forward to the task you viewed next"
         },
         "open-settings": {
           "label": "Open settings",
@@ -6941,18 +7098,6 @@
         "codeDetail": "Runs in an isolated sandbox with no access to your files or network.",
         "resident": "Always-on (starts when enabled, keeps a background process even when idle)",
         "residentDetail": "Uses a small amount of memory while idle; the process stops immediately when it is disabled or uninstalled.",
-        "harnessRead": "Read AI runtime information: {{name}}",
-        "harnessReadDetail": "Reads declared capabilities, usage, or context statistics. Excludes messages, tool arguments, results, and fixed instructions.",
-        "harnessMessages": "Read Messages in Linked Tasks",
-        "harnessMessagesDetail": "Reads user messages, AI replies, and saved history in approved tasks. Content may be sensitive. Excludes fixed instructions and hidden reasoning.",
-        "harnessToolContent": "Read Tool Arguments and Results",
-        "harnessToolContentDetail": "Reads tool arguments and results in approved tasks, which may contain file contents, commands, or sensitive information.",
-        "harnessEvents": "Observe AI runtime events: {{name}}",
-        "harnessEventsDetail": "Receives declared runtime events. Message and tool content require separate approval. Events may have gaps and are not a complete history.",
-        "harnessHooks": "Block AI operations: {{name}}",
-        "harnessHooksDetail": "May block at a supported pre-execution or permission boundary. Cannot approve on your behalf or rewrite arguments. After at most 1.5 seconds, normal permission handling continues.",
-        "harnessActions": "Control AI runtime: {{name}}",
-        "harnessActionsDetail": "Only connected, separately approved operations can be called.",
         "subscribeTopics": "Observes your session activity (turn and session events, no message content)",
         "subscribeActivity": "Observes when the AI is thinking and when it is waiting on you",
         "subscribeActivityDetail": "Sees only the timing: when thinking starts and ends, and when the AI is waiting for your approval or your answer. It never sees the reasoning text, the action awaiting approval, the command or file involved, the plan, the question, or your answer — and it cannot approve anything on your behalf.",
@@ -8537,6 +8682,10 @@
   },
   "titleBar": {
     "menu": "Menu",
+    "historyBack": "Back to previous task",
+    "historyForward": "Forward to next task",
+    "historyBackUnavailable": "No previous task",
+    "historyForwardUnavailable": "No next task",
     "minimize": "Minimize",
     "maximizeOrRestore": "Maximize or Restore Window",
     "close": "Close",
@@ -9435,6 +9584,8 @@
   },
   "bots": {
     "workbench": {
+      "ownedMark": "Belongs to {{names}}",
+      "createdMark": "Created by {{names}}",
       "followingMark": "This task is looked after by {{names}}"
     },
     "glance": {
@@ -9943,6 +10094,8 @@
         "stepTimeout": "{{name}} took too long, so this step was stopped",
         "stepUnavailable": "{{name}} is unavailable and can’t do this step",
         "runtimeFailure": {
+          "REMOTE_DEVICE_LIMIT": "{{name}} can’t reply: the teammate’s device has reached its remote session limit.\nAsk the teammate’s owner to archive unused sessions, or ask the remote computer’s owner to raise the limit in Remote & sharing.",
+          "REMOTE_TOTAL_LIMIT": "{{name}} can’t reply: the remote computer has reached its total remote session limit.\nAsk that computer’s owner to release unused sessions or raise the limit in Remote & sharing.",
           "IMAGE_INPUT_UNSUPPORTED": "{{name}} could not reply: the current model does not support images.\nChoose an image-capable model, or enable and configure Vision Bridge in Settings → Personalization, then send your message again.",
           "MODEL_UNAVAILABLE": "{{name}} could not reply: no model is available.\nChoose a connected, available model in the teammate settings, then send your message again.",
           "AUTH_REQUIRED": "{{name}} could not reply: the model connection needs authentication.\nReconnect the model provider in Settings, then send your message again.",
@@ -10610,7 +10763,16 @@
           "appIdLabel": "App ID",
           "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
           "appSecretLabel": "App Secret",
-          "appSecretPlaceholder": "Paste the app secret"
+          "appSecretPlaceholder": "Paste the app secret",
+          "description": "Once connected, you can message {{name}} in {{service}}.",
+          "createPrompt": "Need a {{service}} bot?",
+          "createLink": "Create one on {{service}} Open Platform",
+          "credentialsHint": "After creating the app, copy its App ID and App Secret from Credentials & Basic Info and enter them here.",
+          "stepsLabel": "View setup steps",
+          "stepCreate": "Create a custom app on the Open Platform and add the bot capability. In Permissions, confirm that reading direct messages (im:message.p2p_msg:readonly) and sending messages as the app (im:message:send_as_bot) are enabled. Receiving group @mentions also requires im:message.group_at_msg:readonly.",
+          "stepCredentials": "Open Credentials & Basic Info in your app and copy the App ID and App Secret.",
+          "stepConnect": "Enter the credentials below and click “Connect {{service}}” to establish a connection. In Events & Callbacks on the Open Platform, select the long connection subscription mode and add the Receive message event (im.message.receive_v1). In Callback Configuration, select long connection mode and add the Card action callback (card.action.trigger) so card buttons work. Publish the app version, wait for approval if required, then send the bot a message and click a card button to verify both work.",
+          "confirm": "Connect {{service}}"
         },
         "wecom": {
           "botIdLabel": "Bot ID",
@@ -12130,6 +12292,7 @@
       "diagnose": "Diagnose",
       "diagnoseTitle": "Diagnose this error in a new session",
       "diagnosePrompt": "Please diagnose this error: find the cause and tell me how to fix it.\n\nSession: {{sessionUrl}}\nError: {{message}}\nDetails:\n{{details}}\n\nIf you find it's a problem with Cindy itself, let me know so I can choose whether to file an issue with the Cindy team.",
+      "diagnosePromptWithoutSession": "Please diagnose this error: find the cause and tell me how to fix it.\n\nError: {{message}}\nDetails:\n{{details}}\n\nIf you find it's a problem with Cindy itself, let me know so I can choose whether to file an issue with the Cindy team.",
       "gatewayProxyTokenInvalid": "Cindy AI credentials are no longer valid. Click Retry. If it happens again, sign out and sign back in",
       "gatewayProxyTokenInvalidNoRetry": "Cindy AI credentials are no longer valid. If it happens again, sign out and sign back in",
       "modelAccessDenied": "The upstream account cannot access this model. Select another model or check its access with the provider",
@@ -12571,6 +12734,7 @@
         "toggleHint": "View handoff context",
         "handoffTitle": "Handoff — the context summary sent to the new engine at switch time (not part of the chat transcript; shown only here)",
         "handoffTitleEnglishSource": "Handoff — the context summary sent to the new engine at switch time (not part of the chat transcript; shown only here)",
+        "fallbackBadge": "Continued from summary",
         "resumedBadge": "session resumed",
         "relocatedHere": "Agent now runs on this computer",
         "relocatedTo": "Agent now runs on {{device}}",
@@ -13000,7 +13164,13 @@
     }
   },
   "ccAgent": {
-    "sessionEntry": {"missing":"This session could not be found. It may have been deleted.","denied":"This account or computer cannot access this session.","failed":"Could not load this session.","back":"Back to Sessions","retry":"Reload Session"},
+    "sessionEntry": {
+      "missing": "This session could not be found. It may have been deleted.",
+      "denied": "This account or computer cannot access this session.",
+      "failed": "Could not load this session.",
+      "back": "Back to Sessions",
+      "retry": "Reload Session"
+    },
     "contextRingPanel": {
       "title": "Context",
       "meaning": "What AI can refer to this turn: conversation, instructions and tool results.",
@@ -13273,7 +13443,7 @@
       "selectFolderFailed": "Could not select folder. Try again.",
       "projectsToggleExpand": "Expand all project sessions",
       "projectsToggleCollapse": "Collapse all project sessions",
-      "filterAria": "Sidebar settings (Status: {{status}}, Harness: {{vendor}}, Last activity: {{lastActivity}}, Group by: {{groupBy}}, Sort by: {{sortBy}}, Projects: {{projects}})",
+      "filterAria": "Sidebar settings (Status: {{status}}, Harness: {{vendor}}, Last activity: {{lastActivity}}, Group by: {{groupBy}}, Sort by: {{sortBy}}, Projects: {{projects}}, Teammates: {{creators}})",
       "organizeSidebar": "Sidebar settings",
       "filterAllText": "all",
       "filterSelectedProjects": "{{count}} selected",
@@ -13338,6 +13508,9 @@
       "filterProjectOrderTip": {
         "custom": "Drag project rows with the mouse to reorder. Sessions inside still follow the sort above."
       },
+      "filterCreatorsHeading": "Teammates",
+      "filterCreatorsAny": "Any source",
+      "filterSelectedCreators": "{{count}} selected",
       "filterProjectsHeading": "Projects",
       "filterAllProjects": "All projects",
       "filterHeading": "Filters",
@@ -13407,6 +13580,7 @@
       },
       "renameFailed": "Rename failed",
       "pinFailed": "Operation failed",
+      "muteNotificationsFailed": "Failed to update notification settings",
       "deleteFailed": "Delete failed, please retry",
       "archiveFailed": "Archive failed, please retry",
       "unarchiveFailed": "Restore failed, please retry",
@@ -13451,6 +13625,14 @@
         "description": "Restore {{count}} archived sessions in this chat group? They will move from Archived to Active.",
         "empty": "No archived sessions in this chat group can be restored"
       },
+      "automationArchiveAll": {
+        "description": "Archive {{count}} sessions created by this automation. The automation will continue to run as scheduled.",
+        "descriptionWithSkip": "Archive {{count}} sessions created by this automation, skipping {{skip}} sessions. The automation will continue to run as scheduled.",
+        "allPinnedOrRunning": "All sessions from this automation are pinned or running. Nothing to archive.",
+        "allPinned": "All sessions from this automation are pinned. Nothing to archive.",
+        "allRunning": "All sessions from this automation are running. Nothing to archive yet.",
+        "empty": "This automation has no sessions to archive."
+      },
       "archiveAll": {
         "title": "Archive all sessions",
         "confirm": "Archive all",
@@ -13460,6 +13642,7 @@
         "skipRunning": "{{count}} running",
         "skipPinned": "{{count}} pinned",
         "skipSeparator": ", ",
+        "skipped": "Skipped {{skip}} sessions",
         "archived_one": "Archived {{count}} session",
         "archived_other": "Archived {{count}} sessions",
         "partialFailure": "Archived {{ok}}, {{fail}} failed, please retry",
@@ -13518,6 +13701,8 @@
         "delete": "Delete",
         "pin": "Pin",
         "unpin": "Unpin",
+        "muteNotifications": "Mute notifications",
+        "unmuteNotifications": "Allow notifications",
         "archived": "Archived",
         "moveToProject": "Move task",
         "moveToProjectHeading": "Projects on this computer",

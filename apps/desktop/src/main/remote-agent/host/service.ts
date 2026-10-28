@@ -5,6 +5,8 @@ import { readRemoteAgentLimitsState } from './limitsStore.js';
  * 供应商分享的受邀者(其他账号)另按分享快照准入，只能用分享给它的那个供应商。
  */
 import path from 'node:path';
+import { createNativeHistoryTransfer } from '../nativeHistoryTransfer';
+import { nativeHistoryStorage } from '../nativeHistoryStorage';
 
 import { isProviderSharePeer, parseProviderSharePeer } from '@cindy/device-link';
 import type { Maker, StartSessionOptions } from '@cindy/maker-core';
@@ -133,6 +135,7 @@ export function installRemoteAgentHost(options: { getMaker: () => Maker; userDat
     log,
   });
   host = createRemoteAgentHost({
+    nativeHistory: createNativeHistoryTransfer(path.join(options.userDataDir, 'native-history-transfers'), nativeHistoryStorage(options.userDataDir)),
     fastPolicy: receiveGroupFastPolicy,
     prepareImageEvent: (sessionId, event, upstream, retainForRecovery) => prepareGeneratedImageTransport(`remote:${sessionId}`, event, { upstream, retainForRecovery, invoke: remoteBackgroundInvoke }),
     imageArtifacts: async (sessionId, request) => {

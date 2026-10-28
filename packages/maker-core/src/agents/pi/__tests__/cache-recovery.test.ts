@@ -14,7 +14,8 @@ const failure = (text = '400: {"error":{"message":"opaque refusal","param":null,
   type: 'error', error: { role: 'assistant', content: [], stopReason: 'error', errorMessage: text, usage: { output: 0 } },
 });
 const success = { type: 'done', message: { stopReason: 'stop', content: [{ type: 'text', text: 'OK' }], usage: { input: 3, output: 1, cacheRead: 2 } } };
-function fixture() {
+const modernRegistry = { getProvider() {}, getRegisteredNativeProvider() {} };
+function fixture(legacy = false) {
   let now = 1000000000;
   const files = new Map<string, string>();
   const handlers = new Map<string, (...args: any[]) => any>();
@@ -40,7 +41,8 @@ function fixture() {
   const startUser = (direct = true, followUp = false) => {
     if (direct) handlers.get('before_agent_start')?.({});
     handlers.get('message_start')?.({ message: { role: 'user', content: [{ type: 'text', text: 'OK' }] } }, {
-      mode: 'rpc', ui: { input: async (_title: string, raw: string) => JSON.stringify({ key: JSON.parse(raw).key, followUp }) },
+      mode: 'rpc', modelRegistry: legacy ? {} : modernRegistry,
+      ui: { input: async (_title: string, raw: string) => JSON.stringify({ key: JSON.parse(raw).key, followUp }) },
     });
   };
   const fresh = () => { handlers.get('input')!({ source: 'rpc' }, { isIdle: () => true }); startUser(); };
@@ -71,7 +73,7 @@ function fixture() {
 
 describe('Pi native cache recovery', () => {
   it.each(['openai-completions', 'openai-responses'])('keeps learned payload recovery without taking provider ownership on an older %s registry', async api => {
-    const h = fixture();
+    const h = fixture(true);
     const selected = { ...model, api };
     const rules = [{ ...selected, providerId: 'connection', routeKey }];
     h.files.set('/agent/pi-cache-compatibility.json', JSON.stringify(rules));
@@ -89,7 +91,7 @@ describe('Pi native cache recovery', () => {
     expect(ctx.modelRegistry.getProvider).not.toHaveBeenCalled();
     expect(payload).toHaveProperty('prompt_cache_key', 'cache');
     // A newly loaded bridge reads the same durable record, not process memory.
-    const restarted = fixture();
+    const restarted = fixture(true);
     restarted.files.set('/agent/pi-cache-compatibility.json', JSON.stringify(rules));
     restarted.files.set('/compat.json', h.files.get('/compat.json')!);
     restarted.fresh();
@@ -107,7 +109,7 @@ describe('Pi native cache recovery', () => {
   });
 
   it('preserves normal caching and bounds legacy records in the older registry payload hook', async () => {
-    const h = fixture();
+    const h = fixture(true);
     const ctx = { model, modelRegistry: {} };
     const hook = () => h.handlers.get('before_provider_request')?.({ payload: body }, ctx);
     h.fresh();
@@ -222,15 +224,41 @@ describe('Pi native cache recovery', () => {
       const message = { role: 'user', content: [{ type: 'text', text: 'accepted input' }], timestamp: 123 };
       const key = createHash('sha256').update(JSON.stringify(message)).digest('hex');
       const query = vi.fn(async () => JSON.stringify({ key, followUp: !direct }));
-      h.handlers.get('message_start')!({ message }, { mode, ui: { input: query } });
+      h.handlers.get('message_start')!({ message }, { mode, modelRegistry: modernRegistry, ui: { input: query } });
       // Pi's message_end replacement mutates the same message object in place.
       Object.assign(message, { content: [{ type: 'text', text: 'extension replacement' }], timestamp: 456 });
       await h.request([failure(), success]);
-      expect(query).toHaveBeenCalledWith('cindy:cache-input', JSON.stringify({ key, direct }));
+      if (direct) expect(query).not.toHaveBeenCalled();
+      else expect(query).toHaveBeenCalledWith('cindy:cache-input', JSON.stringify({ key, direct: false }));
       expect(h.sent).toHaveLength(2);
       expect(h.record()).toMatchObject({ evidence: 'opaque' });
     },
   );
+
+  it('keeps modern ordinary input recovery independent of the queue receipt service', async () => {
+    const h = fixture(); h.fresh();
+    const query = vi.fn(() => { throw new Error('queue service unavailable'); });
+    h.handlers.get('before_agent_start')!({});
+    h.handlers.get('message_start')!({ message: { role: 'user', content: 'direct' } }, { mode: 'rpc', modelRegistry: modernRegistry, ui: { input: query } });
+    expect(await h.request([failure(), success])).toEqual([success]);
+    expect(query).not.toHaveBeenCalled();
+    expect(h.sent).toHaveLength(2);
+    expect(h.record()).toMatchObject({ evidence: 'opaque' });
+  });
+
+  it('retains exact direct-input acknowledgement only for older host recovery', async () => {
+    const h = fixture(true);
+    const message = { role: 'user', content: 'legacy direct' };
+    const key = createHash('sha256').update(JSON.stringify(message)).digest('hex');
+    const query = vi.fn(async () => JSON.stringify({ key, followUp: false }));
+    h.handlers.get('before_agent_start')!({});
+    h.handlers.get('message_start')!({ message }, { mode: 'rpc', modelRegistry: {}, ui: { input: query } });
+    await h.handlers.get('before_provider_request')!({ payload: body }, { model, modelRegistry: {} });
+    expect(query).toHaveBeenCalledWith('cindy:cache-input', JSON.stringify({ key, direct: true }));
+    expect(await h.request([failure(), success])).toEqual([success]);
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(h.sent).toHaveLength(2);
+  });
 
   it('does not ask an interactive runtime to confirm queued provenance', async () => {
     const h = fixture(); h.fresh(); h.interrupt();

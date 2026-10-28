@@ -338,7 +338,9 @@
       "doneUnread": "완료·읽지 않음",
       "running": "실행 중",
       "close": "닫기",
-      "cancelRename": "이름 변경 취소"
+      "cancelRename": "이름 변경 취소",
+      "createdBy": "{{name}}이(가) 생성",
+      "ownedBy": "{{name}} 소속"
     },
     "accounts": {
       "title": "계정 전환",
@@ -415,7 +417,10 @@
       },
       "summaryNone": "없음",
       "summarySeparator": ", ",
-      "filterEmptyCopy": "표시 설정의 필터에서 조정하거나 재설정할 수 있습니다."
+      "filterEmptyCopy": "표시 설정의 필터에서 조정하거나 재설정할 수 있습니다.",
+      "filterTeammatesHeading": "파트너",
+      "filterAnySource": "모든 출처",
+      "filterSelectedTeammates": "{{count}}명 선택"
     },
     "search": {
       "placeholder": "제목 또는 내용 검색…",

@@ -3,14 +3,14 @@ export const PI_CACHE_RECOVERY_SOURCE = String.raw`
 function installCindyCacheRecovery(pi) {
   const supported = (api) => api === 'openai-completions' || api === 'openai-responses';
   const fields = ['prompt_cache_key', 'prompt_cache_retention'];
+  const nativeRegistry = ctx => typeof ctx?.modelRegistry?.getProvider === 'function'
+    && typeof ctx.modelRegistry.getRegisteredNativeProvider === 'function';
   const day = 24 * 60 * 60 * 1000;
   const home = process.env.CINDY_PI_CACHE_COMPAT_FILE;
   const file = home && home.replace(/^\$HOME(?=\/)/, () => homedir());
   let turn;
   let pendingInput;
   let directInput = false;
-  let revision = 0;
-  let sequence = 0;
   let memory = Object.create(null);
   let routeRules = new Map();
   function rules() {
@@ -173,7 +173,7 @@ function installCindyCacheRecovery(pi) {
     return cacheRejected || /(?:unsupported|not supported|unknown|未知|不支持).{0,80}prompt_cache_(?:key|retention)|prompt_cache_(?:key|retention).{0,80}(?:unsupported|not supported|unknown|未知|不支持)/i.test(body) ? 'explicit' : 'opaque';
   }
   function invalidate() {
-    revision++;
+    pendingInput = undefined;
     if (turn) { turn.safe = false; turn.valid = false; }
   }
   pi.on('input', () => {
@@ -195,13 +195,16 @@ function installCindyCacheRecovery(pi) {
     }
     const startedAt = Date.now();
     const learned = new Set(Object.keys(records).filter(key => active(records[key], startedAt)));
-    // Pi's later message_end hooks may replace this object in place. Match
-    // the supervisor's message_start receipt, not a subsequently edited object.
-    const key = createHash('sha256').update(JSON.stringify(event.message)).digest('hex');
-    pendingInput = { key, ctx, direct: directInput, revision, learned, inputRules };
     if (directInput) {
       routeRules = inputRules;
-      turn = { sequence: ++sequence, safe: true, valid: true, attempted: false, learned };
+      turn = { safe: true, valid: true, attempted: false, learned };
+    }
+    if (!directInput || !nativeRegistry(ctx)) {
+      // Pi's message_end hooks may replace the message in place. Capture the
+      // receipt now. Modern direct inputs need no query; older host recovery
+      // still needs this exact input's snapshot, never an agent_start guess.
+      const key = createHash('sha256').update(JSON.stringify(event.message)).digest('hex');
+      pendingInput = { key, ctx, direct: directInput, learned, inputRules };
     }
     directInput = false;
   });
@@ -225,10 +228,10 @@ function installCindyCacheRecovery(pi) {
         }
       } catch { /* Unconfirmed queued provenance must not reopen recovery. */ }
       finally { if (timer) clearTimeout(timer); }
-      if (pendingInput !== input || input.revision !== revision || input.ctx?.signal?.aborted) return;
+      if (pendingInput !== input || input.ctx?.signal?.aborted) return;
       if (!input.direct && followUp) {
         routeRules = input.inputRules;
-        turn = { sequence: ++sequence, safe: true, valid: true, attempted: false, learned: input.learned };
+        turn = { safe: true, valid: true, attempted: false, learned: input.learned };
       }
       pendingInput = undefined;
     })();
@@ -241,8 +244,7 @@ function installCindyCacheRecovery(pi) {
     // Older registries cannot safely restore an extension provider's ownership.
     // Keep their existing host recovery usable without registering a provider;
     // modern registries leave all payload handling to the final stream wrapper.
-    if (typeof ctx.modelRegistry?.getProvider === 'function'
-      && typeof ctx.modelRegistry?.getRegisteredNativeProvider === 'function') return;
+    if (nativeRegistry(ctx)) return;
     await settleInput();
     const key = route(ctx.model);
     // Use the same input snapshot as the modern wrapper, including tool rounds

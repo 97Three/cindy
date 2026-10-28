@@ -147,6 +147,15 @@ export function readModelCompactionPct(providerId: string, modelId: string): num
   return readPrefs().compactionPcts?.[JSON.stringify([providerId, modelId])] ?? null;
 }
 
+/**
+ * A separate owner-pinned store wrote the shared prefs file. The module store's
+ * mtime guard can miss that write when both land within the filesystem's mtime
+ * granularity (seen on Windows CI), so drop its cache, as the rollback paths do.
+ */
+function dropCachedStore(): void {
+  store = createStore(() => ownerScopedUserDataPath('model-context-limit-prefs.json'));
+}
+
 /** Participate in the existing provider deletion transaction, including rollback. */
 export function stageProviderModelCompactionClear(providerId: string): () => boolean {
   const filePath = ownerScopedUserDataPath('model-context-limit-prefs.json');
@@ -159,13 +168,16 @@ export function stageProviderModelCompactionClear(providerId: string): () => boo
   ownerStore.writePatch({
     compactionPcts: Object.fromEntries(Object.entries(previous).filter(([key]) => !key.startsWith(prefix))),
   });
+  dropCachedStore();
   return () => {
     try {
-      ownerStore.invalidateIfChanged();
-      const current = { ...ownerStore.read().compactionPcts };
+      // Reload the pinned owner's file even when intervening writes share its mtime.
+      const rollbackStore = createStore(() => filePath);
+      const current = { ...rollbackStore.read().compactionPcts };
       // Restore only removed entries; do not overwrite a newer external edit.
       for (const [key, value] of Object.entries(removed)) current[key] ??= value;
-      ownerStore.writePatch({ compactionPcts: current });
+      rollbackStore.writePatch({ compactionPcts: current });
+      dropCachedStore();
       return true;
     } catch (error) {
       log.warn('restore provider model compaction failed', {

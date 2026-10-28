@@ -57,6 +57,21 @@ export const CINDY_BRIDGE_EXTENSION_FILENAME = "cindy-bridge.ts";
 export const CINDY_PI_TEXT_ONLY_INPUT_PREFIX = '[CINDY_TEXT_ONLY_INPUT]:';
 export const CINDY_PI_TEXT_ONLY_READY_PREFIX = 'cindy:text-only-ready:';
 export const CINDY_PI_TEXT_ONLY_CLOSED_PREFIX = 'cindy:text-only-unavailable:';
+export const CINDY_PI_REQUEST_DIAGNOSTICS_PREFIX = 'cindy:provider-request:';
+
+/** Shared with the generated bridge: only bounded counts and known effort names may enter logs. */
+export function projectPiRequestDiagnostics(value: unknown): Record<string, number | string | null> {
+  const row = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const result: Record<string, number | string | null> = {};
+  for (const key of ['toolCount', 'messageCount']) {
+    const count = row[key];
+    if (typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 && count <= 1_000_000) result[key] = count;
+  }
+  result.wireEffort = typeof row.wireEffort === 'string' &&
+    ['none', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(row.wireEffort)
+    ? row.wireEffort : null;
+  return result;
+}
 
 /** Cindy-enforced bash bound when the model omits timeout or passes a non-positive number. */
 export const CINDY_PI_BASH_DEFAULT_TIMEOUT_SECONDS = 300;
@@ -157,6 +172,7 @@ const PI_PACKAGE_MANAGEMENT_TITLE = 'cindy:pi-package';
 const MAX_PI_PACKAGE_SOURCE_LENGTH = 2_048;
 const projectPiPackageCommandDiagnostic = ${projectPiPackageCommandDiagnostic.toString()};
 const projectPiManagedCommandFailure = ${projectPiManagedCommandFailure.toString()};
+const projectPiRequestDiagnostics = ${projectPiRequestDiagnostics.toString()};
 
 // Pi 的模型鉴权、localhost proxy 与 MCP bearer 需要留在父进程 env 供 runtime
 // 按请求解析，但绝不能继承进 LLM 可调用的 bash 子进程。名单由 host 按本次会话
@@ -2849,7 +2865,7 @@ class McpHttpClient {
   }
 }
 
-function mcpContentToPi(content: unknown): Array<Record<string, unknown>> {
+function mcpContentToPi(content: unknown, structuredContent?: unknown): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = [];
   if (Array.isArray(content)) {
     for (const item of content) {
@@ -2863,6 +2879,17 @@ function mcpContentToPi(content: unknown): Array<Record<string, unknown>> {
         out.push({ type: 'text', text: JSON.stringify(rec) });
       }
     }
+  }
+  // Pi details are for rendering/state, not model input. Keep MCP's structured
+  // result visible without duplicating the JSON text supplied by many servers.
+  if (structuredContent !== undefined) {
+    const text = JSON.stringify(structuredContent);
+    const alreadyIncluded = out.some((item) => {
+      if (item.type !== 'text' || typeof item.text !== 'string') return false;
+      if (item.text === text) return true;
+      try { return JSON.stringify(JSON.parse(item.text)) === text; } catch { return false; }
+    });
+    if (!alreadyIncluded) out.push({ type: 'text', text });
   }
   if (out.length === 0) out.push({ type: 'text', text: '(empty result)' });
   return out;
@@ -2958,6 +2985,9 @@ function schemaHint(schema: Record<string, unknown>): string {
 }
 
 class CindyMcpGateway {
+  // Older Pi ignores execute-result isError but supports tool_result overrides.
+  // Weak identities keep the status private without retaining completed calls.
+  private readonly failedResults = new WeakMap<object, { content: object; details: unknown }>();
   private readonly tools = new Map<string, ConnectedMcpTool>();
   private readonly unavailableServers = new Map<string, string>();
   /** 已披露工具：键为 server + NUL + tool，值为该工具当前 schema 的指纹。 */
@@ -3416,6 +3446,7 @@ class CindyMcpGateway {
   private async executeResolvedCall(resolved: ResolvedMcpGatewayCall, signal?: AbortSignal): Promise<{
     content: Array<Record<string, unknown>>;
     details: unknown;
+    isError?: boolean;
   }> {
     let result: any;
     try {
@@ -3431,17 +3462,14 @@ class CindyMcpGateway {
           ? '. Expected args schema: ' + schemaHint(resolved.tool.inputSchema) : ''),
       );
     }
-    const content = mcpContentToPi(result?.content);
+    const content = mcpContentToPi(result?.content, result?.structuredContent);
+    const details = result?.structuredContent ?? {};
     if (result?.isError) {
-      const message = content
-        .map((item) => (typeof item.text === 'string' ? item.text : ''))
-        .join('\n')
-        .trim();
-      throw new Error(
-        message.length > 0 ? message : 'MCP tool returned an error',
-      );
+      const failure = { content, details };
+      this.failedResults.set(content, failure);
+      if (details !== null && typeof details === 'object') this.failedResults.set(details, failure);
     }
-    return { content, details: result?.structuredContent ?? {} };
+    return { content, details, ...(result?.isError ? { isError: true } : {}) };
   }
 
   private async executeCall(params: unknown, signal?: AbortSignal, toolCallId?: string): Promise<{
@@ -3529,6 +3557,16 @@ class CindyMcpGateway {
   }
 
   register(pi: any, options: { botMemoryFacade?: boolean } = {}): void {
+    pi.on?.('tool_result', (event: any) => {
+      const failure = this.failedResults.get(event.content) ?? this.failedResults.get(event.details);
+      if (failure) {
+        this.failedResults.delete(failure.content);
+        if (failure.details !== null && typeof failure.details === 'object') {
+          this.failedResults.delete(failure.details);
+        }
+        return { isError: true };
+      }
+    });
     // Host-owned Bot identity enables native shortcuts; execution uses the scoped helper entry.
     this.botHelperFacadeEnabled = options.botMemoryFacade === true;
     this.botMemoryFacadeEnabled = options.botMemoryFacade === true
@@ -4319,7 +4357,23 @@ export default async function cindyBridge(piApi: any) {
   if (!currentPermissionState().reviewOnly) registerCindyQuestionTool(pi);
   pi.on('before_provider_request', async (event, ctx) => {
     const payload = astraResponsesPayload(event.payload, ctx.model) ?? event.payload;
-    return (await nativeFastPayload(payload, ctx.model, ctx)) ?? payload;
+    const next = (await nativeFastPayload(payload, ctx.model, ctx)) ?? payload;
+    // A one-way native notification adds no host round trip. This is the payload
+    // preparation hook, not proof that HTTP was sent or accepted upstream.
+    const token = process.env.CINDY_PI_TURN_TOOL_POLICY;
+    if (token) {
+      try {
+        const messages = next?.messages ?? next?.input ?? next?.contents;
+        ctx.ui.notify(${JSON.stringify(CINDY_PI_REQUEST_DIAGNOSTICS_PREFIX)} + token + ':' + JSON.stringify(
+          projectPiRequestDiagnostics({
+            toolCount: Array.isArray(next?.tools) ? next.tools.length : undefined,
+            messageCount: Array.isArray(messages) ? messages.length : undefined,
+            wireEffort: next?.reasoning_effort ?? next?.reasoning?.effort ?? next?.output_config?.effort,
+          }),
+        ), 'info');
+      } catch { /* Diagnostics must never block a model request. */ }
+    }
+    return next;
   });
   const mcpGateway = new CindyMcpGateway();
   // bash 隔离 home 经 resolveBashPackageHome 解析(首次加载读删 + 防篡改 stash,
@@ -4642,26 +4696,6 @@ export default async function cindyBridge(piApi: any) {
   // 设备托管：文件、命令与搜索工具改用任务所在电脑上的执行器(替换上面的本机注册)。
   registerCindyHostedTools(pi, bashTool, applyCindyBashTimeoutParams);
 
-  // This uses the existing RPC UI channel; no model tool or prompt is added.
-  const runHarnessHook = async (name: string, event: any, ctx: any): Promise<boolean> => {
-    if (process.env.CINDY_PI_HARNESS_HOOKS !== '1') return false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const payload = name === 'tool.before'
-        ? { name, toolName: event.toolName, toolUseId: event.toolCallId, input: event.input }
-        : { name };
-      const value = await Promise.race([
-        ctx.ui.input('cindy:harness-hook', JSON.stringify(payload)),
-        new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), 2000); }),
-      ]);
-      return typeof value === 'string' && JSON.parse(value)?.action === 'block';
-    } catch { return false; }
-    finally { if (timer) clearTimeout(timer); }
-  };
-  pi.on('session_before_compact', async (event: any, ctx: any) => {
-    if (await runHarnessHook('compaction.before', event, ctx)) return { cancel: true };
-  });
-
   // ── 权限门 ────────────────────────────────────────────────────────────────
   pi.on('tool_call', async (event: any, ctx: any) => {
     if (guestToolGate && guestToolGate.blocks(event.toolName)) {
@@ -4684,9 +4718,6 @@ export default async function cindyBridge(piApi: any) {
         block: true,
         reason: 'Cindy Review only permits read-only access to this task and its explicit artifacts.',
       };
-    }
-    if (await runHarnessHook('tool.before', event, ctx)) {
-      return { block: true, reason: 'Blocked by an approved task plugin.' };
     }
     if (event.toolName === 'ask_user_question') return;
     if (FILE_WRITE_BUILTINS.has(event.toolName)) {

@@ -338,7 +338,9 @@
       "doneUnread": "已完成未讀",
       "running": "執行中",
       "close": "關閉",
-      "cancelRename": "取消重新命名"
+      "cancelRename": "取消重新命名",
+      "createdBy": "由 {{name}} 建立",
+      "ownedBy": "歸屬 {{name}}"
     },
     "accounts": {
       "title": "切換帳號",
@@ -415,7 +417,10 @@
       },
       "summaryNone": "無",
       "summarySeparator": "、",
-      "filterEmptyCopy": "可在顯示設定的「篩選」中調整或重設。"
+      "filterEmptyCopy": "可在顯示設定的「篩選」中調整或重設。",
+      "filterTeammatesHeading": "夥伴",
+      "filterAnySource": "不限來源",
+      "filterSelectedTeammates": "已選 {{count}} 位"
     },
     "search": {
       "placeholder": "搜尋標題或內容…",

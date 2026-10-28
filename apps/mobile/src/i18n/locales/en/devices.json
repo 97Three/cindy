@@ -338,7 +338,9 @@
       "doneUnread": "Completed, unread",
       "running": "Running",
       "close": "Close",
-      "cancelRename": "Cancel rename"
+      "cancelRename": "Cancel rename",
+      "createdBy": "Created by {{name}}",
+      "ownedBy": "Belongs to {{name}}"
     },
     "accounts": {
       "title": "Switch account",
@@ -415,7 +417,10 @@
       },
       "summaryNone": "None",
       "summarySeparator": ", ",
-      "filterEmptyCopy": "Adjust or reset Filters in Display settings."
+      "filterEmptyCopy": "Adjust or reset Filters in Display settings.",
+      "filterTeammatesHeading": "Teammates",
+      "filterAnySource": "Any source",
+      "filterSelectedTeammates": "{{count}} selected"
     },
     "search": {
       "placeholder": "Search titles or content…",

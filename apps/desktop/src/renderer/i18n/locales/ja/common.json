@@ -74,6 +74,11 @@
       "stopped": "ローカル接続は停止しています"
     }
   },
+  "attachmentAccessConfirmation": {
+    "title": "添付ファイルへのアクセスを確認",
+    "message": "Cindy がこの添付ファイルを読み取れません。元のファイルを選択すると、このメッセージの送信を続行します。キャンセルすると下書きが保持されます。",
+    "button": "元のファイルを使用"
+  },
   "mailReader": {
     "showExternalImages": "外部画像を表示",
     "markReadFailed": "既読状態を同期できませんでした。メールボックスの認証を確認して開き直してください。",
@@ -810,6 +815,8 @@
     },
     "rebalance": {
       "title": "{{label}} に切り替えて続けますか？",
+      "fallbackTitle": "要約を使って {{label}} で続けますか？",
+      "fallbackDescription": "元の会話を完全に復元できませんでした。要約では以前の詳細やツールの結果が省略される場合があります。キャンセルすると元のコンピューターで送信します。",
       "description": "各アカウントのクォータを均等に使い切るため、このメッセージは {{label}} から送ることをおすすめします（{{quota}}）。直近数回のやり取りと要約は引き継がれますが、それより前の細部は失われることがあります。",
       "quota": "残り {{left}}%",
       "quotaReset": "残り {{left}}%・{{reset}}",
@@ -843,6 +850,135 @@
       "addedAccounts_other": "{{count}} 個のアカウントを {{provider}} のプロバイダーグループに追加しました",
       "removed": "{{name}} をプロバイダーグループから外しました",
       "deleted": "{{provider}} のプロバイダーグループを削除しました"
+    }
+  },
+  "regionScreenshot": {
+    "editor": { "fitWidth": "幅に合わせる", "loading": "画像を読み込み中…" },
+    "moveToolbar": "ツールバーを左右に移動",
+    "hint": "クリックでウィンドウや要素を選択、ドラッグで範囲を選択 · スクロールで範囲を切り替え · Space で全画面 · C で色をコピー · Esc で終了",
+    "hintWithLast": "クリックでウィンドウや要素を選択、ドラッグで範囲を選択 · スクロールで範囲を切り替え · Space で全画面 · R で前回の範囲 · C で色をコピー · Esc で終了",
+    "copy": "コピー",
+    "cancel": "スクリーンショットを終了",
+    "captureFailed": "画面をキャプチャできませんでした",
+    "permission": {
+      "title": "画面収録の許可が必要です",
+      "detail": "スクリーンショットを撮るには、「システム設定 > プライバシーとセキュリティ > 画面収録とシステムオーディオ録音」で {{appName}} を許可し、{{appName}} を開き直してください。",
+      "openSettings": "システム設定を開く",
+      "later": "今はしない"
+    },
+    "undo": "取り消す",
+    "redo": "やり直す",
+    "pinToScreen": "画面に固定",
+    "pin": {
+      "copy": "コピー",
+      "save": "保存…",
+      "ask": "{{appName}} に聞く",
+      "opacity": "不透明度",
+      "originalSize": "元のサイズ",
+      "passThrough": "クリックを透過",
+      "close": "閉じる",
+      "closeAll": "固定した画像をすべて閉じる",
+      "unlock": "マウス操作を戻す"
+    },
+    "save": "保存",
+    "cindy": "{{appName}} に送る",
+    "tools": {
+      "rect": "四角形",
+      "ellipse": "楕円",
+      "line": "直線",
+      "arrow": "矢印",
+      "pen": "ペン",
+      "marker": "蛍光ペン",
+      "text": "テキスト",
+      "mosaic": "モザイク",
+      "blur": "ぼかし",
+      "step": "番号"
+    },
+    "ai": {
+      "ask": "{{appName}} に聞く",
+      "translate": "翻訳",
+      "explain": "説明",
+      "extract": "テキストを抽出"
+    },
+    "size": {
+      "stroke": {
+        "0": "細",
+        "1": "中",
+        "2": "太"
+      },
+      "text": {
+        "0": "小",
+        "1": "中",
+        "2": "大"
+      },
+      "strength": {
+        "0": "弱",
+        "1": "中",
+        "2": "強"
+      }
+    },
+    "colors": {
+      "red": "赤",
+      "yellow": "黄",
+      "green": "緑",
+      "blue": "青",
+      "black": "黒",
+      "white": "白"
+    },
+    "magnifier": {
+      "copyHint": "C で色をコピー"
+    },
+    "saveFileName": "スクリーンショット",
+    "saveFailed": "スクリーンショットを保存できませんでした",
+    "prompt": {
+      "translate": "このスクリーンショットの文字を読み取り、日本語に翻訳してください。元の段落やリストの構成を保ち、訳文だけを出力してください。原文がすでに日本語の場合は英語に翻訳してください。",
+      "explain": "このスクリーンショットの内容を説明してください。エラーの場合は原因と解決方法を、グラフ・コード・画面の場合は何を表しているかと要点を説明してください。",
+      "extract": "このスクリーンショットの文字をそのまま抽出してください。元の改行・段落・リストを保ち、表は Markdown の表で出力してください。抽出した文字だけを出力してください。"
+    },
+    "live": {
+      "scroll": "スクロールスクリーンショット",
+      "video": "画面録画",
+      "gif": "GIF を録画",
+      "recording": "録画中…",
+      "preview": "キャプチャのプレビュー",
+      "cursor": "ポインターを表示",
+      "keys": "キーを表示（入力内容を含む）",
+      "start": "録画を開始",
+      "pause": "一時停止",
+      "resume": "再開",
+      "finish": "完了",
+      "paused": "録画を一時停止しました",
+      "done": "キャプチャを保存できます",
+      "saved": "保存しました",
+      "copied": "コピーしました",
+      "copyFailed": "コピーできませんでした。もう一度試すか、ファイルを保存してください。",
+      "scrollHint": "選択範囲内を上下にスクロールするか、自動スクロールを選択してください",
+      "recordHint": "プレビューに描いた注釈は録画に含まれます。音声は録音しません。",
+      "format": "形式",
+      "videoFormat": "動画 (WebM)",
+      "prepareHint": "開始を押すと3秒後に録画します。音声は録音しません。",
+      "countdown": "{{count}}秒後に録画開始",
+      "countdownHint": "まもなく開始します。Escでキャンセル。",
+      "annotate": "注釈",
+      "finishing": "処理中…",
+      "replay": "もう一度再生",
+      "previewUnavailable": "プレビューを開けません。保存するか、前のプレビューを閉じて再試行してください。",
+      "playbackFailed": "再生できません。録画ファイルは保存できます。",
+      "annotationNoRoom": "注釈を開くには選択範囲の横に空き領域が必要です。",
+      "overlap": "この部分を結合できません。少し上に戻すか、撮影済みの部分で完了してください。",
+      "limit": "キャプチャの上限に達しました。終了して保存してください。",
+      "captureFailed": "キャプチャが停止しました。再開するか、取得済みの内容を保存できます。",
+      "encodeFailed": "録画をエンコードできませんでした。閉じてから録画し直してください。",
+      "exportFailed": "保存できませんでした。もう一度保存を選んでください。",
+      "keysUnavailable": "キーを表示できません。macOS では Cindy の入力監視を許可してください。",
+      "noRoom": "開始できません。32 × 32 ピクセル以上の範囲を選択し、その横にプレビュー用のスペースを空けてください。",
+      "image": "スクリーンショット",
+      "startScroll": "スクロールスクリーンショットを開始",
+      "autoScroll": "自動スクロール",
+      "stopScroll": "スクロールを停止",
+      "edit": "編集",
+      "autoUnavailable": "自動スクロールが停止しました。選択範囲内を手動でスクロールできます。",
+      "autoPermission": "自動スクロールには「アクセシビリティ」の権限が必要です。システム設定で Cindy を許可してから再試行するか、選択範囲内を手動でスクロールしてください。"
     }
   },
   "privacyExit": {
@@ -5005,6 +5141,13 @@
       }
     },
     "computerUse": {
+      "configurationRead": {
+        "loading": "{{section}}を読み込み中…",
+        "retrying": "{{section}}を読み込めませんでした。自動で再試行中…",
+        "error": "{{section}}を読み込めませんでした。",
+        "retry": "設定を再読み込み",
+        "browserDetection": "ブラウザの検出結果"
+      },
       "title": "自動操作",
       "description": "エージェントがコンピュータと接続済みデバイスを使ってあなたの代わりに作業します。ブラウザ自動操作は独立したブラウザを使い、Android 自動操作は ADB を使い、コンピュータ自動操作はローカルドライバーに依存します。",
       "codexRefreshDeferred": "設定は保存されましたが、Codex が使用中です。アプリを再起動すると、新しい Codex セッションに反映されます。",
@@ -6185,12 +6328,26 @@
         "conflict": "「{{name}}」と競合しています",
         "voiceConflict": "音声入力のショートカットと競合しています",
         "composerVoiceConflict": "音声入力のショートカットと競合しています。メッセージ入力の送信ショートカットまたは音声入力のショートカットを変更してください。",
-        "menuAccelerator": "この組み合わせはメニューショートカットとして登録できません"
+        "menuAccelerator": "この組み合わせはメニューショートカットとして登録できません",
+        "globalUnusable": "この組み合わせはシステム全体のショートカットに使用できません",
+        "globalOccupied": "他のアプリで使用中です。別の組み合わせを選んでください"
       },
       "items": {
+        "region-screenshot": {
+          "label": "スクリーンショット",
+          "description": "どのアプリでもスクリーンショットを撮り、注釈を付けたり、画面に固定したり、{{appName}} に送ったりできます"
+        },
         "toggle-sidebar": {
           "label": "サイドバーを切り替え",
           "description": "左側のセッションリストを折りたたみ・展開します"
+        },
+        "session-history-back": {
+          "label": "前のセッション",
+          "description": "閲覧順で前に開いていたセッションに戻ります"
+        },
+        "session-history-forward": {
+          "label": "次のセッション",
+          "description": "閲覧順で次に開いていたセッションに進みます"
         },
         "open-settings": {
           "label": "設定を開く",
@@ -6910,18 +7067,6 @@
         "codeDetail": "独立したサンドボックスで実行され、ファイルやネットワークにはアクセスできません。",
         "resident": "常駐実行(有効化すると起動し、呼び出されなくてもバックグラウンドプロセスを維持)",
         "residentDetail": "待機中も少量のメモリを使用します。無効化またはアンインストールすると、プロセスは直ちに終了します。",
-        "harnessRead": "AI の実行情報を読み取る：{{name}}",
-        "harnessReadDetail": "宣言された機能一覧、使用量、コンテキスト統計を読み取ります。メッセージ、ツール引数、結果、固定指示の本文は含みません。",
-        "harnessMessages": "関連付けられたタスクのメッセージを読む",
-        "harnessMessagesDetail": "許可されたタスクのユーザーメッセージ、AI の返信、保存済みの履歴を読み取ります。機密情報が含まれる場合があります。固定指示や非公開の推論は含みません。",
-        "harnessToolContent": "ツールの引数と結果を読む",
-        "harnessToolContentDetail": "許可されたタスクのツールの引数と結果を読み取ります。ファイルの内容、コマンド、機密情報が含まれる場合があります。",
-        "harnessEvents": "AI の実行イベントを監視する：{{name}}",
-        "harnessEventsDetail": "宣言された実行イベントを受信します。メッセージとツールの本文には別途承認が必要です。イベントには欠落があるため、完全な履歴としては使えません。",
-        "harnessHooks": "AI の操作をブロックできる：{{name}}",
-        "harnessHooksDetail": "対応する実行前または権限確認の境界で操作をブロックできます。代理承認や引数の書き換えはできません。最大 1.5 秒待機した後、通常の権限確認を続けます。",
-        "harnessActions": "AI の実行を制御する：{{name}}",
-        "harnessActionsDetail": "接続済みで個別に承認された実行操作のみ呼び出せます。",
         "subscribeTopics": "セッションの動きを傍受(ターン・セッションイベント、メッセージ内容は含まない)",
         "subscribeActivity": "AI が思考中のタイミングと、あなたの操作を待っているタイミングを傍受",
         "subscribeActivityDetail": "分かるのはタイミングのみです。思考の開始と終了、そして AI があなたの承認や回答を待っている時点だけを把握します。思考の内容、承認待ちの操作、関係するコマンドやファイル、計画の本文、質問、あなたの回答は一切見えず、あなたの代わりに承認することもできません。",
@@ -8505,6 +8650,10 @@
   },
   "titleBar": {
     "menu": "メニュー",
+    "historyBack": "前のセッションに戻る",
+    "historyForward": "次のセッションに進む",
+    "historyBackUnavailable": "前のセッションがありません",
+    "historyForwardUnavailable": "次のセッションがありません",
     "minimize": "最小化",
     "maximizeOrRestore": "ウィンドウを最大化または元のサイズに戻す",
     "close": "閉じる",
@@ -9403,6 +9552,8 @@
   },
   "bots": {
     "workbench": {
+      "ownedMark": "担当：{{names}}",
+      "createdMark": "{{names}} が作成",
       "followingMark": "このセッションの担当: {{names}}"
     },
     "glance": {
@@ -9909,6 +10060,8 @@
         "stepTimeout": "{{name}} の作業に時間がかかりすぎたため、このステップを止めました",
         "stepUnavailable": "{{name}} は現在利用できないため、このステップを進められません",
         "runtimeFailure": {
+          "REMOTE_DEVICE_LIMIT": "{{name}}は返信できません：この仲間のデバイスのリモートセッション数が上限に達しました。\n仲間の所有者に不要なセッションのアーカイブを依頼するか、リモートのパソコンの所有者に「リモートと共有」で上限の変更を依頼してください。",
+          "REMOTE_TOTAL_LIMIT": "{{name}}は返信できません：リモートのパソコンのセッション総数が上限に達しました。\nそのパソコンの所有者に不要なセッションの解放、または「リモートと共有」での上限変更を依頼してください。",
           "IMAGE_INPUT_UNSUPPORTED": "{{name}}は返信できませんでした。現在のモデルは画像に対応していません。\n画像対応モデルに切り替えるか、「設定 → パーソナライズ → ビジョンブリッジ」を有効にして視覚モデルを設定し、メッセージを再送してください。",
           "MODEL_UNAVAILABLE": "{{name}}は返信できませんでした。利用可能なモデルがありません。\n仲間の設定で接続済みの利用可能なモデルを選び、メッセージを再送してください。",
           "AUTH_REQUIRED": "{{name}}は返信できませんでした。モデルの接続に再認証が必要です。\n設定でモデルのプロバイダーに再接続し、メッセージを再送してください。",
@@ -10575,7 +10728,16 @@
           "appIdLabel": "App ID",
           "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
           "appSecretLabel": "App Secret",
-          "appSecretPlaceholder": "App Secret を貼り付け"
+          "appSecretPlaceholder": "App Secret を貼り付け",
+          "description": "接続すると、{{service}} で {{name}} にメッセージを送れます。",
+          "createPrompt": "{{service}} ボットをお持ちでない場合",
+          "createLink": "{{service}} オープンプラットフォームで作成",
+          "credentialsHint": "作成後、アプリの「認証情報と基本情報」から App ID と App Secret をコピーし、ここに入力してください。",
+          "stepsLabel": "設定手順を見る",
+          "stepCreate": "オープンプラットフォームでカスタムアプリを作成し、ボット機能を追加します。「権限管理」で、個別メッセージの読み取り（im:message.p2p_msg:readonly）とアプリとしてのメッセージ送信（im:message:send_as_bot）が有効か確認します。グループ内の @メンションの受信には im:message.group_at_msg:readonly も必要です。",
+          "stepCredentials": "アプリの「認証情報と基本情報」を開き、App ID と App Secret をコピーします。",
+          "stepConnect": "下の欄に認証情報を入力し、「{{service}} に接続」をクリックして接続します。オープンプラットフォームの「イベントとコールバック」で長接続によるイベント受信を選び、メッセージ受信イベント（im.message.receive_v1）を追加します。コールバック設定でも長接続による受信を選び、カード操作のコールバック（card.action.trigger）を追加して、カードのボタンを使えるようにします。アプリのバージョンを公開し、審査が必要な場合は承認を待ってから、ボットにメッセージを送り、カードのボタンもクリックして動作を確認します。",
+          "confirm": "{{service}} に接続"
         },
         "wecom": {
           "botIdLabel": "Bot ID",
@@ -12085,6 +12247,7 @@
       "diagnose": "診断",
       "diagnoseTitle": "新しいセッションでこのエラーを診断",
       "diagnosePrompt": "このエラーを診断して、原因と解決方法を教えてください。\n\nエラーが起きたセッション：{{sessionUrl}}\nエラー表示：{{message}}\nエラー詳細：\n{{details}}\n\nCindy 自体の問題だと分かった場合は教えてください。Cindy チームに issue を提出するかどうかは私が選びます。",
+      "diagnosePromptWithoutSession": "このエラーを診断して、原因と解決方法を教えてください。\n\nエラー表示：{{message}}\nエラー詳細：\n{{details}}\n\nCindy 自体の問題だと分かった場合は教えてください。Cindy チームに issue を提出するかどうかは私が選びます。",
       "gatewayProxyTokenInvalid": "Cindy AI の認証情報が無効になりました。「再試行」をクリックしてください。繰り返す場合はサインアウトしてから再ログインしてください",
       "gatewayProxyTokenInvalidNoRetry": "Cindy AI の認証情報が無効になりました。繰り返す場合はサインアウトしてから再ログインしてください",
       "modelAccessDenied": "接続先のアカウントにはこのモデルへのアクセス権限がありません。別のモデルに切り替えるか、プロバイダーにアクセス権限を確認してください",
@@ -12526,6 +12689,7 @@
         "toggleHint": "引き継ぎ内容を表示",
         "handoffTitle": "引き継ぎ内容——切り替え時に新しいエンジンへ送信されたコンテキスト要約(チャット履歴には含まれず、ここでのみ表示)",
         "handoffTitleEnglishSource": "引き継ぎ内容——切り替え時に新しいエンジンへ送信されたコンテキスト要約。原文は英語(チャット履歴には含まれず、ここでのみ表示)",
+        "fallbackBadge": "要約から続行",
         "resumedBadge": "セッション再開",
         "relocatedHere": "Agent をこのパソコンで実行するようにしました",
         "relocatedTo": "Agent を {{device}} で実行するようにしました",
@@ -12946,7 +13110,13 @@
     }
   },
   "ccAgent": {
-    "sessionEntry": {"missing":"このセッションが見つかりません。削除された可能性があります。","denied":"このアカウントまたはコンピューターでは、このセッションにアクセスできません。","failed":"このセッションを読み込めませんでした。","back":"セッション一覧に戻る","retry":"セッションを再読み込み"},
+    "sessionEntry": {
+      "missing": "このセッションが見つかりません。削除された可能性があります。",
+      "denied": "このアカウントまたはコンピューターでは、このセッションにアクセスできません。",
+      "failed": "このセッションを読み込めませんでした。",
+      "back": "セッション一覧に戻る",
+      "retry": "セッションを再読み込み"
+    },
     "contextRingPanel": {
       "title": "コンテキスト",
       "meaning": "今回 AI が参照できる会話、指示、ツールの結果です。",
@@ -13219,7 +13389,7 @@
       "selectFolderFailed": "フォルダーを選択できませんでした。もう一度お試しください。",
       "projectsToggleExpand": "すべてのプロジェクトセッションを展開",
       "projectsToggleCollapse": "すべてのプロジェクトセッションを折りたたむ",
-      "filterAria": "サイドバー表示設定（ステータス：{{status}}、Harness：{{vendor}}、最終アクティビティ：{{lastActivity}}、グループ：{{groupBy}}、並び替え：{{sortBy}}、プロジェクト：{{projects}}）",
+      "filterAria": "サイドバー表示設定（ステータス：{{status}}、Harness：{{vendor}}、最終アクティビティ：{{lastActivity}}、グループ：{{groupBy}}、並び替え：{{sortBy}}、プロジェクト：{{projects}}、チームメイト：{{creators}}）",
       "organizeSidebar": "サイドバー表示設定",
       "filterAllText": "すべて",
       "filterSelectedProjects": "{{count}} 件選択",
@@ -13284,6 +13454,9 @@
       "filterProjectOrderTip": {
         "custom": "マウスでプロジェクト行をドラッグして並び替え。中のセッションは上の並び替えに従う"
       },
+      "filterCreatorsHeading": "チームメイト",
+      "filterCreatorsAny": "作成元を問わない",
+      "filterSelectedCreators": "{{count}} 人を選択",
       "filterProjectsHeading": "プロジェクト",
       "filterAllProjects": "すべてのプロジェクト",
       "filterHeading": "フィルター",
@@ -13353,6 +13526,7 @@
       },
       "renameFailed": "名前の変更に失敗しました",
       "pinFailed": "操作に失敗しました",
+      "muteNotificationsFailed": "通知設定の変更に失敗しました",
       "deleteFailed": "削除に失敗しました。再試行してください",
       "archiveFailed": "アーカイブに失敗しました。再試行してください",
       "unarchiveFailed": "復元に失敗しました。再試行してください",
@@ -13397,6 +13571,14 @@
         "description": "この「会話」グループのアーカイブ済みセッション {{count}} 件を復元します。復元後は「アーカイブ済み」から「アクティブ」に移動します。",
         "empty": "この「会話」グループに復元できるセッションはありません"
       },
+      "automationArchiveAll": {
+        "description": "この自動化で作成された {{count}} 件のセッションをアーカイブします。自動化は引き続き予定どおり実行されます。",
+        "descriptionWithSkip": "この自動化で作成された {{count}} 件のセッションをアーカイブし、{{skip}}のセッションはスキップします。自動化は引き続き予定どおり実行されます。",
+        "allPinnedOrRunning": "この自動化のセッションはすべてピン留め済みまたは実行中のため、アーカイブできません",
+        "allPinned": "この自動化のセッションはすべてピン留め済みのため、アーカイブしません",
+        "allRunning": "この自動化のセッションはすべて実行中のため、今はアーカイブできません",
+        "empty": "この自動化にはアーカイブできるセッションがありません"
+      },
       "archiveAll": {
         "title": "すべてのセッションをアーカイブ",
         "confirm": "すべてアーカイブ",
@@ -13406,6 +13588,7 @@
         "skipRunning": "{{count}} 件は実行中",
         "skipPinned": "{{count}} 件はピン留め",
         "skipSeparator": "、",
+        "skipped": "{{skip}}のセッションをスキップしました",
         "archived_one": "{{count}} 件のセッションをアーカイブしました",
         "archived_other": "{{count}} 件のセッションをアーカイブしました",
         "partialFailure": "{{ok}} 件アーカイブ、{{fail}} 件失敗。再試行してください",
@@ -13464,6 +13647,8 @@
         "delete": "削除",
         "pin": "ピン留め",
         "unpin": "ピン留め解除",
+        "muteNotifications": "通知をミュート",
+        "unmuteNotifications": "通知のミュートを解除",
         "archived": "アーカイブ済み",
         "moveToProject": "タスクを移動",
         "moveToProjectHeading": "現在のコンピューターのプロジェクト",

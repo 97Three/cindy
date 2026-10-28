@@ -3553,6 +3553,34 @@ describe('session-agent-switch handoff injection', () => {
       agentMeta: stored!.agentMeta as Record<string, unknown> }])).toBe(request);
   });
 
+  // #7424 / unit: the trusted queue and accepted transaction must persist the exact pasted owner request.
+  // Adjacent reference tests did not cover paste ranges; the minimal old failure stamps '' for text + ranges.
+  it.each([false, true])('preserves pasted authorization through queue and persistence (deviceLink=%s)', async deviceLink => {
+    const text = '允许本地修改和测试，但不要 push、不要发布。';
+    const content = { text, pastedTextRanges: [{ start: 0, end: text.length }] };
+    const queued = stampTrustedDesktopQueuedOrigin({ clientId: 'pasted-request', text,
+      persistedContent: content, files: [],
+    } as unknown as AgentInputQueuedMessage, deviceLink);
+    expect(queued.autoReviewUserText).toBe(text);
+    const { deps, session } = createDeps();
+    await createMakerSendTransaction(deps).sendToAgentAccepted('session-1', text, undefined, {
+      [AUTO_REVIEW_SOURCE_CONTENT]: queued.autoReviewUserText,
+      persistUserMessage: { clientId: queued.clientId, content, delivery: 'turn' },
+    });
+    expect(vi.mocked(session.send).mock.lastCall?.[1]?.[AUTO_REVIEW_USER_INTENT]).toBe(text);
+    expect(vi.mocked(deps.createDbMessage).mock.lastCall?.[1].agentMeta?.autoReviewUserText).toBe(text);
+  });
+
+  it.each([false, true])('rejects pasted authorization when persisted and wire text diverge (deviceLink=%s)', deviceLink => {
+    const persisted = { text: '允许 push。', pastedTextRanges: [{ start: 0, end: 6 }] };
+    for (const persistedContent of [persisted, JSON.stringify(persisted)]) {
+      const queued = stampTrustedDesktopQueuedOrigin({ clientId: 'pasted-mismatch', text: '不要 push。',
+        persistedContent, files: [],
+      } as unknown as AgentInputQueuedMessage, deviceLink);
+      expect(queued.autoReviewUserText).toBe('');
+    }
+  });
+
   // unit: a forwarded quote must survive persistence without becoming permission.
   it('persists host request evidence without restoring the target previous grant', async () => {
     const { deps, session } = createDeps({ readAutoReviewHistory: async () => [{

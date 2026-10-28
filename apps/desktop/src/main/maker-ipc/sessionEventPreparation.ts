@@ -52,9 +52,9 @@ import {
 import type { UsageLimitAutoResume } from './usageLimitAutoResume.js';
 import { isBotGroupClientId } from '../../shared/botGroupChat.js';
 
-/** Bot DMs and group-lane turns answer an internal channel, not the user watching this Session. */
+/** Group-lane output belongs in its group. A DM input is hidden, but its answer belongs to the owner. */
 function isBotPrivateInput(clientId: string): boolean {
-  return clientId.startsWith('bot-dm:') || isBotGroupClientId(clientId);
+  return isBotGroupClientId(clientId);
 }
 
 interface DismissedInteraction {

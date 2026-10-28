@@ -186,6 +186,7 @@ export interface OwnerProviderRouteBinding {
 }
 
 export interface RemoteAgentHostDeps {
+  nativeHistory?(scope: string, command: unknown, workingDir: string, assertCurrent: () => void): Promise<unknown>;
   fastPolicy?(controller: string, command: import('@cindy/device-link').RemoteAgentFastPolicy): Promise<unknown>;
   /** Prepare native bytes; retain recovery ownership only for receipted controllers. */
   prepareImageEvent?(hostSessionId: string, event: AgentEvent, upstream: GeneratedImageUpstream | undefined, retainForRecovery: boolean): Promise<AgentEvent>;
@@ -2480,6 +2481,24 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     const request = parseRemoteAgentRequest(raw);
     if (!deps.isControllerAuthorized(controller)) fail('REMOTE_AGENT_UNAVAILABLE', 'remote control is not allowed');
     switch (request.op) {
+      case 'native-history': {
+        if (trustOf(controller) !== 'owner' || !deps.nativeHistory) fail('REMOTE_AGENT_UNSUPPORTED', 'native history transfer is unavailable');
+        const owner = deps.captureOwner();
+        const assertCurrent = () => {
+          if (!deps.isOwnerCurrent(owner) || !deps.isControllerAuthorized(controller) || trustOf(controller) !== 'owner') {
+            fail('REMOTE_AGENT_UNAVAILABLE', 'remote control is not allowed');
+          }
+        };
+        const hostSessionId = hostSessionIdFor(controller, request.sessionId);
+        // The controller closes the source run before requesting a snapshot. Never copy a live writer.
+        for (const run of runs.values()) {
+          if (run.controller === controller && run.hostSessionId === hostSessionId && run.closedAt === undefined) fail('REMOTE_AGENT_BUSY', 'close the running session before transferring its history');
+        }
+        const workingDir = path.join(shadowSessionRoot(controller, hostSessionId), 'fs', 'workspace', ...Array.from({ length: MAX_ANCESTOR_LEVELS }, () => 'p'));
+        const result = await deps.nativeHistory!(`${controller}:${request.sessionId}`, request.command, workingDir, assertCurrent);
+        assertCurrent();
+        return result;
+      }
       case 'fast-policy':
         if (!deps.fastPolicy) fail('REMOTE_AGENT_UNSUPPORTED', 'subscription Fast policy is not supported');
         return deps.fastPolicy!(controller, request);
@@ -2617,6 +2636,7 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
           maxPayloadBytes: REMOTE_AGENT_MAX_PAYLOAD_BYTES,
           virtualWorkspace: true,
           ...(deps.forkHosted ? { nativeFork: true } : {}),
+          ...(!guest && deps.nativeHistory ? { nativeHistoryTransfer: true } : {}),
           ...(deps.imageArtifacts ? { imageRecovery: true, imageRecoveryRelay: true } : {}),
           // 能按受邀者隔离运行(供应商级授权与出站边界都已接上)，才接受组所在电脑中转过来的受邀者任务。
           ...(deps.providerAccess && deps.bindGuestProviderRoute ? { guestRelay: true } : {}),

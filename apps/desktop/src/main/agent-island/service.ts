@@ -82,6 +82,7 @@ import {
   type AgentIslandScreenLayoutMetrics,
 } from '../../shared/agentIsland.js';
 import { getSessionRowSnapshot, patchSessionMetaInDb } from '../localDb/ipc/sessions.js';
+import { isSessionNotificationsMutedSync } from '../localDb/sessionFlagRegistry';
 import { withSessionRouteLock } from '../localDb/sessionRouteLock.js';
 import { confirmIslandArchive } from './archiveConfirmation.js';
 import { remoteInvoke } from '../device-link/index.js';
@@ -132,6 +133,7 @@ import {
   setAgentIslandLayoutDragActive,
   setAgentIslandMeasuredContentHeight,
   setAgentIslandPointerZones,
+  setAgentIslandSessionDisplaySuppressed,
   setAgentIslandStrings,
   setAgentIslandToolWording,
   setAgentIslandVisibleSession,
@@ -333,7 +335,7 @@ function safeSessionActionSummary(snapshot: AgentIslandSessionSnapshot): string 
 function canonicalSessionActivity(
   activity: AgentIslandSessionActivity,
 ): SessionActivitySnapshot {
-  const { compactDetail: _compactDetail, ...snapshot } = activity;
+  const { compactDetail: _compactDetail, summaryFormat: _summaryFormat, ...snapshot } = activity;
   return {
     ...snapshot,
     workflow: snapshot.workflow ? { ...snapshot.workflow } : null,
@@ -1410,6 +1412,28 @@ export class AgentIslandService {
   }
 
   /**
+   * 「消息免打扰」发生变化:只影响展示面(岛面 / 菜单栏 / 提示音)。重发一次即可 ——
+   * 抑制集合在 publish() 里从同步索引重新对齐。静音任务的 Agent 事件仍照常进状态机,
+   * 侧栏卡片的实时活动、等待交互态与远端活动镜像不受影响。
+   */
+  handleNotificationMuteChanged(): void {
+    // 取消静音会让任务重新进入展示面。若它在此期间还在跑 / 已完成 / 报错 / 等确认,
+    // 逐帧比较会把「重新出现」当成一次新转移,补播一次 start / complete / error /
+    // attention 提示音。把刚解除抑制的任务记进本帧的声音基线,只为旧状态重发一次画面。
+    if (this.enabledSynced && this.enabled) {
+      for (const sessionId of this.state.sessions.keys()) {
+        if (
+          this.state.displaySuppressedSessionIds.has(sessionId) &&
+          !isSessionNotificationsMutedSync(sessionId)
+        ) {
+          this.baselineSoundSessionIds.add(sessionId);
+        }
+      }
+    }
+    this.publish();
+  }
+
+  /**
    * @param options.reason
    *   `'discarded'`(默认)= 这条记录不该再存在(会话归档 / 删除、Orca worker 被策略
    *   清除),条目硬删。
@@ -1911,6 +1935,7 @@ export class AgentIslandService {
       interactionKind: s.interactionKind,
       // 完成后这份摘要只给其它设备的完成卡片用(本机岛面直接读展示快照)。
       compactDetail: s.phase === 'completed' ? completedReplySummary(s) : s.compactDetail,
+      summaryFormat: 'plain-text',
       workingPhase: s.workingPhase,
     }));
   }
@@ -2051,7 +2076,24 @@ export class AgentIslandService {
     }
   }
 
+  /**
+   * 把「消息免打扰」从同步索引对齐到展示面抑制集合。放在每次 publish 的开头：账号
+   * 切换、索引重载、直接改库都能自愈，不靠某一条写库路径记得来登记。
+   */
+  private syncDisplaySuppression(): void {
+    for (const [sessionId, session] of this.state.sessions) {
+      // 静音标记属于本机那行任务：其它设备投影进来的条目（sourceDeviceId 非空）可能与它
+      // 同 id（还原/复制过的库），不能拿本机标记去压远端的卡片与提示音。
+      setAgentIslandSessionDisplaySuppressed(
+        this.state,
+        sessionId,
+        session.sourceDeviceId === null && isSessionNotificationsMutedSync(sessionId),
+      );
+    }
+  }
+
   private publish(): void {
+    this.syncDisplaySuppression();
     const now = Date.now();
     if (!this.enabledSynced) {
       this.mutedCompletionSoundSessionIds.clear();

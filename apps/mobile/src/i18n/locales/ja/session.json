@@ -261,6 +261,7 @@
     "voiceSenderNotReady": "メッセージを送信できません。一度戻ってから、セッションを開き直してください。",
     "voiceStopAndSend": "音声入力を終了して送信",
     "sendMessage": "リモートメッセージを送信",
+    "inputSyncFailed": "入力内容をすべて読み取れませんでした。内容は保持されています。もう一度お試しください。",
     "voiceStartInput": "音声入力を開始",
     "stopSession": "リモートセッションを停止",
     "sessionNotFoundResync": "現在のリモートセッションが見つかりません。再同期してから送信してください。",

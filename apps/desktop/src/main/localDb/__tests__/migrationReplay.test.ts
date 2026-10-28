@@ -112,9 +112,10 @@ describeMigrationReplay('migration replay', () => {
       db.exec("CREATE TABLE bot_delegations (id TEXT PRIMARY KEY)");
       db.exec("INSERT INTO sessions (id) VALUES ('legacy-session')");
       const result = runMigrationReplay(db, { drizzleDir: drizzleDir(), currentVersion: 124 });
-      expect(result.applied.map((migration) => migration.seq)).toEqual([125, 126, 127, 128, 129, 130, 131, 132, 133, 134]);
+      expect(result.applied.map((migration) => migration.seq)).toEqual([125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135]);
       expect(columnNames(db, 'chat_cache_rooms')).toEqual(['namespace', 'room_id', 'state', 'version']);
       expect(columnNames(db, 'sessions')).toContain('scheduled_model_baseline');
+      expect(columnNames(db, 'sessions')).toContain('notifications_muted');
       expect(columnNames(db, 'sessions')).toContain('last_activity_at');
       expect(db.prepare('SELECT last_activity_at FROM sessions').get()).toEqual({ last_activity_at: null });
       expect(tableExists(db, 'plugin_usage_subjects')).toBe(true);
@@ -133,6 +134,7 @@ describeMigrationReplay('migration replay', () => {
     try {
       db.exec('CREATE TABLE migration_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE migration_history (seq INTEGER PRIMARY KEY, file_name TEXT NOT NULL, content_hash TEXT NOT NULL, applied_at INTEGER NOT NULL)');
       db.exec(readFileSync(path.join(drizzleDir(), '0128_demonic_odin.sql'), 'utf-8'));
+      db.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY)");
       db.prepare('INSERT INTO plugin_usage_subjects (id,source_kind,ghost_id,display_name,recording_started_at) VALUES (?,?,?,?,?)')
         .run('subject', 'manual', 'plugin', 'Plugin', 100);
       db.prepare('INSERT INTO plugin_usage_events (call_id,subject_id,history_generation,occurred_at,tool_name) VALUES (?,?,?,?,?)')
@@ -202,6 +204,24 @@ describeMigrationReplay('migration replay', () => {
       ]);
       db.prepare("UPDATE sessions SET hidden_at = 9 WHERE id = 'a'").run();
       expect(db.prepare("SELECT count(*) AS n FROM sessions WHERE hidden_at IS NULL").get()).toEqual({ n: 1 });
+    } finally { cleanup(); }
+  });
+  it('defaults sessions.notifications_muted to unmuted on a populated database', () => {
+    const { db, cleanup } = createTempDb();
+    try {
+      db.exec("CREATE TABLE migration_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE migration_history (seq INTEGER PRIMARY KEY, file_name TEXT NOT NULL, content_hash TEXT NOT NULL, applied_at INTEGER NOT NULL)");
+      db.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL, updated_at INTEGER NOT NULL); INSERT INTO sessions VALUES ('a', 'Loud', 'active', 1), ('b', 'Archived', 'archived', 2);");
+      db.exec("CREATE TABLE plugin_usage_events (call_id TEXT PRIMARY KEY)");
+      const result = runMigrationReplay(db, { drizzleDir: drizzleDir(), currentVersion: 129 });
+      expect(result.applied.map((migration) => migration.seq)).toEqual([130, 131, 132, 133, 134, 135]);
+      expect(columnNames(db, 'sessions')).toContain('notifications_muted');
+      // 存量任务全部回填为「未静音」：升级不能替用户少发提醒。
+      expect(db.prepare('SELECT id, notifications_muted FROM sessions ORDER BY id').all()).toEqual([
+        { id: 'a', notifications_muted: 0 },
+        { id: 'b', notifications_muted: 0 },
+      ]);
+      db.prepare("UPDATE sessions SET notifications_muted = 1 WHERE id = 'a'").run();
+      expect(db.prepare('SELECT id FROM sessions WHERE notifications_muted = 0').all()).toEqual([{ id: 'b' }]);
     } finally { cleanup(); }
   });
   it('commits the complete fresh schema and task presets in one outer transaction', () => {
