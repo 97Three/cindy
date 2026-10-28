@@ -155,6 +155,8 @@ it('never treats a retired independent Claude account as a connected subscriptio
     { id: 'claude-work', auth: { method: 'oauth', native: 'claude' } },
   ] }) }));
   vi.doMock('../claude-native-auth.js', () => ({ hasClaudeNativeLogin: readBuiltin }));
+  // 不读开发机真实的 ~/.claude/settings.json(用户显式 ENABLE_TOOL_SEARCH 会改写断言)。
+  vi.doMock('../claude-user-tool-search.js', () => ({ readUserToolSearchOverride: () => undefined }));
   try {
     const { buildDesktopClaudeRuntimeConfig } = await import('../runtime-configs.js');
     const flags = buildDesktopClaudeRuntimeConfig(() => 'http://localhost').behaviorFlags;
@@ -169,6 +171,7 @@ it('never treats a retired independent Claude account as a connected subscriptio
   } finally {
     vi.doUnmock('../active-catalog.js');
     vi.doUnmock('../claude-native-auth.js');
+    vi.doUnmock('../claude-user-tool-search.js');
     vi.resetModules();
   }
 });
