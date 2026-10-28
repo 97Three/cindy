@@ -105,6 +105,43 @@ it.each([false, true])('keeps an offline or unsupported device selected without 
   expect(io.install).not.toHaveBeenCalled();
 });
 
+// A known rejection happens before the target stores a receipt. The old test
+// only covered a lost response after send; querying that nonexistent operation
+// must not leave installation and device selection permanently busy (unit).
+it.each(['INVALID_PARAMS', 'NOT_FOUND', 'PRECONDITION_FAILED', 'UNSUPPORTED_CAPABILITY', 'PERMISSION_DENIED'] as const)(
+  'allows a new explicit install after the target rejects begin with %s', async code => {
+    remoteHost();
+    const host = io.invoke.getMockImplementation()!;
+    let refused = false;
+    io.invoke.mockImplementation(async (...args) => {
+      if (args[2][0].actionId === 'management:begin' && !refused) {
+        refused = true;
+        throw createIpcError(code, 'Request rejected before creating an operation');
+      }
+      return host(...args);
+    });
+    const installed = vi.fn(); render(view(installed, control()));
+    const button = await screen.findByRole<HTMLButtonElement>('button', { name: 'sharing.localInstallButton' });
+    await waitFor(() => expect(button.disabled).toBe(false));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(button); });
+      expect(button.disabled).toBe(false);
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: 'settings.ghosts.remote.device' }).disabled).toBe(false);
+      expect(screen.getByText('settings.ghosts.remote.actionFailed')).toBeTruthy();
+      await act(async () => { await vi.advanceTimersByTimeAsync(650); });
+      expect(io.invoke.mock.calls.some(([, , [request]]) => request.actionId === 'management:operation')).toBe(false);
+      await act(async () => { fireEvent.click(button); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(650); });
+      expect(installed).toHaveBeenCalledOnce();
+      const begins = io.invoke.mock.calls.filter(([, , [request]]) => request.actionId === 'management:begin');
+      expect(begins).toHaveLength(2);
+      expect(begins[1][2][0].input.operationId).not.toBe(begins[0][2][0].input.operationId);
+      expect(io.install).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  },
+);
+
 it('reads the original receipt after an ambiguous begin without sending another install', async () => {
   remoteHost();
   const host = io.invoke.getMockImplementation()!;

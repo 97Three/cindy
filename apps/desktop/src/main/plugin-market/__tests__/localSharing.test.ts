@@ -39,6 +39,10 @@ const manifest = { schemaVersion: 3, id: 'local-example', name: 'Local Example',
 const ghost = { manifest, dir: path.join(os.tmpdir(), 'virtual-local-plugin'), namespace: null, namespaceState: 'confirmed', approval: { state: 'approved' as const, revision: '00000000-0000-4000-8000-000000000001' }, builtin: false, publishingSource: { kind: 'local' } };
 const binding = { version: manifest.version, approvalToken: ghostInstallApprovalToken(ghost.approval) };
 const prepareLocalPluginShare = async (caller: number, instanceId: string, id: string, options: ShareOptions): Promise<ShareContent> => {
+  // Follow the real dialog's check-before-confirm flow. Confirmation must not
+  // create a missing operation or choose a new content hash.
+  const checked = await prepareShare(caller, instanceId, id, options, binding, false);
+  if (!('confirmationRequired' in checked)) return checked;
   const result = await prepareShare(caller, instanceId, id, options, binding, true);
   if ('confirmationRequired' in result) throw new Error('Unexpected upload confirmation');
   return result;
@@ -223,15 +227,34 @@ describe('local plugin sharing coordinator', () => {
     expect(io.api.mock.calls.filter(([url]) => url === '/api/shares')).toHaveLength(2);
   });
 
-  it('rejects a reused snapshot for bytes other than the frozen local package', async () => {
+  it('rejects a reused snapshot for content other than the checked local package', async () => {
     const snapshotId = 'b'.repeat(32);
     io.api.mockResolvedValueOnce({ status: 'upload_required', contentSha256: digest })
-      .mockResolvedValueOnce({ snapshotId, status: 'ready', snapshot: { ...details(snapshotId), sha256: '0'.repeat(64) }, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      .mockResolvedValueOnce({ snapshotId, status: 'ready', snapshot: { ...details(snapshotId), contentSha256: '0'.repeat(64) }, expiresAt: new Date(Date.now() + 3600000).toISOString() });
     // The public coordinator sanitizes upload/binding failures as SHARE_READ_FAILED.
     await expect(prepareLocalPluginShare(1, 'local-example', operation, { includeAttribution: false }))
       .rejects.toMatchObject({ code: 'SHARE_READ_FAILED' });
     expect(io.put).not.toHaveBeenCalled();
     expect(io.api.mock.calls.filter(([url]) => url === '/api/shares')).toHaveLength(0);
+  });
+
+  // The server can retain a different ZIP encoding of identical verified content.
+  // Its selected ZIP must then stay fixed across material and attribution retries.
+  it('accepts the retained ZIP for checked content and rejects later ZIP drift', async () => {
+    const respond = io.api.getMockImplementation()!;
+    let retainedSha = '1'.repeat(64);
+    io.api.mockImplementation(async (url: string, options: { body: Record<string, unknown> }) => {
+      const result = await respond(url, options);
+      return result.snapshot ? { ...result, snapshot: { ...result.snapshot, sha256: retainedSha, sizeBytes: bytes.length + 3 } } : result;
+    });
+    await expect(prepareLocalPluginShare(1, 'local-example', operation, { includeAttribution: false }))
+      .resolves.toHaveProperty('title', manifest.name);
+    expect(io.put).toHaveBeenCalledOnce();
+    retainedSha = '2'.repeat(64);
+    await expect(prepareLocalPluginShare(1, 'local-example', operation, { includeAttribution: true }))
+      .rejects.toMatchObject({ code: 'SHARE_READ_FAILED' });
+    expect(io.put).toHaveBeenCalledOnce();
+    expect(io.snapshot).toHaveBeenCalledOnce();
   });
 
   it('reuses the exact uploaded snapshot when sharing material fails or attribution changes', async () => {
@@ -268,8 +291,10 @@ describe('local plugin sharing coordinator', () => {
   // during consent, lookup failure and owner change while reading the content.
   it('uses a verified content hit without compressing, inspecting or writing an archive', async () => {
     const snapshotId = 'c'.repeat(32);
+    const snapshot = { ...details(snapshotId), sha256: '1'.repeat(64) };
     io.api.mockResolvedValueOnce({ status: 'ready', contentSha256: digest,
-      snapshot: { ...details(snapshotId), sha256: '1'.repeat(64) } });
+      snapshot }).mockResolvedValueOnce({ schemaVersion: 1, kind: 'local-plugin', snapshot, includeAttribution: false,
+        shareId: snapshotId, url: `https://share.example.test/s/${snapshotId}`, imageSvg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>' });
     const result = await prepareShare(1, 'local-example', operation, { includeAttribution: false }, binding, false);
     expect(result).toHaveProperty('url', `https://share.example.test/s/${snapshotId}`);
     expect(io.snapshot).not.toHaveBeenCalled();
@@ -345,6 +370,32 @@ describe('local plugin sharing coordinator', () => {
     expect(io.put).not.toHaveBeenCalled();
     await expect(prepareShare(1, 'local-example', operation, { includeAttribution: false }, binding, false))
       .resolves.toEqual({ confirmationRequired: true });
+  });
+
+  // The real coordinator must reject stale consent before any new content read
+  // or upload. Existing changed-content tests retained the operation in memory;
+  // a missing record or the production 30-minute expiry loses that binding.
+  it.each(['missing', 'expired'])('requires reopening after a %s confirmation record', async state => {
+    vi.useFakeTimers();
+    try {
+      if (state === 'expired') {
+        await prepareShare(1, 'local-example', operation, { includeAttribution: false }, binding, false);
+        await vi.advanceTimersByTimeAsync(30 * 60_000);
+      }
+      const reads = io.content.mock.calls.length;
+      const requests = io.api.mock.calls.length;
+      const changed = Buffer.from('later local content');
+      io.content.mockResolvedValue({ status: 'prepared', ghost, contentSha256: '0'.repeat(64) });
+      io.snapshot.mockResolvedValue({ status: 'prepared', bytes: changed, ghost, shareContentSha256: '0'.repeat(64) });
+      io.inspect.mockResolvedValue({ packageSha256: createHash('sha256').update(changed).digest('hex'), canonicalManifest: manifest });
+      await expect(prepareShare(1, 'local-example', operation, { includeAttribution: false }, binding, true))
+        .rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+      expect(io.content).toHaveBeenCalledTimes(reads);
+      expect(io.api).toHaveBeenCalledTimes(requests);
+      expect(io.put).not.toHaveBeenCalled();
+      await expect(prepareShare(1, 'local-example', 'operation_00000002', { includeAttribution: false }, binding, false))
+        .resolves.toEqual({ confirmationRequired: true });
+    } finally { vi.useRealTimers(); }
   });
 
   it('stops before lookup when the owner changes during content reading', async () => {

@@ -190,7 +190,14 @@ function RemoteShareInstall({ snapshot, device, online, onBusy, onError, onInsta
       await acceptReceipt(parsePluginManagementReceipt(await invoke('begin', {
         operationId: id, kind: 'install-share', expectedSnapshot: snapshot,
       }), id));
-    } catch { if (writable()) setStatus('unknown'); }
+    } catch (cause) {
+      if (!current() || id !== operation.current) return;
+      const code = extractIpcError(cause)?.code;
+      if (['INVALID_PARAMS', 'NOT_FOUND', 'PRECONDITION_FAILED', 'UNSUPPORTED_CAPABILITY', 'PERMISSION_DENIED'].includes(code ?? '')) {
+        operation.current = null; setBusy(false); onBusy(false); setStatus(null);
+        onError('settings.ghosts.remote.actionFailed');
+      } else setStatus('unknown');
+    }
   };
   return <div className="space-y-3">
     <Button variant="cta" loading={busy} disabled={busy || !online || supported !== true} onClick={() => void install()}>

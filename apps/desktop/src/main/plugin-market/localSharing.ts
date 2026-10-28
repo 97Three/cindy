@@ -144,18 +144,15 @@ export async function releaseLocalPluginSharesForCaller(caller: number): Promise
   await Promise.all([...operations.values()].filter(value => value.caller === caller).map(value => releaseLocalPluginShare(caller, value.id)));
 }
 
-function bindSnapshot(snapshot: LocalPluginShareSnapshot, bundle: Bundle, id?: string) {
-  if ((id && snapshot.snapshotId !== id) || snapshot.sha256 !== bundle.sha256 || snapshot.sizeBytes !== bundle.sizeBytes ||
-      snapshot.ghostId !== bundle.ghostId || snapshot.version !== bundle.version)
-    throwIpcError('PRECONDITION_FAILED', 'Local share does not match the prepared package');
-  return snapshot;
-}
-
 function bindOperationSnapshot(snapshot: LocalPluginShareSnapshot, operation: Operation, id?: string) {
   if (snapshot.contentSha256 !== operation.content?.sha256 || snapshot.ghostId !== operation.content?.ghostId ||
       snapshot.version !== operation.expected.version || (id && snapshot.snapshotId !== id))
     throwIpcError('PRECONDITION_FAILED', 'Local share does not match the checked content');
-  return operation.bundle ? bindSnapshot(snapshot, operation.bundle, id) : snapshot;
+  // The server may retain another ZIP encoding of the same verified content.
+  // Once selected, that exact ZIP remains fixed for this operation's material.
+  if (operation.snapshot && (snapshot.sha256 !== operation.snapshot.sha256 || snapshot.sizeBytes !== operation.snapshot.sizeBytes))
+    throwIpcError('PRECONDITION_FAILED', 'Local share does not match the selected package');
+  return snapshot;
 }
 
 async function checkContent(operation: Operation): Promise<LocalPluginShareSnapshot | undefined> {
@@ -224,6 +221,8 @@ export async function prepareLocalPluginShare(caller: number, instanceId: string
   if (operation && (operation.access.owner !== access.owner || operation.instanceId !== instanceId))
     throwIpcError('OWNER_CHANGED', 'Local share belongs to another owner or instance');
   if (!operation) {
+    if (uploadConfirmed)
+      throwIpcError('PRECONDITION_FAILED', 'Local share confirmation expired; reopen sharing to check it again');
     if ([...operations.values()].filter(value => value.caller === caller).length >= 8)
       throwIpcError('PRECONDITION_FAILED', 'Too many local share operations');
     const timer = setTimeout(() => { void releaseLocalPluginShare(caller, id); }, TTL_MS);
