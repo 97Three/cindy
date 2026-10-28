@@ -17,9 +17,9 @@ void mountPage({
         ? { status: 'unavailable', error: 'auth' }
         : { status: 'ready', stale: ctx.data.stale === true, snapshot: {
           kind: 'kimi-coding-quota', fetchedAt: Date.now(), windows: ctx.data.empty ? [] : [
-            { id: 'limit_5h', usedPercent: 23, resetsAt: Date.now() + 2 * 3600_000 },
+            ...(!ctx.data.monthly ? [{ id: 'limit_5h', usedPercent: 23, resetsAt: Date.now() + 2 * 3600_000 }] : []),
             ...(ctx.data.legacy ? [{ id: 'limit_7d', usedPercent: 42, resetsAt: Date.now() + 4 * 86400_000 }] : []),
-            ...(ctx.data.monthly ? [{ id: 'limit_month_total', usedPercent: 65, resetsAt: null }, { id: 'limit_month_code', usedPercent: 80, resetsAt: null }] : []),
+            ...(ctx.data.monthly ? [{ id: 'limit_month_total', usedPercent: 65, resetsAt: Date.now() + 4 * 86400_000 }, { id: 'limit_month_code', usedPercent: 80, resetsAt: Date.now() + 4 * 86400_000 }] : []),
           ],
         } },
     },

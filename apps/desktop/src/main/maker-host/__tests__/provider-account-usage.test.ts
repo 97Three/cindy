@@ -644,6 +644,19 @@ describe('Kimi Code subscription quota', () => {
   afterEach(resetProviderAccountUsageForTest);
   const read = (forceRefresh = false) => readKimiCodingAccountUsage({ providerId: 'kimi-custom', forceRefresh });
 
+  // PR #7721: the dedicated remote/menu-bar reader must not return another
+  // integration when a mixed provider's earlier runtime points to DeepSeek.
+  it('pins implicit reads to Kimi and preserves explicit runtime selection', async () => {
+    current.routing['claude-code'] = mkProvider().routing['claude-code'];
+    const readKey = vi.fn((_id: string, agent: AgentKind) => agent === 'pi' ? key : 'synthetic-deepseek');
+    setAccountUsageKeyReader(readKey);
+    expect(await read()).toMatchObject({ status: 'ready', agent: 'pi', snapshot: { kind: 'kimi-coding-quota' } });
+    expect(fetcher).toHaveBeenCalledWith('https://api.kimi.com/coding/v1/usages', expect.objectContaining({ headers: { Authorization: 'Bearer synthetic-key' } }));
+    expect(readKey.mock.calls.every(([, agent]) => agent === 'pi')).toBe(true);
+    expect(await readKimiCodingAccountUsage({ providerId: 'kimi-custom', agent: 'claude-code' })).toEqual({ status: 'unsupported' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('reads the official key endpoint, deduplicates concurrent views and caches only returned windows', async () => {
     const [a, b] = await Promise.all([read(), read()]);
     expect(a).toEqual(b);

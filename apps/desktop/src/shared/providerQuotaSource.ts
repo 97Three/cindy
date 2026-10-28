@@ -13,7 +13,7 @@ export function providerWeeklyQuotaSource(
     !provider.connected ||
     provider.suspended ||
     provider.openAiAccount?.reconnectRequired ||
-    provider.auth.method !== 'oauth' ||
+    provider.auth?.method !== 'oauth' ||
     (provider.access && provider.access.kind !== 'subscription')
   )
     return null;

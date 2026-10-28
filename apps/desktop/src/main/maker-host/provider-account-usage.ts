@@ -626,6 +626,11 @@ export function resetProviderAccountUsageForTest(): void {
 
 /** Only the fixed Kimi integration is exposed to linked same-account computers. */
 export async function readKimiCodingAccountUsage(request: ProviderAccountUsageRequest): Promise<ProviderAccountUsageResult> {
-  if (!isKimiCodingProvider(providerReader(request.providerId), request.agent)) return { status: 'unsupported' };
-  return readProviderAccountUsage(request);
+  const provider = providerReader(request.providerId);
+  const agents = request.agent ? [request.agent] : PROVIDER_ACCOUNT_USAGE_AGENTS;
+  const agent = agents.find(candidate => isKimiCodingProvider(provider, candidate));
+  if (!agent) return { status: 'unsupported' };
+  // A mixed provider can also expose DeepSeek/Zhipu routes. Pin the generic reader
+  // to the Kimi route so it cannot select another integration or its credentials.
+  return readProviderAccountUsage({ ...request, agent });
 }

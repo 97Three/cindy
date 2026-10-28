@@ -1421,7 +1421,9 @@ export function TodaySpendChip({
     ? (providerAccountSnapshot?.kind === 'kimi-coding-quota' && providerAccountUsage.result?.status === 'ready' && !providerAccountUsage.result.stale
       ? providerAccountSnapshot.windows.slice(0, 2).map(w => ({
         key: w.id,
-        label: formatCompactTimeUntilReset(w.resetsAt === null ? null : w.resetsAt / 1000, windowLabelNowMs, t, kimiUsageWindowMinutes(w.id)) ?? t(`providerAccountUsage.kimi.${w.id}`),
+        label: w.id === 'limit_month_total' || w.id === 'limit_month_code'
+          ? t(`providerAccountUsage.kimi.${w.id}`)
+          : formatCompactTimeUntilReset(w.resetsAt === null ? null : w.resetsAt / 1000, windowLabelNowMs, t, kimiUsageWindowMinutes(w.id)) ?? t(`providerAccountUsage.kimi.${w.id}`),
         remainingPercent: 100 - w.usedPercent,
         resetsAtMs: w.resetsAt,
         resetPending: isResetPending(w.resetsAt, windowLabelNowMs),
