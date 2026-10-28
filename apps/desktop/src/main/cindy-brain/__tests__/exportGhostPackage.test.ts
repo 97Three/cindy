@@ -137,10 +137,10 @@ function makeDeps(overrides: Partial<Parameters<typeof exportGhostPackage>[1]> =
 }
 
 describe('snapshotInstalledGhostPackage', () => {
-  // OSS reuse requires equal bytes, not only equal manifests. Existing export
-  // tests never compare two snapshots across time/entry order. Unit tier: real
-  // tiny directory, ZIP and signatures; Date is fake and no timers are awaited.
-  it.each([false, true])('reproduces unchanged package bytes across time and enumeration order (signed=%s)', async signed => {
+  // Sharing reuses content identity across ZIP metadata/entry-order changes.
+  // Ordinary exports and contributions keep their existing ZIP timestamps.
+  // Unit tier: real tiny directory, ZIP and signatures; only Date is fake.
+  it.each([false, true])('keeps content identity stable without normalizing export ZIP metadata (signed=%s)', async signed => {
     await fs.promises.mkdir(path.join(ghostDir, 'templates', 'empty'), { recursive: true });
     await fs.promises.mkdir(path.join(ghostDir, 'another-empty'));
     if (signed) await writeStatement(['ghost.json', 'locales/en.json', 'main.js']);
@@ -164,10 +164,12 @@ describe('snapshotInstalledGhostPackage', () => {
       vi.setSystemTime(new Date('2026-10-29T12:34:56.000Z'));
       const second = await snapshotInstalledGhostPackage('hello', makeDeps());
       if (first.status !== 'prepared' || second.status !== 'prepared') throw new Error('Expected package snapshots');
-      expect(second.bytes).toEqual(first.bytes);
+      expect(second.bytes).not.toEqual(first.bytes);
       expect(content).toMatchObject({ status: 'prepared', contentSha256: first.shareContentSha256 });
       expect(second.shareContentSha256).toBe(first.shareContentSha256);
+      expect(second.contentSha256).toBe(first.contentSha256);
       const zip = await JSZip.loadAsync(second.bytes);
+      expect(zip.files['main.js']?.date.getUTCFullYear()).toBe(2026);
       expect(zip.files['templates/empty/']?.dir).toBe(true);
       expect(await verifyGhostZipSignatures(zip, '', makeGhost().manifest)).toMatchObject({ ok: true });
       if (signed) expect(await zip.file('cindy-signatures.json')!.async('string'))

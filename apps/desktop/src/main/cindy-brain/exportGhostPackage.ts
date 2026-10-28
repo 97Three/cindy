@@ -589,17 +589,12 @@ export async function snapshotInstalledGhostPackage(
   const { ghost, snapshot, maxEntries, maxArchive } = content;
 
   const zip = new JSZip();
-  // Equal installed content must produce equal bytes for local-share OSS reuse.
-  // Use code-unit order so archive identity does not depend on host locale.
-  for (const rel of snapshot.emptyDirs.slice().sort()) {
+  for (const rel of snapshot.emptyDirs) {
     zip.folder(rel);
   }
-  for (const file of snapshot.entries.slice().sort((a, b) => a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0)) {
+  for (const file of snapshot.entries) {
     zip.file(file.rel, file.data, { unixPermissions: file.unixPermissions });
   }
-  // Include automatically created parent folders; timestamps are not package content.
-  const archiveDate = new Date('1980-01-01T00:00:00.000Z');
-  zip.forEach((_rel, entry) => { entry.date = archiveDate; });
   if (Object.keys(zip.files).length > maxEntries) {
     return { status: 'error' as const, code: 'too_large' as const };
   }
