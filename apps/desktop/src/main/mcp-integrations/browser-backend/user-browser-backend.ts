@@ -1073,9 +1073,7 @@ export class UserBrowserBackend implements BrowserBackend {
         return actionOk(req.action, {
           ...base,
           note:
-            job.broughtToFront === true
-              ? '已把 Cindy 窗口带到用户面前:请告诉用户在这个页面上完成需要亲手做的事(例如登录),完成后再继续。'
-              : '只在标签页所在窗口内切到前台,不抢窗口焦点。',
+            '已在 Chrome 的 Cindy 窗口里切到这一页(不抢焦点,浏览器图标会闪动提醒):需要用户亲手操作(例如登录)时,请告诉用户切到那个窗口完成,完成后再继续。',
         });
       case 'screenshot':
       case 'pdf':

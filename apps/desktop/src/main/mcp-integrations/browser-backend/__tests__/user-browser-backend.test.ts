@@ -723,14 +723,14 @@ describe('UserBrowserBackend · 读取与动作', () => {
     expect(fake.jobs.filter(([action]) => action === 'unmark')).toHaveLength(2);
   });
 
-  it('focus 把 Cindy 窗口带到用户面前时,提示模型请用户去完成', async () => {
+  it('focus 只在 Cindy 窗口内切页并提醒,提示模型请用户切过去完成', async () => {
     const fake = fakeControl({ version: '0.4.43' });
-    fake.responses.set('focus', () => ({ ok: true, broughtToFront: true }));
+    fake.responses.set('focus', () => ({ ok: true, handoff: true }));
     const b = backend(fake.control);
     await call(b, { action: 'tabs' });
     expect(await call(b, { action: 'focus', targetId: 't1' })).toMatchObject({
       ok: true,
-      data: { note: expect.stringContaining('带到用户面前') },
+      data: { note: expect.stringContaining('不抢焦点') },
     });
   });
 });
