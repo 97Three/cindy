@@ -3592,6 +3592,7 @@ initGhostSetupCoordinator({
     }),
   executeInlineAction: executeGhostSetupInlineAction,
   timeoutMessage: () => t('newChat.pluginSetup.timeout'),
+  cancelledMessage: () => t('newChat.pluginSetup.cancelled'),
   logger: log,
 });
 

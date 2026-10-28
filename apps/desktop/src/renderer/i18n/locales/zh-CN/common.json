@@ -11261,6 +11261,7 @@
         "cancelled": "已取消"
       },
       "timeout": "等待超时",
+      "cancelled": "用户取消了插件设置，本次调用未执行。",
       "oauthCancelled": "授权已取消",
       "oauthFailed": "授权失败：{{detail}}",
       "pluginUninstalledDuringOauth": "目标插件已卸载或不可用",

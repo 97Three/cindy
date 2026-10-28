@@ -11296,6 +11296,7 @@
         "cancelled": "Cancelled"
       },
       "timeout": "Setup timed out",
+      "cancelled": "Plugin setup was cancelled; this call was not run.",
       "oauthCancelled": "Authorization was cancelled",
       "oauthFailed": "Authorization failed: {{detail}}",
       "pluginUninstalledDuringOauth": "The target plugin was uninstalled or is unavailable",

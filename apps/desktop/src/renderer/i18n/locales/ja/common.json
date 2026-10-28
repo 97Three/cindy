@@ -11261,6 +11261,7 @@
         "cancelled": "キャンセル済み"
       },
       "timeout": "設定がタイムアウトしました",
+      "cancelled": "プラグインの設定がキャンセルされたため、この呼び出しは実行されませんでした。",
       "oauthCancelled": "認証がキャンセルされました",
       "oauthFailed": "認証に失敗しました：{{detail}}",
       "pluginUninstalledDuringOauth": "対象プラグインがアンインストールされたか利用不可です",
