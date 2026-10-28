@@ -700,22 +700,6 @@ export class UserBrowserBackend implements BrowserBackend {
     if (!picked.ok) return picked.result;
     const label = typeof req.label === 'string' ? req.label : undefined;
     if (this.parity(gate.control, picked.clientId)) {
-      // 已知的同站点标签页(用户或之前的任务开着的,常常已在正确账号下):提示模型优先复用。
-      let host = '';
-      try {
-        host = new URL(url).hostname;
-      } catch {
-        // validated by the bridge below
-      }
-      const sameSite = existing
-        ? []
-        : [...this.targets.values()].filter((r) => {
-            try {
-              return r.clientId === picked.clientId && new URL(r.url).hostname === host;
-            } catch {
-              return false;
-            }
-          });
       // navigate 带 targetId:在原标签页跳转;否则新页开在 Cindy 自己的后台窗口,不碰用户的窗口。
       const job =
         existing && existing.clientId === picked.clientId
@@ -733,21 +717,7 @@ export class UserBrowserBackend implements BrowserBackend {
         },
         label,
       );
-      const others = sameSite.filter((r) => r.targetId !== record.targetId).slice(0, 5);
-      return actionOk(req.action, {
-        backend: this.kind,
-        ...this.describe(record),
-        ...(others.length
-          ? {
-              sameSiteTabs: others.map((r) => ({
-                targetId: r.label ?? r.alias,
-                url: r.url,
-                ...(r.title ? { title: r.title } : {}),
-              })),
-              note: '已有同一网站的页面开着(往往已经在正确的账号和位置):优先复用它们,不要从入口重新找;新开的这页不需要时可以 close。',
-            }
-          : {}),
-      });
+      return actionOk(req.action, { backend: this.kind, ...this.describe(record) });
     }
     const navigated = await gate.control.bridge.act('navigate', { url, browser: picked.clientId });
     if (!navigated.ok) return this.failureResult(req.action, navigated);

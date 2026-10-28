@@ -709,16 +709,12 @@ describe('UserBrowserBackend · 读取与动作', () => {
     ]);
   });
 
-  it('打开页面时提示已开着的同站点页面;任务停下时清掉它操作过的页面上的标记', async () => {
+  it('任务停下时清掉它操作过的页面上的标记', async () => {
     const fake = fakeControl({ version: '0.4.43' });
     fake.responses.set('open', (payload) => ({ ok: true, tabId: 42, url: payload.url, title: 'New' }));
     const b = backend(fake.control);
     await call(b, { action: 'tabs', __mcpSessionId: 's1' });
-    const opened = await call(b, { action: 'open', url: 'https://example.test/other', __mcpSessionId: 's1' });
-    expect(opened).toMatchObject({
-      ok: true,
-      data: { sameSiteTabs: [{ targetId: 't1', url: 'https://example.test/a' }], note: expect.stringContaining('复用') },
-    });
+    expect(await call(b, { action: 'open', url: 'https://example.test/other', __mcpSessionId: 's1' })).toMatchObject({ ok: true });
     await call(b, { action: 'act', targetId: 't1', request: { kind: 'click', ref: 'r' }, __mcpSessionId: 's1' });
     await b.clearSessionMarks('s1');
     const unmarked = fake.jobs.filter(([action]) => action === 'unmark').map(([, payload]) => payload.tabId as number).sort((x, y) => x - y);

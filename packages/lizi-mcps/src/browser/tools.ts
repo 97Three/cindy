@@ -239,6 +239,36 @@ async function detectLoginWall(runtime: BrowserControlRuntime, profile: unknown,
   }
 }
 
+/** Other open tabs on the same site as a freshly opened page (any backend's tabs shape). */
+async function listSameSiteTabs(
+  runtime: BrowserControlRuntime,
+  profile: string | undefined,
+  opened: BrowserControlResult,
+): Promise<Array<{ targetId: string; url: string; title?: string }>> {
+  const data = opened.data as { url?: unknown; targetId?: unknown } | undefined;
+  if (typeof data?.url !== 'string') return [];
+  const host = new URL(data.url).hostname;
+  const listed = await Promise.race([
+    runtime.call({ action: 'tabs', ...(profile ? { profile } : {}) } as BrowserControlRequest),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+  ]);
+  const tabs = (listed?.ok ? (listed.data as { tabs?: unknown } | undefined)?.tabs : undefined) ?? [];
+  const out: Array<{ targetId: string; url: string; title?: string }> = [];
+  for (const tab of Array.isArray(tabs) ? (tabs as Array<Record<string, unknown>>) : []) {
+    const url = typeof tab.url === 'string' ? tab.url : '';
+    const id = typeof tab.suggestedTargetId === 'string' ? tab.suggestedTargetId : typeof tab.targetId === 'string' ? tab.targetId : '';
+    if (!url || !id || tab.targetId === data.targetId) continue;
+    try {
+      if (new URL(url).hostname !== host) continue;
+    } catch {
+      continue;
+    }
+    out.push({ targetId: id, url, ...(typeof tab.title === 'string' ? { title: tab.title.slice(0, 120) } : {}) });
+    if (out.length >= 5) break;
+  }
+  return out;
+}
+
 function readTargetId(result: { data?: unknown }): string | undefined {
   const id = (result.data as { targetId?: unknown } | undefined)?.targetId;
   return typeof id === 'string' && id ? id : undefined;
@@ -1176,6 +1206,22 @@ export function registerBrowserTools(registry: BrowserToolRegistry, deps: Browse
         }
         if (args.action === 'screenshot') {
           return await screenshotToolResult(result, deps);
+        }
+        // Every backend: an explicit maxChars bounds the whole snapshot (some runtime snapshots exceed it).
+        if (args.action === 'snapshot' && result.ok && typeof args.maxChars === 'number') {
+          result = limitAfterSnapshot(result, args.maxChars);
+        }
+        // Every backend: a new page on a site that already has open tabs is usually a detour — those tabs are
+        // often already signed in to the right account and place. Point them out (best effort, never fails open).
+        if (args.action === 'open' && result.ok) {
+          const sameSiteTabs = await listSameSiteTabs(runtime, args.profile, result).catch(() => []);
+          if (sameSiteTabs.length) {
+            result = {
+              ...result,
+              sameSiteTabs,
+              sameSiteHint: '这个网站已有打开的页面(往往已在正确的账号和位置):优先在它们上面继续,不要从入口重新找;新开的页面不需要时可以 close。',
+            } as typeof result;
+          }
         }
         if (args.action === 'snapshot' && result.ok) {
           const loginWall = await detectLoginWall(runtime, args.profile, readTargetId(result) ?? args.targetId);

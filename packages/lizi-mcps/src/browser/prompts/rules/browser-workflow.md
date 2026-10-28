@@ -76,6 +76,10 @@
 
 大结果返回结构摘要和 `fullResult`，不是完整事实；用 `readResult(resultId,offset,maxChars)` 补读（`nextOffset:null` 表示结束），不猜省略内容或 ref。原文只留当前工具会话最近四份、每份最多 200 万字符；更大结果沿用明确截断，需缩小读取范围。`advisory` 是代码发现的可疑输出，不自动认定业务错误。
 
+#### 先复用已打开的页面(三种浏览器通用)
+
+开新页之前先 `tabs`:目标网站已有打开的页面时(用户开的或之前任务留下的),它往往已在正确的账号和位置,直接在它上面 `navigate` / 操作,不要另开新页从入口重新找账号。`open` 结果带 `sameSiteTabs` 就是在提醒这一点;新开的页面用不上时 `close`。需要用户亲手完成登录、验证码时,对那一页 `focus` 再告诉用户,不要自己尝试。
+
 #### 三种浏览器目标(先认环境,再谈登录)
 
 宿主用三种后端之一承接本工具。专用浏览器与侧边栏**顶层 action 集合一致**(都支持 snapshot / act 各 kind / requests / upload / dialog 等),差别在少数参数级能力与"页面呈现在哪里";用户浏览器(user-browser)与专用浏览器能力基本一致,`status.data.capabilities` 列出不支持项。判别依据是 `action: "status"` 返回结果里的 **`data.backend`**(工具结果的外层是 `{ ok, action, status, data }`,`status` 是数字状态码——**别去读 `status.backend`**,那是 undefined):
@@ -85,8 +89,7 @@
 - **`data.backend === "external"` = 独立外置浏览器**:一个专属持久自动化浏览器窗口(profile 显示为 "Cindy")。`act:saveResource` 与语义 `query` 在此模式不可用,元素定位改用 snapshot 的 `ref` 或 `selector`。旧宿主可能省略该字段,不要把缺少模式信息当成已使用内置浏览器。
   - 此模式的 `status.data.proxy` 报告当前启动路由:`direct`、`proxied`(带脱敏 `server`)或无法确认继承进程路由时的 `unknown`。需要指定代理时必须重新调用 `start` 并检查结果,不要从已有 tab 猜测出口。代理模式下只有 `proxyAllowedHostnames` 列出的公网域名可导航,内网地址不在其中。
 - **`data.backend === "user-browser"` = 用户正在使用的浏览器(经 Cindy 扩展)**:页面活在用户自己的 Chrome / Edge 里,带着用户本人的登录态;Cindy 不启停它。`open` 的新页面开在 Cindy 自己的后台窗口里,不抢焦点;用户自己的标签页只在任务需要时操作,不要关闭、重排或切换它们。
-    - **先 `tabs`,能复用就复用**:用户或之前任务已经开着目标网站的页面时,它往往已在正确的账号和位置,直接在它上面 `navigate` / 操作,不要另开新页从入口重新找账号;`open` 结果里的 `sameSiteTabs` 就是在提醒这一点。
-    - **需要用户亲手操作时**(登录、验证码、确认弹窗):对那一页调用 `focus`。页面在 Cindy 窗口里时会把窗口带到用户面前(结果带 `broughtToFront`),然后告诉用户去完成;用户的窗口不会被抢焦点。截图、`evaluate`、`requests` / `responseBody`、上传、原生弹窗、`focus` / `close`、坐标点击、拖拽、`resize`、`pdf` 与配方都可用,但有这些差别:
+    - 需要用户亲手操作(登录、验证码)时对那一页 `focus`:页面在 Cindy 窗口里时会把窗口带到用户面前(结果带 `broughtToFront`);用户自己的窗口不会被抢焦点。截图、`evaluate`、`requests` / `responseBody`、上传、原生弹窗、`focus` / `close`、坐标点击、拖拽、`resize`、`pdf` 与配方都可用,但有这些差别:
     - 有些动作借用 Chrome 的调试功能,需要用户允许一次:`pdf`、整页 / 元素截图、截取用户窗口里的后台标签页、读 Cookie 或抓网络请求的配方。`pdf` 与配方第一次需要时报 `DEBUGGER_NOT_ALLOWED`,扩展同时在用户的 Chrome 里打开说明页;请用户在那里点「开启」,确认后再重试,用户拒绝就不要重试。使用期间 Chrome 顶部会短暂显示调试提示。未允许时截图退回可视区域并在 `note` 里说明。`resize` 只作用于 Cindy 自己的窗口。
     - 点击、坐标与拖拽是合成事件(非可信输入),个别要求可信输入的站点会忽略;页面 CSP 禁止脚本时 `evaluate` 报 `EVAL_BLOCKED_BY_PAGE`,改用 snapshot / extract。
     - 控制台从第一次 `console` 调用开始捕获;`requests` 来自页面资源计时(无方法与请求头);`responseBody` 以页面身份重新请求该地址;`dialog` 预先应答页面下一个 alert / confirm / prompt,已经弹出的原生弹窗需要用户自己处理。

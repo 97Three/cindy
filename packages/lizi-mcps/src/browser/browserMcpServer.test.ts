@@ -1742,6 +1742,29 @@ describe('browser · backend capability gating (user browser via extension)', ()
     } finally { await h.cleanup(); }
   });
 
+  it('points out open tabs on the same site after open, and bounds snapshots by maxChars, for any backend', async () => {
+    const h = await makeHarness({}, (request) => {
+      if (request.action === 'open') return { targetId: 'new', url: 'https://play.example.test/console' };
+      if (request.action === 'tabs') return { tabs: [
+        { targetId: 'new', url: 'https://play.example.test/console' },
+        { targetId: 'old', suggestedTargetId: 'play', url: 'https://play.example.test/console/u/1/app', title: 'Release overview' },
+        { targetId: 'other', url: 'https://elsewhere.test/' },
+      ] };
+      if (request.action === 'snapshot') return { targetId: 'old', snapshot: Array.from({ length: 400 }, (_, i) => `line ${i} [ref=e${i}]`).join('\n'), refs: { e1: {}, e399: {} } };
+      return undefined;
+    });
+    try {
+      const opened = await h.client.callTool({ name: 'call_tool', arguments: { name: 'browser', args: { action: 'open', url: 'https://play.example.test/console' } } });
+      const body = JSON.parse((opened.content as Array<{ text: string }>)[0].text);
+      expect(body.sameSiteTabs).toEqual([{ targetId: 'play', url: 'https://play.example.test/console/u/1/app', title: 'Release overview' }]);
+      const snap = await h.client.callTool({ name: 'call_tool', arguments: { name: 'browser', args: { action: 'snapshot', targetId: 'play', maxChars: 500 } } });
+      const data = JSON.parse((snap.content as Array<{ text: string }>)[0].text).data;
+      expect(data.snapshot.length).toBeLessThanOrEqual(500);
+      expect(data.truncated).toBe(true);
+      expect(Object.keys(data.refs)).toEqual(['e1']);
+    } finally { await h.cleanup(); }
+  });
+
   it('ignores a browser name passed as target instead of failing schema validation', async () => {
     const h = await makeHarness({ backendCapabilities: () => ({ ...caps(), pointer: true }) });
     try {
