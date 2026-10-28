@@ -1115,6 +1115,12 @@ export interface GhostBrowserExtensionNeeds {
   nativeHost?: { name: string; binary: string };
   /** 扩展实现页面控制契约;Browser Use 据此把它列为用户浏览器执行端。 */
   pageControl?: true;
+  /**
+   * 宿主承接页面控制后被取代的插件自有 Agent 工具与手册条目。宿主确实在经本插件
+   * 提供「我的浏览器」时,对 Agent 隐藏它们,只留一套操作用户浏览器的工具;
+   * 不认识此字段的旧宿主照常暴露。须同时声明 pageControl。
+   */
+  pageControlReplaces?: { tools: string[]; manual?: string[] };
 }
 
 /** skill 槽:单插件最多捆绑的 Agent Skill 数(范围越小越好,同 preview 精神)。 */
@@ -5029,12 +5035,38 @@ function validateGhostManifestInput(value: unknown, preserveHistoricalTasks: boo
     if (needsRaw.pageControl !== undefined && needsRaw.pageControl !== true) {
       return { ok: false, reason: 'browserExtension.pageControl 只能省略或为字面量 true' };
     }
+    let pageControlReplaces: { tools: string[]; manual?: string[] } | undefined;
+    if (needsRaw.pageControlReplaces !== undefined) {
+      const raw = needsRaw.pageControlReplaces as Record<string, unknown> | null;
+      const names = (value: unknown) =>
+        Array.isArray(value) &&
+        value.length <= 32 &&
+        value.every((name) => typeof name === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(name));
+      if (
+        needsRaw.pageControl !== true ||
+        !raw ||
+        typeof raw !== 'object' ||
+        Array.isArray(raw) ||
+        !names(raw.tools) ||
+        (raw.manual !== undefined && !names(raw.manual))
+      ) {
+        return {
+          ok: false,
+          reason: 'browserExtension.pageControlReplaces 须与 pageControl 同时声明,形如 {tools:[名称…], manual?:[名称…]}',
+        };
+      }
+      pageControlReplaces = {
+        tools: [...(raw.tools as string[])],
+        ...(raw.manual !== undefined ? { manual: [...(raw.manual as string[])] } : {}),
+      };
+    }
     browserExtension = {
-      ...unknownDeclarationFields(needsRaw, ['protocol', 'extensionIds', 'nativeHost', 'pageControl']),
+      ...unknownDeclarationFields(needsRaw, ['protocol', 'extensionIds', 'nativeHost', 'pageControl', 'pageControlReplaces']),
       protocol: GHOST_BROWSER_EXTENSION_PROTOCOL,
       extensionIds: needsRaw.extensionIds as string[],
       ...(nativeHost !== undefined ? { nativeHost } : {}),
       ...(needsRaw.pageControl === true ? { pageControl: true as const } : {}),
+      ...(pageControlReplaces !== undefined ? { pageControlReplaces } : {}),
     };
   }
 

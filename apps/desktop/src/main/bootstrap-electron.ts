@@ -758,6 +758,7 @@ import {
   setIsDetachedForBackend,
   setUserBrowserPageControlProvider,
 } from './mcp-integrations/browser.js';
+import { setPageControlGhostProvider } from './mcp-integrations/ghost.js';
 import { RsbWindowController } from './right-sidebar-window/controller.js';
 import { resolveRsbHostContextFromSession } from './right-sidebar-window/resolveHostContext.js';
 import { createRightSidebarWindow } from './right-sidebar-window/window.js';
@@ -2504,6 +2505,8 @@ setIsDetachedForBackend(() => readRsbWindowSettings().detached);
 // 「我的浏览器」后端经 browserExtension 插件槽拿页面控制桥接;槽归 cindy-brain,
 // 这里倒置依赖,browser.ts 不反向 import 插件基座。
 setUserBrowserPageControlProvider(() => getGhostBrowserExtensionSlot().getPageControl());
+// The plugin providing "My browser" hides its own page tools from agents: one way to drive the user's browser.
+setPageControlGhostProvider(() => getGhostBrowserExtensionSlot().getPageControl()?.ghostId ?? null);
 setBrowserSessionUploadRootResolver(async (sessionId) => {
   try {
     const meta = await getMakerCore().getSessionMeta(sessionId);

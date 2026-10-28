@@ -5013,9 +5013,23 @@ describe('ghost · browserExtension 槽(2026-10-27 浏览器扩展经宿主桥�
       { ...good, nativeHost: { name: 'com.example.browser', binary: '../outside' } },
       { ...good, pageControl: false },
       { ...good, pageControl: 'yes' },
+      { ...good, pageControlReplaces: { tools: 'browser_read' } },
+      { ...good, pageControlReplaces: { tools: ['bad name'] } },
+      { ...good, pageControlReplaces: { tools: ['browser_read'], manual: 'browser' } },
+      { protocol: good.protocol, extensionIds: [chromeId], pageControlReplaces: { tools: ['browser_read'] } },
     ]) {
       expect(withNeeds(bad).ok, JSON.stringify(bad)).toBe(false);
     }
+  });
+
+  it('pageControlReplaces 列出被「我的浏览器」取代的插件工具与手册,须与 pageControl 同时声明', () => {
+    const replaces = { tools: ['browser_read', 'browser_act'], manual: ['browser'] };
+    const ok = withNeeds({ ...good, pageControlReplaces: replaces });
+    expect(ok.ok, JSON.stringify(ok)).toBe(true);
+    if (!ok.ok) return;
+    expect(ok.manifest.browserExtension?.pageControlReplaces).toEqual(replaces);
+    expect(validateGhostManifest(ok.manifest)).toEqual(ok);
+    expect(withNeeds({ ...good, pageControlReplaces: { tools: [] } }).ok).toBe(true);
   });
 
   it('装入前展示为一项权限;页面控制用单独说明;id 子集与去掉页面控制是收权,新增 id 是扩权', () => {
