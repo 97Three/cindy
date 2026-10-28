@@ -579,7 +579,7 @@ export function registerBrowserTools(registry: BrowserToolRegistry, deps: Browse
     category: 'browser',
     description:
       '浏览器自动化统一入口。通过 action 选择 status/start/tabs/navigate/snapshot/screenshot/act 等操作; ' +
-      'status 返回实际浏览器模式; setBackend 切换并保存全局浏览器模式(内置 rsb-webview / 外置 external)。' +
+      'status 返回实际浏览器模式; setBackend 切换并保存全局浏览器模式(内置 rsb-webview / 外置 external / 用户自己的浏览器 user-browser,即「我的浏览器」)。' +
       '优先使用 snapshot 返回的 ref 执行 click/type/press,不要猜测 CSS selector。' +
       'act/open/navigate/upload 可带 afterSnapshot:{}，一次返回动作结果和精简快照；可用 selector 限定区域。' +
       '注意:直接调用本工具时,wait/evaluate/saveResource 不是顶层 action(会报 INVALID_ARGS),它们只能作为 act 的 request.kind 子操作(配方 steps 里仅 wait/evaluate 是合法 DSL action,saveResource 在配方中同样不可用)。',
