@@ -188,7 +188,8 @@ function RemoteShareInstall({ snapshot, device, online, onBusy, onError, onInsta
     setBusy(true); onBusy(true); onError(null); setStatus(null);
     try {
       await acceptReceipt(parsePluginManagementReceipt(await invoke('begin', {
-        operationId: id, kind: 'install-share', expectedSnapshot: snapshot,
+        // Icons are presentation only; keep the action within device-link's size bound.
+        operationId: id, kind: 'install-share', expectedSnapshot: { ...snapshot, icon: null },
       }), id));
     } catch (cause) {
       if (!current() || id !== operation.current) return;

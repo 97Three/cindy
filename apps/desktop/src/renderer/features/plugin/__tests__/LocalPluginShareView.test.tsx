@@ -6,6 +6,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { parseRemoteActionInvokeRequest } from '@cindy/device-link';
+import { parseLocalPluginShareSnapshot } from '@cindy/plugin-protocol';
 import { createIpcError } from '../../../../shared/ipc-errors';
 import { LocalPluginShareView } from '../LocalPluginShareView';
 import type { CatalogDeviceControl } from '../PluginDevicePicker';
@@ -96,6 +98,41 @@ it('installs on the chosen device with its consent receipt and never invokes loc
     .toMatchObject({ kind: 'install-share', expectedSnapshot: snapshot });
   expect(io.confirm).toHaveBeenCalledOnce();
 });
+
+// The fixed snapshot may carry a valid 512 KiB icon, while device-link actions
+// allow only 64 KiB. Exercise the real request parser at the fake IPC boundary;
+// the earlier remote test only used icon=null and could not expose the failure.
+it('installs a share with a large icon within the existing remote request limit', async () => {
+  const shown = parseLocalPluginShareSnapshot({ ...snapshot,
+    name: '本地插件'.repeat(64), description: '说明'.repeat(5000), author: '作'.repeat(256),
+    icon: 'data:image/png;base64,' + 'A'.repeat(Math.ceil(512 * 1024 / 3) * 4),
+  });
+  io.read.mockResolvedValue(shown);
+  remoteHost();
+  const host = io.invoke.getMockImplementation()!;
+  io.invoke.mockImplementation(async (...args) => {
+    const request = args[2][0];
+    if (request.actionId === 'management:begin' && !parseRemoteActionInvokeRequest(request))
+      throw createIpcError('INVALID_PARAMS', 'Action input exceeds the existing limit');
+    return host(...args);
+  });
+  const installed = vi.fn(); render(view(installed, control()));
+  const button = await screen.findByRole<HTMLButtonElement>('button', { name: 'sharing.localInstallButton' });
+  await waitFor(() => expect(button.disabled).toBe(false));
+  vi.useFakeTimers();
+  try {
+    await act(async () => { fireEvent.click(button); });
+    const begin = io.invoke.mock.calls.find(([, , [r]]) => r.actionId === 'management:begin')![2][0];
+    expect(parseRemoteActionInvokeRequest({ ...begin, input: { ...begin.input, expectedSnapshot: shown } })).toBeNull();
+    expect(parseRemoteActionInvokeRequest(begin)).not.toBeNull();
+    expect(begin.input.expectedSnapshot).toEqual({ ...shown, icon: null });
+    expect(shown.icon).not.toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(650); });
+    expect(installed).toHaveBeenCalledOnce();
+    expect(io.install).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});
+
 it.each([false, true])('keeps an offline or unsupported device selected without installing locally (%s)', async online => {
   remoteHost(false); render(view(vi.fn(), control(online)));
   await screen.findByText('v1.0.0');
