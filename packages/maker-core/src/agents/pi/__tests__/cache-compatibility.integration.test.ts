@@ -31,16 +31,25 @@ describe.skipIf(!existsSync(binary))('Pi cache recovery over real native RPC/HTT
     { api, mode: 'explicit', rejection: { message: '未知请求字段：prompt_cache_retention', type: 'invalid_request_error' } },
     { api, mode: 'always-fails', rejection: { message: 'Validation: Unsupported parameter(s): prompt_cache_key', type: 'invalid_request_error' } },
     { api, mode: 'supported', rejection: {} },
+    // #7561: actual followUp start has no second agent_start. Exercise the
+    // public send queue and outgoing HTTP, beyond the unit lifecycle fixture.
+    { api, mode: 'queued', rejection: { error: { message: 'opaque refusal', type: 'invalid_request_error' } } },
   ]))('preserves bounded recovery and native caching: $api / $mode', async ({ api, mode, rejection }) => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'cindy-cache-integration-'));
     const received: Array<Record<string, unknown>> = [];
     let rejectCache = mode !== 'supported';
     let persistentFailure = mode === 'always-fails';
+    let firstArrived!: () => void;
+    const firstRequest = new Promise<void>(resolve => { firstArrived = resolve; });
+    let releaseFirst!: () => void;
+    const firstReleased = new Promise<void>(resolve => { releaseFirst = resolve; });
     const gateway = createServer(async (req, res) => {
       expect(req.headers.authorization).toBe('Bearer fixture-key');
       let body = ''; for await (const chunk of req) body += chunk;
       const data = JSON.parse(body); received.push(data);
-      if (persistentFailure || rejectCache && ('prompt_cache_key' in data || 'prompt_cache_retention' in data)) {
+      const held = mode === 'queued' && received.length === 1;
+      if (held) { firstArrived(); await firstReleased; }
+      if (!held && (persistentFailure || rejectCache && ('prompt_cache_key' in data || 'prompt_cache_retention' in data))) {
         res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify(rejection)); return;
       }
       res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -67,24 +76,32 @@ describe.skipIf(!existsSync(binary))('Pi cache recovery over real native RPC/HTT
       const run = async () => {
         const events: AgentEvent[] = [];
         const finish = (async () => { for await (const event of handle!.events()) { events.push(event); if (event.type === 'done') break; } })();
-        await handle!.send({ type: 'user', content: 'Reply OK' }); await finish; return events;
+        await handle!.send({ type: 'user', content: 'Reply OK' });
+        if (mode === 'queued' && received.length <= 1) {
+          await firstRequest;
+          await handle!.send({ type: 'user', content: 'Reply OK to the queued message' });
+          releaseFirst();
+        }
+        await finish; return events;
       };
       const agent = new PiAgent(deps);
       handle = await agent.startSession({ ...opts, sessionId: 'first' });
       const first = await run();
-      expect(received).toHaveLength(mode === 'supported' ? 1 : 2);
+      expect(received).toHaveLength(mode === 'supported' ? 1 : mode === 'queued' ? 3 : 2);
       expect(received[0]).toHaveProperty('prompt_cache_key');
       expect(received[0]).toHaveProperty('prompt_cache_retention', '24h');
       if (mode !== 'supported') {
-        const { prompt_cache_key: _key, prompt_cache_retention: _retention, ...without } = received[0];
-        expect(received[1]).toEqual(without);
+        const original = mode === 'queued' ? 1 : 0;
+        expect(received[original]).toHaveProperty('prompt_cache_retention', '24h');
+        const { prompt_cache_key: _key, prompt_cache_retention: _retention, ...without } = received[original];
+        expect(received[original + 1]).toEqual(without);
       }
       expect(first.filter(e => e.type === 'done')).toHaveLength(1);
       const sessions = path.join(root, 'agent', 'sessions');
       const transcripts = readdirSync(sessions, { recursive: true }).map(name => path.join(sessions, name.toString())).filter(name => name.endsWith('.jsonl'));
       const entries = transcripts.flatMap(name => readFileSync(name, 'utf8').trim().split('\n').map(line => JSON.parse(line)));
-      expect(entries.filter(entry => entry.type === 'message' && entry.message?.role === 'user')).toHaveLength(1);
-      expect(entries.filter(entry => entry.type === 'message' && entry.message?.role === 'assistant')).toHaveLength(1);
+      expect(entries.filter(entry => entry.type === 'message' && entry.message?.role === 'user')).toHaveLength(mode === 'queued' ? 2 : 1);
+      expect(entries.filter(entry => entry.type === 'message' && entry.message?.role === 'assistant')).toHaveLength(mode === 'queued' ? 2 : 1);
       if (mode === 'always-fails') {
         expect(first.filter(e => e.type === 'error')).toHaveLength(1);
         expect(first.find(e => e.type === 'error')?.data).toMatchObject({ piCacheRecoveryHandled: true });
@@ -102,6 +119,7 @@ describe.skipIf(!existsSync(binary))('Pi cache recovery over real native RPC/HTT
       expect(records).toHaveLength(1);
       expect(records[0].expiresAt - records[0].learnedAt).toBe((mode === 'explicit' ? 7 : 1) * 86400000);
       expect(readFileSync(storeFile, 'utf8')).not.toContain(endpoint);
+      if (mode === 'queued') return;
       await handle.close(); handle = await agent.startSession({ ...opts, sessionId: 'learned' });
       await run(); expect(received).toHaveLength(3); expect(received[2]).not.toHaveProperty('prompt_cache_key');
       // The same running Pi must restore real fields when its rule expires.
@@ -112,6 +130,7 @@ describe.skipIf(!existsSync(binary))('Pi cache recovery over real native RPC/HTT
       handle = await agent.startSession({ ...opts, sessionId: 'other-route' });
       await run(); expect(received[4]).toHaveProperty('prompt_cache_retention', '24h');
     } finally {
+      releaseFirst();
       await handle?.close(); gateway.closeAllConnections();
       await new Promise<void>(resolve => gateway.close(() => resolve()));
       rmSync(root, { recursive: true, force: true });

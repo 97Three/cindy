@@ -5749,9 +5749,10 @@ export class PiAgent extends BaseAgent {
         transport,
         logger: this.deps.logger,
         onEvent: (event: PiRpcEvent) => {
-          if (event.type === 'agent_start') {
-            // Includes native Execute/Refine and queued follow-ups. Freeze the
-            // active record for this input, even if it expires during the call.
+          if (event.type === 'agent_start'
+            || event.type === 'message_start' && (event.message as { role?: string } | undefined)?.role === 'user') {
+            // Native Execute/Refine starts an agent; queued follow-ups only
+            // start a user message. Freeze until the next input, not tool round.
             inputCacheCompatibility = readCacheCompatibility();
           }
           if (event.type === 'agent_start' && !ctx.pendingHostTurnStartToken) {

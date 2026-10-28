@@ -1387,7 +1387,7 @@ describe("Pi provider-aware model routing", () => {
     await handle.close();
   });
 
-  it.each([false, true])('freezes per-input cache learning across expiry and relearning, native continuation: %s', async (native) => {
+  it.each(['send', 'native', 'queued'])('freezes per-input cache learning across expiry and relearning: %s', async (mode) => {
     let active = true;
     const deps = byomDeps(async () => ({ providers: [{
       id: 'native-a', name: 'Native A', baseUrl: 'https://cache.example/v1', api: 'openai-completions',
@@ -1401,11 +1401,13 @@ describe("Pi provider-aware model routing", () => {
     try {
       for (const expected of [true, false, true]) {
         active = expected;
-        if (!native) await handle.send({ type: 'user', content: 'try cache' });
-        captured.onEvent!({ type: 'agent_start' });
+        if (mode === 'send') await handle.send({ type: 'user', content: 'try cache' });
+        if (mode !== 'queued') captured.onEvent!({ type: 'agent_start' });
+        captured.onEvent!({ type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'try cache' }] } });
         // Expiry or another session's learning during the request must not
         // change whether this input actually started with the override.
         active = !expected;
+        captured.onEvent!({ type: 'message_start', message: { role: 'toolResult', content: [] } });
         captured.onEvent!({ type: 'auto_retry_end', success: false,
           finalError: '400: unsupported parameter: prompt_cache_retention' });
         let event;

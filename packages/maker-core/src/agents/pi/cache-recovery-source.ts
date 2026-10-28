@@ -154,15 +154,23 @@ function installCindyCacheRecovery(pi) {
     }
     return cacheRejected || /(?:unsupported|not supported|unknown|未知|不支持).{0,80}prompt_cache_(?:key|retention)|prompt_cache_(?:key|retention).{0,80}(?:unsupported|not supported|unknown|未知|不支持)/i.test(body) ? 'explicit' : 'opaque';
   }
-  pi.on('input', (event, ctx) => {
-    if (ctx.isIdle() && !event.streamingBehavior && event.source === 'rpc') {
-      refreshRules();
-      const records = load()?.routes ?? Object.create(null);
-      for (const [key, record] of Object.entries(memory)) {
-        if ((records[key]?.learnedAt ?? 0) < record.learnedAt) records[key] = record;
-      }
-      turn = { sequence: ++sequence, safe: true, valid: true, attempted: false, records };
-    } else if (turn) { turn.safe = false; turn.valid = false; }
+  pi.on('input', () => {
+    // Queuing/steering invalidates the old trial immediately. It cannot arm a
+    // budget for the new input until Pi actually starts that user message.
+    if (turn) { turn.safe = false; turn.valid = false; }
+  });
+  pi.on('message_start', (event) => {
+    if (event.message?.role !== 'user') return;
+    // Queued follow-ups do not emit agent_start. Tool continuations and native
+    // retries do not start a user message, so they retain this input's budget.
+    refreshRules();
+    const records = load()?.routes ?? Object.create(null);
+    for (const [key, record] of Object.entries(memory)) {
+      if ((records[key]?.learnedAt ?? 0) < record.learnedAt) records[key] = record;
+    }
+    const startedAt = Date.now();
+    const learned = new Set(Object.keys(records).filter(key => active(records[key], startedAt)));
+    turn = { sequence: ++sequence, safe: true, valid: true, attempted: false, learned };
   });
   for (const name of ['tool_call', 'tool_execution_start', 'model_select', 'session_switch', 'session_shutdown']) {
     pi.on(name, () => { if (turn) { turn.safe = false; turn.valid = false; } });
@@ -174,9 +182,9 @@ function installCindyCacheRecovery(pi) {
     if (typeof ctx.modelRegistry?.getProvider === 'function'
       && typeof ctx.modelRegistry?.getRegisteredNativeProvider === 'function') return;
     const key = route(ctx.model);
-    // Native continuation need not emit a new RPC input. Read current learning
-    // here as well, rather than reuse the previous RPC input's snapshot.
-    if (!key || !active(load()?.routes[key], Date.now())) return;
+    // Use the same input snapshot as the modern wrapper, including tool rounds
+    // across expiry. Before any input exists, preserve native preparation calls.
+    if (!key || !(turn ? turn.learned.has(key) : active(load()?.routes[key], Date.now()))) return;
     const payload = event.payload;
     if (payload && typeof payload === 'object' && !Array.isArray(payload)) return withoutCache(payload);
   });
@@ -188,7 +196,7 @@ function installCindyCacheRecovery(pi) {
       if (!key || !turn) return invoke(options);
       const owner = turn;
       const startedAt = Date.now();
-      const learned = active(owner.records[key], startedAt);
+      const learned = owner.learned.has(key);
       let originalFingerprint;
       let originalIdentity;
       let hasCache = false;
@@ -239,7 +247,7 @@ function installCindyCacheRecovery(pi) {
             if (retried.type === 'done' && turn === owner && owner.valid && !options?.signal?.aborted
               && ['stop', 'toolUse'].includes(retried.message?.stopReason)) {
               const record = remember(key, evidence, startedAt);
-              if (record) owner.records[key] = record;
+              if (record) owner.learned.add(key);
             }
             if (retried.type !== 'error') owner.safe = false;
             yield retried.type === 'error'

@@ -37,7 +37,8 @@ function fixture() {
     // The in-memory filesystem uses POSIX keys on every host, including Windows.
     ...fs, path: path.posix, createHash, randomUUID, Buffer, Date: { now: () => now }, homedir: () => '/home/fixture',
   });
-  const fresh = () => handlers.get('input')!({ source: 'rpc' }, { isIdle: () => true });
+  const startUser = () => handlers.get('message_start')?.({ message: { role: 'user', content: [{ type: 'text', text: 'OK' }] } });
+  const fresh = () => { handlers.get('input')!({ source: 'rpc' }, { isIdle: () => true }); startUser(); };
   const interrupt = () => handlers.get('input')!({ source: 'rpc', streamingBehavior: 'steer' }, { isIdle: () => false });
   const sent: any[] = [];
   let invocation = 0;
@@ -59,7 +60,7 @@ function fixture() {
     for await (const event of api.wrap(selectedModel, options, invoke)) output.push(event);
     return output;
   };
-  return { api, handlers, fresh, interrupt, request, files, sent, clock: (value: number) => { now = value; },
+  return { api, handlers, fresh, startUser, interrupt, request, files, sent, clock: (value: number) => { now = value; },
     failWrites: () => { writeFails = true; }, record: () => JSON.parse(files.get('/compat.json') ?? '{"routes":{}}').routes[key] };
 }
 
@@ -73,8 +74,9 @@ describe('Pi native cache recovery', () => {
     const record = { supportsLongCacheRetention: false, learnedAt: 1000000000,
       expiresAt: 1086400000, evidence: 'opaque' };
     // Another session can learn after the last RPC input. Native continuation
-    // has no new RPC input event, but must still consume the durable record.
+    // has no new RPC input event, but its real user message starts a new input.
     h.files.set('/compat.json', JSON.stringify({ routes: { [key]: record } }));
+    h.startUser();
     const ctx = { model: selected, modelRegistry: { getProvider: vi.fn() } };
     const hook = h.handlers.get('before_provider_request')!;
     const payload = { ...body, service_tier: 'priority' };
@@ -91,6 +93,10 @@ describe('Pi native cache recovery', () => {
     expect(recovered({ payload }, { ...ctx, model: { ...selected, baseUrl: selected.baseUrl + '/other' } })).toBeUndefined();
     expect(recovered({ payload }, { ...ctx, modelRegistry: { ...ctx.modelRegistry, getRegisteredNativeProvider: vi.fn() } })).toBeUndefined();
     restarted.clock(1086400001);
+    // Expiry cannot change a tool continuation in the already-started input.
+    restarted.handlers.get('tool_execution_start')!();
+    expect(recovered({ payload }, ctx)).not.toHaveProperty('prompt_cache_key');
+    restarted.startUser();
     expect(recovered({ payload }, ctx)).toBeUndefined();
     expect(restarted.record()).toEqual(record);
   });
@@ -133,6 +139,46 @@ describe('Pi native cache recovery', () => {
     expect(h.sent[2]).not.toHaveProperty('prompt_cache_key');
     h.fresh(); await h.request([success]);
     expect(h.sent[3]).toHaveProperty('prompt_cache_key');
+  });
+
+  // PR #7561 P1: input queuing is not execution; Pi emits user message_start
+  // (without agent_start) when followUp actually begins. Unit production wrapper.
+  it('arms one budget only when a queued user input actually starts', async () => {
+    const h = fixture(); h.fresh();
+    await h.request([failure()], {}, () => {
+      h.handlers.get('input')!({ source: 'rpc', streamingBehavior: 'followUp' }, { isIdle: () => false });
+    });
+    expect(h.sent).toHaveLength(1); expect(h.record()).toBeUndefined();
+    h.startUser();
+    await h.request([failure()]);
+    expect(h.sent).toHaveLength(3);
+    expect(h.sent[1]).toHaveProperty('prompt_cache_key');
+    expect(h.sent[2]).not.toHaveProperty('prompt_cache_key');
+    for (const role of ['assistant', 'toolResult', 'system']) h.handlers.get('message_start')?.({ message: { role } });
+    h.handlers.get('turn_start')?.({});
+    await h.request([failure()]);
+    expect(h.sent).toHaveLength(4);
+    expect(h.sent[3]).not.toHaveProperty('prompt_cache_key');
+    expect(h.record()).toBeUndefined();
+    h.startUser(); await h.request([failure(), failure(), failure(), failure(), failure(), success]);
+    expect(h.sent).toHaveLength(6);
+    expect(h.record()).toMatchObject({ evidence: 'opaque' });
+  });
+
+  // PR #7561 P1: freeze learned state across tool calls, including the case
+  // where the TTL passes after input start but before the first provider call.
+  it('freezes learned cache removal until the next real user input', async () => {
+    const h = fixture();
+    h.files.set('/compat.json', JSON.stringify({ routes: { [key]: { supportsLongCacheRetention: false,
+      learnedAt: 1000000000, expiresAt: 1086400000, evidence: 'opaque' } } }));
+    h.fresh(); h.clock(1086400001);
+    await h.request([success]);
+    h.handlers.get('tool_execution_start')!();
+    await h.request([success]);
+    expect(h.sent).toHaveLength(2);
+    for (const payload of h.sent) expect(payload).toEqual({ model: 'wire', messages: body.messages });
+    h.startUser(); await h.request([success]);
+    expect(h.sent[2]).toEqual(body);
   });
 
   it('treats an unfamiliar gateway error type as opaque without a vendor allowlist', async () => {
