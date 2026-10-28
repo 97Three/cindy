@@ -463,20 +463,20 @@ describe('UserBrowserBackend · 读取与动作', () => {
     ).toEqual([]);
   });
 
-  it('能力表按扩展版本给出:0.4.42 起完整,旧版只有基础能力', () => {
-    expect(extensionSupportsParity('0.4.42')).toBe(true);
+  it('能力表按扩展版本给出:0.4.43 起完整,旧版只有基础能力', () => {
+    expect(extensionSupportsParity('0.4.43')).toBe(true);
     expect(extensionSupportsParity('0.5.0')).toBe(true);
-    expect(extensionSupportsParity('0.4.41')).toBe(false);
+    expect(extensionSupportsParity('0.4.42')).toBe(false);
     expect(extensionSupportsParity(null)).toBe(false);
     expect(userBrowserCapabilities(fakeControl().control)).toBe(USER_BROWSER_CAPABILITIES);
-    expect(userBrowserCapabilities(fakeControl({ version: '0.4.42' }).control)).toBe(
+    expect(userBrowserCapabilities(fakeControl({ version: '0.4.43' }).control)).toBe(
       USER_BROWSER_PARITY_CAPABILITIES,
     );
     expect(userBrowserCapabilities(null)).toBe(USER_BROWSER_CAPABILITIES);
   });
 
   it('新版扩展:open 开到后台窗口并按 tabId 寻址,不再逐次列标签页', async () => {
-    const fake = fakeControl({ version: '0.4.42' });
+    const fake = fakeControl({ version: '0.4.43' });
     fake.responses.set('open', (payload) => ({
       ok: true,
       tabId: 42,
@@ -505,13 +505,14 @@ describe('UserBrowserBackend · 读取与动作', () => {
   });
 
   it('新版扩展:截图、控制台、网络、弹窗、切换与关闭映射成标签页作业', async () => {
-    const fake = fakeControl({ version: '0.4.42' });
+    const fake = fakeControl({ version: '0.4.43' });
     fake.responses.set('screenshot', () => ({
       ok: true,
       tabId: 7,
       mimeType: 'image/png',
       data: 'iVBORw0KGgo=',
       bytes: 8,
+      note: 'Only the visible area was captured.',
     }));
     fake.responses.set('console', () => ({ ok: true, messages: [{ level: 'log', text: 'x' }] }));
     fake.responses.set('requests', () => ({ ok: true, requests: [{ url: 'https://example.test/api' }] }));
@@ -521,9 +522,9 @@ describe('UserBrowserBackend · 读取与动作', () => {
     const base = { url: 'https://example.test/a', browser: 'client-aaaaaaaa', tabId: 7 };
     expect(await call(b, { action: 'screenshot', targetId: 't1', fullPage: true })).toMatchObject({
       ok: true,
-      data: { mimeType: 'image/png', data: 'iVBORw0KGgo=', note: expect.stringContaining('可视区域') },
+      data: { mimeType: 'image/png', data: 'iVBORw0KGgo=', note: expect.stringContaining('visible area') },
     });
-    expect(fake.jobs.at(-1)).toEqual(['screenshot', { ...base, type: 'png' }]);
+    expect(fake.jobs.at(-1)).toEqual(['screenshot', { ...base, type: 'png', fullPage: true }]);
     expect(await call(b, { action: 'console', targetId: 't1' })).toMatchObject({
       data: { messages: [{ level: 'log', text: 'x' }] },
     });
@@ -549,7 +550,7 @@ describe('UserBrowserBackend · 读取与动作', () => {
   });
 
   it('新版扩展:脚本、坐标、拖拽、调整大小、双击与等待都交给扩展', async () => {
-    const fake = fakeControl({ version: '0.4.42' });
+    const fake = fakeControl({ version: '0.4.43' });
     let polls = 0;
     fake.responses.set('evaluate', (payload) =>
       payload.fn === '() => ready'
@@ -600,7 +601,7 @@ describe('UserBrowserBackend · 读取与动作', () => {
     try {
       const file = pathMod.join(root, 'a.png');
       await fsp.writeFile(file, Buffer.from([1, 2, 3]));
-      const fake = fakeControl({ version: '0.4.42' });
+      const fake = fakeControl({ version: '0.4.43' });
       fake.responses.set('upload', () => ({ ok: true, files: [{ name: 'a.png', size: 3 }] }));
       const b = backend(fake.control, async () => [root]);
       await call(b, { action: 'tabs' });
@@ -629,5 +630,73 @@ describe('UserBrowserBackend · 读取与动作', () => {
     } finally {
       await fsp.rm(root, { recursive: true, force: true });
     }
+  });
+
+  it('按需调试:PDF 交给扩展;未授权时告诉模型请用户在已打开的说明页里确认', async () => {
+    const fake = fakeControl({ version: '0.4.43' });
+    let granted = false;
+    fake.responses.set('pdf', () =>
+      granted
+        ? { ok: true, mimeType: 'application/pdf', data: 'JVBERg==', bytes: 4 }
+        : { ok: false, error: 'DEBUGGER_NOT_ALLOWED', message: 'needs debugger', grantPageOpened: true },
+    );
+    const b = backend(fake.control);
+    await call(b, { action: 'tabs' });
+    expect(await call(b, { action: 'pdf', targetId: 't1' })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining('已在用户的 Chrome 里打开说明页'),
+    });
+    expect(fake.jobs.at(-1)).toEqual([
+      'pdf',
+      { url: 'https://example.test/a', browser: 'client-aaaaaaaa', tabId: 7 },
+    ]);
+    granted = true;
+    expect(await call(b, { action: 'pdf', targetId: 't1' })).toMatchObject({
+      ok: true,
+      data: { mimeType: 'application/pdf', data: 'JVBERg==' },
+    });
+  });
+
+  it('配方协议会话:按需接上调试,事件随结果回传,结束即断开', async () => {
+    const fake = fakeControl({ version: '0.4.43' });
+    fake.responses.set('cdp', (payload) => {
+      if (payload.op === 'command' && payload.method === 'Network.getCookies')
+        return { ok: true, result: { cookies: [{ name: 'sid' }] }, events: [] };
+      if (payload.op === 'command')
+        return {
+          ok: true,
+          result: {},
+          events: [
+            ['Network.requestWillBeSent', { requestId: 'r1', request: { url: 'https://example.test/api', method: 'GET' } }],
+            ['Network.responseReceived', { requestId: 'r1', response: { status: 200, headers: {} } }],
+          ],
+        };
+      if (payload.op === 'events')
+        return { ok: true, events: [['Network.loadingFailed', { requestId: 'r1' }]] };
+      return { ok: true };
+    });
+    const b = backend(fake.control);
+    await call(b, { action: 'tabs' });
+    const scope = { targetId: 't1', __mcpSessionId: 's1' };
+    const begun = await call(b, { action: 'recipeCommand', ...scope, recipeCommand: { method: 'Cindy.begin' } });
+    const sessionId = (begun.data as { sessionId: string }).sessionId;
+    expect(fake.jobs.at(-1)).toEqual([
+      'cdp',
+      { url: 'https://example.test/a', browser: 'client-aaaaaaaa', tabId: 7, op: 'begin' },
+    ]);
+    await call(b, { action: 'recipeCommand', ...scope, recipeCommand: { method: 'Cindy.captureStart', sessionId, params: { pattern: '/api' } } });
+    expect(
+      await call(b, { action: 'recipeCommand', ...scope, recipeCommand: { method: 'Network.getCookies', sessionId, params: {} } }),
+    ).toMatchObject({ ok: true, data: { cookies: [{ name: 'sid' }] } });
+    const read = await call(b, { action: 'recipeCommand', ...scope, recipeCommand: { method: 'Cindy.captureRead', sessionId } });
+    expect(read).toMatchObject({
+      ok: true,
+      data: { entries: [{ url: 'https://example.test/api', responseStatus: 200, captureComplete: true }] },
+    });
+    await call(b, { action: 'recipeCommand', ...scope, recipeCommand: { method: 'Cindy.end', sessionId } });
+    expect(fake.jobs.at(-1)).toEqual([
+      'cdp',
+      { url: 'https://example.test/a', browser: 'client-aaaaaaaa', tabId: 7, op: 'end' },
+    ]);
   });
 });

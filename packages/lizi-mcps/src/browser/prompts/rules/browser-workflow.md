@@ -84,11 +84,11 @@
   - 仅此模式支持:`act:saveResource`(托管下载)、以及 `query` 语义元素查询(role / name / text / label / placeholder / testId / css)。在外置模式下用这两个会被 schema 或运行时门控直接拒掉,别当通用能力使。
 - **`data.backend === "external"` = 独立外置浏览器**:一个专属持久自动化浏览器窗口(profile 显示为 "Cindy")。`act:saveResource` 与语义 `query` 在此模式不可用,元素定位改用 snapshot 的 `ref` 或 `selector`。旧宿主可能省略该字段,不要把缺少模式信息当成已使用内置浏览器。
   - 此模式的 `status.data.proxy` 报告当前启动路由:`direct`、`proxied`(带脱敏 `server`)或无法确认继承进程路由时的 `unknown`。需要指定代理时必须重新调用 `start` 并检查结果,不要从已有 tab 猜测出口。代理模式下只有 `proxyAllowedHostnames` 列出的公网域名可导航,内网地址不在其中。
-- **`data.backend === "user-browser"` = 用户正在使用的浏览器(经 Cindy 扩展)**:页面活在用户自己的 Chrome / Edge 里,带着用户本人的登录态;Cindy 不启停它。`open` 的新页面开在 Cindy 自己的后台窗口里,不抢焦点;用户自己的标签页只在任务需要时操作,不要关闭、重排或切换它们。截图、`evaluate`、`requests` / `responseBody`、上传、原生弹窗、`focus` / `close`、坐标点击、拖拽与 `resize` 都可用,但有这些差别:
-    - 截图只截可视区域(无 `fullPage` / 元素截图);用户窗口里的后台标签页无法截图,先 `open` 到 Cindy 窗口再截;`resize` 只作用于 Cindy 自己的窗口。
+- **`data.backend === "user-browser"` = 用户正在使用的浏览器(经 Cindy 扩展)**:页面活在用户自己的 Chrome / Edge 里,带着用户本人的登录态;Cindy 不启停它。`open` 的新页面开在 Cindy 自己的后台窗口里,不抢焦点;用户自己的标签页只在任务需要时操作,不要关闭、重排或切换它们。截图、`evaluate`、`requests` / `responseBody`、上传、原生弹窗、`focus` / `close`、坐标点击、拖拽、`resize`、`pdf` 与配方都可用,但有这些差别:
+    - 有些动作借用 Chrome 的调试功能,需要用户允许一次:`pdf`、整页 / 元素截图、截取用户窗口里的后台标签页、读 Cookie 或抓网络请求的配方。`pdf` 与配方第一次需要时报 `DEBUGGER_NOT_ALLOWED`,扩展同时在用户的 Chrome 里打开说明页;请用户在那里点「开启」,确认后再重试,用户拒绝就不要重试。使用期间 Chrome 顶部会短暂显示调试提示。未允许时截图退回可视区域并在 `note` 里说明。`resize` 只作用于 Cindy 自己的窗口。
     - 点击、坐标与拖拽是合成事件(非可信输入),个别要求可信输入的站点会忽略;页面 CSP 禁止脚本时 `evaluate` 报 `EVAL_BLOCKED_BY_PAGE`,改用 snapshot / extract。
     - 控制台从第一次 `console` 调用开始捕获;`requests` 来自页面资源计时(无方法与请求头);`responseBody` 以页面身份重新请求该地址;`dialog` 预先应答页面下一个 alert / confirm / prompt,已经弹出的原生弹窗需要用户自己处理。
-    - 不支持:导出 PDF、需要适配器(原始协议命令)的配方、`saveResource` 与语义 `query`。`status.data.updateNote` 出现时说明扩展是旧版,只有基础读取与交互,请用户更新 Cindy 扩展。遇到不支持的操作先告诉用户,由用户决定是否改用专用浏览器,**不要自行 setBackend 切换**。
+    - 不支持:`saveResource` 与语义 `query`。`status.data.updateNote` 出现时说明扩展是旧版,只有基础读取与交互,请用户更新 Cindy 扩展。遇到不支持的操作先告诉用户,由用户决定是否改用专用浏览器,**不要自行 setBackend 切换**。
   - 站点策略归 Cindy Chrome 插件:读取默认开放,交互按站点授权(作业报 `INTERACT_NOT_ALLOWED` 时用该插件的 `browser_policy` 工具请求授权,需用户确认)。`profile` 是浏览器连接 id(一个浏览器用户配置一条),多条连接时必须指定,不要猜账号。
   - 页面跳转后旧 ref 失效(报 `STALE_REF`),先 `snapshot` 再继续;旧版扩展按 URL 寻址,跳转会报 `PAGE_CHANGED`,`navigate` 也可能落在另一个标签页并返回新的 targetId。`status.data.connected === false` 时请用户在自己的浏览器里安装并启用 Cindy 扩展,不要反复重试。
 

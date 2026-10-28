@@ -24,6 +24,8 @@ export const BROWSER_EXTENSION_READ_ACTIONS = [
   'requests',
   'responseBody',
   'wait',
+  'pdf',
+  'debuggerAccess',
 ] as const;
 export const BROWSER_EXTENSION_INTERACT_ACTIONS = [
   'click',
@@ -40,7 +42,10 @@ export const BROWSER_EXTENSION_INTERACT_ACTIONS = [
   'drag',
   'dialog',
   'resize',
+  'cdp',
 ] as const;
+/** Actions that address no page: listing tabs, and checking or granting the on-demand debugger. */
+const UNADDRESSED_ACTIONS: readonly unknown[] = ['tabs', 'debuggerAccess'];
 export const BROWSER_EXTENSION_EXTRACT_ATTRIBUTES = [
   'href',
   'src',
@@ -210,7 +215,7 @@ export function checkBrowserExtensionPolicy(
   if (!isBrowserExtensionReadAction(action) && !isBrowserExtensionInteractAction(action)) {
     return deny('INVALID_ACTION', 'Choose a supported browser action.');
   }
-  if (action === 'tabs') return { ok: true };
+  if (UNADDRESSED_ACTIONS.includes(action)) return { ok: true };
   let u: URL;
   try {
     u = new URL(String(url));
@@ -268,7 +273,7 @@ export interface BrowserExtensionJobPayload {
 
 const TAB_ADDRESSED_ACTIONS = [
   'focus', 'close', 'screenshot', 'console', 'requests', 'responseBody',
-  'evaluate', 'clickCoords', 'drag', 'dialog', 'resize', 'wait',
+  'evaluate', 'clickCoords', 'drag', 'dialog', 'resize', 'wait', 'pdf', 'cdp',
 ];
 
 /** 与扩展侧同判据:对齐专用浏览器后新增动作的参数。 */
@@ -322,6 +327,17 @@ function validateParityPayload(action: string, payload: BrowserExtensionJobPaylo
     if (files.reduce((n, f) => n + (f.data as string).length, 0) > 40_000_000)
       throw new Error('Upload files must total at most about 30 MB.');
   }
+  if (action === 'cdp') {
+    if (!['begin', 'end', 'events', 'command'].includes(payload.op as string))
+      throw new Error('cdp op must be begin, end, events or command.');
+    if (payload.op === 'command' && (typeof payload.method !== 'string' || !/^[A-Za-z]+\.[A-Za-z]+$/.test(payload.method)))
+      throw new Error('cdp command needs a protocol method such as Network.getCookies.');
+    if (
+      payload.params != null &&
+      (typeof payload.params !== 'object' || Array.isArray(payload.params) || JSON.stringify(payload.params).length > 1_000_000)
+    )
+      throw new Error('cdp params must be an object of at most 1 MB.');
+  }
   for (const key of ['timeMs', 'timeoutMs'] as const)
     if (payload[key] != null && !finite(payload[key], 0, 120000)) throw new Error(key + ' must be 0–120000.');
   if (payload.loadState != null && !['load', 'domcontentloaded', 'networkidle'].includes(payload.loadState as string))
@@ -341,7 +357,7 @@ export function validateBrowserExtensionJob(
   const payload = (
     input && typeof input === 'object' && !Array.isArray(input) ? input : {}
   ) as BrowserExtensionJobPayload;
-  if (action !== 'tabs' && (typeof payload.url !== 'string' || payload.url.length > 8192)) {
+  if (!UNADDRESSED_ACTIONS.includes(action) && (typeof payload.url !== 'string' || payload.url.length > 8192)) {
     throw new Error('Provide a full URL of at most 8192 characters.');
   }
   if (

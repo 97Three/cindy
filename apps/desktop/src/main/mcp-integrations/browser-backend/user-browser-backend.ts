@@ -7,8 +7,10 @@
  * - 用哪个浏览器是用户的选择,所以能力与专用浏览器对齐(扩展 0.4.42 起):截图、
  *   上传、页面脚本、控制台、网络、弹窗、坐标与拖拽都可用。底线是不打扰用户自己的
  *   使用:新页面开在 Cindy 自己的后台窗口,不抢焦点,不切换用户正在看的标签页;
- * - 只有 debugger 才能做的(导出 PDF、可信输入、原始协议命令)仍明确拒绝并指向专用
- *   浏览器,绝不悄悄换目标;旧版扩展只有基础读取与交互,同样明确拒绝并提示更新;
+ * - 只有 debugger 才能做的(导出 PDF、整页/元素/后台标签截图、配方适配器的原始协议命令)
+ *   按需使用:用户在扩展里授权一次后,扩展只在这些动作期间临时接上调试(Chrome 会显示
+ *   提示条),做完即断开;未授权时明确告诉模型请用户开启,绝不悄悄换目标。旧版扩展只有
+ *   基础读取与交互,同样明确拒绝并提示更新;
  * - 每个作业都经桥接按插件保存的站点策略守门,结果脱敏后才回到这里。
  *
  * 寻址:这里维护 targetId ↔ {连接, tabId, url} 的映射。新版扩展按 tabId 寻址;
@@ -17,6 +19,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { RecipeBrowserSessions } from '@cindy/browser-control-runtime';
 import { buildDomReadSource } from '@cindy/browser-control-runtime/dom-read';
 import type {
   BrowserExtensionBridge,
@@ -73,8 +76,8 @@ export const USER_BROWSER_CAPABILITIES = Object.freeze({
   rawProtocol: false,
 });
 
-/** 扩展从这个版本起与专用浏览器对齐;只有需要 debugger 的 pdf 与可信输入仍不提供。 */
-export const USER_BROWSER_PARITY_VERSION = '0.4.42';
+/** 扩展从这个版本起与专用浏览器对齐;pdf 与原始协议按需借用 debugger(需用户授权一次)。 */
+export const USER_BROWSER_PARITY_VERSION = '0.4.43';
 export const USER_BROWSER_PARITY_CAPABILITIES = Object.freeze({
   evaluate: true,
   screenshot: true,
@@ -82,12 +85,12 @@ export const USER_BROWSER_PARITY_CAPABILITIES = Object.freeze({
   upload: true,
   dialog: true,
   console: true,
-  pdf: false,
+  pdf: true,
   focus: true,
   close: true,
   trustedInput: false,
   pointer: true,
-  rawProtocol: false,
+  rawProtocol: true,
 });
 
 export function extensionSupportsParity(version: string | null | undefined): boolean {
@@ -168,6 +171,7 @@ const TAB_ACTION_LABEL: Partial<Record<BackendRequest['action'], string>> = {
   responseBody: '读取网络响应',
   dialog: '处理原生弹窗',
   upload: '上传文件',
+  pdf: '导出 PDF',
 };
 
 const NOT_CONFIGURED_MESSAGE =
@@ -180,6 +184,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export class UserBrowserBackend implements BrowserBackend {
   readonly kind = 'user-browser' as const;
   private readonly targets = new Map<string, TargetRecord>();
+  private readonly recipeSessions = new RecipeBrowserSessions();
+  /** 配方会话 id → 取回扩展缓存的网络事件(事件随每条命令回传,读取抓包前再取一次)。 */
+  private readonly recipePumps = new Map<string, () => Promise<void>>();
   private nextAlias = 1;
   private disposed = false;
 
@@ -205,6 +212,7 @@ export class UserBrowserBackend implements BrowserBackend {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    this.recipeSessions.dispose();
     this.targets.clear();
   }
 
@@ -242,13 +250,12 @@ export class UserBrowserBackend implements BrowserBackend {
       case 'requests':
       case 'responseBody':
       case 'dialog':
+      case 'pdf':
         return this.handleTabAction(req);
       case 'upload':
         return this.handleUpload(req);
-      case 'pdf':
-        return unsupported(req.action, '导出 PDF(需要浏览器调试权限)');
       case 'recipeCommand':
-        return unsupported(req.action, '原始协议命令(OpenCLI 适配器)');
+        return this.handleRecipeCommand(req);
       default:
         return actionFailed(
           req.action,
@@ -355,7 +362,14 @@ export class UserBrowserBackend implements BrowserBackend {
         error === 'EXTENSION_DISCONNECTED' || error === 'BRIDGE_PORTS_BUSY'
           ? 'BROWSER_RUNTIME_UNAVAILABLE'
           : 'BROWSER_RUNTIME_ACTION_FAILED',
-      message: `${error}:${message}`,
+      message:
+        error === 'DEBUGGER_NOT_ALLOWED'
+          ? `${error}:这一步需要 Chrome 的调试功能,用户还没有允许。${
+              job.grantPageOpened === true
+                ? '扩展已在用户的 Chrome 里打开说明页'
+                : '说明页刚才已经打开过'
+            },请告诉用户在那里点「开启」(Chrome 会请用户确认一次;使用时 Chrome 顶部会短暂显示调试提示),确认后再重试。用户拒绝就不要重试,也不要自行改用其他浏览器。`
+          : `${error}:${message}`,
       data: {
         error,
         ...(typeof execution === 'string' ? { execution } : {}),
@@ -987,12 +1001,14 @@ export class UserBrowserBackend implements BrowserBackend {
     if (!this.parity(gate.control, record.clientId))
       return outdated(req.action, TAB_ACTION_LABEL[req.action] ?? req.action);
     let extra: Record<string, unknown> = {};
-    let note: string | undefined;
     switch (req.action) {
       case 'screenshot':
-        extra = { type: req.type === 'jpeg' ? 'jpeg' : 'png' };
-        if (req.fullPage || req.ref || req.element)
-          note = '用户浏览器只能截取可视区域:这是当前视口的截图;需要页面其他部分时先滚动再截。';
+        // 整页、元素与用户窗口里的后台标签由扩展按需借用调试完成;未授权时扩展退回可视区域并说明。
+        extra = {
+          type: req.type === 'jpeg' ? 'jpeg' : 'png',
+          ...(req.fullPage ? { fullPage: true } : {}),
+          ...(req.ref ? { ref: req.ref } : {}),
+        };
         break;
       case 'requests':
         extra = {
@@ -1028,12 +1044,13 @@ export class UserBrowserBackend implements BrowserBackend {
           note: '只在标签页所在窗口内切到前台,不抢窗口焦点。',
         });
       case 'screenshot':
+      case 'pdf':
         return actionOk(req.action, {
           ...base,
           mimeType: job.mimeType,
           data: job.data,
           bytes: job.bytes,
-          ...(note ? { note } : {}),
+          ...(job.note ? { note: job.note } : {}),
         });
       case 'console':
         return actionOk(req.action, {
@@ -1060,6 +1077,78 @@ export class UserBrowserBackend implements BrowserBackend {
           ...(job.note ? { note: job.note } : {}),
         });
     }
+  }
+
+  /**
+   * 配方适配器的原始协议命令:扩展按需接上调试(需用户授权一次),会话结束或闲置即断开。
+   * 网络事件缓存在扩展里,随每条命令的结果回传;读取抓包前再主动取一次。
+   */
+  private async handleRecipeCommand(req: BackendRequest): Promise<BackendResult> {
+    const command = req.recipeCommand;
+    if (!command || !req.targetId)
+      return actionFailed(
+        req.action,
+        'recipeCommand requires an explicit targetId and command',
+        'BROWSER_RUNTIME_INVALID_REQUEST',
+      );
+    const gate = this.control(req.action);
+    if (!gate.ok) return gate.result;
+    const located = await this.locate(req.action, gate.control, req.targetId);
+    if (!located.ok) return located.result;
+    const record = located.record;
+    const control = gate.control;
+    if (!this.parity(control, record.clientId)) return outdated(req.action, '配方适配器的浏览器协议命令');
+    const sessionKey = (req as { __mcpSessionId?: unknown }).__mcpSessionId;
+    const scope = JSON.stringify([
+      typeof sessionKey === 'string' ? sessionKey : '',
+      req.profile ?? '',
+      record.targetId,
+    ]);
+    if (command.method !== 'Cindy.begin') {
+      if (command.method === 'Cindy.captureRead')
+        await this.recipePumps.get(command.sessionId ?? '')?.();
+      return actionOk(
+        req.action,
+        await this.recipeSessions.call(scope, command.sessionId ?? '', command.method, command.params),
+      );
+    }
+    const begun = await this.pageJob(control, record, 'cdp', { op: 'begin' });
+    if (!begun.ok) return this.failureResult(req.action, begun);
+    const listeners = new Set<(method: string, params: Record<string, unknown>) => void>();
+    const closers = new Set<() => void>();
+    const deliver = (job: BrowserExtensionJobResult) => {
+      const events = Array.isArray(job.events) ? (job.events as Array<[string, Record<string, unknown>]>) : [];
+      for (const [method, params] of events) for (const listener of listeners) listener(method, params);
+      if (!job.ok && (job.error === 'DEBUGGER_DETACHED' || job.error === 'TAB_CLOSED'))
+        for (const close of [...closers]) close();
+    };
+    let sessionId = '';
+    sessionId = this.recipeSessions.begin(scope, {
+      send: async (method, params) => {
+        const job = await this.pageJob(control, record, 'cdp', {
+          op: 'command',
+          method,
+          params: params ?? {},
+        });
+        deliver(job);
+        if (!job.ok) throw new Error(`${String(job.error)}:${String(job.message ?? '')}`);
+        return job.result;
+      },
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      onClose: (listener) => {
+        closers.add(listener);
+        return () => closers.delete(listener);
+      },
+      dispose: () => {
+        this.recipePumps.delete(sessionId);
+        void this.pageJob(control, record, 'cdp', { op: 'end' }).catch(() => {});
+      },
+    });
+    this.recipePumps.set(sessionId, async () => deliver(await this.pageJob(control, record, 'cdp', { op: 'events' })));
+    return actionOk(req.action, { sessionId });
   }
 
   /** 上传:按会话允许的目录解析本地文件,读成字节交给扩展放进页面的文件输入框。 */
