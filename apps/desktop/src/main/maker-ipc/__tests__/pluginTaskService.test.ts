@@ -1402,17 +1402,19 @@ it('rechecks saved preferences at the runtime mutation boundary', async () => {
 
 it('an open plugin selection without a source session follows the auxiliary chain at low effort', async () => {
   // Rule: a plugin's own persistent task must not borrow the new-task composer
-  // model; the settings copy says it follows the system auxiliary model. tier: unit.
+  // model; the settings copy says it follows the system auxiliary model. It runs
+  // on Pi when the provider offers the model there (2026-10-28). tier: unit.
   const f = fixture();
   const selected = { harness: 'codex' as const, model: 'next', providerId: f.route.providerId, effort: 'high' as const, fastMode: false };
   const resolver = createSessionExecutionResolver({
     captureOwner: () => () => {}, readCaller: async () => { throw Error('unexpected caller'); },
     readDefault: () => ({ agentKind: selected.harness, model: selected.model, providerId: selected.providerId, effort: selected.effort, fastMode: selected.fastMode }),
-    availableAgents: () => ['codex'],
-    availableModels: () => [{ id: 'next', efforts: ['high'] }, { id: 'cheap', efforts: ['low', 'high'] }, { id: 'nolow', efforts: ['high'] }],
+    availableAgents: () => ['codex', 'pi'],
+    availableModels: () => [{ id: 'next', efforts: ['high'] }, { id: 'cheap', efforts: ['low', 'high'] }, { id: 'nolow', efforts: ['high'] }, { id: 'onpi', efforts: ['medium', 'high'] }],
     hasCindyAiApiKey: () => true,
-    readProviderRouting: async () => ({ availability: { 'claude-code': [], pi: [],
-      codex: [{ id: f.route.providerId, name: 'provider', models: ['next', 'cheap', 'nolow'] }] },
+    readProviderRouting: async () => ({ availability: { 'claude-code': [],
+      pi: [{ id: f.route.providerId, name: 'provider', models: ['onpi'] }],
+      codex: [{ id: f.route.providerId, name: 'provider', models: ['next', 'cheap', 'nolow', 'onpi'] }] },
       resolveDefaultProviderIdForModel: () => f.route.providerId }),
   });
   const source = readFileSync(new URL('../register.ts', import.meta.url), 'utf8');
@@ -1427,9 +1429,12 @@ it('an open plugin selection without a source session follows the auxiliary chai
     const js = ts.transpileModule(`${resolve}\nreturn resolveRoute;`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
     return new Function(...Object.keys(deps), js)(...Object.values(deps))('p') as Promise<{ model: string; effort: string }>;
   };
-  // First usable candidate wins, at low effort.
+  // First usable candidate wins, at low effort; a model Pi does not offer stays on the chain's harness.
   await expect(run([{ agentKind: 'codex', providerId: f.route.providerId, model: 'missing' }, { agentKind: 'codex', providerId: f.route.providerId, model: 'cheap' }]))
-    .resolves.toMatchObject({ model: 'cheap', effort: 'low' });
+    .resolves.toMatchObject({ model: 'cheap', effort: 'low', agentKind: 'codex' });
+  // A model the provider offers on Pi runs on Pi, at its lightest level.
+  await expect(run([{ agentKind: 'codex', providerId: f.route.providerId, model: 'onpi' }]))
+    .resolves.toMatchObject({ model: 'onpi', effort: 'medium', agentKind: 'pi' });
   // A chain head without a light effort level yields to the next candidate that has one.
   await expect(run([{ agentKind: 'codex', providerId: f.route.providerId, model: 'nolow' }, { agentKind: 'codex', providerId: f.route.providerId, model: 'cheap' }]))
     .resolves.toMatchObject({ model: 'cheap', effort: 'low' });

@@ -21,13 +21,18 @@ describe('auxiliaryChainSessionCandidates', () => {
     ]);
   });
 
-  // Rule: a chain head without a light effort level yields to a later candidate
-  // that has one; default efforts are only a last pass. tier: unit.
-  it('tries every candidate at a light effort before any candidate at its default', () => {
-    expect(pluginTaskRouteAttempts(['a', 'b'])).toEqual([
-      { candidate: 'a', effort: 'low' }, { candidate: 'a', effort: 'medium' },
-      { candidate: 'b', effort: 'low' }, { candidate: 'b', effort: 'medium' },
-      { candidate: 'a', effort: undefined }, { candidate: 'b', effort: undefined },
+  // Rule (2026-10-28): plugin tasks run on Pi when the model is offered there; a
+  // chain head without a light effort level yields to a later candidate that has
+  // one; default efforts are only a last pass. tier: unit.
+  it('tries each candidate on Pi first, every candidate at a light effort before any default', () => {
+    const a = { agentKind: 'codex' as const, providerId: 'xd', model: 'a' };
+    const b = { agentKind: 'pi' as const, providerId: 'xd', model: 'b' };
+    const aPi = { ...a, agentKind: 'pi' as const };
+    expect(pluginTaskRouteAttempts([a, b])).toEqual([
+      { candidate: aPi, effort: 'low' }, { candidate: aPi, effort: 'medium' },
+      { candidate: a, effort: 'low' }, { candidate: a, effort: 'medium' },
+      { candidate: b, effort: 'low' }, { candidate: b, effort: 'medium' },
+      { candidate: aPi, effort: undefined }, { candidate: a, effort: undefined }, { candidate: b, effort: undefined },
     ]);
   });
 

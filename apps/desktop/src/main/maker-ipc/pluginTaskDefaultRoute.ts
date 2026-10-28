@@ -1,6 +1,12 @@
 /**
  * Default model for a plugin's own persistent tasks (created without a source
- * session): follow the system auxiliary-model chain at low reasoning effort.
+ * session): follow the system auxiliary-model chain, on the Pi harness when the
+ * model is offered there, at the lightest reasoning effort available.
+ *
+ * Pi first (decided 2026-10-28): on a real install with many plugins, the same
+ * deepseek passage reasoned three to five times longer through Codex than
+ * through Pi, whose tool surface stays small whatever is installed. Codex and
+ * Claude remain the fallback when Pi does not offer the candidate model.
  *
  * The plugin settings page has always described the model row as "follows the
  * system auxiliary model"; routes created from inside a user's session still
@@ -47,18 +53,24 @@ export function auxiliaryChainSessionCandidates(refs: readonly string[]): Plugin
 /** Reasoning levels light enough for a plugin's background work, cheapest first. */
 export const PLUGIN_TASK_LIGHT_EFFORTS = ['low', 'medium'] as const;
 
+/** The same provider/model on Pi first, then on the harness the chain named. */
+function harnessVariants<T extends { agentKind: AgentKind }>(candidate: T): T[] {
+  return candidate.agentKind === 'pi' ? [candidate] : [{ ...candidate, agentKind: 'pi' }, candidate];
+}
+
 /**
- * Route attempts in order: every candidate at a light effort before any candidate
- * at its default. A chain head that only offers high/xhigh (deepseek-v4-flash on
- * xd) therefore yields to the next candidate that has low, instead of running
- * subtitle passages at high reasoning.
+ * Route attempts in order: every candidate (Pi variant first) at a light effort
+ * before any candidate at its default. A chain head that only offers high/xhigh
+ * therefore yields to the next candidate that has a light level, instead of
+ * running subtitle passages at high reasoning.
  */
-export function pluginTaskRouteAttempts<T>(
+export function pluginTaskRouteAttempts<T extends { agentKind: AgentKind }>(
   candidates: readonly T[],
 ): Array<{ candidate: T; effort: (typeof PLUGIN_TASK_LIGHT_EFFORTS)[number] | undefined }> {
+  const expanded = candidates.flatMap(harnessVariants);
   return [
-    ...candidates.flatMap(candidate => PLUGIN_TASK_LIGHT_EFFORTS.map(effort => ({ candidate, effort }))),
-    ...candidates.map(candidate => ({ candidate, effort: undefined })),
+    ...expanded.flatMap(candidate => PLUGIN_TASK_LIGHT_EFFORTS.map(effort => ({ candidate, effort }))),
+    ...expanded.map(candidate => ({ candidate, effort: undefined })),
   ];
 }
 
