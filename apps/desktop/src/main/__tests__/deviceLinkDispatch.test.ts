@@ -509,6 +509,7 @@ import {
   getUpdateRelaunchControllers,
   hasInFlightRemoteInvokes,
   dropAllControllers,
+  setRemoteAgentHandler,
   pushSessionActivityToController,
 } from '../device-link/dispatch';
 import {
@@ -575,6 +576,18 @@ function makeFakeClient(initialStatus: 'stopped' | 'connecting' | 'online' = 'on
 }
 
 describe('被控端控制链路生命周期', () => {
+  // Restart recovery must not turn the provider owner's explicit disconnect into
+  // an automatic reconnect. Exercise the production dropAll entry for each cause.
+  it.each(['user', 'toggle-off', 'shutdown'] as const)('passes the teardown intent to the Agent host: %s', reason => {
+    const { client } = makeFakeClient();
+    const abortAll = vi.fn();
+    setRemoteAgentHandler({ handle: vi.fn(), abortAll });
+    try {
+      dropAllControllers(client, reason);
+      expect(abortAll).toHaveBeenCalledExactlyOnceWith(reason === 'shutdown' ? 'app-quit' : 'navigation');
+    } finally { setRemoteAgentHandler(null); }
+  });
+
   beforeEach(() => {
     setControllersChangedListener(null);
     // 清掉可能残留的 controllers:dropAll 需要 client,改用重置 listener 后逐个 close

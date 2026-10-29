@@ -1,7 +1,7 @@
 /**
  * 任务首页顶部的「伙伴」段（对照桌面 TeammatesSection.tsx 与 2026-10-24 手机「A+B 合一」定稿）：
  * 展开 = 伙伴行（CompanionListRow，默认 3 位，多了「显示全部」）；
- * 收起 = 段头 + 56pt 头像条（名字 12/18，可横滑，最后一格新建）。收起状态按账号记住。
+ * 收起 = 段头；用户开启「收起时显示头像」后显示原有头像条。两个选择分别按账号记住。
  * 伙伴与群聊按最近活动混排；不跟随顶栏的电脑范围筛选（与桌面一致）。手机没有单独的伙伴首页，
  * 搜索时本段只列出名字匹配的伙伴与群聊。只在首页（有共享伙伴名册）出现；没有伙伴也没有能新建的
  * 电脑时整段不显示。
@@ -37,7 +37,7 @@ import { homeListStyles } from './HomeListVisuals';
 import { useHomeRoster } from './HomeRosterContext';
 import { DisclosureItem } from './listDisclosureTransition';
 import { useTeammateCreateController } from './TeammateCreateController';
-import { useTeammateEntries, useTeammateRowRenderer, type TeammateListEntry } from './TeammateList';
+import { useTeammateEntries, useTeammateRowRenderer, useAwaitingSessions, teammateAttention, type TeammateListEntry } from './TeammateList';
 import { cloudCompanionRoute } from './teammateNavigation';
 import { useTeammateNavigation } from './useTeammateNavigation';
 import { getHomeViewSession, useRetainedHomeState } from './homeViewSession';
@@ -128,6 +128,8 @@ function SectionContent({ shared, active, refreshKey, visible, query, showFooter
   const stored = local?.owner === owner ? local.collapsed : navigation.teammatesCollapsed;
   // Search results are always rows; the stored fold returns with the search cleared.
   const collapsed = stored && !search;
+  const headerOnly = collapsed && !navigation.showCollapsedTeammateAvatars;
+  const { unread, attention } = useHeaderAttention(entries, headerOnly, roster.isOnline);
   const [showAll, setShowAll] = useRetainedHomeState(getHomeViewSession(), 'teammatesShowAll', false);
   const setTeammatesCollapsed = navigation.setTeammatesCollapsed;
   const toggleCollapsed = useCallback(() => {
@@ -169,7 +171,8 @@ function SectionContent({ shared, active, refreshKey, visible, query, showFooter
   const body = shown ? <DisclosureItem clip testID="home.teammates">
     <View style={styles.header}>
       <Pressable accessibilityRole="button" accessibilityState={{ expanded: !collapsed, disabled: !!search }} disabled={!!search}
-        accessibilityLabel={t(collapsed ? 'devices.list.a11y.expand' : 'devices.list.a11y.collapse', { title })}
+        accessibilityLabel={[t(collapsed ? 'devices.list.a11y.expand' : 'devices.list.a11y.collapse', { title }),
+          unread ? t('devices.companions.unread') : '', attention].filter(Boolean).join(', ')}
         onPress={toggleCollapsed} onPressIn={prepareDisclosure}
         style={({ pressed }) => [list.projectRow, styles.headerToggle, pressed && mobileInteractionStyles.pressed]} testID="home.teammatesHeader">
         {collapsed
@@ -177,20 +180,21 @@ function SectionContent({ shared, active, refreshKey, visible, query, showFooter
           : <ChevronDown color={colors.textSecondary} size={iconSize.xl} strokeWidth={iconStroke.regular} />}
         <UsersRound color={colors.textSecondary} size={iconSize.action} strokeWidth={iconStroke.thin} />
         <Text style={[list.projectTitle, styles.headerTitle]} numberOfLines={1}>{title}</Text>
-        {collapsed || !entries.length ? null : <Text style={[list.projectCount, styles.count]} numberOfLines={1}>{entries.length}</Text>}
+        {(collapsed && !headerOnly) || !entries.length ? null : <Text style={[list.projectCount, styles.count]} numberOfLines={1}>{entries.length}</Text>}
+        {headerOnly && (unread || attention) ? <View style={[styles.unreadDot, !!attention && styles.attentionDot]} testID="home.teammatesAttention" /> : null}
       </Pressable>
       {showError ? <Pressable accessibilityRole="button" accessibilityLabel={`${t(errorKey)} ${t('devices.resources.retry')}`}
         disabled={retrying} onPress={retry} hitSlop={spacing.xs}
         style={({ pressed }) => [styles.headerAdd, pressed && mobileInteractionStyles.pressed]} testID="home.teammatesRetry">
         {retrying ? <ActivityIndicator color={colors.textTertiary} /> : <RefreshCw size={iconSize.sm} color={colors.textTertiary} strokeWidth={iconStroke.regular} />}
       </Pressable> : null}
-      {/* Folded, the strip's last cell is the create entry; the header keeps only one. */}
-      {collapsed || !entries.length ? null : create((press, label) => <Pressable accessibilityRole="button" accessibilityLabel={label}
+      {/* Keep a single create entry: in the header when the body is hidden. */}
+      {!headerOnly && (collapsed || !entries.length) ? null : create((press, label) => <Pressable accessibilityRole="button" accessibilityLabel={label}
         onPress={press} hitSlop={spacing.xs} style={({ pressed }) => [styles.headerAdd, pressed && mobileInteractionStyles.pressed]} testID="home.teammatesCreate">
         <Plus color={colors.textSecondary} size={iconSize.action} strokeWidth={iconStroke.regular} />
       </Pressable>)}
     </View>
-    {!entries.length ? <DisclosureItem exit>{create((press, label) => <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={press}
+    {headerOnly ? null : !entries.length ? <DisclosureItem exit>{create((press, label) => <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={press}
       style={({ pressed }) => [styles.addRow, pressed && mobileInteractionStyles.pressed]} testID="home.teammatesAdd">
       <View style={[styles.addCircle, styles.addCircleRow]}><Plus color={colors.textSecondary} size={iconSize.action} strokeWidth={iconStroke.regular} /></View>
       <Text style={styles.addText} numberOfLines={1}>{t('devices.companions.createTeammate')}</Text>
@@ -226,6 +230,27 @@ function SectionContent({ shared, active, refreshKey, visible, query, showFooter
     {showFooter ? <View style={styles.footer} /> : null}
   </DisclosureItem> : null;
   return <>{body}{creator.sheets}</>;
+}
+
+/** Hidden content keeps its existing read/attention semantics without opening the section. */
+function useHeaderAttention(entries: readonly TeammateListEntry[], enabled: boolean, isOnline: (host: RemoteResourceHostTarget) => boolean) {
+  const { user } = useAuth();
+  const { t, i18n } = useTranslation();
+  const bots = useMemo(() => enabled ? entries.filter(entry => entry.kind === 'bot').map(entry => entry.row) : [], [enabled, entries]);
+  const awaiting = useAwaitingSessions(bots);
+  const readUnread = useCallback(() => enabled && entries.some(entry => {
+    const { row } = entry;
+    const mainUnread = isRemoteResourceUnread(user?.id ?? '', row.host.deviceId, row.item.ref.id,
+      row.item.display.lastReplyAt, entry.kind === 'group' ? row.lastReplySequence : undefined);
+    return entry.kind === 'group' && row.chatUnread
+      ? (mainUnread ? row.chatUnread.count : row.chatUnread.threadCount) > 0 : mainUnread;
+  }), [enabled, entries, user?.id]);
+  const unread = useSyncExternalStore(subscribeRemoteResourceCache, readUnread);
+  const attention = bots.map(row => {
+    const state = teammateAttention(row, isOnline(row.host), awaiting, i18n.language);
+    return state.attention || (state.waiting ? t('devices.companions.awaiting') : '');
+  }).find(Boolean) ?? '';
+  return { unread, attention };
 }
 
 interface StripCellProps {
@@ -340,6 +365,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   // The row's 10pt unread dot in a 2pt page-colored ring (CompanionPresenceDot geometry).
   unreadRing: { position: 'absolute', right: 0, bottom: 0, padding: 2, borderRadius: radius.pill, backgroundColor: colors.surface },
   unreadDot: { width: COMPANION_ROW_DOT_SIZE, height: COMPANION_ROW_DOT_SIZE, borderRadius: radius.pill, backgroundColor: colors.botUnread },
+  attentionDot: { backgroundColor: colors.statusAwaiting },
   addCircle: { borderRadius: radius.pill, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.borderStrong, alignItems: 'center', justifyContent: 'center' },
   addCircleStrip: { width: STRIP_AVATAR_SIZE, height: STRIP_AVATAR_SIZE },
   addCircleRow: { width: COMPANION_ROW_AVATAR_SIZE, height: COMPANION_ROW_AVATAR_SIZE },

@@ -165,6 +165,16 @@ Host 不因当前输入缺少主人标记再追加行动同意判定。只认运
 
 执行任务的模型可用 `cindy_helper` 的 cindy 类 `report_task_delivery` 报告本轮是否新交付最终结果；只限当前任务执行者，子 Agent 不可代报。三个 Harness 共用此入口；它不结束任务或授予操作权限。跟进通知门控见 `cindy-bots-runtime.md` §6.3。
 
+## 历史查询的大结果分页
+
+历史工具 `list_sessions`、`get_chat_history`、`search_chat_history` 的 `limit` 是条数上限。
+源设备另按完整记录约 64 KiB 的软预算提前分页，消息、搜索命中及其上下文不被截断；
+单条记录超过预算时仍完整返回，保证继续读取可以前进。调用方以 `hasMore` / `nextCursor`
+续读，不以返回条数少于 limit 判断结束。原始历史不改写、不另存摘要，所有 Harness 共用；
+跨电脑沿源设备同一查询与游标，旧设备保留其原有分页行为。
+搜索预算仅由历史工具入口启用；界面搜索和学习证据等内部消费者保留按条数取页。
+工具搜索逐条读取上下文并累计预算，到达边界后停止后续读取；游标保留未返回命中的位置。
+
 ## 社区插件贡献
 
 普通个人作者的独立入口为 `ghost_contribution_prepare`、`ghost_contribution_submit`、
