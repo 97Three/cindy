@@ -913,6 +913,23 @@ export function mergeVisibleReorder(
   return result;
 }
 
+/** Build the same pinned drag request for the expanded sidebar and collapsed rail. */
+export function buildManualPinnedReorder(
+  rankedOrder: readonly string[],
+  activeEntryIds: readonly string[],
+  visibleNewOrder: readonly string[],
+  comparisonKey: (entryId: string) => string = (entryId) => entryId,
+): { baseOrder: string[]; order: string[] } {
+  const displayOrder = normalizeManualPinnedOrder(rankedOrder, activeEntryIds, comparisonKey);
+  const rankedIdentities = new Set(rankedOrder.map(comparisonKey));
+  return {
+    // Display-only pins are new entries, not concurrently removed ranks (#6345).
+    // Keep ranks outside this status catalogue out of the base so Main retains them.
+    baseOrder: displayOrder.filter((entryId) => rankedIdentities.has(comparisonKey(entryId))),
+    order: mergeVisibleReorder(displayOrder, visibleNewOrder, comparisonKey),
+  };
+}
+
 /**
  * 第一次切到手动项目顺序:用切换前的可见视觉序填回全量 baseline 的可见槽位。
  * 隐藏项(其它机器 / 筛选)原位保留,不能把可见子集当成完整序再把其余甩到末尾。
