@@ -89,6 +89,8 @@ const mocks = vi.hoisted(() => {
 describe('task action dispatch authorization', () => {
   // Unit regression through the production coordinator: revocation/restore cannot
   // deliver an automatic message, while the following owner input still runs.
+  // teammate-authority.md「延迟投递只认真实撤权」: the revoked item settles before the
+  // send transaction, so the receiving task gets no user row or failed reply for it.
   it.each(['revoked', 'restored'] as const)('discards %s automatic input without blocking owner input', async mode => {
     const h = createHarness(), sid = 'task-action-target';
     let current = true;
@@ -111,9 +113,11 @@ describe('task action dispatch authorization', () => {
     h.coordinator.wakeSession(sid, 'idle');
     await vi.waitFor(() => expect(dispatched).toHaveBeenCalledOnce());
     await flush();
-    expect(h.sendToAgent.mock.calls[1]![3].persistUserMessage?.clientId).toBe('owner');
+    expect(h.sendToAgent).toHaveBeenCalledOnce();
+    expect(h.sendToAgent.mock.calls[0]![3].persistUserMessage?.clientId).toBe('owner');
     expect(h.onDiscardedQueuedMessage).toHaveBeenCalledWith(sid, expect.objectContaining({ clientId: 'automatic' }));
-    expect(h.coordinator.getProjection(sid).pendingQueue).toEqual([]);
+    expect(h.onUndispatchedUserTurn).not.toHaveBeenCalled();
+    expect(h.coordinator.getProjection(sid)).toMatchObject({ error: null, pendingQueue: [] });
   });
 });
 

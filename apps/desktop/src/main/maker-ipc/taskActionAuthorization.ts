@@ -68,10 +68,11 @@ export interface TaskActionScope {
   routine?: { botId: string; id: string; revision: number };
   /** Existing, explicitly confirmed delegation; never inferred from creator/follower. */
   delegated: boolean;
-  /** Rechecked at mutation/delivery; includes account, target and delegation revocation. */
+  /** Rechecked at mutation; includes account, target and delegation revocation. */
   assertCurrent(): Promise<void>;
   /** Host generation check for existing synchronous commit/pre-send callbacks. */
   assertCurrentSync?(): void;
+  /** Queued delivery outlives the admitting turn: real revocation only, no live turn facts. */
   assertDeliveryCurrent?(): Promise<void>;
 }
 

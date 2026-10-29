@@ -5067,7 +5067,22 @@ export class AgentInputCoordinator {
     this.emit(sessionId);
 
     let appMessageGuardRejected = false;
+    const taskActionGuard = taskActionInputGuard(sessionId, head);
     try {
+      if (taskActionGuard) {
+        // A revoked task action settles before screening, persistence or a vendor
+        // turn, so the receiving task never shows a failed reply for it. The send
+        // transaction still rechecks the same guard at dispatch.
+        const revoked = await taskActionGuard().then(() => null, (error: unknown) => ({ error }));
+        if (!this.isActiveTurnCurrent(sessionId, active)) return;
+        if (revoked) {
+          log.info('discarding revoked task action input before dispatch', {
+            sessionId, clientId: head.clientId, reason: errorMessage(revoked.error),
+          });
+          this.discardRevokedAppInput(sessionId, active, head);
+          return;
+        }
+      }
       // 意识拦截钩(订阅槽①):落库/派发之前问一遍——block 即丢弃本项
       // (不入库不起 turn),通知宿主降级气泡,继续放行后续排队消息;
       // rewrite 用新正文替换 head(送 agent / 落库 / 显示都用它),通知宿主
@@ -5134,7 +5149,7 @@ export class AgentInputCoordinator {
       // may synchronously emit the new turn's started marker before it returns;
       // post-dispatch acknowledgements must remain older than that marker.
       const preVendorDispatchAt = Math.max(0, Date.now() - 1);
-      const appMessageGuard = combineInputGuards(queuedAppMessageGuard(head), taskActionInputGuard(sessionId, head));
+      const appMessageGuard = combineInputGuards(queuedAppMessageGuard(head), taskActionGuard);
       const result = await this.deps.sendToAgent(sessionId, makerUserMessage, head.createOpts, {
         ...(appMessageGuard ? { [MCP_APP_MESSAGE_GUARD]: async () => {
           try {

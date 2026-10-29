@@ -434,7 +434,10 @@ describe('Owner-delegated scheduled task actions', () => {
     expect(effect).not.toHaveBeenCalled();
   });
 
-  it.each(['permission', 'plan', 'instance', 'account', 'input'] as const)('invalidates admission and delayed delivery after %s changes', async changed => {
+  // teammate-authority.md「延迟投递只认真实撤权」(2026-10-30): live turn facts still
+  // expire the admission, but only real revocation stops a queued message. Before,
+  // any of these rollovers between turns dropped every supplement still queued.
+  it.each(['permission', 'plan', 'instance', 'account', 'input'] as const)('invalidates admission after %s changes; delayed delivery stops only on account change', async changed => {
     const h = scheduledFixture();
     const queued = input();
     const guard = await withToolCallAuthority(h.authorize, scheduledSend(), async () => {
@@ -450,7 +453,9 @@ describe('Owner-delegated scheduled task actions', () => {
     if (changed === 'account') hostFacts.boundaryPending.mockReturnValue(true);
     if (changed === 'input') h.activeInput.boundary = 'replacement-runtime';
     expect(() => guard()).toThrow('AUTHORIZATION_EXPIRED');
-    await expect(taskActionInputGuard('target', queued)!()).rejects.toThrow('AUTHORIZATION_EXPIRED');
+    const delivery = expect(taskActionInputGuard('target', queued)!());
+    if (changed === 'account') await delivery.rejects.toThrow('AUTHORIZATION_EXPIRED');
+    else await delivery.resolves.toBeUndefined();
   });
 
   it.each(['permission', 'account', 'turn'] as const)('does not act or prompt if %s changes during review', async changed => {
@@ -513,7 +518,7 @@ describe('Desktop owner input task actions', () => {
   );
 
   it.each(['bypassPermissions', 'auto', 'ask'])(
-    'revokes the %s admission before execution and delayed delivery when live permissions change', async permissionMode => {
+    'revokes the %s admission before execution but keeps its queued message when live permissions change', async permissionMode => {
       const h = desktopFixture('private');
       let current = true;
       h.activeInput.permission = {
@@ -529,7 +534,7 @@ describe('Desktop owner input task actions', () => {
       current = false;
       const effect = vi.fn(async () => 'changed');
       await expect(decision.run(effect)).rejects.toThrow('AUTHORIZATION_EXPIRED');
-      await expect(taskActionInputGuard('target', queued)!()).rejects.toThrow('AUTHORIZATION_EXPIRED');
+      await expect(taskActionInputGuard('target', queued)!()).resolves.toBeUndefined();
       expect(() => syncGuard()).toThrow('AUTHORIZATION_EXPIRED');
       expect(effect).not.toHaveBeenCalled();
     },
