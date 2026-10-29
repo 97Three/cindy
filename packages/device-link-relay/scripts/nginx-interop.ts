@@ -104,6 +104,11 @@ async function inside() {
     await new Promise<void>((resolve) => { nginx.once('exit', () => resolve()); nginx.kill('SIGQUIT'); });
     nginx = startNginx();
   };
+  const trackReload = (label: string) => {
+    const master = fs.readFileSync('/tmp/nginx.pid', 'utf8').trim();
+    const oldWorkers = fs.readFileSync(`/proc/${master}/task/${master}/children`, 'utf8').trim().split(/\s+/).filter(Boolean);
+    return () => retry(async () => oldWorkers.every((pid) => !fs.existsSync(`/proc/${pid}`)), Boolean, label);
+  };
   await retry(
     () => fetch('http://127.0.0.1').then((r) => r.text()),
     (value) => value === 'website-home',
@@ -216,11 +221,10 @@ async function inside() {
       publicUrl: 'https://127.0.0.1',
       trustProxyHeaders: true,
     });
-    const master = fs.readFileSync('/tmp/nginx.pid', 'utf8').trim();
-    const oldWorkers = fs.readFileSync(`/proc/${master}/task/${master}/children`, 'utf8').trim().split(/\s+/).filter(Boolean);
+    const initialReloaded = trackReload('initial TLS workers replaced');
     cli('activate');
     // 首个新 worker 能响应时，旧 worker 可能尚在退出；后续写请求须等旧证书监听停止接收。
-    await retry(async () => oldWorkers.every((pid) => !fs.existsSync(`/proc/${pid}`)), Boolean, 'initial TLS workers replaced');
+    await initialReloaded();
     await retry(
       () => get('/api/device-link/relay/info'),
       (value) => value.status === 200,
@@ -308,7 +312,9 @@ async function inside() {
     fs.writeFileSync('/tmp/website-tls/cert.pem', material.cert);
     fs.writeFileSync('/tmp/website-tls/key.pem', material.key);
     command('nginx', ['-t']);
-    process.kill(nginx.pid!, 'SIGHUP');
+    await restartFixture();
+    await retry(() => get('/'), (value) => value.body.toString() === 'website-home', 'existing HTTPS initial website');
+    const existingReloaded = trackReload('existing HTTPS workers replaced');
     const existing = prepare(true);
     assert.equal(existing.existingCertificate, true);
     relay = await startRelayServer({
@@ -320,6 +326,7 @@ async function inside() {
     });
     cli('activate');
     cli('commit');
+    await existingReloaded();
     await retry(
       () => get('/api/device-link/relay/info'),
       (value) => value.status === 200,
@@ -341,11 +348,16 @@ async function inside() {
     }
     cli('remove');
     assert.equal(fs.readFileSync(site, 'utf8'), initialSite);
-    const httpOnlySite = initialSite.slice(0, initialSite.indexOf('server { listen 443'));
+    const httpOnlySite = initialSite.slice(0, initialSite.indexOf('server { listen 443'))
+      .replace('listen 80 default_server;', '').replace('server_name website.example.test;', 'server_name _;');
     fs.writeFileSync(site, httpOnlySite);
     command('nginx', ['-t']);
     await restartFixture();
+    await retry(() => fetch('http://127.0.0.1').then((res) => res.text()), (value) => value === 'website-home', 'implicit HTTP initial website');
+    const implicitReloaded = trackReload('implicit HTTP workers replaced');
     const httpOnly = prepare();
+    await implicitReloaded();
+    assert.equal(await fetch('http://127.0.0.1').then((res) => res.text()), 'website-home');
     relay = await startRelayServer({ dataDir, host: '127.0.0.1', port: httpOnly.port, tls: material, publicUrl: 'https://127.0.0.1' });
     cli('activate');
     cli('commit');

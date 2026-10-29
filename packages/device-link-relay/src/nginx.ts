@@ -151,9 +151,13 @@ function children(nodes: Directive[], files: Map<string, string>, main: string, 
 }
 
 function listens(node: Directive, port: number, files: Map<string, string>, main: string): boolean {
-  return children(node.children ?? [], files, main).some(
-    (d) => d.name === 'listen' && (d.args[0] === String(port) || d.args[0]?.endsWith(`:${port}`)) && !d.args.includes('quic'),
-  );
+  return serverListeners(node, files, main).some((d) => endpoint(d, port) !== null);
+}
+
+function serverListeners(node: Directive, files: Map<string, string>, main: string): Directive[] {
+  const declared = children(node.children ?? [], files, main).filter((d) => d.name === 'listen');
+  // 本适配器管理 root Nginx；没有 listen 的 server 原本就隐式监听 *:80。
+  return declared.length ? declared : [{ ...node, name: 'listen', args: ['80'] }];
 }
 
 interface ListenGroup {
@@ -166,6 +170,11 @@ function endpoint(listen: Directive, port: number): string | null {
   if (listen.name !== 'listen' || listen.args.includes('quic')) return null;
   const value = listen.args[0];
   if (value === String(port) || value === `*:${port}`) return `0.0.0.0:${port}`;
+  if (port === 80) {
+    if (value === '*') return '0.0.0.0:80';
+    if (isIP(value) === 4) return `${value}:80`;
+    if (value?.startsWith('[') && value.endsWith(']') && isIP(value.slice(1, -1)) === 6) return `${value}:80`;
+  }
   if (value?.endsWith(`:${port}`) && (value.startsWith('[') || isIP(value.slice(0, value.lastIndexOf(':'))))) return value;
   return null;
 }
@@ -173,7 +182,7 @@ function endpoint(listen: Directive, port: number): string | null {
 function destinations(servers: Directive[], port: number, addresses: string[], files: Map<string, string>, main: string): ListenGroup[] {
   const groups = new Map<string, ListenGroup>();
   for (const server of servers)
-    for (const listen of children(server.children ?? [], files, main)) {
+    for (const listen of serverListeners(server, files, main)) {
       const socket = endpoint(listen, port);
       if (!socket) continue;
       const group = groups.get(socket) ?? { endpoint: socket, entries: [] };

@@ -5,7 +5,7 @@
  * - 现有覆盖缺口：Desktop SSH fake 只覆盖调度，未执行远端配置事务。
  * - 最小输入：带默认网站的 80/443 配置、同一个块监听两端口/多个 IP、NAT 公网地址、校验失败及中途断开。
  * - tier：unit。文件系统/进程为内存适配，独立 CLI 的真实 Nginx 验证另在 Docker 执行。
- * - 实测耗时：见 PR 描述（19 例，2026-10-29）。
+ * - 实测耗时：单独运行本文件 0.398 秒（22 例，2026-10-29）。
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -298,6 +298,24 @@ it('keeps the implicit TLS default when adding a domain relay', () => {
   expect(h.files.get(site)).toContain('listen 443 ssl default_server;');
   expect(h.files.get(site)).toContain('ssl_certificate /website/cert.pem;');
   expect(h.files.get(`${root}/http.conf`)).toContain('listen 0.0.0.0:443 ssl;');
+  manageNginx('commit');
+  manageNginx('remove');
+  expect(h.files.get(site)).toBe(implicit);
+});
+
+// PR #7776：Nginx 的省略 listen、只写地址两种语法仍占用 HTTP 80，不能新增站点抢走默认网页。
+it.each([
+  ['', '203.0.113.10'],
+  ['listen 203.0.113.10;', '203.0.113.10'],
+  ['listen [2001:db8::10];', '2001:db8::10'],
+])('preserves the HTTP website with a default listen port (%s)', (listen, resolved) => {
+  const implicit = originalSite.replace('listen 80 default_server;', listen);
+  h.files.set(site, implicit);
+  manageNginx('prepare', { address: 'relay.example.test', resolvedAddresses: [resolved] });
+  expect(h.files.get(site)).toContain('proxy_pass http://127.0.0.1:47822;');
+  expect(h.files.get(`${root}/http.conf`)).not.toContain('proxy_pass http://127.0.0.1:47822;');
+  material('key-one');
+  manageNginx('activate');
   manageNginx('commit');
   manageNginx('remove');
   expect(h.files.get(site)).toBe(implicit);
