@@ -3411,9 +3411,9 @@ describe("remote desktop controls", () => {
       });
     },
   );
-  it.each([false, true])(
-    "waits for the saved lock policy before starting, enabled=%s",
-    async (enabled) => {
+  it.each([null, "false", "true"])(
+    "waits for the saved lock policy before starting, stored=%s",
+    async (stored) => {
       act(() => root.unmount());
       fixture.lockPreferenceFromStorage = true;
       let finish!: (value: string | null) => void;
@@ -3433,9 +3433,9 @@ describe("remote desktop controls", () => {
         );
         expect(finish).toBeTypeOf("function");
         expect(requests().filter((r) => r.op === "start")).toHaveLength(0);
-        await act(async () => finish(String(enabled)));
+        await act(async () => finish(stored));
         expect(requests().filter((r) => r.op === "start")).toEqual([
-          { op: "start", displayId: "display", lockOnExit: enabled },
+          { op: "start", displayId: "display", lockOnExit: stored !== "false" },
         ]);
       } finally {
         read.mockRestore();

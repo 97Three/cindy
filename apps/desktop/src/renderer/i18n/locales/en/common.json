@@ -1035,7 +1035,7 @@
   },
   "privacyExit": {
     "status": "This computer is being remotely controlled through Cindy",
-    "hint": "Click or press any key to disconnect…",
+    "hint": "To show this screen, turn off Computer privacy screen under Security on the device controlling it. Or click or press any key on this computer, then choose Disconnect.",
     "title": "Disconnect remote desktop?",
     "detail": "This will end remote control and restore this computer’s screen. The computer will lock if lock on exit is enabled.",
     "cancel": "Keep connected",
