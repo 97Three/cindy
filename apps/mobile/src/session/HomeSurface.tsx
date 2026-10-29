@@ -238,8 +238,11 @@ import {
   type HomeSection,
 } from '@/session/homeSections';
 import {
+  readHomeCollapsePreferences,
   readHomeViewPreferences,
+  saveHomeCollapsePreferences,
   saveHomeViewPreferences as persistHomeViewPreferences,
+  type HomeCollapsePreferences,
   type HomeViewPreferencePatch,
   type HomeViewPreferences,
 } from '@/session/homeViewPreferenceStore';
@@ -477,7 +480,6 @@ export function MobileHome(props: MobileHomeProps) {
 
 function HomeScreenContent({ active = true, width, newSessionInSystemBar = false, newSessionInHeader = false, onSelectSession, runNavigation, newSessionActionRef }: MobileHomeProps) {
   const ownedSharedTasks = useSharedTasks();
-  const [sharedCollapsed, setSharedCollapsed] = useState(false);
   // The retained page and its visible sidebar must never release each other's subscriptions.
   const HOME_LIST_SUBSCRIPTION_OWNER = `device-list:${useId()}`;
   const embedded = width !== undefined;
@@ -519,6 +521,17 @@ function HomeScreenContent({ active = true, width, newSessionInSystemBar = false
       }
     });
   }, [t]);
+  // 分组收起/展开按账号落盘;写失败只意味着下次启动显示旧状态,不打断操作。
+  // 「已手动操作」按字段记在视图会话上,常驻首页与侧栏两个实例共用:迟到的恢复只跳过
+  // 用户动过的那一类分组,其余分组照常恢复。
+  const saveHomeCollapse = useCallback((patch: HomeCollapsePreferences) => {
+    viewSession.write('collapseTouchedFields', [
+      ...new Set([...viewSession.read<string[]>('collapseTouchedFields', []), ...Object.keys(patch)]),
+    ]);
+    void saveHomeCollapsePreferences(preferenceOwnerRef.current, patch).catch(() => undefined);
+  }, [viewSession]);
+  const [sharedCollapsed, setSharedCollapsed] = useRetainedHomeState(viewSession, 'sharedCollapsed', false,
+    (next) => saveHomeCollapse({ sharedCollapsed: next }));
   // 所有前进导航(进会话 / 新建 / 设置 / 组页面)统一走守卫 push:列表卡顿时的
   // 连点会各自触发一次裸 push,把同一页压进栈 N 层(返回也要 N 次)。
   const push = useGuardedPush();
@@ -723,10 +736,13 @@ function HomeScreenContent({ active = true, width, newSessionInSystemBar = false
   const requestedListFilter = active ? remoteListStatusFilter(statusFilter) : 'active';
   const homeListFilterRef = useRef(requestedListFilter);
   const homeListFilterChanged = homeListFilterRef.current !== requestedListFilter;
-  const [collapsedProjectKeys, setCollapsedProjectKeys] = useRetainedHomeState<string[]>(viewSession, 'collapsedProjectKeys', []);
-  const [pinnedCollapsed, setPinnedCollapsed] = useRetainedHomeState(viewSession, 'pinnedCollapsed', false);
+  const [collapsedProjectKeys, setCollapsedProjectKeys] = useRetainedHomeState<string[]>(viewSession, 'collapsedProjectKeys', [],
+    (next) => saveHomeCollapse({ collapsedProjectKeys: next }));
+  const [pinnedCollapsed, setPinnedCollapsed] = useRetainedHomeState(viewSession, 'pinnedCollapsed', false,
+    (next) => saveHomeCollapse({ pinnedCollapsed: next }));
   // 已展开的自动化组 key(页面级 state:SectionList 虚拟化回收行组件时展开态不丢)。
-  const [expandedAutomationGroups, setExpandedAutomationGroups] = useRetainedHomeState<string[]>(viewSession, 'expandedAutomationGroups', []);
+  const [expandedAutomationGroups, setExpandedAutomationGroups] = useRetainedHomeState<string[]>(viewSession, 'expandedAutomationGroups', [],
+    (next) => saveHomeCollapse({ expandedAutomationGroups: next }));
   const [rawDeviceConnectionStates, setDeviceConnectionStates] = useState<Record<string, HomeDeviceConnectionState>>({});
   // 熔断 open(电脑端未响应)的设备复用既有 failed 渲染路径(红圈),不新增视觉:
   // 内部态映射覆盖在 hydrate 状态之上,熔断关闭后自动回落到原状态。
@@ -1432,6 +1448,20 @@ function HomeScreenContent({ active = true, width, newSessionInSystemBar = false
       readHomeViewPreferences(preferenceOwnerRef.current),
       null,
     );
+    // 分组收起记录单独读取:与显示偏好互不牵连,任何一边读失败都不影响另一边恢复。
+    const collapseRead = startBoundedStartupRead<HomeCollapsePreferences | null>(
+      readHomeCollapsePreferences(preferenceOwnerRef.current),
+      null,
+    );
+    const applyCollapse = (collapse: HomeCollapsePreferences | null) => {
+      if (!collapse || restoredView) return;
+      if (cancelled || homeAccountGenerationRef.current !== expectedAccountGeneration) return;
+      const touched = viewSession.read<string[]>('collapseTouchedFields', []);
+      // 直接写入视图会话:恢复出来的值不需要再落盘一次;用户已动过的分组保持其选择。
+      for (const key of ['pinnedCollapsed', 'sharedCollapsed', 'collapsedProjectKeys', 'expandedAutomationGroups'] as const) {
+        if (collapse[key] !== undefined && !touched.includes(key)) viewSession.write(key, collapse[key]);
+      }
+    };
     const applyPreferences = (preferences: HomeViewPreferences | null) => {
       if (!preferences || restoredView) return;
       if (
@@ -1457,6 +1487,11 @@ function HomeScreenContent({ active = true, width, newSessionInSystemBar = false
         restoredSelectionUnvalidatedRef.current = true;
       }
     };
+    void collapseRead.initial.then((initial) => {
+      applyCollapse(initial.value);
+      // 超时只是不再等待,迟到的值仍会补上用户没动过的分组。
+      if (initial.timedOut) void collapseRead.completion.then((late) => { if (late.ok) applyCollapse(late.value); });
+    });
     void read.initial
       .then((initial) => {
         applyPreferences(initial.value);

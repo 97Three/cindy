@@ -4051,6 +4051,7 @@ interface ElectronAPI {
       isDark: boolean,
       mode: 'system' | 'light' | 'dark',
       systemModeFollowsSystem: boolean,
+      wallpaperCovered?: boolean,
     ) => void;
   };
   /**

@@ -78,6 +78,7 @@ host 在 `browser-managed-config.ts` 用 `buildManagedConfig({proxyServer?})` �
 | 11 | 开了「使用我的浏览器登录态」但窗口仍是登出 | 快照把 `last_used` 的 cookie 放进 dest `Default`,却原样拷了 `Local State`;Chrome 按 `last_used` 打开空的 `Profile N` | 写入 dest `Local State` 时必须把 `last_used` / `last_active_profiles` / `profiles_order` 改成 `Default`,`info_cache` 只留 Default(元数据从源 last_used 挪过来),并删掉 dest 里其它 `Profile N` |
 | 12 | Chrome 右上角 chip 显示 `Cindy-real` / 源 profile 名 | 磁盘 key 必须是 `Cindy-real`;vendored decorate 默认用 `profile.name`(map key)。host 只改 Local State 不够,下次 launch 会盖回去 | `profiles[Cindy-real].displayName = "Cindy"`;`launchOpenClawChrome` 用 `displayName ?? name` decorate。快照写入时也把 `info_cache.Default.name` 写成 `Cindy` |
 | 13 | 已有完全磁盘访问仍弹「需要完全磁盘访问权限」 | 第一次 enable 在 macOS 无条件跑 `guideFullDiskAccessAfterReadDenied` | 同意拷贝之后先 `probeSourceRead`(只 open 源 Local State / Cookies,不拷贝、不回路径);`readable: true` 就跳过。真正快照 `REAL_PROFILE_READ_DENIED` 仍弹。不自动打开系统设置 |
+| 14 | macOS 上用户在别的 App 点链接，打开的是 Agent 浏览器而不是自己的浏览器 | Agent 浏览器优先选用系统默认浏览器的同一个 App，只换 `--user-data-dir`；LaunchServices 按 bundle id 投递打开链接事件，会落到任意一个同 App 实例 | host 的 `ExternalLinkHandoff`（`browser-backend/external-link-handoff.ts`，仅 macOS）在浏览器级 `Fetch.enable` 只暂停 Document 请求：新标签无 opener、创建时即带 http(s) URL、首个请求无 Referer，且当时没有 Agent `open` 在途（含 1 秒余量），即判为外部链接——先 `open -n -a <App> --args <url>`（新进程经 Chrome 单例转交给用户的默认 profile 实例，未运行则启动它），成功后 `failRequest` + `closeTarget`，请求从未发出，一次性登录链接不会被用掉；转交失败则放行。⌘ 点击靠 Referer、网页弹窗靠 opener 排除。新增建标签的 action 必须同样计入 `trackTabOpen`，否则 Agent 标签会被当成外部链接转走 |
 
 ### 4.1 per-start 代理不变量
 

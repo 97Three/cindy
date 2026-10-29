@@ -53,7 +53,7 @@ function isNetworkCapableTargetType(type: unknown): boolean {
   return typeof type === 'string' && NETWORK_CAPABLE_TARGET_TYPES.has(type);
 }
 
-async function fetchBrowserWebSocketUrl(cdpHttpUrl: string): Promise<string> {
+export async function fetchBrowserWebSocketUrl(cdpHttpUrl: string): Promise<string> {
   const base = new URL(cdpHttpUrl);
   if (
     base.protocol !== 'http:'
