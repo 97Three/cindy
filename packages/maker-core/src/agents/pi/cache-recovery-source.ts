@@ -85,6 +85,45 @@ function installCindyCacheRecovery(pi) {
     return left && right && ['dev', 'ino', 'size', 'mtimeMs'].every(key => left.info[key] === right.info[key])
       && left.text === right.text;
   }
+  function gateReleased(name, nonce) {
+    // Desktop's existing .released credential is bound to both the unique
+    // gate filename and its UUID nonce. Read only a bounded, stable regular
+    // file through one handle, with the same no-follow/root checks as Desktop.
+    let fd;
+    try {
+      const marker = name + '.released';
+      const normalize = value => process.platform === 'win32' ? value.replace(/^([A-Z]):/, (_, drive) => drive.toLowerCase() + ':') : value;
+      const directory = normalize(realpathSync(path.dirname(name)));
+      fd = openSync(marker, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+      const before = fstatSync(fd, { bigint: true });
+      if (!before.isFile() || before.size > 4096n) return false;
+      const matchesPath = () => {
+        const link = lstatSync(marker, { bigint: true });
+        const current = statSync(marker, { bigint: true });
+        return !link.isSymbolicLink() && current.dev !== 0n && current.ino !== 0n
+          && current.dev === before.dev && current.ino === before.ino
+          && link.dev === before.dev && link.ino === before.ino
+          && normalize(path.dirname(realpathSync(marker))) === directory;
+      };
+      if (!matchesPath()) return false;
+      const bytes = Buffer.alloc(Number(before.size));
+      let offset = 0;
+      while (offset < bytes.length) {
+        const count = readSync(fd, bytes, offset, bytes.length - offset, offset);
+        if (!count) return false;
+        offset += count;
+      }
+      const after = fstatSync(fd, { bigint: true });
+      if (!after.isFile() || !['dev', 'ino', 'mode', 'size', 'mtimeNs', 'ctimeNs'].every(key => before[key] === after[key])
+        || !matchesPath()) return false;
+      const value = JSON.parse(bytes.toString('utf8'));
+      return value && typeof value === 'object' && !Array.isArray(value)
+        && value.gateFile === path.basename(name) && typeof value.nonce === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.nonce)
+        && (nonce === undefined || value.nonce === nonce);
+    } catch { return false; }
+    finally { if (fd !== undefined) { try { closeSync(fd); } catch {} } }
+  }
   function gateBusy(lock, ownGate) {
     // Legacy gates are still observed by released Desktop versions.
     try {
@@ -101,7 +140,7 @@ function installCindyCacheRecovery(pi) {
       const snapshot = lockSnapshot(name);
       if (!snapshot) return true;
       const record = snapshot.record;
-      if (record?.state === 'released') continue;
+      if (record?.state === 'released' || gateReleased(name, record?.nonce ?? undefined)) continue;
       if (stale(snapshot)) {
         const pid = Number(/^gate-(\d+)-/.exec(entry)?.[1]);
         if (record?.pid || dead(pid)) continue;

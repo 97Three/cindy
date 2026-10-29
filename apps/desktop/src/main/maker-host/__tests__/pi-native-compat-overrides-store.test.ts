@@ -110,7 +110,7 @@ let pendingTimers = 0;
 let calls = 0, pause = ${Boolean(options.pause)}, failWrite = ${Boolean(options.failWrite)};
 let releaseFailure = ${JSON.stringify(options.failRelease ?? '')};
 const api = runInNewContext(${JSON.stringify(PI_CACHE_RECOVERY_SOURCE + '\ninstallCindyCacheRecovery(pi)')}, {
-  ...fs, path, process: { pid: process.pid, uptime: () => process.uptime(), kill: (...a) => process.kill(...a),
+  ...fs, path, process: { pid: process.pid, platform: process.platform, uptime: () => process.uptime(), kill: (...a) => process.kill(...a),
     env: { PI_CODING_AGENT_DIR: '/fixture', CINDY_PI_CACHE_COMPAT_FILE: file } },
   createHash, randomUUID, Buffer, clearTimeout, Date,
   setTimeout: (fn, ms) => {
@@ -121,7 +121,7 @@ const api = runInNewContext(${JSON.stringify(PI_CACHE_RECOVERY_SOURCE + '\ninsta
     }, ms);
   }, homedir: () => '/fixture',
   pi: { on: (event, fn) => handlers.set(event, fn) },
-  statSync: name => name === ruleFile ? { size: rule.length } : fs.statSync(name),
+  statSync: (name, ...args) => name === ruleFile ? { size: rule.length } : fs.statSync(name, ...args),
   readFileSync: (name, ...a) => name === ruleFile ? rule : fs.readFileSync(name, ...a),
   writeFileSync: (name, ...a) => {
     if (failWrite && typeof name === 'string' && name.endsWith('.tmp')) throw new Error('fixture write failure');
@@ -190,13 +190,13 @@ process.send({ event: 'ready', key });
   const send = (command: string) => child.stdin!.write(command + '\n');
   return {
     child, release, send,
-    async event(name: string) {
+    async event(name: string, occurrence = 1) {
       await vi.waitFor(() => {
         expect(child.exitCode, stderr).toBeNull();
         expect(messages.find(message => message.event === 'error'), stderr).toBeUndefined();
-        expect(messages.some(message => message.event === name), stderr).toBe(true);
+        expect(messages.filter(message => message.event === name).length, stderr).toBeGreaterThanOrEqual(occurrence);
       }, { timeout: 2000 });
-      return messages.find(message => message.event === name);
+      return messages.filter(message => message.event === name)[occurrence - 1];
     },
     async stop() {
       fs.writeFileSync(release, 'release');
@@ -251,6 +251,63 @@ describe('native and Desktop cache writers share one lock', () => {
       expect(await record('desktop', 'other', fix, b)).toBe(true);
       await vi.waitFor(() => expect(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')).routes)).toHaveLength(2));
     } finally { await native.stop(); }
+  });
+
+  it.each(['valid', 'wrong nonce', 'active gate', 'wrong filename', 'invalid nonce', 'malformed', 'oversized', 'directory'])('validates %s after Desktop publishes a release credential for an undeletable held gate', async credential => {
+    const gateDir = file + '.lock.reclaim.d';
+    const rm = fsp.rm.bind(fsp);
+    let gate: string | undefined;
+    const spy = vi.spyOn(fsp, 'rm').mockImplementation((target, options) => {
+      if (typeof target === 'string' && path.dirname(target) === gateDir && target.endsWith('.json') && fs.existsSync(target)) {
+        gate ??= target;
+        if (target === gate) return Promise.reject(Object.assign(new Error('fixture gate busy'), { code: 'EBUSY' }));
+      }
+      return rm(target, options);
+    });
+    const native = cacheProcess('desktop-released');
+    try {
+      await withCrossProcessLock(file + '.lock', { label: 'fixture' }, async status => {
+        expect(status.held).toBe(true);
+      });
+      expect(gate).toBeDefined();
+      const held = JSON.parse(fs.readFileSync(gate!, 'utf8'));
+      expect(held).toMatchObject({ state: 'held', pid: process.pid });
+      expect(JSON.parse(fs.readFileSync(gate! + '.released', 'utf8'))).toEqual({ gateFile: path.basename(gate!), nonce: held.nonce });
+      const marker = gate! + '.released';
+      if (credential === 'wrong nonce') fs.writeFileSync(marker, JSON.stringify({ gateFile: path.basename(gate!), nonce: '00000000-0000-4000-8000-000000000000' }));
+      if (credential === 'active gate') fs.rmSync(marker);
+      if (credential === 'wrong filename') fs.writeFileSync(marker, JSON.stringify({ gateFile: 'gate-other.json', nonce: held.nonce }));
+      if (credential === 'invalid nonce') {
+        fs.writeFileSync(gate!, JSON.stringify({ ...held, nonce: 'invalid' }));
+        fs.writeFileSync(marker, JSON.stringify({ gateFile: path.basename(gate!), nonce: 'invalid' }));
+      }
+      if (credential === 'malformed') fs.writeFileSync(marker, '{bad-json');
+      if (credential === 'oversized') fs.writeFileSync(marker, JSON.stringify({ gateFile: path.basename(gate!), nonce: held.nonce, padding: 'x'.repeat(4096) }));
+      if (credential === 'directory') { fs.rmSync(marker); fs.mkdirSync(marker); }
+      // The Desktop process remains alive, and its own production release
+      // function, rather than this fixture, minted the original credential.
+      await native.event('ready'); native.send('start');
+      const first = await native.event('success');
+      expect(first.events).toEqual(['done']); expect(first.calls).toBe(2);
+      if (credential === 'valid') {
+        await vi.waitFor(() => expect(read('child', 'desktop-released', 'c'.repeat(64))).toEqual(fix));
+      } else {
+        await native.event('persistence-idle');
+        expect(fs.existsSync(file)).toBe(false);
+      }
+      native.send('next');
+      const next = await native.event('next');
+      expect(next.events).toEqual(['done']); expect(next.calls).toBe(3);
+      expect(next.sent).toEqual([{ model: 'desktop-released' }]);
+      if (credential !== 'valid') {
+        await native.event('persistence-idle', 2);
+        expect(fs.existsSync(file)).toBe(false);
+      }
+      expect(fs.existsSync(gate!)).toBe(true);
+    } finally {
+      spy.mockRestore(); await native.stop();
+      fs.rmSync(gateDir, { recursive: true, force: true });
+    }
   });
 
   it.each(['once', 'held'] as const)('lets Desktop persist while Pi stays alive after %s release failure', async failRelease => {
