@@ -44,6 +44,8 @@ import { assertTrustedAppRendererEvent } from '../security/trustedAppRenderer.js
 import { throwIpcError } from '../utils/ipcValidate.js';
 import {
   parseSelfHostedRelayCommand,
+  RELAY_DEPLOY_STEPS,
+  RELAY_UNINSTALL_STEPS,
   relayBaseUrlForAddress,
   SELF_HOSTED_RELAY_IPC,
   type SelfHostedRelayCommand,
@@ -51,7 +53,11 @@ import {
   type SelfHostedRelayErrorCode,
   type SelfHostedRelayJoinView,
   type SelfHostedRelayPairRequestView,
+  type SelfHostedRelayDeploymentStatus,
+  type SelfHostedRelayServerCheck,
   type SelfHostedRelayState,
+  type RelayDeployProgressMessage,
+  type RelayDeployStep,
 } from '../../shared/selfHostedRelay.js';
 import { deviceName } from './deviceName.js';
 import {
@@ -77,7 +83,13 @@ import {
   type RelayDeployment,
   type RelaySecrets,
 } from './selfHostedRelayConfig.js';
-import { bundledRelayVersion, deployRelayToServer, RelayDeployError, uninstallRelayFromServer } from './selfHostedRelayDeploy.js';
+import {
+  bundledRelayVersion,
+  checkRelayServer,
+  deployRelayToServer,
+  RelayDeployError,
+  uninstallRelayFromServer,
+} from './selfHostedRelayDeploy.js';
 import { refreshRelayCertificatesSoon } from './selfHostedRelayFrameAuth.js';
 import { readDeviceLinkSettings } from './settings-store.js';
 import { activeOwnerScopeKey, getActiveAppSession, isAppSessionBoundaryPending, onAppSessionInvalidated } from '../appSessionState.js';
@@ -189,9 +201,13 @@ export function getState(): SelfHostedRelayState {
 
 // ─── 主人身份 ────────────────────────────────────────────────────────────────
 
+function generateOwnerSecrets(): RelaySecrets {
+  return { credential: createDeviceCredential().credential, seed: createRelaySigningKey(crypto).seed };
+}
+
 /** 新建一份主人身份:凭证与签名私钥只存本机安全存储。 */
 function createOwnerSecrets(relayId: string): RelaySecrets {
-  const secrets = { credential: createDeviceCredential().credential, seed: createRelaySigningKey(crypto).seed };
+  const secrets = generateOwnerSecrets();
   writeRelaySecrets(relayId, secrets);
   return secrets;
 }
@@ -483,7 +499,12 @@ async function decide(requestId: string, approve: boolean): Promise<CommandResul
 
 // ─── 命令 ────────────────────────────────────────────────────────────────────
 
-type CommandResult = { state: SelfHostedRelayState; error?: SelfHostedRelayErrorCode };
+type CommandResult = {
+  state: SelfHostedRelayState;
+  error?: SelfHostedRelayErrorCode;
+  check?: SelfHostedRelayServerCheck;
+  deploymentStatus?: SelfHostedRelayDeploymentStatus;
+};
 
 function requireReady(): SelfHostedRelayErrorCode | null {
   // 账号数据作用域提交之前不能读写中转配置(否则会落进临时命名空间)。
@@ -680,57 +701,67 @@ function deploymentActive(deployment: RelayDeployment): RelayConfig['active'] {
   };
 }
 
-function runDeployJob(action: SelfHostedRelayDeployJobView['action'], work: (onStep: (step: SelfHostedRelayDeployJobView['step']) => void, assertOwner: () => void) => Promise<void>): void {
+type DeployJobPlan = Pick<SelfHostedRelayDeployJobView, 'action' | 'target' | 'serverChanged'> & { steps: RelayDeployStep[] };
+
+function runDeployJob(plan: DeployJobPlan, work: (onStep: (step: SelfHostedRelayDeployJobView['step']) => void, assertOwner: () => void, onProgress: (message: RelayDeployProgressMessage) => void) => Promise<void>): void {
+  const { action } = plan;
   const assertOwner = captureOwner();
   const isCurrent = () => {
     try { assertOwner(); return true; } catch { return false; }
   };
-  deployJob = { action, step: 'connect', status: 'running' };
-  const onStep = (step: SelfHostedRelayDeployJobView['step']) => {
-    assertOwner();
-    if (deployJob?.status !== 'running') return;
-    deployJob = { ...deployJob, step };
+  const startedAt = Date.now();
+  const first = plan.steps[0];
+  deployJob = { ...plan, step: first, status: 'running', startedAt, logs: [{ at: startedAt, step: first }] };
+  log.info('relay deployment started', { action });
+  const appendProgress = (step: SelfHostedRelayDeployJobView['step'], message?: RelayDeployProgressMessage) => {
+    if (!isCurrent() || deployJob?.status !== 'running') return;
+    const logs = deployJob.logs ?? [];
+    const last = logs.at(-1);
+    if (last?.step === step && last.message === message) return;
+    deployJob = { ...deployJob, step, logs: [...logs.slice(-99), { at: Date.now(), step, ...(message ? { message } : {}) }] };
     emitChanged();
   };
-  void work(onStep, assertOwner)
+  const onStep = (step: SelfHostedRelayDeployJobView['step']) => {
+    assertOwner();
+    appendProgress(step);
+    log.info('relay deployment step', { action, step });
+  };
+  const onProgress = (message: RelayDeployProgressMessage) => {
+    if (deployJob) appendProgress(deployJob.step, message);
+  };
+  void work(onStep, assertOwner, onProgress)
     .then(() => {
       if (!isCurrent()) return;
-      deployJob = { action, step: 'finish', status: 'done' };
+      deployJob = { ...deployJob!, action, step: 'finish', status: 'done', finishedAt: Date.now() };
+      log.info('relay deployment completed', { action });
     })
     .catch((error: unknown) => {
       if (!isCurrent()) return;
       const step = deployJob?.step ?? 'connect';
       if (error instanceof RelayDeployError) {
-        deployJob = { action, step, status: 'failed', error: error.code, detail: error.detail };
+        log.warn('relay deployment failed', { action, step, code: error.code });
+        deployJob = { ...deployJob!, action, step, status: 'failed', error: error.code, detail: error.detail, finishedAt: Date.now() };
       } else {
-        log.warn('relay deployment failed', { reason: error instanceof Error ? error.name : 'unknown' });
-        deployJob = { action, step, status: 'failed', error: 'DEPLOY_FAILED', detail: error instanceof Error ? error.message.slice(0, 300) : undefined };
+        log.warn('relay deployment failed', { action, step, code: 'DEPLOY_FAILED', reason: error instanceof Error ? error.name : 'unknown' });
+        deployJob = { ...deployJob!, action, step, status: 'failed', error: 'DEPLOY_FAILED', detail: error instanceof Error ? error.message.slice(0, 300) : undefined, finishedAt: Date.now() };
       }
     })
     .finally(() => { if (isCurrent()) emitChanged(); });
 }
 
-/** 部署或升级。身份(中转 ID、主人秘密)跟着部署记录走:重试与升级都保留它。 */
+/**
+ * 部署或升级。身份(中转 ID、主人秘密)跟着部署记录走:重试与升级都保留它。
+ * 检查通过、第一次改动服务器前才保存记录和新身份:在检查阶段停下的部署不留下任何东西。
+ */
 function deploy(input: { sshHostId: string; address: string; name: string; replaceExisting: boolean }, action: 'deploy' | 'upgrade'): CommandResult {
   const notReady = requireReady();
   if (notReady) return { state: getState(), error: notReady };
   if (deployJob?.status === 'running') return { state: getState(), error: 'BUSY' };
   if (!bundledRelayVersion()) return { state: getState(), error: 'BUNDLE_MISSING' };
-  const config = readRelayConfig();
-  const previous = config.deployment;
+  const previous = readRelayConfig().deployment;
   const reuse = previous && previous.sshHostId === input.sshHostId && !input.replaceExisting ? readRelaySecrets(previous.relayId) : null;
   const relayId = reuse && previous ? previous.relayId : randomUUID();
-  const secrets = reuse ?? createOwnerSecrets(relayId);
-  let replacedActive = false;
-  if (previous && previous.relayId !== relayId) {
-    // 换了一台服务器(或清掉重来):旧身份作废。正在用旧中转时先切回官方,不留下指向已删秘密的配置。
-    replacedActive = config.active?.relayId === previous.relayId;
-    if (replacedActive) {
-      stopPairing();
-      config.active = null;
-    }
-    deleteRelaySecrets(previous.relayId);
-  }
+  const secrets = reuse ?? generateOwnerSecrets();
   const init = ownerInitArgs(relayId, secrets, input.name);
   const baseUrl = relayBaseUrlForAddress(input.address);
   const record: RelayDeployment = {
@@ -744,10 +775,40 @@ function deploy(input: { sshHostId: string; address: string; name: string; repla
     deployedAt: new Date().toISOString(),
     complete: false,
   };
-  // 先记下身份再动服务器:中途失败后重试,用的还是已经写进服务器的这一份。
-  writeRelayConfig({ ...config, deployment: record });
-  if (replacedActive) restartDeviceLinkForRelayChange();
-  runDeployJob(action, async (onStep, assertOwner) => {
+  // 没完成的部署换了服务器:原服务器上可能装了一半,先清理掉再部署到新服务器。
+  const cleanup = previous && !previous.complete && previous.sshHostId !== input.sshHostId ? previous : null;
+  const persist = () => {
+    const config = readRelayConfig();
+    const old = config.deployment;
+    let replacedActive = false;
+    if (old && old.relayId !== relayId) {
+      // 换了一台服务器(或清掉重来):旧身份作废。正在用旧中转时先切回官方,不留下指向已删秘密的配置。
+      replacedActive = config.active?.relayId === old.relayId;
+      if (replacedActive) {
+        stopPairing();
+        config.active = null;
+      }
+      deleteRelaySecrets(old.relayId);
+    }
+    if (!reuse) writeRelaySecrets(relayId, secrets);
+    // 升级沿用原记录:失败时服务器上仍是这一份中转,卡片照常显示,可以重试。
+    if (!(action === 'upgrade' && old?.relayId === relayId)) writeRelayConfig({ ...config, deployment: record });
+    if (deployJob) deployJob = { ...deployJob, serverChanged: true };
+    if (replacedActive) restartDeviceLinkForRelayChange();
+  };
+  const plan: DeployJobPlan = {
+    action,
+    steps: cleanup ? ['cleanup', ...RELAY_DEPLOY_STEPS] : [...RELAY_DEPLOY_STEPS],
+    target: { sshHostId: input.sshHostId, address: input.address, name: input.name, baseUrl },
+    serverChanged: false,
+  };
+  runDeployJob(plan, async (onStep, assertOwner, onProgress) => {
+    if (cleanup) {
+      onStep('cleanup');
+      await uninstallRelayFromServer(cleanup.sshHostId, cleanup, true, () => {}, assertOwner);
+      assertOwner();
+      forgetDeploymentLocally(cleanup, true);
+    }
     const { relayVersion } = await deployRelayToServer({
       sshHostId: input.sshHostId,
       address: input.address,
@@ -756,7 +817,12 @@ function deploy(input: { sshHostId: string; address: string; name: string; repla
       init,
       preferMirror: providerShareLinkApp() === 'cindycn',
       onStep,
+      onProgress,
       assertCurrent: assertOwner,
+      onServerChange: () => {
+        assertOwner();
+        persist();
+      },
     });
     onStep('finish');
     const done: RelayDeployment = { ...record, relayVersion, deployedAt: new Date().toISOString(), complete: true };
@@ -786,7 +852,8 @@ function uninstallDeployment(removeData: boolean): CommandResult {
   if (deployJob?.status === 'running') return { state: getState(), error: 'BUSY' };
   const deployment = readRelayConfig().deployment;
   if (!deployment) return { state: getState(), error: 'NO_DEPLOYMENT' };
-  runDeployJob('uninstall', async (onStep, assertOwner) => {
+  const target = { sshHostId: deployment.sshHostId, address: deployment.address, name: deployment.name, baseUrl: deployment.baseUrl };
+  runDeployJob({ action: 'uninstall', steps: [...RELAY_UNINSTALL_STEPS], target, serverChanged: true }, async (onStep, assertOwner) => {
     await uninstallRelayFromServer(deployment.sshHostId, deployment, removeData, onStep, assertOwner);
     onStep('finish');
     forgetDeploymentLocally(deployment, removeData);
@@ -824,6 +891,63 @@ async function useDeployment(): Promise<CommandResult> {
   return { state: getState() };
 }
 
+/** 部署表单里选服务器时的只读检查;服务器上已有的中转按这台电脑的部署记录核对是不是自己的。 */
+async function checkServer(sshHostId: string): Promise<CommandResult> {
+  const notReady = requireReady();
+  if (notReady) return { state: getState(), error: notReady };
+  const assertOwner = captureOwner();
+  const deployment = readRelayConfig().deployment;
+  const identity = deployment?.sshHostId === sshHostId ? deployment : null;
+  let check: SelfHostedRelayServerCheck;
+  try {
+    check = { sshHostId, ok: true, ...(await checkRelayServer(sshHostId, identity, assertOwner)) };
+  } catch (error) {
+    if (error instanceof RelayOperationExpired) throw error;
+    check = error instanceof RelayDeployError
+      ? { sshHostId, ok: false, error: error.code, ...(error.detail ? { detail: error.detail } : {}) }
+      : { sshHostId, ok: false, error: 'DEPLOY_FAILED', ...(error instanceof Error ? { detail: error.message.slice(0, 300) } : {}) };
+  }
+  assertOwner();
+  log.info('relay server checked', check.ok ? { ok: true, plan: check.plan, existing: check.existing } : { ok: false, code: check.error });
+  return { state: getState(), check };
+}
+
+const countOf = (value: unknown) => (typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined);
+
+/**
+ * 用部署记录里的主人凭证读服务器中转的管理状态;没在用它时也能看到在线、设备数与证书到期。
+ * 返回的中转 ID 不是这份部署时按连不上处理,不把别的中转的数字当成自己的。
+ */
+async function deploymentStatus(): Promise<CommandResult> {
+  const notReady = requireReady();
+  if (notReady) return { state: getState(), error: notReady };
+  const assertOwner = captureOwner();
+  const deployment = readRelayConfig().deployment;
+  if (!deployment?.complete) return { state: getState(), error: 'NO_DEPLOYMENT' };
+  const secrets = readRelaySecrets(deployment.relayId);
+  if (!secrets) return { state: getState(), deploymentStatus: { online: false } };
+  let status: SelfHostedRelayDeploymentStatus = { online: false };
+  try {
+    const res = await fetch(`${deployment.baseUrl}/api/device-link/relay/admin/status`, {
+      headers: { authorization: `CindyRelay ${secrets.credential}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (res.ok && body?.relayId === deployment.relayId) {
+      status = {
+        online: true,
+        devices: countOf(body.devices),
+        onlineDevices: countOf(body.online),
+        certificateExpiresAt: typeof body.certificateExpiresAt === 'string' ? body.certificateExpiresAt : null,
+      };
+    }
+  } catch {
+    status = { online: false };
+  }
+  assertOwner();
+  return { state: getState(), deploymentStatus: status };
+}
+
 async function execute(command: SelfHostedRelayCommand): Promise<CommandResult> {
   switch (command.type) {
     case 'state':
@@ -859,6 +983,13 @@ async function execute(command: SelfHostedRelayCommand): Promise<CommandResult> 
     }
     case 'use-deployment':
       return useDeployment();
+    case 'check-server':
+      return checkServer(command.sshHostId);
+    case 'dismiss-deploy-job':
+      if (deployJob && deployJob.status !== 'running') deployJob = null;
+      return { state: getState() };
+    case 'deployment-status':
+      return deploymentStatus();
   }
 }
 
@@ -878,7 +1009,8 @@ export function registerSelfHostedRelayIpc(): void {
       if (!(error instanceof RelayOperationExpired)) throw error;
       return { state: getState(), error: 'NOT_SIGNED_IN' };
     }
-    if (command.type !== 'state') emitChanged();
+    // 只读查询不改状态,不向所有窗口广播。
+    if (command.type !== 'state' && command.type !== 'check-server' && command.type !== 'deployment-status') emitChanged();
     return result;
   });
 
