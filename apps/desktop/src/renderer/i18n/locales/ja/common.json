@@ -3369,6 +3369,9 @@
       },
       "xd": {
         "title": "Cindy AI",
+        "personal": "個人",
+        "xdOrganization": "XD",
+        "organization": "組織",
         "subtitle": "すべてのモデル · Claude Code / Codex 共通 · トークン単位で残高から引き落とし",
         "modelLabel": "すべてのモデル",
         "billingLabel": "トークン単位で残高から引き落とし",

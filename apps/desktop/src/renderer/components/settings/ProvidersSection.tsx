@@ -2020,7 +2020,7 @@ function XdGatewayHeader({
     <DetailHeader
       children={children}
       icon={<XDIncMark size={18} />}
-      title={t('settings.providers.xd.title')}
+      title={provider ? providerDisplayName(provider, t) : t('settings.providers.xd.title')}
       identityBadge={
         syncStatus.accountTier === 'free' ? (
           <span
@@ -2278,7 +2278,7 @@ function ListRow({
     () => (providerHasModels(provider) ? buildUnionRows(provider).length : null),
     [provider],
   );
-  const title = provider.id === 'xd' ? t('settings.providers.xd.title') : provider.name;
+  const title = providerDisplayName(provider, t);
   return (
     <div
       className={cn(
@@ -2350,7 +2350,8 @@ function ListRow({
               {t('settings.providers.pill.suspended')}
             </span>
           ) : (
-            modelCount !== null && (
+            // Keep the account suffix visible in the narrow rail; the detail lists the count.
+            provider.id !== 'xd' && modelCount !== null && (
               <span
                 className="shrink-0 text-11 tabular-nums"
                 style={{ color: 'var(--text-tertiary)' }}
@@ -2391,7 +2392,7 @@ function SuggestionRow({
 }) {
   const { t } = useTranslation();
   const cliName = localCliDisplayName(detection.cli);
-  const title = provider.id === 'xd' ? t('settings.providers.xd.title') : provider.name;
+  const title = providerDisplayName(provider, t);
   return (
     <button
       type="button"
@@ -2743,10 +2744,7 @@ export function ProvidersSection() {
       const provider = byId.get(providerId);
       setOrderAnnouncement(
         t('settings.providers.order.moved', {
-          provider:
-            provider?.id === 'xd'
-              ? t('settings.providers.xd.title')
-              : (provider?.name ?? providerId),
+          provider: provider ? providerDisplayName(provider, t) : providerId,
           position: nextIndex + 1,
           total: currentIds.length,
         }),
