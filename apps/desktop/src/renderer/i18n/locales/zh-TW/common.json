@@ -113,7 +113,11 @@
   "taskActionConfirmation": {
     "title": "確認任務操作",
     "once": "請核對下方的目標、動作與完整內容。允許僅對本次操作生效。",
-    "delegation": "請核對獨立任務的目標與設定。允許後將啟動任務，並可在本次委託結束前傳送範圍內的訊息或停止任務。代答、恢復暫停與切換模型仍需另行確認。"
+    "remove": "這會刪除自動化。請核對目標，僅允許這一次。",
+    "permission": "這會代你回答另一個任務的授權請求。請核對操作，僅允許這一次。",
+    "resume": "這會恢復已暫停的執行。請核對目標，僅允許這一次。",
+    "command": "這會在電腦上儲存或執行命令，執行時不經過 Agent 的工具審批。請核對命令與工作目錄，僅允許這一次。",
+    "authority": "這會建立或改寫自動執行的指令，後續執行將沿用這份授權。請核對完整指令，批准僅用於本次儲存。"
   },
   "logSupport": {
     "title": "日誌與回饋",
@@ -1645,6 +1649,7 @@
     }
   },
   "settings": {
+    "newChatDefaults": { "title": "新任務預設權限" },
     "imConnection": {
       "reconnect": "重新連線",
       "savedNote": "繫結資訊已保留，可直接重試連線。",
@@ -3594,7 +3599,7 @@
           "modelsAutoNote": "登入後自動取得可用模型"
         },
         "advanced": {
-          "label": "高階配置（模型 / 請求頭）"
+          "label": "進階連線設定"
         },
         "runtimeFill": {
           "action": "填入其他 Runtime",
@@ -3751,16 +3756,16 @@
           "defaultEffort": "預設推理強度",
           "defaultEffortHint": "新任務選中該模型時的初始檔位，任務內仍可臨時調整。",
           "contextLimit": "上下文上限",
-          "contextLimitHint": "套用至此模型所有可用引擎。以整數 K 編輯（1 K = 1,000 tokens）；未編輯時保留精確值。儲存後用於後續執行，不影響正在產生的內容。實際可用長度仍受模型服務限制。",
+          "contextLimitHint": "可直接輸入 token 數，或使用 K、M、萬，例如 1000000、1M。套用至此模型的所有可用引擎，後續執行生效。實際可用長度仍受模型服務限制。",
           "contextLimitLocalMillionHint": "原生 256K（262,144 tokens），可選擴展至 1M（1,000,000）。服務執行時需在「管理服務」中重新啟動以套用變更；已停止時，下次使用自動生效。長輸入會增加記憶體用量和等待時間。",
-          "contextLimitAria": "上下文上限（千 tokens）",
+          "contextLimitAria": "上下文上限（tokens、K、M 或萬）",
           "compaction": {
             "title": "自動壓縮",
             "hint": "占用達到所選比例時整理上下文。比例越低，越早壓縮；實際時機仍受引擎限制。",
             "default": "{{pct}}%（預設）",
             "timing": "套用至此來源下該模型的所有可用引擎。後續執行生效，不中斷正在產生的內容。"
           },
-          "contextLimitRoute": "目前 {{tokens}} tokens · 1 K = 1,000 tokens",
+          "contextLimitRoute": "目前 {{tokens}} tokens",
           "contextLimitOverWindow": "已超過上游宣告的長度，可能導致請求失敗。",
           "restoreDefault": "恢復預設",
           "engines": "引擎支援",
@@ -3787,7 +3792,7 @@
           "close": "關閉",
           "maxOutput": "最大輸出",
           "catalogCapabilities": "目錄宣告的能力",
-          "contextInvalid": "請輸入 {{min}}–100,000 K 的整數。",
+          "contextInvalid": "請輸入 {{min}}–{{max}} tokens，也支援 K、M、萬。",
           "contextWriteFailed": "未儲存，請重試。",
           "contextMixed": "現有引擎設定不同；修改或恢復預設將套用至所有引擎。",
           "inputModalities": "輸入類型",
@@ -9854,6 +9859,13 @@
     }
   },
   "bots": {
+    "avatarStatus": {
+      "awaiting": "待你確認",
+      "error": "需要注意",
+      "running": "正在工作",
+      "done": "已完成",
+      "unread": "未讀"
+    },
     "workbench": {
       "ownedMark": "所屬夥伴：{{names}}",
       "createdMark": "由 {{names}} 建立",
@@ -10566,8 +10578,10 @@
         "reactorsUnavailable_one": "另有 {{count}} 位成員的資訊暫不可用",
         "reactorsUnavailable_other": "另有 {{count}} 位成員的資訊暫不可用",
         "invite": "邀請加入群聊",
+        "groupCreated": "群聊已建立",
+        "inviteFriends": "邀請朋友加入，一起使用夥伴",
+        "generatingLink": "正在產生邀請連結…",
         "join": "加入群聊",
-        "inviteDescription": "對方接受邀請後會成為群組成員，可閱讀群聊記錄。",
         "revokeLink": "撤銷此連結",
         "revokeDescription": "此連結將無法再用於加入群組。其他邀請連結和已加入的成員不受影響。",
         "revokedLink": "此邀請連結已撤銷。",
