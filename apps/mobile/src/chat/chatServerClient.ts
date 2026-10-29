@@ -8,6 +8,7 @@ import type { HostedRemoteCollectionItem } from '@/device-link/remoteResources';
 import i18next from 'i18next';
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from '@/i18n/locale';
 import { mobileMarkdownPreviewText } from '@/session/messageMarkdown';
+import type { RemoteSerializedAttachment } from '@/session/types';
 
 export interface ChatRoom {
   id: string; name: string; state?: string; kind: string; archived: boolean; dissolved_at?: string | null;
@@ -56,6 +57,7 @@ export interface ChatSendInput {
   conversationKind?: 'direct';
   clientId: string; text: string; mentions: { all: boolean; botIds: string[] };
   quote?: { messageId: string }; threadRootId?: string;
+  attachments?: readonly RemoteSerializedAttachment[];
 }
 export interface ChatSendBody {
   operationId: string; content: ChatMessage['content']; mentions: string[]; threadRootId?: string;
@@ -256,7 +258,7 @@ export function chatGroupView(page: ChatPage, selfId: string, actors: readonly C
     createdAt: Date.parse(room.created_at), updatedAt: Date.parse(room.updated_at),
     lastMessage: last ? { authorKind: last.authorKind, authorName: last.authorName, preview: mobileMarkdownPreviewText(botGroupMessageSummaryText(last)).slice(0, 80), createdAt: last.createdAt } : null,
     speakingBotIds: speakers.map(speaker => speaker.botId), planningBotId: null, openPlan: null, plans: [], messages: projectBotGroupExecutionFailures(messages, failures),
-    hasMoreBefore: page.before !== null, round: { status: speakers.length ? 'running' : 'idle', speakers, canContinue: false }, supportsAttachments: false };
+    hasMoreBefore: page.before !== null, round: { status: speakers.length ? 'running' : 'idle', speakers, canContinue: false }, supportsAttachments: true };
 }
 
 export function createChatServerClient(request: ChatRequest, personalList = createConversationListState(),
@@ -569,9 +571,12 @@ export function createChatServerClient(request: ChatRequest, personalList = crea
       save(body: ChatSendBody): Promise<void>;
     }) {
       if (durable?.body) return request<ChatMessage>(`/conversations/${chatId(roomId)}/messages`, 'POST', durable.body);
-      const key = JSON.stringify([roomId, input.clientId, input.text, input.mentions, input.quote?.messageId, input.threadRootId]);
+      const key = JSON.stringify([roomId, input.clientId, input.text, input.mentions, input.quote?.messageId, input.threadRootId, input.attachments]);
       const known = input.quote ? postedQuotes.get(key) : undefined;
-      const content: ChatMessage['content'] = known?.content ?? [{ type: 'text', text: input.text }];
+      const content: ChatMessage['content'] = known?.content ?? [
+        ...(input.text ? [{ type: 'text', text: input.text }] : []),
+        ...(input.attachments ?? []).map(attachment => ({ type: 'media', mediaId: chatId(attachment.id), caption: attachment.name })),
+      ];
       const mentions = new Set(known?.mentions ?? input.mentions.botIds.map(chatId));
       if (input.quote && !known) {
         const [original, members] = await Promise.all([
