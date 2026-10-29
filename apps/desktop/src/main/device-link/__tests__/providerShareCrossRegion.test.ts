@@ -22,6 +22,7 @@ const state = vi.hoisted(() => ({
   localHasGroupShare: false,
   localReceivedReads: 0,
   localReceivedGate: null as Promise<void> | null,
+  endpointsGate: null as Promise<void> | null,
   userId: 'user-1',
   identityCards: [] as string[],
   invokes: [] as Array<{ target: string; channel: string }>,
@@ -42,7 +43,7 @@ vi.mock('../../authManager.js', () => ({
 }));
 vi.mock('../../clientEndpointsService.js', () => ({
   getClientEndpoint: () => LOCAL,
-  loadClientEndpointsForRealm: async () => ({}),
+  loadClientEndpointsForRealm: async () => { await state.endpointsGate; return {}; },
   getClientEndpointForRealm: (region: string) => (region === 'global' ? PEER : LOCAL),
 }));
 vi.mock('../../maker-host/outbound-fetch.js', () => ({ createOutboundHttpAgent: async () => undefined }));
@@ -137,6 +138,7 @@ beforeEach(() => {
   state.localHasGroupShare = false;
   state.localReceivedReads = 0;
   state.localReceivedGate = null;
+  state.endpointsGate = null;
   state.userId = 'user-1';
   state.identityCards = [];
   state.invokes = [];
@@ -200,6 +202,53 @@ describe('cross-region provider share', () => {
     expect(state.clients).toEqual([]);
     expect(changed).not.toHaveBeenCalled();
     expect(state.calls).toHaveLength(phase === 'preview' ? 1 : 2);
+  });
+
+  // Review regression: guest-entry awaits can outlive an account switch before
+  // cross-region recovery captures its runtime; peer-request-only tests missed this.
+  it.each(['preview', 'send'] as const)('does not resume an old-account %s after asynchronous link resolution', async (action) => {
+    const endpoints = deferred();
+    state.endpointsGate = endpoints.promise;
+    const memberError = Object.assign(new Error('already a member'), { code: 'PROVIDER_SHARE_ALREADY_MEMBER' });
+    state.responses.set('/preview', memberError);
+    state.responses.set('/requests', memberError);
+    state.responses.set('/session', {
+      credential: CREDENTIAL, expiresAt: new Date(Date.now() + 86_400_000).toISOString(), shares: [share],
+    });
+    startProviderShareGuest({ changed: vi.fn(), settled: vi.fn() }, { userDataDir: dir });
+    const invitation = { invitation: TOKEN, server: PEER };
+    const result = (action === 'preview' ? previewProviderShare(invitation) : sendProviderShareRequest(invitation))
+      .catch((error: unknown) => error);
+    state.userId = 'user-2';
+    startProviderShareGuest({ changed: vi.fn(), settled: vi.fn() }, { userDataDir: dir });
+    endpoints.resolve();
+    const error = await result;
+    expect(__testing.readMarkers()).toEqual({});
+    expect(getCrossRegionReceived()).toEqual([]);
+    expect(state.calls).toEqual([]);
+    expect(state.clients).toEqual([]);
+    expect(error).toMatchObject({ code: 'DEVICE_LINK_NOT_CONNECTED' });
+  });
+
+  it('does not send an old-account application after its preview finishes under a new account', async () => {
+    const preview = deferred<unknown>();
+    state.responses.set('/preview', preview.promise);
+    state.responses.set('/requests', Object.assign(new Error('already a member'), { code: 'PROVIDER_SHARE_ALREADY_MEMBER' }));
+    state.responses.set('/session', {
+      credential: CREDENTIAL, expiresAt: new Date(Date.now() + 86_400_000).toISOString(), shares: [share],
+    });
+    startProviderShareGuest({ changed: vi.fn(), settled: vi.fn() }, { userDataDir: dir });
+    const result = sendProviderShareRequest({ invitation: TOKEN, server: PEER }).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(state.calls.some((call) => call.path.endsWith('/preview'))).toBe(true));
+    state.userId = 'user-2';
+    startProviderShareGuest({ changed: vi.fn(), settled: vi.fn() }, { userDataDir: dir });
+    preview.resolve(Object.assign(new Error('already a member'), { code: 'PROVIDER_SHARE_ALREADY_MEMBER' }));
+    const error = await result;
+    expect(__testing.readMarkers()).toEqual({});
+    expect(getCrossRegionReceived()).toEqual([]);
+    expect(state.calls.map((call) => call.path)).toEqual(['/api/device-link/provider-shares/x/preview']);
+    expect(state.clients).toEqual([]);
+    expect(error).toMatchObject({ code: 'DEVICE_LINK_NOT_CONNECTED' });
   });
 
   it('refreshes existing membership behind an obsolete empty list', async () => {
