@@ -120,31 +120,48 @@ describe('task action dispatch authorization', () => {
     expect(h.coordinator.getProjection(sid)).toMatchObject({ error: null, pendingQueue: [] });
   });
 
-  // Review on #7969: a failed check (group transport, database not ready) is not a
-  // revocation. The message must stay as a retryable queue head, not be destroyed.
-  it('keeps the message as a retryable queue head when the delivery check itself fails', async () => {
-    const h = createHarness(), sid = 'task-action-check-failed';
+  // Reviews on #7969: a check that merely failed (group transport, database not ready) is not
+  // a revocation. The guard runs three times per dispatch: the drain pre-check, then in the send
+  // transaction before and after the row is persisted. While the message can still be retried it
+  // stays a queue head; once persisted a task action cannot be retried (its guard is bound to the
+  // clientId), so it is delivered on the strength of the earlier successful checks.
+  it.each([
+    { failsAt: 'the pre-check', failingCall: 1, delivered: false },
+    { failsAt: 'the re-check before persistence', failingCall: 2, delivered: false },
+    { failsAt: 'the re-check after persistence', failingCall: 3, delivered: true },
+  ])('a delivery check failing at $failsAt delivers=$delivered', async ({ failingCall, delivered }) => {
+    const h = createHarness(), sid = `task-action-check-failed-${failingCall}`;
+    const dispatched = vi.fn();
     h.sendToAgent.mockImplementation(async (_id, _message, _opts, sendOpts) => {
       await sendOpts[MCP_APP_MESSAGE_GUARD]?.();
+      await sendOpts.persistUserMessage?.onPersisted?.();
+      await sendOpts[MCP_APP_MESSAGE_GUARD]?.();
+      dispatched();
       return sendSuccess();
     });
     await h.coordinator.ensureQueueRestored(sid);
     h.setRunning(true);
+    let calls = 0;
     const queued = makeItem('automatic', 'Continue');
     bindTaskActionInput(sid, queued, async () => {
-      throw Object.assign(new Error('verification unavailable'), { code: 'GROUP_AUTHORIZATION_UNAVAILABLE' });
+      if (++calls === failingCall)
+        throw Object.assign(new Error('verification unavailable'), { code: 'GROUP_AUTHORIZATION_UNAVAILABLE' });
     });
     h.coordinator.enqueue(sid, queued);
     await flush();
     h.setRunning(false);
     h.coordinator.wakeSession(sid, 'idle');
-    await flush();
-    expect(h.sendToAgent).not.toHaveBeenCalled();
+    if (delivered) {
+      await vi.waitFor(() => expect(dispatched).toHaveBeenCalledOnce());
+      await flush();
+      expect(h.onUndispatchedUserTurn).not.toHaveBeenCalled();
+      expect(h.coordinator.getProjection(sid)).toMatchObject({ error: null, pendingQueue: [] });
+    } else {
+      await vi.waitFor(() => expect(h.coordinator.getProjection(sid).recovery).toEqual({ kind: 'queue-head', clientId: 'automatic' }));
+      expect(dispatched).not.toHaveBeenCalled();
+      expect(h.coordinator.getProjection(sid).pendingQueue).toHaveLength(1);
+    }
     expect(h.onDiscardedQueuedMessage).not.toHaveBeenCalled();
-    expect(h.coordinator.getProjection(sid)).toMatchObject({
-      recovery: { kind: 'queue-head', clientId: 'automatic' },
-      pendingQueue: [expect.objectContaining({ clientId: 'automatic' })],
-    });
   });
 });
 

@@ -5164,9 +5164,18 @@ export class AgentInputCoordinator {
           try {
             await taskActionGuard?.();
           } catch (error) {
-            // Only a proven revocation discards; a failed check keeps the message retryable.
-            if (isTaskActionRevoked(error)) appMessageGuardRejected = true;
-            throw error;
+            if (isTaskActionRevoked(error)) {
+              appMessageGuardRejected = true;
+              throw error;
+            }
+            // A failed check is not a revocation. Before the row is persisted the ordinary
+            // failure path keeps the message as a retryable queue head. Afterwards a task action
+            // cannot be retried (its guard is bound to this clientId) and the pre-check already
+            // passed: deliver rather than leave a failed reply behind.
+            if (!active.persisted) throw error;
+            log.warn('task action re-check failed after the row was persisted; delivering on the earlier check', {
+              sessionId, clientId: head.clientId, reason: errorMessage(error),
+            });
           }
         } } : {}),
         ...(head.supersedesUserClientId ? { retryUserClientId: head.supersedesUserClientId } : {}),
