@@ -249,16 +249,18 @@ try {
         await wait(()=>inner().executeJavaScript("document.querySelector('#denied pre').textContent.includes('MCP_APP_TOOL_NOT_VISIBLE')"));
         assert.equal(await inner().executeJavaScript('typeof window.cindy'),'undefined');
         // Regression: the shipped page sent seq=0, which the real Library rejects.
-        // Drag a multi-chunk file through the DOM, dispatcher, main.js and real vault.
+        // PR #7924: a 200-character Chinese filename also used to exceed the 64-character segment limit.
+        // Drag through the DOM, dispatcher, shipped main.js and actual LibraryVault.
         stage='author drag import';
-        await inner().executeJavaScript("(()=>{const transfer=new DataTransfer();transfer.items.add(new File(['x'.repeat(2*1024*1024+3)],'drag-test.txt',{type:'text/plain'}));document.querySelector('#drop .drop').dispatchEvent(new DragEvent('drop',{dataTransfer:transfer,bubbles:true,cancelable:true}));})()");
+        await inner().executeJavaScript("(()=>{const transfer=new DataTransfer();transfer.items.add(new File(['x'.repeat(2*1024*1024+3)],'中文'+'a'.repeat(185)+'drag-test.txt',{type:'text/plain'}));document.querySelector('#drop .drop').dispatchEvent(new DragEvent('drop',{dataTransfer:transfer,bubbles:true,cancelable:true}));})()");
         await wait(()=>inner().executeJavaScript("document.querySelector('#drop .drop').getAttribute('aria-busy')==='false'"));
         const imported=await inner().executeJavaScript("document.querySelector('#drop pre').textContent");
         assert.ok(imported.includes('sha256') && imported.includes('2097155') && !imported.includes('STREAM_INVALID'),imported);
         const filename=readdirSync(authorLibraryRoot+'/imports').find(name=>name.endsWith('drag-test.txt'));
         assert.ok(filename,imported);
         assert.equal(readFileSync(authorLibraryRoot+'/imports/'+filename,'utf8'),'x'.repeat(2*1024*1024+3));
-        console.log('AUTHOR_DRAG_IMPORT=passed (real page drop, three chunks, committed bytes match)');
+        assert.ok(imported.includes(createHash('sha256').update('x'.repeat(2*1024*1024+3)).digest('hex')),imported);
+        console.log('AUTHOR_DRAG_IMPORT=passed (real page drop, 200-character Chinese filename, three chunks, committed bytes and SHA match)');
 
         await window.webContents.executeJavaScript('document.body.style.margin="0";document.querySelector("iframe").style.width="100%";document.querySelector("iframe").style.border="0";document.querySelector("iframe").style.display="block"');
         for(const theme of ['light','dark'])for(const width of [360,800]){

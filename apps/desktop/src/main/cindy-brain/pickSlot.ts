@@ -32,6 +32,7 @@ import {
   type GhostPipePickResult,
   type InstalledGhost,
 } from '../../shared/ghost.js';
+import { pickedFileNameBudget } from './pickedFiles.js';
 import { sanitizeGhostNoticeText } from './notifySlot.js';
 
 export interface PickSlotDeps {
@@ -110,6 +111,9 @@ export class GhostPickSlot {
         return fail('UNSUPPORTED', '当前宿主不支持本机文件选择');
       }
       if (request.into === 'library' && ghost.manifest.library !== true) return fail('PERMISSION_DENIED', '插件未声明 Library');
+      if (request.into === 'library' && !pickedFileNameBudget((request.path as string | undefined) ?? 'imports')) {
+        return fail('INVALID_REQUEST', 'Library 目标目录不合法或无法容纳导入文件名');
+      }
     }
     if (request.title !== undefined && typeof request.title !== 'string') {
       return fail('INVALID_REQUEST', 'title 必须是字符串');

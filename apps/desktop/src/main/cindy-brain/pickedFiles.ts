@@ -16,13 +16,21 @@ export interface PickedFilesDeps {
   progress?(ghostId: string, callId?: string): (bytes: number | undefined, total: number | undefined, message: string) => void;
 }
 
+/** Reserve the UUID prefix and at least one filename character before opening a picker. */
+export function pickedFileNameBudget(directory: string): number {
+  // The shared safe-path contract caps ASCII segments at 64 and the full path at 256.
+  const budget = Math.min(64, 256 - directory.length - 1);
+  return budget > 42 && !validateLibraryRelPath(`${directory}/${'x'.repeat(43)}`) ? budget : 0;
+}
+
 /** Bytes flow from one held file handle into Host staging, never through the plugin runtime. */
 export async function importPickedFiles(deps: PickedFilesDeps, ghostId: string, paths: string[], input: {
   into: 'media' | 'library'; path?: string; callId?: string; assertCurrent(): void;
 }): Promise<GhostPipePickResult> {
   if (paths.length > 32) return { ok: false, errorCode: 'INVALID_REQUEST', message: '一次最多选择 32 个文件' };
   const directory = input.path ?? 'imports';
-  if (input.into === 'library' && validateLibraryRelPath(directory)) return { ok: false, errorCode: 'INVALID_REQUEST', message: 'Library 目标目录不合法' };
+  const nameBudget = pickedFileNameBudget(directory);
+  if (input.into === 'library' && !nameBudget) return { ok: false, errorCode: 'INVALID_REQUEST', message: 'Library 目标目录不合法或无法容纳导入文件名' };
   const files: NonNullable<Success['files']> = [];
   const progress = deps.progress?.(ghostId, input.callId);
   let completed = 0;
@@ -57,9 +65,9 @@ export async function importPickedFiles(deps: PickedFilesDeps, ghostId: string, 
           if (read !== stat.size) throw new Error('FILE_CHANGED');
         }
         if (input.into === 'library') {
-          // Keep the 42-character UUID prefix plus filename within the 64-character path segment limit.
+          // Reserve both the 64-character segment and the remaining full-path budget for the 42-character prefix.
           // The original display name is returned separately, unchanged.
-          const safeName = `file-${randomUUID()}-${name.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(-22).replace(/[.]+$/, '')}`;
+          const safeName = `file-${randomUUID()}-${name.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(-(nameBudget - 42)).replace(/[.]+$/, '')}`;
           const saved = await deps.importLibrary(ghostId, { path: `${directory}/${safeName}`, source: chunks(), totalBytes: stat.size,
             assertCurrent: input.assertCurrent, onProgress: bytes => progress?.(completed + bytes, undefined, '正在导入文件') });
           if (!saved.ok) return { ok: false, errorCode: 'INTERNAL', message: saved.message };

@@ -322,6 +322,8 @@ cindy.send({ type: 'tool-progress', callId: msg.callId, progress: 1, total: 10, 
 
 ### 文件从哪里来，怎么给页面
 
+Library 落盘路径只接受安全 ASCII，每段最多 64、整条最多 256 个 JavaScript 字符，生成文件名须为目录和前缀预留长度；中文原名可另作显示名。
+
 | 场景 | 页面 / main.js 分工 |
 | --- | --- |
 | 显示本插件文件 | main.js 返回标准 `resource_link`，View 读 `_meta["cindy/file"].url` |

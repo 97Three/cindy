@@ -25,7 +25,8 @@ cindy.onHostMessage(async m=>{
     selected=(r.files||[]).map(safeFile);out=output({files:selected},selected.filter(f=>f.ref).map(f=>link(f.ref,f.name,f.mimeType)));
    }else if(a.action==='begin'){
     if(!Number.isInteger(a.size)||a.size<1||a.size>16*1024*1024)throw new Error('演示拖放限 16 MiB；更大文件请用系统选择框');
-    const name=String(a.name||'file').replace(/[^a-zA-Z0-9_.-]/g,'_').slice(-60);const path='imports/'+Date.now()+'-'+name;
+    const name=String(a.name||'file');const prefix=Date.now()+'-';
+    const safeName=name.replace(/[^a-zA-Z0-9_.-]/g,'_').slice(-(64-prefix.length)).replace(/[.]+$/,'')||'file';const path='imports/'+prefix+safeName;
     const r=checked(await cindy.library({op:'writeBegin',path,totalBytes:a.size}));streams.set(r.streamId,{path,name,size:a.size,mimeType:String(a.mimeType||'application/octet-stream')});out=output({streamId:r.streamId});
    }else if(a.action==='chunk'){
     if(!streams.has(a.streamId))throw new Error('导入已失效');checked(await cindy.library({op:'writeChunk',streamId:a.streamId,seq:a.seq,content:a.data,encoding:'base64'}));out=output({accepted:true,seq:a.seq});

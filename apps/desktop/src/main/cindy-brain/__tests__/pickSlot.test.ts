@@ -246,6 +246,21 @@ describe('pickSlot · 骚扰钳制', () => {
 // B2: real pick entry must retain directory consent/owner rules for file selection.
 // tier: unit; minimum failure input is a selected file followed by a changed install target.
 describe('file selection', () => {
+  // PR #7924: a valid directory can leave no generated-file budget. Unit through
+  // the real pick request entry; earlier tests only selected short media paths.
+  // Reject before native UI or import rather than reporting INTERNAL after selection.
+  it('rejects an exhausted Library path budget before opening the file selector', async () => {
+    const ghost = pickGhost({ node: false }); ghost.manifest.library = true;
+    const showFileDialog = vi.fn(async () => ['/selected/file.txt']);
+    const importFiles = vi.fn(async () => ({ ok: true as const, name: 'file.txt' }));
+    const { slot } = makeSlot({ getGhost: () => ghost, showFileDialog, importFiles });
+    const directory = [...Array(3).fill('a'.repeat(64)), 'b'.repeat(18)].join('/');
+    expect(await slot.handleRequest('pick-ghost', { mode: 'file', into: 'library', path: directory }))
+      .toMatchObject({ ok: false, errorCode: 'INVALID_REQUEST' });
+    expect(showFileDialog).not.toHaveBeenCalled();
+    expect(importFiles).not.toHaveBeenCalled();
+  });
+
   it('imports selected files without paths for non-Node plugins and can issue a single-file deposit', async () => {
     const { slot } = makeSlot({ getGhost: () => pickGhost({ node: false }),
       showFileDialog: async () => ['/selected/image.png'],
