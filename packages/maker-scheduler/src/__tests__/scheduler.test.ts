@@ -140,10 +140,10 @@ it('preserves interrupted runs on app exit instead of recording a provider-close
   expect(h.storage.runs.get(runId)?.status).toBe('interrupted');
 });
 
-// Review P1: stop can precede the first durable row. Exercise every await
-// boundary through the real tick/runNow entry, with gates instead of sleeps.
+// Before dispatch no user turn exists to continue. Stop at each persistence
+// boundary must leave a cancelled row, never a fake resumable interruption.
 it.each(['manual-get', 'manual-insert', 'automatic-claim', 'automatic-insert'] as const)(
-  'persists interrupted when app exit wins the %s pre-registration window', async (boundary) => {
+  'cancels undispatched work when app exit wins the %s pre-registration window', async (boundary) => {
     const h = makeHarness();
     await h.scheduler.start();
     const schedule = await h.scheduler.create(baseInput);
@@ -175,9 +175,46 @@ it.each(['manual-get', 'manual-insert', 'automatic-claim', 'automatic-insert'] a
     release();
     await settled;
     expect([...h.storage.runs.values()]).toEqual([
-      expect.objectContaining({ status: 'interrupted', errorMsg: 'app restarted' }),
+      expect.objectContaining({ status: 'aborted', readAt: h.clock.now() }),
     ]);
     expect(h.runner.fire).not.toHaveBeenCalled();
+  },
+);
+
+// discussion_r4418886395: a busy target binds a session but has not accepted
+// this run's prompt. Existing active-run tests do not cover this queue boundary.
+// Real tick/runNow/resume + stop must cancel fresh queues and preserve reclaimed
+// original turns, without fabricating a new message or run. In-memory unit I/O.
+it.each(['automatic', 'manual', 'recovery'] as const)(
+  'distinguishes a fresh queued run from its accepted original on exit (%s)', async (source) => {
+    let entered!: () => void;
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    const h = makeHarness({ runnerImpl: async (_schedule, ctx) => {
+      await ctx.onSessionBound?.('busy-task');
+      ctx.onQueueWaitStart?.();
+      entered();
+      return new Promise<FireResult>((_resolve, reject) => {
+        ctx.signal.addEventListener('abort', () => reject(new Error('provider closed')), { once: true });
+      });
+    } });
+    await h.scheduler.start();
+    const schedule = await h.scheduler.create(baseInput);
+    if (source === 'recovery') {
+      await h.storage.insertRun({ id: 'old-run', scheduleId: schedule.id, sessionId: 'busy-task',
+        firedAt: h.clock.now() - 5000, status: 'interrupted', errorMsg: 'app restarted' });
+      h.storage.claimInterruptedRun = async () => h.storage.updateRun('old-run', { status: 'running' });
+    }
+    h.clock.setTo(schedule.nextFireAt!);
+    const pending = source === 'recovery'
+      ? (await h.scheduler.resumeInterruptedRun('busy-task'))!.completion
+      : source === 'automatic' ? h.scheduler.tick() : h.scheduler.runNow(schedule.id);
+    await ready;
+    await h.scheduler.stop({ interrupted: true });
+    await pending;
+    expect([...h.storage.runs.values()]).toEqual([expect.objectContaining({
+      status: source === 'recovery' ? 'interrupted' : 'aborted', sessionId: 'busy-task',
+    })]);
+    expect(h.scheduler.resolveInflightRunForSession('busy-task')).toBeUndefined();
   },
 );
 
