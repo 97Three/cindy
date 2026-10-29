@@ -14,6 +14,8 @@ import { markBotRead, getBotLastReadAt, botGroupReadKey, resetBotReadStateForTes
 import { botGroupAttachmentScope, botGroupThreadDraftKey } from '../botGroupAttachments';
 import { getBotGroupListSnapshot, refreshBotGroups, resetBotGroupStoreForTests } from '../botGroupStore';
 import { getBotGroupOutbox, getBotGroupOutboxPreviews, resetBotGroupOutboxForTests } from '../botGroupOutbox';
+import { resetCompanionCloudStoreForTests } from '../companionCloudStore';
+import { botGroupWorkPreview } from '../BotGroupLivePreview';
 import { BotGroupChatView } from '../BotGroupChatView';
 import { ControlledBanner, __resetControlledBannerForTests } from '../../remote-device/ControlledBanner';
 import type {
@@ -56,6 +58,7 @@ const mocks = vi.hoisted(() => ({
   /** Live activity of the speaking Session (null = not running on this machine). */
   activity: null as null | { compactDetail: string; startedAtMs: number | null; phase: string },
   ownerGeneration: { dataOwnerId: 'account-a', generation: 1 },
+  remoteInvoke: vi.fn(),
   reply: vi.fn(),
   shareToMain: vi.fn(),
 }));
@@ -268,6 +271,8 @@ function renderView() {
 }
 
 beforeEach(() => {
+  resetCompanionCloudStoreForTests();
+  mocks.remoteInvoke.mockReset();
   window.localStorage.clear();
   for (const id of ['g1', 'g2']) clearDraft(botGroupAttachmentScope(id));
   // 话题 reply drafts persist like the group's own; start every test without one.
@@ -311,6 +316,8 @@ beforeEach(() => {
     configurable: true,
     value: {
       deviceLink: {
+        invoke: mocks.remoteInvoke,
+        onRemotePush: () => () => {},
         getState: mocks.getControlledState,
         onControlledState: (callback: NonNullable<typeof mocks.controlledPush>) => {
           mocks.controlledPush = callback;
@@ -1258,7 +1265,7 @@ describe('BotGroupChatView', () => {
     renderView();
     const speaking = await screen.findByTestId('bot-group-speaking');
     expect(speaking.textContent).toContain('咪咪');
-    expect(speaking.textContent).toContain('phase:thinking');
+    expect(speaking.textContent).toContain('phase:processing');
     expect(screen.getByTestId('pending-interaction').textContent).toBe('lane-mimi');
     expect(screen.queryByRole('button', { name: 'bots.groupChat.timeline.continue' })).toBeNull();
 
@@ -3300,7 +3307,7 @@ describe('Telegram / Slack-grade timeline', () => {
     }) });
     renderView();
     const strip = await screen.findByTestId('bot-group-progress');
-    expect(strip.textContent).toContain('bots.groupChat.progress.speaking');
+    expect(strip.textContent).toContain('phase:processing');
     expect(strip.textContent).not.toContain('bots.groupChat.progress.step');
   });
 
@@ -4149,4 +4156,65 @@ it('renders component body as readable text without changing the message', async
   expect(body.textContent).toContain('After');
   expect(body.textContent).not.toContain('"op":"create"');
   expect(reply.content).toBe(content);
+});
+
+// Regression: tool boundaries clear streaming text; keep this turn's public progress,
+// without reviving old turns, private replies or reasoning. Unit tier, no clock waits.
+it('keeps only the current public progress note between tool calls', () => {
+  const note = { clientId: 'public-progress', role: 'assistant', content: 'Checking the result', assistantPhase: 'commentary', createdAt: '2026-10-26T01:00:01Z' };
+  const state = { streamingText: '', messages: [note], agentStatus: { startedAt: Date.parse('2026-10-26T01:00:00Z') } } as Parameters<typeof botGroupWorkPreview>[0];
+  expect(botGroupWorkPreview(state, 2)).toBe('Checking the result');
+  for (const patch of [{ botPrivateReply: true }, { failedSamplingAttempt: true }, { assistantPhase: 'analysis' }, { createdAt: '2026-10-25T01:00:00Z' }]) {
+    expect(botGroupWorkPreview({ ...state, messages: [{ ...note, ...patch }] } as Parameters<typeof botGroupWorkPreview>[0], 2)).toBe('');
+  }
+  expect(botGroupWorkPreview({ ...state, streamingText: 'NO_REPLY' }, 2)).toBe('');
+});
+
+// Group work identity: the source computer returns two concurrent executions of the
+// same companion. Open only the requested execution on its original host (unit tier).
+it('opens the exact remote execution and leaves other members’ private tasks unavailable', async () => {
+  resetCompanionCloudStoreForTests({ enabled: true, selfDeviceId: 'here', humanActorId: 'me', demotedBotIds: [], actors: [{
+    id: 'actor-mimi', externalId: 'mimi', name: '咪咪', avatar: null, homeDeviceId: 'studio',
+    homeDevice: { deviceId: 'studio', name: 'Studio', online: true, isSelf: false, remoteControlEnabled: true },
+  }] });
+  mocks.remoteInvoke.mockResolvedValue({ ref: { collectionId: 'bot-groups', kind: 'bot-group', id: 'g1' }, blocks: [{ primitive: 'bot-group-chat', data: {
+    id: 'g1', round: { speakers: [{ executionId: 'other-thread', sessionId: 'wrong-lane' }, { executionId: 'this-turn', sessionId: 'correct-lane' }] },
+  } }] });
+  mocks.getBotGroup.mockResolvedValue({ ok: true, group: detail({ speakingBotIds: ['mimi', 'xiaoman'], round: {
+    status: 'running', canContinue: false, speakers: [
+      { botId: 'mimi', activity: 'reply', executionId: 'this-turn', sessionId: null, startedAt: Date.now() - 10_000 },
+      { botId: 'xiaoman', activity: 'reply', executionId: 'theirs', sessionId: null, startedAt: Date.now() - 10_000 },
+    ],
+  } }) });
+  renderView();
+  const process = await screen.findByRole('button', { name: 'bots.groupChat.progress.viewProcess' });
+  expect(screen.getAllByTestId('bot-group-progress')).toHaveLength(2);
+  fireEvent.click(process);
+  expect(mocks.navigate).toHaveBeenCalledWith('/cc-agent/correct-lane?device=studio');
+  expect(mocks.remoteInvoke.mock.calls.every(([device]) => device === 'studio')).toBe(true);
+});
+
+// A stopping last row must not disable the group control while an earlier
+// execution is still stoppable (Greptile review #4375066338).
+it.each([false, true])('keeps the group stop control enabled for another running execution (admin: %s)', async admin => {
+  mocks.getBotGroup.mockResolvedValue({ ok: true, group: detail({
+    canStopAll: admin,
+    speakingBotIds: ['mimi', 'xiaoman'],
+    round: { status: 'running', canContinue: false, othersActive: admin, speakers: [
+      { botId: 'mimi', activity: 'reply', executionId: 'first-running', sessionId: 'lane-mimi', startedAt: Date.now() - 10_000, executionStatus: 'running' },
+      { botId: 'xiaoman', activity: 'reply', executionId: 'last-stopping', sessionId: 'lane-xiaoman', startedAt: Date.now() - 10_000, executionStatus: 'stopping', stopping: true },
+    ] },
+  }) });
+  renderView();
+  const buttons = await screen.findAllByRole('button', { name: 'bots.groupChat.progress.stop' });
+  expect(buttons).toHaveLength(1);
+  expect((buttons[0] as HTMLButtonElement).disabled).toBe(false);
+  if (admin) {
+    fireEvent.pointerDown(buttons[0]!, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^bots\.groupChat\.progress\.stopAll/ }));
+    await waitFor(() => expect(mocks.stopBotGroupRound).toHaveBeenCalledWith('g1', 'all'));
+  } else {
+    fireEvent.click(buttons[0]!);
+    await waitFor(() => expect(mocks.stopBotGroupRound).toHaveBeenCalledWith('g1'));
+  }
 });

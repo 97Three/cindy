@@ -33,6 +33,20 @@ export default {
   notCovered:
     'Sending, round control, real device-link control and revocation, pending interactions, plans and attachments; the bubbles case shows a task snapshot, not a live task; the sidebar is an empty frame',
   cases: {
+    'remote-limits': {
+      about: '#6835: lane-unavailable notices show device and total task limits with recovery advice',
+      viewport: { width: 720, height: 700 },
+      data: { ...base, sidebar: false, remoteLimits: true },
+    },
+    'work-thinking': { about: 'Actual group work status, scenario data: thinking', data: { ...base, messages: 2, workState: 'thinking' } },
+    'work-tools': { about: 'Actual group work status, scenario data: command execution', data: { ...base, messages: 2, workState: 'testing' } },
+    'work-reading': { about: 'Actual group work status, scenario data: file reading', data: { ...base, messages: 2, workState: 'reading-file' } },
+    'work-waiting': { about: 'Actual group work status, scenario data: needs confirmation', data: { ...base, messages: 2, workState: 'waiting' } },
+    'work-stopping': { about: 'Actual group work status, scenario data: stop requested', data: { ...base, messages: 2, workState: 'stopping' } },
+    'work-unknown': { about: 'Remote work with no readable task: generic activity, no invented thinking', data: { ...base, messages: 2, workState: 'unknown' } },
+    'work-remote': { about: 'Authenticated remote target projection, scenario data (not a live device-link run)', data: { ...base, messages: 2, workState: 'testing', workRemote: true } },
+    'work-parallel': { about: 'Two concurrent execution rows, separate task entries and one group stop', data: { ...base, messages: 2, workState: 'testing', workParallel: true } },
+    'work-parallel-stopping': { about: 'Last execution is stopping while the first still runs: the group stop control remains available', data: { ...base, messages: 2, workState: 'testing', workParallel: true, workLastStopping: true } },
     'body-answer': {
       about: '#6550: component body is readable; literal punctuation and surrounding Markdown are retained',
       viewport: { width: 720, height: 700 },
@@ -113,12 +127,46 @@ export default {
   },
   async check(page, ui) {
     const definition = this.cases[ui.case];
+    if (ui.case === 'remote-limits') {
+      const timeline = page.getByTestId('bot-group-timeline');
+      for (const [i, code] of ['REMOTE_DEVICE_LIMIT', 'REMOTE_TOTAL_LIMIT'].entries()) {
+        const expected = (await ui.t(`bots.groupChat.notice.runtimeFailure.${code}`)).replace('{{name}}', members[i].name);
+        assert.ok((await timeline.innerText()).includes(expected));
+      }
+      return;
+    }
+    if (definition.data.workState) {
+      const state = definition.data.workState;
+      await ui.emit('sessionActivity', [{ sessionId: 'fixture-work', phase: 'running',
+        workingPhase: ['thinking', 'reading-file', 'testing'].includes(state) ? state : 'processing',
+        compactDetail: state === 'testing' ? '检查私聊与群聊的回归结果' : state === 'reading-file' ? '核对群聊状态与任务入口' : '',
+        startedAtMs: Date.now() - 83_000, lastActivityAtMs: Date.now(), attention: false,
+        gracefulStopState: state === 'stopping' ? 'requested' : 'none', source: 'live' }]);
+      await page.getByTestId('bot-group-progress').first().waitFor();
+      if (ui.case === 'work-parallel-stopping') {
+        const stop = page.getByRole('button', { name: await ui.t('bots.groupChat.progress.stop'), exact: true });
+        assert.equal(await stop.count(), 1);
+        assert.equal(await stop.isEnabled(), true, 'another running execution must remain stoppable');
+      }
+      await ui.capture('work');
+      return;
+    }
     if (ui.case === 'body-answer') {
       const timeline = page.getByTestId('bot-group-timeline');
       assert.ok((await timeline.innerText()).includes('保留 <name>、*literal* 和 & 符号'));
       assert.ok((await timeline.innerText()).includes('以上是本轮结论。'));
       assert.equal(await timeline.getByText('重点', { exact: true }).count(), 1);
       assert.ok(!(await timeline.innerText()).includes('"op":"create"'));
+      const text = await timeline.innerText();
+      assert.ok(text.includes('图片说明保留') && text.includes('图片标题保留'));
+      assert.ok(text.includes('🖼'), 'an undescribed image has a neutral placeholder');
+      assert.ok(!text.includes('cindy-media://') && !text.includes('/private/tmp/fixture-image.png'));
+      for (const kind of ['image', 'video', 'audio']) {
+        const url = `https://example.test/public-${kind}`;
+        const link = timeline.getByRole('link', { name: url, exact: true });
+        assert.equal(await link.count(), 1, 'public media keep an actionable web link');
+        assert.equal(await link.getAttribute('href'), url);
+      }
       return;
     }
     const input = page.locator('textarea');

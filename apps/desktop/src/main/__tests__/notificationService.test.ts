@@ -102,6 +102,19 @@ vi.mock('../appBadgeService', () => ({
   markSessionNeedsAttention,
 }));
 
+// 高权限 IPC 的入站来源断言：真实实现要 BrowserWindow 与 app-content 登记表，
+// 这里只验它在该 handler 上被调到（且在任何副作用之前）。
+const assertTrustedAppRendererEvent = vi.fn((_event: unknown): void => {});
+vi.mock('../security/trustedAppRenderer', () => ({
+  assertTrustedAppRendererEvent: (event: unknown) => assertTrustedAppRendererEvent(event),
+}));
+
+// 「消息免打扰」判定：真实实现读账号库的同步索引，这里只验 handler 在哪个时刻用它。
+const isSessionNotificationsMutedSync = vi.fn((_sessionId: string): boolean => false);
+vi.mock('../localDb/sessionFlagRegistry', () => ({
+  isSessionNotificationsMutedSync: (sessionId: string) => isSessionNotificationsMutedSync(sessionId),
+}));
+
 // mobile 通道:真实实现在 device-link host(依赖 electron/ws/authManager 全家桶),
 // 这里只验分发契约 —— channels.mobile === true 才调用。
 const sendMobileSessionNotify = vi.fn(() => true);
@@ -165,6 +178,8 @@ async function freshService() {
   ownerScopeCurrent = true;
   ownerScopeKey = 'account-a:1';
   markSessionNeedsAttention.mockClear();
+  assertTrustedAppRendererEvent.mockReset();
+  isSessionNotificationsMutedSync.mockReset().mockReturnValue(false);
   sendMobileSessionNotify.mockReset().mockReturnValue(true);
   getMobileNotifyGeneration.mockClear();
   latestMessageText.mockReset().mockResolvedValue('');
@@ -238,6 +253,91 @@ describe('notificationService — channels 分发', () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('「消息免打扰」任务不发任何外向提醒，但未读照旧记账', async () => {
+    const { initNotificationService } = await freshService();
+    const feishuIm = makeFeishuIm('owner');
+    initNotificationService(baseDeps(feishuIm));
+    isSessionNotificationsMutedSync.mockReturnValue(true);
+
+    // done 与 needs-reply 分别走「预览后的异步分支」和「立即桌面分支」，两条都要断。
+    await invokeHandler({ sessionId: 'muted', title: 'Muted', kind: 'done', channels: { desktop: true, feishu: true, mobile: true } });
+    await invokeHandler({ sessionId: 'muted', title: 'Muted', kind: 'needs-reply', channels: { desktop: true, feishu: true, mobile: true } });
+
+    expect(isSessionNotificationsMutedSync).toHaveBeenCalledWith('muted');
+    expect(markSessionNeedsAttention).toHaveBeenCalledTimes(2);
+    expect(notificationCtor).not.toHaveBeenCalled();
+    expect(sendMobileSessionNotify).not.toHaveBeenCalled();
+    expect(feishuIm.sendMarkdownText).not.toHaveBeenCalled();
+    expect(feishuIm.sendText).not.toHaveBeenCalled();
+  });
+
+  // bot-autonomy / scheduler 这类 main 内直调方不经过 IPC handler，静音门必须在
+  // 公共出口（showDesktopSessionEvent）上，否则静音任务仍会弹出系统 toast。
+  it('main 内直接调公共出口时同样受静音门禁，其它设备任务不受影响', async () => {
+    const { initNotificationService, showDesktopSessionEvent } = await freshService();
+    initNotificationService(baseDeps(makeFeishuIm('owner')));
+    isSessionNotificationsMutedSync.mockReturnValue(true);
+
+    expect(showDesktopSessionEvent(() => null, { sessionId: 'muted', title: 'Muted', kind: 'needs-reply' })).toBe(false);
+    expect(notificationCtor).not.toHaveBeenCalled();
+
+    // 其它设备的任务（markAttention: false）不查本机静音标记，照旧弹。
+    expect(showDesktopSessionEvent(() => null, { sessionId: 'muted', title: 'Remote', kind: 'needs-reply', markAttention: false })).toBe(true);
+    expect(notificationCtor).toHaveBeenCalledOnce();
+  });
+
+  it('keeps remote-device notifications when a local task with the same id is muted', async () => {
+    const { initNotificationService } = await freshService();
+    const feishuIm = makeFeishuIm('owner');
+    initNotificationService(baseDeps(feishuIm));
+    isSessionNotificationsMutedSync.mockReturnValue(true);
+
+    // 还原/复制过的库里可能留着同 id 的本地任务行，那是另一条任务：它的静音标记
+    // 不得把其它设备发来的事件压掉（renderer 对远端任务传 markAttention: false）。
+    await invokeHandler({
+      sessionId: 'collision',
+      title: 'Remote',
+      kind: 'needs-reply',
+      markAttention: false,
+      channels: { desktop: true, feishu: true, mobile: true },
+    });
+
+    expect(notificationCtor).toHaveBeenCalledOnce();
+    expect(feishuIm.sendMarkdownText).toHaveBeenCalledOnce();
+    expect(sendMobileSessionNotify).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'collision', muteExempt: true }),
+    );
+  });
+
+  it('keeps every channel for a task that is not muted', async () => {
+    const { initNotificationService } = await freshService();
+    const feishuIm = makeFeishuIm('owner');
+    initNotificationService(baseDeps(feishuIm));
+
+    await invokeHandler({ sessionId: 'loud', title: 'Loud', kind: 'needs-reply', channels: { desktop: true, feishu: true, mobile: true } });
+
+    expect(notificationCtor).toHaveBeenCalledOnce();
+    expect(feishuIm.sendMarkdownText).toHaveBeenCalledOnce();
+  });
+
+  it('re-checks the mute after preview enrichment so muting during the wait still suppresses', async () => {
+    const { initNotificationService } = await freshService();
+    const feishuIm = makeFeishuIm('owner');
+    // 交接判定是发出去之前的最后一个 await，就在那里把免打扰打开。
+    const check = vi.fn(async () => {
+      isSessionNotificationsMutedSync.mockReturnValue(true);
+      return false;
+    });
+    initNotificationService({ ...baseDeps(feishuIm), isCompletionHandledByTeammate: check });
+    getSessionNotificationTurnSignal.mockReturnValue({ id: 'turn:1:2', fallbackEventId: 'turn:1:2', ended: true });
+
+    await invokeHandler({ sessionId: 's1', title: 'Mid-flight', kind: 'done', channels: { desktop: true, feishu: true, mobile: true } });
+
+    expect(check).toHaveBeenCalled();
+    expect(notificationCtor).not.toHaveBeenCalled();
+    expect(feishuIm.sendMarkdownText).not.toHaveBeenCalled();
   });
 
   it('hands off delegated completion on every external channel while preserving task attention and consuming retries', async () => {
@@ -438,6 +538,30 @@ describe('notificationService — channels 分发', () => {
     expect(sendMobileSessionNotify).toHaveBeenCalled();
     await expect(invokeHandler({ sessionId: 'remote-1', title: 'x', kind: 'done', markAttention: 'no' }))
       .rejects.toThrow('invalid session event payload');
+  });
+
+  it('rejects a caller that is not the Cindy renderer before any channel or badge work', async () => {
+    const { initNotificationService } = await freshService();
+    initNotificationService(baseDeps(makeFeishuIm('ou_owner')));
+    // 插件 webview 等其它 webContents 能调到同一个 channel:来源断言失败时
+    // 不得记角标，也不得把 title/kind 经飞书或手机送出去。
+    assertTrustedAppRendererEvent.mockImplementationOnce(() => {
+      throw new Error('PERMISSION_DENIED');
+    });
+
+    await expect(
+      invokeHandler({
+        sessionId: 's1',
+        title: 'Fix login',
+        kind: 'done',
+        channels: { desktop: true, feishu: true, mobile: true },
+      }),
+    ).rejects.toThrow('PERMISSION_DENIED');
+
+    expect(assertTrustedAppRendererEvent).toHaveBeenCalledTimes(1);
+    expect(markSessionNeedsAttention).not.toHaveBeenCalled();
+    expect(notificationCtor).not.toHaveBeenCalled();
+    expect(sendMobileSessionNotify).not.toHaveBeenCalled();
   });
 
   it('does not treat a pre-drain running snapshot as a reason to lose the completion fallback', async () => {

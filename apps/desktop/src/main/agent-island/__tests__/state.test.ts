@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentEvent, InteractionRequest } from '@cindy/maker-core';
 import { DEFAULT_TOOL_ROW_WORDING } from '@cindy/maker-shared/message-presentation';
 import { DEFAULT_AGENT_ISLAND_STRINGS } from '../../../shared/agentIsland.js';
+import { buildMenubarActivities } from '../../menubar/activity.js';
 
 import {
   acknowledgeAgentIslandSessionRead,
@@ -35,9 +36,39 @@ import {
   setAgentIslandHovered,
   setAgentIslandLayoutDragActive,
   setAgentIslandPointerZones,
+  setAgentIslandSessionDisplaySuppressed,
   setAgentIslandVisibleSession,
   type AgentIslandCompanionChatProjection,
 } from '../state.js';
+
+// Unit regression: the menu re-sorted the island overview on every output event.
+// Existing island ordering tests did not exercise the menu adapter. Two running
+// tasks with an older task emitting newer output are the minimal failure input.
+describe('menu bar task ordering', () => {
+  it('updates previews without reordering output, but promotes new prompts and waiting tasks', () => {
+    const state = createAgentIslandState();
+    const a = { sessionId: 'a', title: 'A' };
+    const b = { sessionId: 'b', title: 'B' };
+    const rows = (now: number) => buildMenubarActivities(
+      buildAgentIslandTaskOverview(state, now), false, key => key,
+    );
+    applyAgentIslandUserPrompt(state, a, 'First task', 1_000);
+    applyAgentIslandUserPrompt(state, b, 'Second task', 2_000);
+    expect(rows(3_000).map(row => row.sessionId)).toEqual(['b', 'a']);
+
+    applyAgentIslandEvent(state, a, { type: 'text', data: { text: 'Progress from A' } }, 10_000);
+    const updated = rows(10_001);
+    expect(updated.map(row => row.sessionId)).toEqual(['b', 'a']);
+    expect(updated.find(row => row.sessionId === 'a')?.preview).toBe('Progress from A');
+
+    applyAgentIslandUserPrompt(state, a, 'Continue A', 20_000);
+    expect(rows(20_001).map(row => row.sessionId)).toEqual(['a', 'b']);
+    applyAgentIslandInteractionRequest(state, b, {
+      kind: 'ask_user_question', requestId: 'question', questions: [],
+    }, 21_000);
+    expect(rows(21_001).map(row => row.sessionId)).toEqual(['b', 'a']);
+  });
+});
 
 // Regression: a chat can be unread after runtime expiry/restart; existing tests only supplied
 // runtime events. Exercise the public display builder with one old unread chat (unit tier).
@@ -243,6 +274,110 @@ function askUserQuestionRequest(requestId: string): InteractionRequest {
 }
 
 describe('Agent Island display state', () => {
+  it('「消息免打扰」只把任务从岛面拿掉，侧栏活动快照照旧保留', () => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 'muted-task', title: 'Muted', agentKind: 'codex' };
+    applyAgentIslandEvent(state, meta, statusEvent(true, 'Working'), 1_000);
+    applyAgentIslandEvent(state, meta, toolUseEvent('tool-1'), 1_100);
+    expect(buildAgentIslandDisplayState(state, 1_200).sessions.map((s) => s.sessionId)).toEqual([
+      'muted-task',
+    ]);
+
+    expect(setAgentIslandSessionDisplaySuppressed(state, 'muted-task', true)).toBe(true);
+    // 岛面（含菜单栏/提示音）不再有它。
+    expect(buildAgentIslandDisplayState(state, 1_300).sessions).toEqual([]);
+    // 但状态机照常记账：侧栏卡片的实时活动与等待交互态从这份快照来。
+    expect(state.sessions.has('muted-task')).toBe(true);
+    expect(buildAllSessionActivitySnapshots(state)).toEqual([
+      expect.objectContaining({ sessionId: 'muted-task', phase: 'running' }),
+    ]);
+
+    // 取消静音后回到岛面，状态没有丢。
+    expect(setAgentIslandSessionDisplaySuppressed(state, 'muted-task', false)).toBe(true);
+    expect(buildAgentIslandDisplayState(state, 1_400).sessions.map((s) => s.sessionId)).toEqual([
+      'muted-task',
+    ]);
+  });
+
+  it('a muted task stays off the island even after its entry is recreated', () => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 'muted-task', title: 'Muted', agentKind: 'codex' };
+    applyAgentIslandEvent(state, meta, statusEvent(true, 'Working'), 1_000);
+    setAgentIslandSessionDisplaySuppressed(state, 'muted-task', true);
+    // 岛面 TTL / 进程收尾把条目删掉后，新事件重建条目也不得把静音任务放回来。
+    state.sessions.delete('muted-task');
+
+    applyAgentIslandEvent(state, meta, statusEvent(true, 'Working again'), 2_000);
+
+    expect(buildAgentIslandDisplayState(state, 2_100).sessions).toEqual([]);
+    expect(buildAllSessionActivitySnapshots(state)).toEqual([
+      expect.objectContaining({ sessionId: 'muted-task', phase: 'running' }),
+    ]);
+  });
+
+  it('静音任务的完成卡不回到岛面，也不占 active transient / 揭示队列', () => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 'muted-done', title: 'Muted', agentKind: 'codex' };
+    applyAgentIslandEvent(state, meta, statusEvent(true, 'Working'), 1_000);
+    setAgentIslandSessionDisplaySuppressed(state, 'muted-done', true);
+
+    applyAgentIslandEvent(state, meta, doneEvent(), 2_000);
+
+    const display = buildAgentIslandDisplayState(state, 2_100);
+    expect(display.sessions).toEqual([]);
+    expect(display.currentSessionId).toBeNull();
+    expect(state.activeTransientSessionId).toBeNull();
+    expect(state.transientRevealQueue).toEqual([]);
+    // 侧栏活动照旧看得到它已经完成。
+    expect(buildAllSessionActivitySnapshots(state)).toEqual([
+      expect.objectContaining({ sessionId: 'muted-done', phase: 'completed' }),
+    ]);
+  });
+
+  it('完成卡已经在岛上时再静音，下一次展示面就不再包含它', () => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 'muted-live', title: 'Muted', agentKind: 'codex' };
+    applyAgentIslandEvent(state, meta, statusEvent(true, 'Working'), 1_000);
+    applyAgentIslandEvent(state, meta, doneEvent(), 1_100);
+    expect(buildAgentIslandDisplayState(state, 1_200).sessions.map((s) => s.sessionId)).toEqual([
+      'muted-live',
+    ]);
+
+    setAgentIslandSessionDisplaySuppressed(state, 'muted-live', true);
+
+    expect(buildAgentIslandDisplayState(state, 1_300).sessions).toEqual([]);
+    expect(buildAgentIslandDisplayState(state, 1_300).currentSessionId).toBeNull();
+  });
+
+  it('静音任务的待交互态不参与阻塞态仲裁，不再挡住其它任务的完成卡', () => {
+    const state = createAgentIslandState();
+
+    applyAgentIslandEvent(state, { sessionId: 'done', title: 'Done' }, doneEvent(), 1_000);
+    applyAgentIslandInteractionRequest(state, { sessionId: 'ask', title: 'Ask' }, permissionRequest('r1'), 1_100);
+    // 静音任务自己不上岛面，也不能继续按阻塞态按住队列里的完成卡。
+    setAgentIslandSessionDisplaySuppressed(state, 'ask', true);
+
+    const display = buildAgentIslandDisplayState(state, 1_200);
+
+    expect(display.sessions.map((session) => session.sessionId)).toEqual(['done']);
+    expect(display.displayPolicy).toBe('transient');
+    expect(display.displaySurface).toBe('completionCard');
+    expect(display.currentSessionId).toBe('done');
+    expect(display.pillSnapshot.deferredRevealCount).toBe(0);
+  });
+
+  it('静音任务的待交互态不再禁用灵动岛的悬停展开', () => {
+    const state = createAgentIslandState();
+
+    applyAgentIslandEvent(state, { sessionId: 'running', title: 'Running' }, statusEvent(true, 'Running'), 1_000);
+    applyAgentIslandInteractionRequest(state, { sessionId: 'ask', title: 'Ask' }, permissionRequest('r1'), 1_100);
+    setAgentIslandSessionDisplaySuppressed(state, 'ask', true);
+
+    setAgentIslandHovered(state, true, 1_200);
+
+    expect(buildAgentIslandDisplayState(state, 1_750).mode).toBe('expanded');
+  });
+
   it('does not complete the island on claimed SDK boundary events', () => {
     const state = createAgentIslandState();
     const meta = { sessionId: 'continuing', title: 'Continuing', agentKind: 'codex' };
@@ -478,7 +613,7 @@ describe('Agent Island display state', () => {
     expect(display.sessions[0]).toMatchObject({
       sessionId: 's1',
       projectName: 'xdt-maker',
-      detail: 'imagegen',
+      detail: '正在调用工具…',
       activityLines: [
         { id: '1', kind: 'user', text: '正在执行绘画命令 请生成一张图' },
         { id: '2', kind: 'assistant', text: '我会开始生成图片。' },
@@ -683,6 +818,24 @@ describe('Agent Island display state', () => {
       detail: '运行测试',
       phase: 'running',
     });
+  });
+
+  // #7474, unit: the public event -> display/activity snapshot path must not
+  // fall back to an internal tool name when a real event has no input payload.
+  it('publishes readable tool activity even when input is absent', () => {
+    const state = createAgentIslandState();
+    setAgentIslandToolWording(state, {
+      ...DEFAULT_TOOL_ROW_WORDING,
+      toolCallLabel: () => 'Calling a tool…',
+    });
+    applyAgentIslandEvent(state, { sessionId: 's1', title: 'Task', agentKind: 'codex' }, {
+      type: 'tool_use',
+      source: 'codex',
+      data: { toolUseId: 'tool-1', toolName: 'mcp:server:read_by_url' },
+    }, 1_000);
+
+    expect(buildAgentIslandDisplayState(state, 1_050).sessions[0]?.detail).toBe('Calling a tool…');
+    expect(buildAllSessionActivitySnapshots(state)[0]?.detail).toBe('Calling a tool…');
   });
 
   it('keeps the raw shell command when no intent rule classifies it', () => {
@@ -939,6 +1092,133 @@ describe('Agent Island display state', () => {
 
     expect(display.sessions[0]?.detail).toBe('');
     expect(display.sessions[0]?.compactDetail).toBe('我已经完成了第一步，并且正在继续处理后续内容。');
+  });
+
+  // Unit regression: the real display builder must use readable rich-answer activity
+  // both during output and after done, not expose the component transport in the island.
+  it('shows readable rich answers in running and completed companion cards', () => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 's1', companion: { name: '电脑管家', hue: 'blue' as const, glyph: '电', glyphIsInitial: true } };
+    const source = '```cindy-ui\n'
+      + '{"version":1,"seq":1,"op":"create","id":"answer","kind":"text","props":{"text":"网络检查完成"}}\n```';
+    applyAgentIslandEvent(state, meta, statusEvent(true, 'Generating...'), 1_000);
+    for (const character of source) {
+      applyAgentIslandEvent(state, meta, textDeltaEvent(character), 1_050);
+      const preview = buildAgentIslandDisplayState(state, 1_060).sessions[0]?.compactDetail ?? '';
+      expect(preview).not.toMatch(/cindy|version|seq|create|props|`/);
+    }
+    applyAgentIslandEvent(state, meta, finalTextEvent(source), 1_100);
+    expect(buildAgentIslandDisplayState(state, 1_200).sessions[0])
+      .toMatchObject({ compactDetail: '网络检查完成', phase: 'running' });
+    applyAgentIslandEvent(state, meta, doneEvent(), 1_300);
+    expect(buildAgentIslandDisplayState(state, 1_400).sessions[0])
+      .toMatchObject({ compactDetail: '网络检查完成', phase: 'completed' });
+  });
+
+  // Local screenshot regression, including the native messagePreview/activityLines
+  // fields: compactDetail alone does not cover the expanded native row.
+  it('projects Markdown once for both native preview fields and completed cards', () => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 'markdown' };
+    applyAgentIslandEvent(state, meta, statusEvent(true, 'Generating...'), 1_000);
+    const text = '分两部分：**更新已完成**；`foo_bar **literal**`';
+    const expected = '分两部分：更新已完成；foo_bar **literal**';
+    applyAgentIslandEvent(state, meta, finalTextEvent(text), 1_100);
+    const running = buildAgentIslandDisplayState(state, 1_200).sessions[0];
+    expect(running?.messagePreview?.text).toBe(expected);
+    expect(running?.activityLines.at(-1)?.text).toBe(expected);
+    expect(running?.compactDetail).toBe(expected);
+    applyAgentIslandEvent(state, meta, doneEvent(), 1_300);
+    const completed = buildAgentIslandDisplayState(state, 4_000).sessions[0];
+    expect(completed?.activityLines.at(-1)?.text).toBe(expected);
+    expect(completed?.compactDetail).toBe(expected);
+    const userState = createAgentIslandState();
+    applyAgentIslandUserPrompt(userState, { sessionId: 'user-code' }, '`foo_bar **literal**`', 5_000);
+    const user = buildAgentIslandDisplayState(userState, 5_000).sessions[0];
+    expect(user?.messagePreview?.text).toBe('foo_bar **literal**');
+    expect(user?.compactDetail).toBe('foo_bar **literal**');
+  });
+
+  // #7566 review, unit: a long destination must not consume the visible budget;
+  // cover both terminal entrances without relying on an independent final text.
+  it.each(['done', 'status'] as const)('completes a delta-only long-link reply through %s', terminal => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 'delta-link' };
+    applyAgentIslandEvent(state, meta, statusEvent(true, 'Generating...'), 1_000);
+    for (const delta of ['[文档](', 'https://example.com/' + 'x'.repeat(500), ') 测试已通过']) {
+      applyAgentIslandEvent(state, meta, textDeltaEvent(delta), 1_100);
+    }
+    expect(buildAgentIslandDisplayState(state, 1_200).sessions[0]?.messagePreview?.text)
+      .toBe('文档 测试已通过');
+    applyAgentIslandEvent(state, meta, terminal === 'done' ? doneEvent() : statusEvent(false, 'Done'), 1_300);
+    const completed = buildAgentIslandDisplayState(state, 1_400).sessions[0];
+    expect(completed).toMatchObject({ phase: 'completed', compactDetail: '文档 测试已通过' });
+    expect(completed?.activityLines.at(-1)?.text).toBe('文档 测试已通过');
+  });
+
+  // #7566 review, unit: whitespace-only deltas commit rich lines without a
+  // final-text repair. Exercise create, patch, closing fence and both terminals.
+  it.each([
+    { newline: '\n', terminal: 'done' },
+    { newline: '\r\n', terminal: 'status' },
+  ])('commits rich lines across standalone newlines (%j)', ({ newline, terminal }) => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 'rich-lines' };
+    applyAgentIslandEvent(state, meta, statusEvent(true, 'Generating...'), 1_000);
+    const create = JSON.stringify({ version: 1, seq: 1, op: 'create', id: 'a', kind: 'text', props: { text: '初步结果' } });
+    const patch = JSON.stringify({ seq: 2, op: 'patch', id: 'a', props: { text: '检查完成' } });
+    const send = (delta: string) => applyAgentIslandEvent(state, meta, textDeltaEvent(delta), 1_100);
+    send('```cindy-ui' + newline + create.slice(0, 40));
+    send(create.slice(40));
+    send(newline);
+    expect(buildAgentIslandDisplayState(state, 1_200).sessions[0]?.activityLines.at(-1)?.text).toBe('初步结果');
+    send(patch.slice(0, 20));
+    send(patch.slice(20));
+    // Complete JSON may project immediately; a separate newline must preserve it.
+    expect(buildAgentIslandDisplayState(state, 1_200).sessions[0]?.activityLines.at(-1)?.text).toBe('检查完成');
+    send(newline);
+    expect(buildAgentIslandDisplayState(state, 1_200).sessions[0]?.messagePreview?.text).toBe('检查完成');
+    send('```');
+    send(newline + '后续说明');
+    applyAgentIslandEvent(state, meta, terminal === 'done' ? doneEvent() : statusEvent(false, 'Done'), 1_300);
+    const completed = buildAgentIslandDisplayState(state, 1_400).sessions[0];
+    expect(completed).toMatchObject({ phase: 'completed', compactDetail: '检查完成 后续说明' });
+    expect(completed?.activityLines.at(-1)?.text).toBe('检查完成 后续说明');
+  });
+
+  // Review regression: a removed/emptied rich node must retract this message's
+  // streamed line from both the activity log and active/queued preview (unit tier).
+  it.each([
+    { operation: 'remove', queued: false, streamed: true },
+    { operation: 'remove', queued: true, streamed: false },
+    { operation: 'patch', queued: false, streamed: false },
+    { operation: 'patch', queued: true, streamed: true },
+  ])('retracts an empty rich preview (%j)', ({ operation, queued, streamed }) => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 's1' };
+    if (queued) applyAgentIslandUserPrompt(state, meta, '检查网络', 1_000);
+    else applyAgentIslandEvent(state, meta, statusEvent(true, 'Generating...'), 1_000);
+    const prefix = '```cindy-ui\n'
+      + '{"version":1,"seq":1,"op":"create","id":"a","kind":"text","props":{"text":"临时结果"}}\n';
+    applyAgentIslandEvent(state, meta, textDeltaEvent(prefix), 1_100);
+    expect(buildAgentIslandDisplayState(state, 1_150).sessions[0]?.activityLines)
+      .toContainEqual(expect.objectContaining({ text: '临时结果' }));
+    const update = JSON.stringify({ seq: 2, op: operation, id: 'a',
+      ...(operation === 'patch' ? { props: { text: '' } } : {}) }) + '\n```';
+    if (streamed) {
+      applyAgentIslandEvent(state, meta, textDeltaEvent(update), 1_200);
+      const during = buildAgentIslandDisplayState(state, 1_250).sessions[0];
+      expect(JSON.stringify(during)).not.toContain('临时结果');
+    }
+    applyAgentIslandEvent(state, meta, finalTextEvent(prefix + update), 1_300);
+    applyAgentIslandEvent(state, meta, doneEvent(), 1_400);
+    for (const time of [1_450, 4_000]) {
+      const completed = buildAgentIslandDisplayState(state, time).sessions[0];
+      expect(JSON.stringify(completed)).not.toContain('临时结果');
+      expect(completed?.activityLines).toContainEqual(expect.objectContaining({
+        kind: 'status', text: DEFAULT_AGENT_ISLAND_STRINGS.done,
+      }));
+    }
   });
 
   it('keeps generic running status behind assistant text in compact detail', () => {
@@ -1619,6 +1899,29 @@ describe('Agent Island display state', () => {
     expect(restoredOlder.displayPolicy).toBe('blocking');
     expect(restoredOlder.displaySurface).toBe('interactionCard');
     expect(restoredOlder.currentSessionId).toBe('older');
+  });
+
+  it('keeps a muted pending task out of the blocking-card arbitration so outside clicks still dismiss the visible card', () => {
+    const state = createAgentIslandState();
+    applyAgentIslandInteractionRequest(state, { sessionId: 'visible', title: 'Visible' }, permissionRequest('r1'), 1_000);
+    applyAgentIslandInteractionRequest(state, { sessionId: 'muted', title: 'Muted' }, permissionRequest('r2'), 1_100);
+    setAgentIslandSessionDisplaySuppressed(state, 'muted', true);
+
+    const display = buildAgentIslandDisplayState(state, 1_200);
+    expect(display.mode).toBe('expanded');
+    expect(display.displaySurface).toBe('interactionCard');
+    expect(display.currentSessionId).toBe('visible');
+
+    // 静音任务更新、排序靠前，但不上岛面：点岛外必须落实到那张真的可见的确认卡上。
+    expect(dismissAgentIslandActiveReveal(state, 2_300)).toBe(true);
+    expect(buildAgentIslandDisplayState(state, 2_350).mode).toBe('compact');
+    expect(dismissAgentIslandActiveReveal(state, 2_360)).toBe(false);
+
+    // 静音任务自己的确认卡不受影响，取消静音后照旧上岛。
+    expect(setAgentIslandSessionDisplaySuppressed(state, 'muted', false)).toBe(true);
+    const unmuted = buildAgentIslandDisplayState(state, 2_400);
+    expect(unmuted.mode).toBe('expanded');
+    expect(unmuted.currentSessionId).toBe('muted');
   });
 
   it('keeps completion reminders on their card when the pointer hovers the expanded panel', () => {

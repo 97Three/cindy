@@ -588,8 +588,8 @@ function formatReference(reference: AgentInputReference): string {
     const truncated = reference.truncated === true || bounded.truncated;
     return [
       '[Referenced message]',
-      `Session ID: ${reference.sessionId}`,
-      `Message ID: ${reference.messageClientId}`,
+      `Session ID: ${quotedMetadata(reference.sessionId)}`,
+      `Message ID: ${quotedMetadata(reference.messageClientId)}`,
       'Content:',
       bounded.text || '(message content unavailable)',
       ...(truncated ? ['[Content truncated]'] : []),
@@ -599,8 +599,8 @@ function formatReference(reference: AgentInputReference): string {
   if (reference.kind === 'session') {
     return [
       '[Referenced conversation]',
-      `Title: ${oneLine(reference.title ?? '') || `Conversation ${reference.sessionId}`}`,
-      `Session ID: ${reference.sessionId}`,
+      `Title: ${quotedMetadata(oneLine(reference.title ?? '') || `Conversation ${reference.sessionId}`)}`,
+      `Session ID: ${quotedMetadata(reference.sessionId)}`,
       '[/Referenced conversation]',
     ].join('\n');
   }
@@ -670,8 +670,8 @@ function formatReference(reference: AgentInputReference): string {
   }
   return [
     '[Referenced project]',
-    `Name: ${oneLine(reference.name)}`,
-    `Working directory: ${reference.workingDir}`,
+    `Name: ${quotedMetadata(oneLine(reference.name))}`,
+    `Working directory: ${quotedMetadata(reference.workingDir)}`,
     '[/Referenced project]',
   ].join('\n');
 }

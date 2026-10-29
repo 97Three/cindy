@@ -44,7 +44,7 @@ import { UI_ACTION_TRIGGER_PREFIX } from '../../shared/interruptedTurn.js';
 import { untrustedJsonBlock } from '../../shared/untrustedPrompt.js';
 import {
   BOT_GROUP_ATTACHMENTS_MAX, BOT_GROUP_CLIENT_ID, isBotGroupNoReplyText,
-  isBotGroupRuntimeFailureCode, type BotGroupRuntimeFailureCode,
+  type BotGroupRuntimeFailureCode,
   readImportedBotGroupRuntimeFailureCode,
   readBotGroupExecutionFailure, type BotGroupExecutionFailureView,
   buildBotGroupThreadShareCard, botGroupThreadShareOperationId, readBotGroupThreadShareCard,
@@ -56,7 +56,7 @@ import {
 import type { BotGroupChatService, BotGroupChatServiceDeps, BotGroupLaneTerminal, BotGroupTaskPostInput, BotGroupTaskPostResult } from './botGroupChatService.js';
 import { readPersistedReplyText } from './botGroupChatService.js';
 import { botGroupRuntimeFailureCode, botGroupRuntimeFailureDetail } from './botGroupRuntimeFailure.js';
-import { chatGroupMemberName as memberName, chatGroupOwnerName, botGroupExecutionFailureBatches } from '@cindy/maker-shared/botGroupPresentation';
+import { chatGroupMemberName as memberName, chatGroupOwnerName, botGroupExecutionFailureBatches, latestBotGroupMessage } from '@cindy/maker-shared/botGroupPresentation';
 import { createThreadProjection, isShareableThreadReply, threadPreviewAttachments, threadPreviewText } from './chatServerThreads.js';
 import { companionSnapshot, registerCompanionHomes } from '../companion-cloud/homes.js';
 import { startCompanionCloud, type CompanionCloudRuntime } from '../companion-cloud/runtime.js';
@@ -110,7 +110,7 @@ interface Running {
   lane?: string;
   laneLookup?: Promise<void>;
   context?: ExecutionContext;
-  settlement?: { terminal: BotGroupLaneTerminal; payload?: Record<string, unknown>; reply?: { sourceText: string; text: string; attachments: ChatUploadAttachment[] }; fileReply?: Awaited<ReturnType<typeof prepareChatReplyFiles>>; retryAt: number; keepLease?: boolean };
+  settlement?: { terminal: BotGroupLaneTerminal; cancelled?: boolean; payload?: Record<string, unknown>; reply?: { sourceText: string; text: string; attachments: ChatUploadAttachment[] }; fileReply?: Awaited<ReturnType<typeof prepareChatReplyFiles>>; retryAt: number; keepLease?: boolean };
   delivery?: Promise<void>;
   plan?: ServerPlan;
   workspace?: { workDir: string; branch: string | null; ownerSessionId: string | null };
@@ -668,7 +668,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       throw error;
     });
   }
-  const media = createChatMedia(api, current, deps.log, { allowLoopback: !app.isPackaged && process.env.XDT_ISOLATED === '1' && config.baseUrl === 'http://127.0.0.1:3018' });
+  const media = createChatMedia(api, current, config.baseUrl, deps.log, { allowLoopback: !app.isPackaged && process.env.XDT_ISOLATED === '1' && config.baseUrl === 'http://127.0.0.1:3018' });
   const threads = createThreadProjection<Message>({
     threadPage: (roomId, rootId, limit, before) => history()?.page<Message>(roomId,
       new URLSearchParams({ threadRootId: rootId, limit: String(limit), ...(before ? { before } : {}) }))
@@ -1337,7 +1337,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
   // request never rejects a room/Thread; subsequent reads retry after a backoff.
   // Until the bytes are here the view keeps a named placeholder in its place, so
   // a slow or failed download is shown as such instead of disappearing.
-  const downloads = new Map<string, { value?: BotGroupAttachment; retryAt: number }>();
+  const downloads = new Map<string, { value?: BotGroupAttachment; retryAt: number; generation: number; imageCacheCleared?: boolean }>();
   // A page's attachments settle close together; one re-read of the room and sidebar shows
   // them all instead of one full re-read per file.
   const attachmentRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
@@ -1359,13 +1359,21 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
         const mediaId = parsed.data;
         const key = `${roomId}:${mediaId}`;
         let cached = downloads.get(key);
+        // Image cleanup does not own ordinary files, including still-pending transfers.
+        if (cached && cached.generation !== media.cacheGeneration
+          && (cached.value?.category === 'image' || cached.imageCacheCleared)) cached = undefined;
         if (!cached || (!cached.value && Date.now() >= cached.retryAt)) {
-          cached = { retryAt: Infinity };
+          cached = { retryAt: Infinity, generation: media.cacheGeneration };
           downloads.set(key, cached);
           const entry = cached;
           void media.download(roomId, mediaId).then(value => {
-            if (current()) entry.value = value;
-          }).catch(() => { entry.retryAt = Date.now() + 30000; })
+            if (!current()) return;
+            if (value.category === 'image' && entry.generation !== media.cacheGeneration) entry.retryAt = 0;
+            else entry.value = value;
+          }).catch(error => {
+            entry.imageCacheCleared = error instanceof Error && error.message === 'REMOTE_MEDIA_CACHE_CLEARED';
+            entry.retryAt = entry.generation !== media.cacheGeneration ? 0 : Date.now() + 30000;
+          })
             .finally(() => attachmentsChanged(roomId));
         }
         view.attachments.push(cached.value ?? placeholder(cached.retryAt === Infinity ? 'loading' : 'unavailable'));
@@ -1559,14 +1567,17 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     const workspace = workspaces().read(roomId);
     const plans = serverPlans.map(plan => planView(plan, s.members, workspace));
     const open = plans.find(p => ['proposed', 'running', 'waiting'].includes(p.status));
-    // A companion answering in several Threads at once is still one speaker per activity; the one
-    // whose turn runs on this computer is shown, so its Session can be opened.
+    // Keep execution identity across computers and concurrent threads. Only the executing
+    // computer resolves a lane; authenticated peers retrieve it through the group resource.
     const speakers: BotGroupSpeaker[] = [];
-    for (const e of executions.filter(e => e.status === 'running')) {
-      const speaker = { botId: localBot(e.bot_id)?.id ?? e.bot_id, sessionId: running.get(e.id)?.sessionId ?? null, activity: e.plan_id ? 'step' as const : 'reply' as const };
-      const known = speakers.findIndex(other => other.botId === speaker.botId && other.activity === speaker.activity);
-      if (known < 0) speakers.push(speaker);
-      else if (!speakers[known]!.sessionId && speaker.sessionId) speakers[known] = speaker;
+    for (const e of executions.filter(e => ['queued', 'running', 'needs_input', 'stopping'].includes(e.status))) {
+      const run = running.get(e.id);
+      const startedAt = run?.started ?? (e.created_at ? Date.parse(e.created_at) : undefined);
+      const speaker: BotGroupSpeaker = { botId: localBot(e.bot_id)?.id ?? e.bot_id, sessionId: run?.sessionId || null,
+        executionId: e.id, ...(Number.isFinite(startedAt) ? { startedAt } : {}), stopping: e.status === 'stopping',
+        executionStatus: e.status as BotGroupSpeaker['executionStatus'],
+        activity: e.plan_id ? 'step' : 'reply' };
+      speakers.push(speaker);
     }
     // The organizer is visibly 「正在看」 while this device decides whether to arrange (§7.2),
     // as the local service showed it. It works on the auxiliary model, not in a lane session.
@@ -1591,7 +1602,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     if (reads) for (const view of [...messages, ...(messageUpdates ?? [])]) if (!view.threadRootId && (view.replyCount ?? 0) > 0) view.threadUnread = threadUnread(view.id, s.messages, reads);
     const threadList = reads && !direct ? threadSummaries(roomId, s, page, reads) : undefined;
     messages.sort((a, b) => a.sequence - b.sequence);
-    const last = s.messages[0];
+    const last = latestBotGroupMessage(s.messages);
     const lastView = last ? messageView(last, s.members, ownerMembers) : null;
     // The sidebar never resolves shares: it names the sharer and never quotes the card's text.
     const lastIsShare = !!last && !!readBotGroupThreadShareCard(last);
@@ -1619,7 +1630,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       createdAt: Date.parse(s.room.created_at), updatedAt: Date.parse(s.room.updated_at ?? s.room.created_at),
       messages, ...(projection ? { historyRevision: projection.generation, messageUpdates } : {}), executionFailures, ...(threadShareUpdates && Object.keys(threadShareUpdates).length ? { threadShareUpdates } : {}),
       ...(shares ? { threadShareVersion: shares.version } : {}), ...(threadList ? { threads: threadList } : {}), hasMoreBefore: page.length === (o.limit ?? 100), plans,
-      round: { status: deciding || executions.some(e => ['queued', 'running'].includes(e.status)) ? 'running' : 'idle', speakers,
+      round: { status: deciding || executions.some(e => ['queued', 'running', 'needs_input', 'stopping'].includes(e.status)) ? 'running' : 'idle', speakers,
         othersActive: executions.some(e => ['queued', 'running', 'needs_input'].includes(e.status) && e.requester_id !== selfId
           && !localBot(e.bot_id) && !s.members.some(m => m.id === e.bot_id && m.ownerActorId === selfId)), canContinue: !open && !planning.has(roomId) && (executions.some(e => !e.plan_id && ordinaryExecution(e)) || s.messages.some(discussionSource)) && !executions.some(e => ['queued','running','stopping'].includes(e.status)) } };
   }
@@ -1861,10 +1872,22 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       const cachedCode = failureCodes.get(`${failure.executionId}:${failure.epoch}`);
       return [{ ...failure, botId: localBot(failure.botId)?.id ?? failure.botId,
         botName: member ? memberName(member, members) : actors.find(actor => actor.id === failure.botId)?.name ?? '',
-        code: !isBotGroupRuntimeFailureCode((row as Record<string, unknown>).failure_code) && cachedCode ? cachedCode : failure.code }];
+        // Older servers may normalize a newly introduced category to RUNTIME_ERROR.
+        code: failure.code === 'RUNTIME_ERROR' && cachedCode ? cachedCode : failure.code }];
     });
   }
   /** One execution gets one immutable terminal result, regardless of which boundary ends it. */
+  async function cancelExecution(run: Running): Promise<void> {
+    if (!current() || running.get(run.execution.id) !== run) return;
+    if (!run.settlement?.cancelled) {
+      run.settlement = { terminal: { sessionId: run.sessionId, activeInputClientId: run.clientId, outcome: 'done', resultText: '' }, cancelled: true, payload: {}, retryAt: 0 };
+      run.releaseToolAuthority?.();
+      if (run.sessionId) await deps.abortLane(run.sessionId).catch(() => undefined);
+    }
+    // Keep the lane resolvable while the existing cancel receipt is being delivered.
+    // A transport failure retries this receipt, never the model or a completion reply.
+    await deliverSettlement(run);
+  }
   async function settleExecution(run: Running, terminal: BotGroupLaneTerminal, abort = false): Promise<void> {
     if (!current() || running.get(run.execution.id) !== run) return;
     if (!run.settlement) {
@@ -1955,9 +1978,9 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
               // A single-speaker server never chains rounds, so there is nothing to continue.
               ...(singleSpeaker ? {} : { continueDiscussion: run.context?.kind !== 'member.joined' && !run.plan && !isBotGroupNoReplyText(text) }) };
         }
-        if (!current() || running.get(run.execution.id) !== run) return;
-        await updateExecution(run, pending.terminal.outcome === 'error' ? 'fail' : 'complete', pending.payload);
-        if (run.plan && deps.onStepSettled) {
+        if (!current() || running.get(run.execution.id) !== run || run.settlement !== pending) return;
+        await updateExecution(run, pending.cancelled ? 'cancel' : pending.terminal.outcome === 'error' ? 'fail' : 'complete', pending.payload);
+        if (!pending.cancelled && run.plan && deps.onStepSettled) {
           const s = await snapshot(run.execution.conversation_id);
           const step = run.plan.steps[run.execution.plan_step!];
           const latest = (await api<ServerPlan[]>(`/conversations/${s.room.id}/plans?ids=${run.plan.id}`)).find(p => p.id === run.plan!.id);
@@ -1966,6 +1989,14 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
             botName: step.botName, task: step.task, outcome: pending.terminal.outcome === 'error' ? 'failed' : 'done', planDone: latest?.status === 'done' }, scope);
         }
       } catch (error) {
+        if (error instanceof ChatResponseError && error.message === 'STOP_REQUESTED' && !pending.cancelled) {
+          // A remote stop can race the final reply. Retire the lease with cancel,
+          // without publishing that reply or waiting for the server's lease expiry.
+          run.settlement = { terminal: pending.terminal, cancelled: true, payload: {}, retryAt: 0 };
+          run.releaseToolAuthority?.();
+          if (run.sessionId) await deps.abortLane(run.sessionId).catch(() => undefined);
+          return;
+        }
         // Keep the result during transport/temporary service failures. A definitive
         // rejection (including revoked/expired leases) must never rerun the Agent
         // or post the private result under a new execution identity.
@@ -1981,7 +2012,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
           return;
         }
       } finally { run.delivery = undefined; }
-      if (running.get(run.execution.id) === run) {
+      if (running.get(run.execution.id) === run && run.settlement === pending) {
         run.releaseToolAuthority?.();
         forgetRun(run);
         // Refresh both delivered results and local failures without waiting for an echo.
@@ -2103,7 +2134,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
           ...(run.plan?.kind === 'talk' ? { talkPlanId: run.plan.id }
             : run.plan ? { plan: { planId: run.plan.id, workDir: run.workspace?.workDir ?? '', sessionId: run.workspace?.ownerSessionId ?? undefined } } : {}),
           ...(threadRootId ? { threadRootId } : {}) });
-        if (!lane.ok) throw new Error(lane.errorCode);
+        if (!lane.ok) throw new Error(botGroupRuntimeFailureCode({ code: lane.errorCode, message: lane.message }));
         run.sessionId = lane.sessionId;
         run.releaseToolAuthority = registerGroupToolAuthority(lane.sessionId, {
           botId: bot.id, mode: execution.access_mode,
@@ -2499,9 +2530,13 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     if (run.settlement) {
       // Auth/rate-limit waits need lease renewal; ordinary lost-response retries
       // preserve the existing receipt lookup without an intervening heartbeat.
-      if (!run.settlement.payload || run.settlement.keepLease) {
+      if (!run.settlement.cancelled && (!run.settlement.payload || run.settlement.keepLease)) {
         try { await updateExecution(run, 'heartbeat'); }
         catch (error) {
+          if (error instanceof ChatResponseError && error.message === 'STOP_REQUESTED') {
+            await cancelExecution(run);
+            return;
+          }
           if (error instanceof ChatResponseError && !retryableResponse(error)) {
             if (running.get(run.execution.id) === run) {
               run.releaseToolAuthority?.();
@@ -2527,7 +2562,11 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
         await settleExecution(run, { sessionId: run.sessionId, activeInputClientId: run.clientId,
           outcome: 'error', resultText: '', failureCode: 'RUNTIME_TIMEOUT' }, true);
       } else await updateExecution(run, 'heartbeat');
-    } catch {
+    } catch (error) {
+      if (error instanceof ChatResponseError && error.message === 'STOP_REQUESTED') {
+        await cancelExecution(run);
+        return;
+      }
       // An in-flight heartbeat must not discard a result that became ready while
       // it was awaiting its response; retry the terminal operation for its receipt.
       if (!run.settlement && running.get(run.execution.id) === run) {
@@ -2682,6 +2721,11 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       const route = type === 'update' || type === 'archive' ? '' : type === 'member' ? '/members' : type === 'botAccess' ? '/bot-access' : `/${type}`;
       const asManager = type === 'update' || type === 'archive' || type === 'transfer' || (type === 'member' && !['leave', 'invite'].includes(action.action));
       const s = await groupSnapshot(target);
+      if (action.type === 'transfer') {
+        const recipient = s.members.find(member => member.id === action.actorId && member.state === 'joined');
+        if (!recipient) throw new Error('MEMBER_NOT_FOUND');
+        if (recipient.kind !== 'human') throw new Error('HUMAN_OWNER_REQUIRED');
+      }
       const actorId = asManager ? managementActor(s) : undefined;
       await api(`/conversations/${target}${route}`, type === 'update' || type === 'archive' ? 'PATCH' : 'POST', {
         operationId: randomUUID(), ...payload, ...(type === 'archive' ? { archived: action.archived } : {}),
@@ -3066,7 +3110,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
         for (const e of executions.filter(e => ['queued', 'running', 'needs_input'].includes(e.status) && !e.plan_id)) {
           await api(`/conversations/${room}/executions/${e.id}/control`, 'POST', { operationId: randomUUID(), action: 'stop' });
           const run = running.get(e.id);
-          if (run) { forgetRun(run); if (run.sessionId) await deps.abortLane(run.sessionId); }
+          if (run) await cancelExecution(run);
         }
         changed(room); return { ok: true as const };
       }
@@ -3091,7 +3135,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
         try { await api(`/conversations/${room}/executions/${e.id}/control`, 'POST', { operationId: randomUUID(), action: 'stop' }, asBot ? e.bot_id : everything && e.requester_id !== selfId ? asManager : undefined); }
         catch (error) { if (refused(error)) continue; throw error; }
         const run = running.get(e.id);
-        if (run) { forgetRun(run); if (run.sessionId) await deps.abortLane(run.sessionId); }
+        if (run) await cancelExecution(run);
       }
       changed(room); return { ok: true as const };
     }),

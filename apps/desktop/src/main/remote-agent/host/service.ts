@@ -1,3 +1,4 @@
+import { assertMemberBudget, memberBudgetDenial, memberBudgetAllows } from '../../device-link/providerShareBudgetRuntime.js';
 import { readRemoteAgentLimitsState } from './limitsStore.js';
 /**
  * 远程 Agent 运行服务的被控端接线：把 `maker:remote-agent:v1` 接到本机 Maker 的 Agent。
@@ -5,9 +6,12 @@ import { readRemoteAgentLimitsState } from './limitsStore.js';
  * 供应商分享的受邀者(其他账号)另按分享快照准入，只能用分享给它的那个供应商。
  */
 import path from 'node:path';
+import { createNativeHistoryTransfer } from '../nativeHistoryTransfer';
+import { nativeHistoryStorage } from '../nativeHistoryStorage';
 
 import { isProviderSharePeer, parseProviderSharePeer } from '@cindy/device-link';
 import type { Maker, StartSessionOptions } from '@cindy/maker-core';
+import { LOCAL_AGENT_CLIENT } from '@cindy/maker-core';
 
 import { createLogger } from '../../logger.js';
 import {
@@ -48,7 +52,17 @@ const log = createLogger('remote-agent:host');
 /** 对方任务的启动选项 → 本机 Agent 的启动选项(工作目录是影子目录，工具经隧道回到对方)。 */
 export function hostedStartOptions(input: HostedStartInput): StartSessionOptions {
   const { options, workspace } = input;
+  const client = options.localApplication;
+  if (client && (!input.localApplicationStorage || !input.mcpServers.includes(client.mcpName))) {
+    throw new Error('[REMOTE_AGENT_INVALID] Missing isolated application tools or storage.');
+  }
   return {
+    ...(client ? { [LOCAL_AGENT_CLIENT]: {
+      url: `${input.tunnel.url.replace(/\/+$/, '')}/mcp/${encodeURIComponent(client.mcpName)}`,
+      token: input.tunnel.token,
+      mcpName: client.mcpName, hostToolsOnly: client.hostToolsOnly,
+      storageDirectory: input.localApplicationStorage,
+    } } : {}),
     sessionId: input.hostSessionId,
     workingDir: input.shadowDir,
     model: options.model,
@@ -133,6 +147,7 @@ export function installRemoteAgentHost(options: { getMaker: () => Maker; userDat
     log,
   });
   host = createRemoteAgentHost({
+    nativeHistory: createNativeHistoryTransfer(path.join(options.userDataDir, 'native-history-transfers'), nativeHistoryStorage(options.userDataDir)),
     fastPolicy: receiveGroupFastPolicy,
     prepareImageEvent: (sessionId, event, upstream, retainForRecovery) => prepareGeneratedImageTransport(`remote:${sessionId}`, event, { upstream, retainForRecovery, invoke: remoteBackgroundInvoke }),
     imageArtifacts: async (sessionId, request) => {
@@ -173,13 +188,17 @@ export function installRemoteAgentHost(options: { getMaker: () => Maker; userDat
         try {
           const access = isProviderSharePeer(controller) ? providerShareGuestAccess(controller) : null;
           const rule = remoteModelAccess.read(providerId, access?.memberId);
-          return rule.models !== null || rule.providerModels !== null;
+          return rule.models !== null || rule.providerModels !== null || !!(rule.memberBudget?.enabled && rule.memberBudget.rules.length);
         } catch { return true; }
       },
       resolve: async (kind, model, providerId, controller) => {
         const views = await getDesktopProviderService().listProviders({ allowSideEffects: false });
         const memberId = isProviderSharePeer(controller) ? providerShareGuestAccess(controller)?.memberId : undefined;
-        const allowed = (id: string) => isRemoteProviderInvocationAllowed(id) && remoteModelAccess.allows(id, model, memberId);
+        const allowed = (id: string) => {
+          if (!isRemoteProviderInvocationAllowed(id) || !remoteModelAccess.allows(id, model, memberId)) return false;
+          assertMemberBudget(id, model, memberId);
+          return true;
+        };
         // 受邀者：来源钉在分享的供应商上，且要它提供所选模型(启动与每次换模型都核对)。
         if (isProviderSharePeer(controller)) {
           return resolveGuestProviderId(
@@ -196,7 +215,8 @@ export function installRemoteAgentHost(options: { getMaker: () => Maker; userDat
       isAllowed: (providerId, controller, model) => {
         const access = isProviderSharePeer(controller) ? providerShareGuestAccess(controller) : null;
         return (isProviderSharePeer(controller) ? guestAllows(controller, providerId) : isRemoteProviderInvocationAllowed(providerId))
-          && remoteModelAccess.allows(providerId, model ?? '', access?.memberId);
+          && remoteModelAccess.allows(providerId, model ?? '', access?.memberId)
+          && (assertMemberBudget(providerId, model ?? '', access?.memberId), true);
       },
     },
     // 受邀者任务的出站登记：本机 proxy 只让它经分享的供应商、用它提供的模型。
@@ -206,6 +226,13 @@ export function installRemoteAgentHost(options: { getMaker: () => Maker; userDat
       ownerAllowed: isControllerAuthorized,
       providerAllowed: isRemoteProviderInvocationAllowed,
       modelAccess: remoteModelAccess,
+      memberBudgetAllows,
+      memberBudgetDenial,
+      recordRequestUsage: (controller, providerId, kind, sample) => {
+        const peer = parseProviderSharePeer(controller);
+        if (peer?.role === 'guest' && peer.memberId) usage.record(peer.shareId, peer.memberId,
+          { providerId, kind, memberKey: 'local', samples: [{ ...sample, turns: 0, sdkCostUsd: 0 }] });
+      },
     }),
     // Codex 与 Pi 的会话历史在受邀者目录里，随它整体删除；这里清 Claude Code 的项目记录与 Pi 子代理运行目录。
     purgeHostedTranscripts: async (hostSessionIds, nativeIds) => {

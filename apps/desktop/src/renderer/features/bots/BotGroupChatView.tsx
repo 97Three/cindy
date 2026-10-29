@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
  */
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { ArrowLeft, CircleAlert, RefreshCcw, Settings2 } from 'lucide-react';
+import { useBotGroupWorkTargets } from './useBotGroupWorkTargets';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
@@ -762,7 +763,7 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
 
   const running = group?.round.status === 'running';
   // Several Bots think at once in a broadcast round's first circle; the key follows the set.
-  const speakingKey = running && group ? group.round.speakers.map((speaker) => `${speaker.botId}:${speaker.activity}`).join(',') : '';
+  const speakingKey = running && group ? group.round.speakers.map((speaker) => (speaker.executionId ?? `${speaker.botId}:${speaker.activity}`)).join(',') : '';
   const lastRowKey = rows[rows.length - 1]?.id ?? '';
   const firstRealSequence = realMessages[0]?.sequence ?? 0;
 
@@ -1088,12 +1089,14 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
 
   const openPlan = group ? openBotGroupPlan({ openPlan: group.openPlan, plans }) : null;
   const runningStep = runningBotGroupPlanStep(openPlan);
+  const workTargets = useBotGroupWorkTargets(group);
   const speakers = useMemo<BotGroupLiveSpeaker[]>(() => (running && group
     ? group.round.speakers.flatMap((speaker) => {
         const member = memberById.get(speaker.botId);
-        return member ? [{ member, displayName: botGroupMemberDisplayName(member), sessionId: speaker.sessionId, activity: speaker.activity }] : [];
+        const target = speaker.executionId ? workTargets.get(speaker.executionId) : undefined;
+        return member ? [{ ...speaker, member, displayName: botGroupMemberDisplayName(member), sessionId: speaker.sessionId || target?.sessionId || null, target }] : [];
       })
-    : []), [running, group, memberById]);
+    : []), [running, group, memberById, workTargets]);
   const stepSpeaker = runningStep
     ? speakers.find((speaker) => speaker.activity === 'step' && speaker.member.botId === runningStep.step.botId)
     : undefined;
@@ -1319,8 +1322,8 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
           ) : null}
           {speakers.map((speaker) => (runningStep && speaker.activity === 'step'
             // The progress strip carries a running step's status; only its confirmations stay here.
-            ? <BotGroupSpeakerInteraction key={`${speaker.member.botId}:${speaker.activity}`} speaker={speaker} />
-            : <BotGroupSpeakingLine key={`${speaker.member.botId}:${speaker.activity}`} speaker={speaker} />))}
+            ? <BotGroupSpeakerInteraction key={speaker.executionId ?? `${speaker.member.botId}:${speaker.activity}`} speaker={speaker} />
+            : <BotGroupSpeakingLine key={speaker.executionId ?? `${speaker.member.botId}:${speaker.activity}`} speaker={speaker} />))}
         </div>
       </div>
       <div className="relative h-0 shrink-0" inert={newMessageCount <= 0}>

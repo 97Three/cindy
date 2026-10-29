@@ -1,3 +1,4 @@
+import type { PreparedPluginContribution } from '../../../shared/pluginContributions';
 import { PluginShareButton } from './PluginShareButton';
 import { Button } from '@/components/ui/button';
 import { GithubAccountCard } from '@/features/cc-agent/GithubAccountCard';
@@ -6,7 +7,7 @@ import { shouldShowOpenPathError } from '../../../shared/openPathResult';
  * Plugin detail presentation for configuration, Tools, permissions, and factual metadata.
  *
  * Inputs: the renderer-safe Plugin detail model plus the installed Ghost when available.
- * Outputs: accessible detail interactions, Host-owned configuration rows, a single-row responsive
+ * Outputs: accessible detail interactions, Host-owned configuration rows, a wrapping responsive
  * action hero with the shared Switch, and the sticky top bar with back and macOS window dragging.
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -92,6 +93,7 @@ interface GhostPluginDetailViewProps {
   onBack: () => void;
   usageOwnerKey?: string;
   confirmClearUsage?: () => Promise<boolean>;
+  publishingSection?: ReactNode;
   onToggle: (enabled: boolean) => void;
   /** 主动作:面板型「使用」/ 指令或 Host 能力型「对话」;纯工具型不渲染主按钮。 */
   onUse: () => void;
@@ -113,6 +115,11 @@ interface GhostPluginDetailViewProps {
   onUninstall: () => void;
   /** 导出 .cindy;当前详情非已装插件(纯市场视图)时缺省,菜单项不渲染。 */
   onExport?: () => void;
+  /** Opens publishing; package preparation and submission belong to the dialog. */
+  onContribute?: () => void;
+  contributionBusy?: boolean;
+  publishingPreview?: PreparedPluginContribution;
+  contributionUnavailableReason?: string;
   toggleDisabled: boolean;
   onIconLoadError?: () => void;
 }
@@ -137,6 +144,7 @@ export function GhostPluginDetailView({
   panelStatus,
   enabledOverride,
   onBack,
+  publishingSection,
   onToggle,
   onUse,
   marketItem,
@@ -151,12 +159,17 @@ export function GhostPluginDetailView({
   updateBusy = false,
   onUninstall,
   onExport,
+  onContribute,
+  contributionBusy = false,
+  publishingPreview,
+  contributionUnavailableReason,
   toggleDisabled,
   onIconLoadError,
 }: GhostPluginDetailViewProps) {
   const { t } = useTranslation();
   const { scrolled, onScroll } = usePluginDetailScrolled();
   const enableSwitchId = useId();
+  const publicationBlocked = publishingPreview?.preflight?.actions.canSubmit === false;
   const [githubConnectionVersion, setGithubConnectionVersion] = useState(0);
   const [taskApprovalPending, setTaskApprovalPending] = useState(false);
   // 未批准的安装不可运行；恢复入口与普通停用区分。
@@ -214,7 +227,7 @@ export function GhostPluginDetailView({
           onIconLoadError={onIconLoadError}
           actions={
             <div
-              className="plugin-detail-actions flex shrink-0 flex-nowrap items-center gap-1.5"
+              className="plugin-detail-actions flex min-w-0 flex-wrap items-center gap-1.5"
               style={WINDOW_NO_DRAG_STYLE}
             >
               {needsReapproval && !detail.builtin && onReapprove ? (
@@ -269,6 +282,18 @@ export function GhostPluginDetailView({
                       ? 'settings.ghosts.detail.useAction'
                       : 'settings.ghosts.detail.chatAction',
                   )}
+                </Button>
+              ) : null}
+              {!publicationBlocked && onContribute ? (
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  onClick={onContribute}
+                  loading={contributionBusy}
+                  disabled={Boolean(contributionUnavailableReason)}
+                  title={contributionUnavailableReason}
+                >
+                  {t('settings.ghosts.contribution.publishPlugin')}
                 </Button>
               ) : null}
               {/* 启用开关带明确文字(设计定稿):状态一目了然,点文字同样可切换。 */}
@@ -503,6 +528,8 @@ export function GhostPluginDetailView({
         ) : null}
 
         {!remote ? <GhostLibrarySection ghostId={detail.id} enabled={ghost?.manifest.library === true} /> : null}
+
+        {publishingSection}
 
         <DetailsSection detail={remote ? { ...detail, installDir: null } : detail} panelStatus={panelStatus} />
       </article>

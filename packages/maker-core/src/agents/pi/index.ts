@@ -1,5 +1,4 @@
 import { getPiExtensionUiCapability } from './extension-ui-capabilities.js';
-import { createHarnessHookBridge } from '../shared/harness-hooks.js';
 import { parsePiManagementArgs, parsePiManagementText } from './managed-command.js';
 import { canonicalSkillPath, snapshotDisabledSkillLaunch, currentDisabledSkillLaunchPaths, extendDisabledSkillLaunchPaths, type DisabledSkillLaunchSnapshot } from '../shared/skill-activation.js';
 /**
@@ -103,6 +102,8 @@ import {
   CINDY_PI_TEXT_ONLY_INPUT_PREFIX,
   CINDY_PI_TEXT_ONLY_READY_PREFIX,
   CINDY_PI_TEXT_ONLY_CLOSED_PREFIX,
+  CINDY_PI_REQUEST_DIAGNOSTICS_PREFIX,
+  projectPiRequestDiagnostics,
   CINDY_BRIDGE_EXTENSION_SOURCE } from './cindy-bridge-source.js';
 import { nativeProviderAdapterAliases } from './native-provider-adapter-source.js';
 import { parsePiNativeRuntimeSettings, resolvePiNativeReserve, type PiNativeRuntimeSettings } from './native-runtime-settings.js';
@@ -542,7 +543,9 @@ function mergeLoopbackNoProxy(env: NodeJS.ProcessEnv): void {
     .flatMap((s) => s.split(','))
     .map((s) => s.trim())
     .filter(Boolean);
-  env.NO_PROXY = Array.from(new Set([...existing, '127.0.0.1', 'localhost', '::1', '[::1]'])).join(',');
+  // NO_PROXY 使用裸 IPv6 地址，避免 [::1] 使 Python httpx 初始化失败（#7632）。
+  // Bun 对裸 ::1 的匹配不一致；MCP bridge 对已校验的回环 URL 使用独立直连。
+  env.NO_PROXY = Array.from(new Set([...existing, '127.0.0.1', 'localhost', '::1'])).join(',');
   delete env.no_proxy;
 }
 
@@ -609,7 +612,7 @@ interface ConfigHomeCleanupLogger {
   debug(message: string, fields?: Record<string, unknown>): void;
 }
 
-type PiStartupStage = 'mcp-ready' | 'pi-spawn' | 'rpc-ready' | 'first-model-request';
+type PiStartupStage = 'mcp-ready' | 'pi-spawn' | 'rpc-ready' | 'first-prompt-rpc';
 
 function logPiStartupStage(
   logger: AgentDeps['logger'],
@@ -2531,15 +2534,18 @@ export class PiAgent extends BaseAgent {
     // Agent-level retries stay with Pi (provider maxRetries stays 0 — Pi docs:
     // SDK retries can swallow quota errors before the agent sees them).
     const compactionModelOverrides: Record<string, { reserveTokens: number }> = {};
-    const addBudget = (provider: string, id: string, window: number, workingWindow?: number) => {
+    const addBudget = (provider: string, id: string, window: number, workingWindow?: number,
+      source = provider, sourceModel = id) => {
       // 任务级预算优先:预算存在时**每个**可选模型都按预算生成保留量(与预演、切后写盘
       // 同一口径)，否则顶层 reserveTokens 会被同模型的 model-level override 盖掉。
       const effectiveWorkingWindow = opts.sessionContextWindowBudget ?? workingWindow;
-      const settings = JSON.parse(buildPiSettingsJsonContent(window, opts.piCompactionPct, [], effectiveWorkingWindow));
+      const pct = this.deps.resolveModelCompactionPct?.(source, sourceModel) ?? opts.piCompactionPct;
+      const settings = JSON.parse(buildPiSettingsJsonContent(window, pct, [], effectiveWorkingWindow));
       compactionModelOverrides[`${provider}/${id}`] = { reserveTokens: settings.compaction?.reserveTokens ?? 16_384 };
     };
     for (const model of models) addBudget(PI_PROVIDER_ID, model.id, model.contextWindow,
-      this.deps.resolveModelContextLimit?.(gatewayProviderId ?? 'xd', model.id) ?? undefined);
+      this.deps.resolveModelContextLimit?.(gatewayProviderId ?? 'xd', model.id) ?? undefined,
+      gatewayProviderId ?? 'xd');
     for (const provider of nativeProviders) {
       if (provider.id === PI_PROVIDER_ID) continue;
       for (const model of provider.models) {
@@ -2564,7 +2570,7 @@ export class PiAgent extends BaseAgent {
           ? workingWindow
           : Math.max(model.contextWindow ?? learnedWindow ?? 128_000, workingWindow ?? 0);
         addBudget(provider.id, model.wireId ?? model.id,
-          budgetWindow, workingWindow);
+          budgetWindow, workingWindow, provider.sourceProviderId ?? provider.id, model.id);
       }
     }
     const settingsJsonContent = await this.buildSettingsJsonPreservingUserKeys(
@@ -3539,6 +3545,10 @@ export class PiAgent extends BaseAgent {
     };
     let activeToolsDisabled = false;
     let textOnlyPolicyReady = false;
+    let providerRequestSequence = 0;
+    let providerRequestObservedAt: number | undefined;
+    let providerTurnObservedAt: number | undefined;
+    let providerFirstOutputLogged = false;
     const textOnlyInput = (text: string): string => {
       if (!activeToolsDisabled) return text;
       if (!textOnlyPolicyReady) throw new Error('Pi text-only input policy is unavailable.');
@@ -4724,6 +4734,32 @@ export class PiAgent extends BaseAgent {
         }
         return;
       }
+      if (approval.method === 'input' && approval.title === 'cindy:harness-hook') {
+        // The harness hook bridge was reverted (2f2721a49b), so nothing on the
+        // host handles these any more, but a durable child started by an older
+        // bridge can still raise one. It is an internal sync hook, not an
+        // approval: answer `continue` (the native policy) instead of rendering
+        // a `Subagent: tool` card with `{}` input (#7494).
+        try {
+          // Park across an account switch rather than answer for the outgoing
+          // account, as the turn-change acknowledgement does.
+          if (accountBoundaryTeardown) return;
+          const controlled = await publishPiSubagentApproval(status.taskId, {
+            childId: task.childId,
+            approvalId: approval.id,
+            value: JSON.stringify({ action: 'continue' }),
+            runtimeOwnerId: controlOwnerId,
+          });
+          if (controlled > 0) piSubagentApprovalDeliveries.add(key);
+        } catch (error) {
+          this.deps.logger.warn('PI Subagent harness hook response failed', {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        } finally {
+          piSubagentApprovalRequests.delete(key);
+        }
+        return;
+      }
       let toolName = 'tool';
       let input: Record<string, unknown> = {};
       let resolvedWritePath: string | null | undefined;
@@ -5153,9 +5189,6 @@ export class PiAgent extends BaseAgent {
     // preparePiExtraSpawnConfig 注册、但 handle 尚未交出,close() 不会跑 → 单独
     // 兜底注销 ctx 再抛(构造失败没有 proc 可关)。catch 必抛,故其后 proc 恒已赋值。
     let proc: PiRpcProcess;
-    const harnessHookBridge = createHarnessHookBridge();
-    const harnessHooksEnabled = !remote && !hosted && !reviewMode;
-    let nativeCompactionActive = false;
     // Pi owns automatic threshold and overflow compaction. Cindy only records a
     // deterministic native failure so Desktop can rebuild before the next send.
     let nativeAutoCompactNeedsRollover = false;
@@ -5185,8 +5218,7 @@ export class PiAgent extends BaseAgent {
       const resp = await proc.request(command, { timeoutMs: PI_COMPACT_TIMEOUT_MS });
       if (!resp.success) {
         const err = (resp.error ?? '').toLowerCase();
-        // Native cancellation returns before appending a compaction entry.
-        if (err === 'compaction cancelled' || err.includes('nothing to compact') || err.includes('too small')) {
+        if (err.includes('nothing to compact') || err.includes('too small')) {
           return { noop: true };
         }
         throw new Error(`pi compact failed: ${resp.error ?? 'unknown'}`);
@@ -5633,7 +5665,6 @@ export class PiAgent extends BaseAgent {
         PI_CODING_AGENT_DIR: configHome,
         [PI_BASH_PACKAGE_HOME_ENV]: bashPackageHome,
         CINDY_PI_PERMISSION_FILE: permissionFile,
-        CINDY_PI_HARNESS_HOOKS: harnessHooksEnabled ? '1' : '0',
         ...(hosted ? { [DEVICE_HOSTED_PI_ENV]: deviceHostedPiEnvValue(hosted) } : {}),
         ...(fastModels.length > 0 ? { CINDY_PI_FAST_MODELS: JSON.stringify(fastModels) } : {}),
         CINDY_PI_TURN_TOOL_POLICY: remote ? '' : runtimeInstanceId,
@@ -5730,14 +5761,58 @@ export class PiAgent extends BaseAgent {
         transport,
         logger: this.deps.logger,
         onEvent: (event: PiRpcEvent) => {
+          // Native retries remain within one agent_start/settled lifecycle.
+          // A new start also recovers diagnostics if the previous turn omitted
+          // settled (abort/retry exhaustion), without changing turn execution.
+          if (event.type === 'agent_start') {
+            providerRequestObservedAt = undefined;
+            providerTurnObservedAt = undefined;
+            providerFirstOutputLogged = false;
+          }
+          if (!remote && event.type === 'extension_ui_request' && event.method === 'notify' &&
+              typeof event.message === 'string' && event.message.startsWith(CINDY_PI_REQUEST_DIAGNOSTICS_PREFIX)) {
+            const prefix = `${CINDY_PI_REQUEST_DIAGNOSTICS_PREFIX}${runtimeInstanceId}:`;
+            if (event.message.startsWith(prefix) && event.message.length <= prefix.length + 1024) {
+              try {
+                const metadata = projectPiRequestDiagnostics(JSON.parse(event.message.slice(prefix.length)));
+                providerRequestObservedAt = performance.now();
+                providerTurnObservedAt ??= providerRequestObservedAt;
+                providerFirstOutputLogged = false;
+                providerRequestSequence++;
+                this.deps.logger.debug('pi request stage', {
+                  startupTraceId, requestSequence: providerRequestSequence,
+                  stage: 'provider-request-prepared', ...metadata,
+                });
+              } catch { /* Invalid diagnostic frames never enter logs or user UI. */ }
+            }
+            return;
+          }
+          if (providerRequestObservedAt !== undefined) {
+            const update = event.assistantMessageEvent as { type?: unknown } | undefined;
+            if (!providerFirstOutputLogged && event.type === 'message_update' &&
+                ['text_delta', 'thinking_delta', 'toolcall_start', 'toolcall_delta'].includes(String(update?.type))) {
+              providerFirstOutputLogged = true;
+              this.deps.logger.debug('pi request stage', {
+                startupTraceId, requestSequence: providerRequestSequence, stage: 'first-output',
+                elapsedMs: Math.max(0, performance.now() - providerRequestObservedAt),
+              });
+            }
+            if (event.type === 'agent_settled') {
+              this.deps.logger.debug('pi request stage', {
+                startupTraceId, requestSequence: providerRequestSequence, stage: 'agent-settled',
+                elapsedMs: Math.max(0, performance.now() - providerRequestObservedAt),
+                turnElapsedMs: Math.max(0, performance.now() - providerTurnObservedAt!),
+              });
+              providerRequestObservedAt = undefined;
+              providerTurnObservedAt = undefined;
+            }
+          }
           if (event.type === 'agent_start' && !ctx.pendingHostTurnStartToken) {
             syncNativePlanMode?.();
           }
           if (event.type === 'agent_start' || event.type === 'agent_settled') {
             piAgentLifecycleSequence += 1;
           }
-          if (event.type === 'compaction_start') nativeCompactionActive = true;
-          if (event.type === 'compaction_end') nativeCompactionActive = false;
           if (!remote && event.type === 'extension_ui_request' && event.method === 'notify') {
             if (event.message === `${CINDY_PI_TEXT_ONLY_READY_PREFIX}${runtimeInstanceId}`) {
               textOnlyPolicyReady = true;
@@ -5749,27 +5824,6 @@ export class PiAgent extends BaseAgent {
             }
           }
           if (event.type === 'extension_ui_request') {
-            if (event.method === 'input' && event.title === 'cindy:harness-hook') {
-              const requestId = typeof event.id === 'string' ? event.id : '';
-              let payload: Record<string, unknown> = {};
-              try { payload = JSON.parse(typeof event.placeholder === 'string' ? event.placeholder : '{}'); }
-              catch { /* Invalid bridge input preserves the original native policy. */ }
-              const request = payload && typeof payload === 'object' ? payload : {};
-              const valid = harnessHooksEnabled && requestId && !closed && !proc.isClosed &&
-                (request.name === 'compaction.before' || request.name === 'tool.before' && typeof request.toolName === 'string');
-              void (valid ? harnessHookBridge.run({
-                name: request.name as 'tool.before' | 'compaction.before',
-                ...(request.name === 'tool.before' ? {
-                  toolName: request.toolName as string,
-                  toolUseId: typeof request.toolUseId === 'string' ? request.toolUseId : undefined,
-                  input: request.input,
-                } : {}),
-              }) : Promise.resolve({ action: 'continue' })).then(result => {
-                if (!requestId || closed || proc.isClosed) return;
-                proc.send({ type: 'extension_ui_response', id: requestId, value: JSON.stringify(result) });
-              }).catch(() => { /* Native timeout keeps the existing permission flow. */ });
-              return;
-            }
             if (event.method === 'input' &&
                 (event.title === 'cindy:provider-refresh' || event.title === 'cindy:provider-refresh-ack')) {
               const requestId = typeof event.id === 'string' ? event.id : '';
@@ -6643,7 +6697,7 @@ export class PiAgent extends BaseAgent {
 
     const deps = this.deps;
     const agentKind = this.kind;
-    let firstModelRequestLogged = false;
+    let firstPromptRpcLogged = false;
 
     // 取消边界:main 的队列协调器在 Stop/close 抢占时会 abort 传入的 signal 并撤下
     // steer 标记。send/steer 必须在**构建 prompt(读附件是 async)前后、投递 RPC 前**
@@ -6731,7 +6785,8 @@ export class PiAgent extends BaseAgent {
       model: string,
       budget: number | null = sessionContextWindowBudget,
     ): number => {
-      const settings = JSON.parse(buildPiSettingsJsonContent(window, sessionPiAutoCompactPct, [],
+      const settings = JSON.parse(buildPiSettingsJsonContent(window,
+        this.deps.resolveModelCompactionPct?.(source, model) ?? sessionPiAutoCompactPct, [],
         budget ?? this.deps.resolveModelContextLimit?.(source, model) ?? undefined));
       return settings.compaction?.reserveTokens ?? 16_384;
     };
@@ -7586,19 +7641,6 @@ export class PiAgent extends BaseAgent {
     };
 
     const handle: AgentSessionHandle = {
-      harnessHooks: harnessHooksEnabled ? ['tool.before', 'compaction.before'] : [],
-      setHarnessHookHandler: handler => harnessHookBridge.setHandler(handler),
-      ...(harnessHooksEnabled ? {
-        requestHarnessCompaction: () => runExclusivePiRpc(async () => {
-          // Pi 1.0.2 auto-compaction belongs to the agent run, whose terminal
-          // event is agent_settled (not agent_end). The same RPC lane orders
-          // all Cindy prompts and controls; recheck after acquiring that lane.
-          if (closed || proc.isClosed || ctx.isStreaming || nativeCompactionActive) {
-            throw new Error('SESSION_RUNNING: Pi is not idle for compaction');
-          }
-          return requestPiCompact();
-        }),
-      } : {}),
       reviewAutoPermissionAction: async (action) => {
         const decision = await reviewAutoAction(action);
         if (decision.unavailable) autoReviewUnavailableNotice.notify();
@@ -7809,9 +7851,6 @@ export class PiAgent extends BaseAgent {
             ? await readPiUserEntryIds()
             : null;
           if (!managedPackageRoute.accepted) rejectIfCancelled(sendOpts, 'send');
-          const firstModelRequestStartedAt = firstModelRequestLogged ? undefined : Date.now();
-          if (firstModelRequestStartedAt !== undefined) firstModelRequestLogged = true;
-          let firstModelRequestStatus: 'ok' | 'degraded' = 'degraded';
           try {
             doctorCommandActivity.enter(isDoctorCommand);
             const { resp, pendingTurnStartToken } = await runExclusivePiRpc(async () => {
@@ -7833,6 +7872,14 @@ export class PiAgent extends BaseAgent {
               }
               const pendingTurnStartToken = markPiHostTurnStartPending(ctx);
               promptRequestStarted = true;
+              const firstPromptRpcStartedAt = firstPromptRpcLogged ? undefined : Date.now();
+              firstPromptRpcLogged = true;
+              const logPromptResponse = (success: boolean) => {
+                if (firstPromptRpcStartedAt !== undefined) logPiStartupStage(
+                  deps.logger, startupTraceId, 'first-prompt-rpc', firstPromptRpcStartedAt,
+                  success ? 'ok' : 'degraded',
+                );
+              };
               const resp = await proc.request(command, {
                 timeoutMs: PI_PROMPT_ACCEPTANCE_TIMEOUT_MS,
                 // Prompt acceptance may legitimately span multiple compaction
@@ -7840,6 +7887,12 @@ export class PiAgent extends BaseAgent {
                 // preflight, so a healthy long compaction is not killed at 10m.
                 refreshTimeoutOnEvent: (event) =>
                   PI_PROMPT_ACCEPTANCE_PROGRESS_EVENTS.has(event.type),
+              }).then(response => {
+                logPromptResponse(response.success);
+                return response;
+              }, error => {
+                logPromptResponse(false);
+                throw error;
               });
               // Only consume the one-shot choice after acceptance. A confirmed
               // rejection must preserve it for a retry without a message snapshot.
@@ -7851,7 +7904,6 @@ export class PiAgent extends BaseAgent {
               }
               return { resp, pendingTurnStartToken };
             });
-            firstModelRequestStatus = resp.success ? 'ok' : 'degraded';
             if (!resp.success) {
               rollbackPiHostTurnStart(ctx, pendingTurnStartToken);
               if (managedPackageRoute.accepted) {
@@ -7977,15 +8029,6 @@ export class PiAgent extends BaseAgent {
               }
             }
           } finally {
-            if (firstModelRequestStartedAt !== undefined) {
-              logPiStartupStage(
-                deps.logger,
-                startupTraceId,
-                'first-model-request',
-                firstModelRequestStartedAt,
-                firstModelRequestStatus,
-              );
-            }
             if (activeExtensionCommandNotifications === capturedExtensionNotifications) {
               activeExtensionCommandNotifications = null;
             }
@@ -8214,7 +8257,6 @@ export class PiAgent extends BaseAgent {
       },
 
       async close(closeOpts?: AgentSessionTeardownOptions): Promise<void> {
-        harnessHookBridge.close();
         closed = true;
         // No reason means the caller could not identify its boundary; fail
         // closed to the account boundary rather than leaving a detached child

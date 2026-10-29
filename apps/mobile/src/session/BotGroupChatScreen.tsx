@@ -5,7 +5,7 @@ import type { DurableOutboxRecord } from './durableOutbox';
 /**
  * 手机上的群聊页（docs/product-rules/bot-group-chat.md §8，对照桌面 BotGroupChatView.tsx）：
  * 顶栏（叠放头像、群名、成员名单、群设置）+ 多作者时间线 + 输入框。用户消息的附件见
- * BotGroupMessageAttachments（图片从电脑取缩略图，文件只显示名字）。
+ * BotGroupMessageAttachments（图片从电脑取缩略图，文件显示名称并按格式预览或交系统应用）。
  *
  * 群在电脑上，电脑执行全部规则；这里整页读电脑给的群快照（最新 100 条消息与涉及的安排），
  * 每次电脑推送变化就重读，不在本地拼时间线。分工的安排卡、交接文件、「下一步 · 继续」
@@ -99,7 +99,7 @@ import {
   type BotGroupPlanCardAction,
 } from './BotGroupPlan';
 import { BotGroupSettingsSheet } from './BotGroupSettingsSheet';
-import { BotGroupSpeakerRow } from './BotGroupSpeakerRow';
+import { BotGroupWorkArea } from './BotGroupWorkArea';
 import { botGroupActionErrorText } from './botGroupCopy';
 import { keyboardAvoidingBehaviorForPlatform } from './mobileNativeShellLayout';
 import type { ResolveRemoteMediaFn } from './remoteMedia';
@@ -491,6 +491,8 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId, messageId, n
         <View style={styles.flex}><BotGroupQuote display={resolveBotGroupQuote(replyTo, group.messages)} onPress={() => locateMessage(replyTo.messageId)} /></View>
         <MainWindowActionButton density="compact" action={{ label: t('message.quote.remove'), onPress: () => setReplyTo(null), testID: 'botGroup.cancelReply' }} />
       </View> : null}
+      <BotGroupWorkArea group={group} deviceId={deviceId} online={chat.online} identityFor={identityFor}
+        onError={message => { if (message) Alert.alert(message); }} />
       <BotGroupComposer members={group.members} identityFor={identityFor} deviceId={deviceId} online={(chat.online || !!chat.canQueue) && !group.archived && !group.dissolvedAt}
         quoteMessageId={replyTo?.messageId} focusRequest={replyFocusRequest}
         running={group.round.status === 'running'} planState={botGroupComposerPlanState(openBotGroupPlan(group), group.replyMode)}
@@ -572,9 +574,6 @@ export function BotGroupTimeline({
   const mentionLabels = useMemo(() => [allLabel, ...group.members.map((member) => member.name)], [allLabel, group.members]);
   const running = group.round.status === 'running';
   const memberById = new Map(group.members.map((member) => [member.botId, member]));
-  const speakers = running
-    ? group.round.speakers.filter((speaker) => memberById.has(speaker.botId))
-    : [];
   const pendingFor = (planId: string | null) => planId && planPending?.planId === planId ? planPending.action : null;
   return <>
     {group.hasMoreBefore && loadOlder ? <MainWindowActionButton action={{ label: t('groupChat.server.loadOlder'), busy: loadingOlder, onPress: loadOlder, testID: 'botGroup.loadOlder' }} /> : group.hasMoreBefore ? <Text style={styles.olderNote} testID="botGroup.olderOnComputer">{t('groupChat.timeline.olderOnComputer')}</Text> : null}
@@ -626,12 +625,6 @@ export function BotGroupTimeline({
         onRetry={() => onPlanAction('retry', openPlan.id)}
         onEnd={() => onPlanAction('dismiss', openPlan.id)} />
     </View> : null}
-    {speakers.map((speaker) => {
-      const member = memberById.get(speaker.botId)!;
-      return <BotGroupSpeakerRow key={`${speaker.botId}:${speaker.activity}`} deviceId={deviceId} online={online}
-        identity={identityFor(member.botId, member.name)} sessionId={speaker.sessionId} activity={speaker.activity}
-        onError={onInteractionError} />;
-    })}
   </>;
 }
 

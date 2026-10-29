@@ -48,6 +48,7 @@ export type BotGroupMemberStatus = 'active' | 'paused' | 'error' | 'archived' | 
 export const BOT_GROUP_RUNTIME_FAILURE_CODES = [
   'IMAGE_INPUT_UNSUPPORTED', 'MODEL_UNAVAILABLE', 'AUTH_REQUIRED', 'RATE_LIMITED', 'UPSTREAM_OVERLOADED',
   'QUOTA_EXCEEDED', 'NETWORK_ERROR', 'RUNTIME_TIMEOUT', 'RUNTIME_ERROR',
+  'REMOTE_DEVICE_LIMIT', 'REMOTE_TOTAL_LIMIT',
 ] as const;
 export type BotGroupRuntimeFailureCode = typeof BOT_GROUP_RUNTIME_FAILURE_CODES[number];
 export function isBotGroupRuntimeFailureCode(value: unknown): value is BotGroupRuntimeFailureCode {
@@ -430,6 +431,11 @@ export type BotGroupSpeakerActivity = 'reply' | 'planning' | 'step';
 
 export interface BotGroupSpeaker {
   botId: string;
+  /** Server execution identity: match the same work on its owning computer, never a bot's main chat. */
+  executionId?: string;
+  startedAt?: number;
+  stopping?: boolean;
+  executionStatus?: 'queued' | 'running' | 'needs_input' | 'stopping';
   /** Hidden group lane or 分工 Session of the speaking Bot, for pending permission/question UI. */
   sessionId: string | null;
   activity: BotGroupSpeakerActivity;

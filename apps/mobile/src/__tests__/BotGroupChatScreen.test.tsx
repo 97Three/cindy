@@ -36,6 +36,10 @@ const h = vi.hoisted(() => ({
   platform: { OS: 'ios' }, headerBlur: [] as number[], headerFade: [] as (number | undefined)[],
 }));
 
+// Keep the real attachment components; only replace native reader and filesystem surfaces for jsdom.
+vi.mock('react-native-webview', () => ({ WebView: () => null }));
+vi.mock('expo-modules-core', () => ({ requireOptionalNativeModule: () => null }));
+vi.mock('expo-file-system', () => ({ Directory: class {}, File: class {}, Paths: { cache: 'file:///test-cache' } }));
 vi.mock('expo-web-browser', () => ({ openBrowserAsync: vi.fn(async () => ({})) }));
 vi.mock('@/components/ChatReplyIcon', () => ({ ChatReplyIcon: () => null }));
 vi.mock('react-native', () => {
@@ -99,6 +103,7 @@ vi.mock('lucide-react-native', () => Object.fromEntries(
 vi.mock('@/theme', async () => ({
   ...await import('@/theme/tokens'), useThemedStyles: (makeStyles: any) => makeStyles({}), useTheme: () => ({ colors: {} }), monoFont: 'mono',
 }));
+vi.mock('@/device-link/DeviceLinkContext', () => ({ useDeviceLink: () => ({ getPresenceAvailability: () => true }) }));
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => ({
   user: { id: 'owner' }, accountGeneration: 1, getAccessToken: async () => 'token', apiFetch: async () => ({}),
 }) }));
@@ -489,6 +494,15 @@ describe('group timeline', () => {
     expect(all('botGroup.notice').map(entry => entry.textContent)).toEqual(['groupChat.notice.memberJoined(name=Taylor)']);
     expect(all('botGroup.message.user')).toHaveLength(0);
     expect(all('botGroup.message.bot')).toHaveLength(0);
+  });
+
+  // #6835: unit screen entry must prioritize the limit over the lane-unavailable fallback.
+  it.each(['REMOTE_DEVICE_LIMIT', 'REMOTE_TOTAL_LIMIT'] as const)('renders lane failure %s on mobile', async runtimeFailureCode => {
+    await render(group({ messages: [message('failure', 1, { kind: 'notice', authorKind: 'system',
+      authorName: 'Bot', noticeCode: 'member-unavailable', runtimeFailureCode })] }));
+    const text = all('botGroup.notice')[0]?.textContent;
+    expect(text).toContain(`groupChat.notice.runtimeFailure.${runtimeFailureCode}(name=Bot)`);
+    expect(text).not.toContain('groupChat.notice.memberUnavailable');
   });
 
   it.each(BOT_GROUP_RUNTIME_FAILURE_CODES)('renders the runtime reason and recovery advice on mobile: %s', async runtimeFailureCode => {
