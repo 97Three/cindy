@@ -93,14 +93,43 @@ export function defaultBrowserExtensionPolicy(): BrowserExtensionPolicy {
   return { read: { block: [] }, interact: { allow: ['*'], block: [] } };
 }
 
+/** DevTools methods the extension accepts for site recipes; mirrors CDP_METHODS in policy.js. */
+export const BROWSER_EXTENSION_CDP_METHODS: ReadonlySet<string> = new Set([
+  'Accessibility.enable',
+  'Accessibility.getFullAXTree',
+  'DOM.enable',
+  'DOM.focus',
+  'DOM.getDocument',
+  'DOM.querySelector',
+  'DOM.querySelectorAll',
+  'DOM.describeNode',
+  'DOM.resolveNode',
+  'DOM.getContentQuads',
+  'DOM.getBoxModel',
+  'DOM.scrollIntoViewIfNeeded',
+  'Input.dispatchKeyEvent',
+  'Input.dispatchMouseEvent',
+  'Input.insertText',
+  'Network.enable',
+  'Network.getResponseBody',
+  'Network.getCookies',
+  'Storage.getCookies',
+  'Page.captureScreenshot',
+  'Page.getLayoutMetrics',
+  'Page.getFrameTree',
+  'Page.handleJavaScriptDialog',
+  'Runtime.callFunctionOn',
+  'Runtime.releaseObject',
+]);
+
 export function normalizeBrowserExtensionHost(value: unknown): string {
   if (typeof value !== 'string') throw new Error('Enter a domain, for example example.test.');
   const text = value.trim().toLowerCase();
   const exact = text.startsWith('=');
   const raw = exact ? text.slice(1) : text.replace(/^\*\./, '');
   if (/^\[[0-9a-f:.]+\]$/.test(raw)) {
+    // Local and private addresses are allowed like any site (2026-10-28), so they can be listed too.
     const host = new URL('https://' + raw).hostname;
-    if (isLocalBrowserHost(host)) throw new Error('Local and private addresses are not supported.');
     return (exact ? '=' : '') + host;
   }
   if (!raw || /[\s/@:?#\\]/.test(raw))
@@ -109,14 +138,13 @@ export function normalizeBrowserExtensionHost(value: unknown): string {
   // eslint-disable-next-line no-control-regex
   if (host !== raw && !/[^\x00-\x7f]/.test(raw)) throw new Error('Invalid domain.');
   if (
+    // Single-label intranet names (jira, localhost) are valid entries.
     host.length > 253 ||
-    !host.includes('.') ||
     host.endsWith('.') ||
     host.split('.').some((part) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(part))
   ) {
     throw new Error('Invalid domain.');
   }
-  if (isLocalBrowserHost(host)) throw new Error('Local and private addresses are not supported.');
   return (exact ? '=' : '') + host;
 }
 
@@ -333,6 +361,20 @@ function validateParityPayload(action: string, payload: BrowserExtensionJobPaylo
       throw new Error('cdp op must be begin, end, events or command.');
     if (payload.op === 'command' && (typeof payload.method !== 'string' || !/^[A-Za-z]+\.[A-Za-z]+$/.test(payload.method)))
       throw new Error('cdp command needs a protocol method such as Network.getCookies.');
+    // Mirrors the extension: only what site recipes send, and cookie reads name the site's URLs
+    // (the extension additionally keeps them to the attached tab's site).
+    if (payload.op === 'command' && !BROWSER_EXTENSION_CDP_METHODS.has(payload.method as string))
+      throw new Error('cdp command ' + String(payload.method) + ' is not available to site recipes.');
+    if (payload.op === 'command' && payload.method === 'Network.getCookies') {
+      const urls = (payload.params as { urls?: unknown } | undefined)?.urls;
+      if (
+        !Array.isArray(urls) ||
+        !urls.length ||
+        urls.length > 50 ||
+        urls.some((u) => typeof u !== 'string' || u.length > 8192 || !/^https?:\/\//i.test(u))
+      )
+        throw new Error('Network.getCookies needs params.urls: 1–50 HTTP(S) URLs of the site being operated on.');
+    }
     if (
       payload.params != null &&
       (typeof payload.params !== 'object' || Array.isArray(payload.params) || JSON.stringify(payload.params).length > 1_000_000)

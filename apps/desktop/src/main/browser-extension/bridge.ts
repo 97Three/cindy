@@ -100,6 +100,8 @@ export interface BrowserExtensionClientInfo {
   origin: string;
   extensionId: string;
   publicKey?: string;
+  /** Changes when the browser restarts (tab ids start over); absent from older extensions. */
+  boot?: string;
 }
 
 export interface BrowserExtensionBridgeStatus {
@@ -131,6 +133,12 @@ export interface BrowserExtensionBridgeOptions {
   nativeToken?: string;
   /** 扩展发起的转交请求到达时回调(宿主转交给插件)。 */
   onRelay?: (notice: BrowserExtensionRelayNotice) => void;
+  /**
+   * Refuse every page job until the first setPolicy: the host has no saved copy of the user's
+   * site permissions yet (first run after the bridge moved into the host, or an unreadable cache),
+   * so the permissive default must not stand in for a blocklist the plugin still holds.
+   */
+  awaitPolicy?: boolean;
   ports?: readonly number[];
   pollTimeout?: number;
   connectWait?: number;
@@ -155,6 +163,7 @@ interface Client {
   challenge: { value: string; expires: number; publicKey: string } | null;
   session: string | null;
   trusted: boolean;
+  boot?: string;
 }
 
 type JobState = 'queued' | 'delivered' | 'acknowledged';
@@ -221,9 +230,24 @@ export class BrowserExtensionBridge {
   private readonly knownIds: Set<string>;
   private readonly now: () => number;
 
+  private policyKnown: boolean;
+  private closed = false;
+
   constructor(private readonly options: BrowserExtensionBridgeOptions) {
     this.knownIds = new Set(options.extensionIds);
     this.now = options.now ?? Date.now;
+    this.policyKnown = options.awaitPolicy !== true;
+  }
+
+  private gate(action: unknown, url: unknown): ReturnType<typeof checkBrowserExtensionPolicy> {
+    if (!this.policyKnown)
+      return {
+        ok: false,
+        error: 'POLICY_NOT_READY',
+        message: 'Cindy is still loading your site permissions from the plugin. Try again shortly.',
+        execution: 'not_executed',
+      };
+    return checkBrowserExtensionPolicy(this.policy, action, url);
   }
 
   get listeningPort(): number {
@@ -302,6 +326,7 @@ export class BrowserExtensionBridge {
       origin: c.origin,
       extensionId: c.extensionId,
       ...(c.publicKey ? { publicKey: c.publicKey } : {}),
+      ...(c.boot ? { boot: c.boot } : {}),
     };
   }
 
@@ -472,7 +497,7 @@ export class BrowserExtensionBridge {
   ): { id: string; action: string; payload: BrowserExtensionJobPayload } | null {
     for (const job of this.jobs.values()) {
       if (job.state !== 'queued' || job.clientId !== clientId) continue;
-      const gate = checkBrowserExtensionPolicy(this.policy, job.action, job.payload.url);
+      const gate = this.gate(job.action, job.payload.url);
       if (!gate.ok) {
         this.finish(job, gate as unknown as Record<string, unknown>);
         continue;
@@ -631,6 +656,8 @@ export class BrowserExtensionBridge {
       }
       client.browser = family ?? client.browser;
       client.version = String(this.header(req, 'x-my-browser-version') || '').slice(0, 30);
+      const boot = this.header(req, 'x-my-browser-boot');
+      if (typeof boot === 'string' && /^[0-9a-f-]{36}$/i.test(boot)) client.boot = boot;
       client.installedVersion = installedVersion;
       client.seen = this.now();
       if (keyHeader !== undefined && publicKey !== client.publicKey) {
@@ -783,7 +810,7 @@ export class BrowserExtensionBridge {
         return this.send(res, failure('INVALID_INPUT', 'Check the selected text or file.'), 400);
       }
       if (payload.source.url) {
-        const gate = checkBrowserExtensionPolicy(this.policy, 'text', payload.source.url);
+        const gate = this.gate('text', payload.source.url);
         if (!gate.ok) return this.send(res, gate, 403);
         payload.source.url = redactBrowserUrl(payload.source.url);
       }
@@ -838,7 +865,7 @@ export class BrowserExtensionBridge {
         return this.send(res, { ok: true });
       }
       const gate = item.payload.source.url
-        ? checkBrowserExtensionPolicy(this.policy, 'text', item.payload.source.url)
+        ? this.gate('text', item.payload.source.url)
         : { ok: true as const };
       if (!gate.ok) {
         this.relays.delete(item.id);
@@ -898,8 +925,7 @@ export class BrowserExtensionBridge {
     if (job.revoked && req.url !== '/result')
       return this.send(res, this.jobFailure(job, job.revoked.error, job.revoked.message), 403);
     if (req.url === '/ack' || req.url === '/authorize') {
-      const gate = checkBrowserExtensionPolicy(
-        this.policy,
+      const gate = this.gate(
         job.action,
         req.url === '/authorize' ? b.url : job.payload.url,
       );
@@ -938,7 +964,7 @@ export class BrowserExtensionBridge {
         ...result,
         ok: true,
         tabs: tabs.map((t) => {
-          if (checkBrowserExtensionPolicy(this.policy, 'text', t.url).ok) return t;
+          if (this.gate('text', t.url).ok) return t;
           const row: Record<string, unknown> = { id: t.id, redacted: true };
           if (['loading', 'complete', 'unloaded'].includes(t.status as string))
             row.status = t.status;
@@ -964,7 +990,7 @@ export class BrowserExtensionBridge {
     } else if (
       !result.error &&
       result.url &&
-      !checkBrowserExtensionPolicy(this.policy, job.action, result.url).ok
+      !this.gate(job.action, result.url).ok
     ) {
       result = this.jobFailure(
         job,
@@ -990,6 +1016,9 @@ export class BrowserExtensionBridge {
   // ── 生命周期 ────────────────────────────────────────────────────────────
 
   async start(): Promise<void> {
+    // A closed bridge stays closed: a caller still holding it must not reopen an ownerless
+    // listener that the extension could connect to after the plugin was disabled or replaced.
+    if (this.closed) throw new Error('BRIDGE_STOPPED');
     if (this.server) return;
     if (this.starting) return this.starting;
     this.starting = (async () => {
@@ -1033,6 +1062,7 @@ export class BrowserExtensionBridge {
 
   private startFailure(e: unknown): BrowserExtensionFailure {
     const code = (e as NodeJS.ErrnoException)?.code;
+    if (this.closed) return failure('BRIDGE_STOPPED', 'This browser connection was closed. Check Cindy Chrome is enabled.');
     return failure(
       code === 'BRIDGE_PORTS_BUSY'
         ? 'BRIDGE_PORTS_BUSY'
@@ -1050,13 +1080,14 @@ export class BrowserExtensionBridge {
     { ok: true; policy: BrowserExtensionPolicy } | (BrowserExtensionFailure & { applied?: true })
   > {
     this.policy = normalizeBrowserExtensionPolicy(input);
+    this.policyKnown = true;
     const dispatches: Array<Promise<boolean>> = [];
     for (const job of [...this.jobs.values()]) {
       // 撤销同时作用于原请求与其重定向目标:只按后者判会让被阻止的请求悄悄活着。
-      const original = checkBrowserExtensionPolicy(this.policy, job.action, job.payload.url);
+      const original = this.gate(job.action, job.payload.url);
       const gate =
         original.ok && job.authorizedUrl
-          ? checkBrowserExtensionPolicy(this.policy, job.action, job.authorizedUrl)
+          ? this.gate(job.action, job.authorizedUrl)
           : original;
       if (!gate.ok) {
         if (job.dispatchSettled) {
@@ -1070,9 +1101,9 @@ export class BrowserExtensionBridge {
     const completed = await Promise.all(dispatches);
     const uncertain = [...this.unconfirmedDispatches.values()].some(
       (job) =>
-        !checkBrowserExtensionPolicy(this.policy, job.action, job.url).ok ||
+        !this.gate(job.action, job.url).ok ||
         (job.authorizedUrl &&
-          !checkBrowserExtensionPolicy(this.policy, job.action, job.authorizedUrl).ok),
+          !this.gate(job.action, job.authorizedUrl).ok),
     );
     if (completed.some((finished) => !finished) || uncertain || this.unconfirmedOverflow) {
       return {
@@ -1113,7 +1144,7 @@ export class BrowserExtensionBridge {
       !!client?.trusted &&
       this.now() <= item.expiresAt &&
       (!item.payload.source.url ||
-        checkBrowserExtensionPolicy(this.policy, 'text', item.payload.source.url).ok);
+        this.gate('text', item.payload.source.url).ok);
     return { item, valid };
   }
 
@@ -1207,7 +1238,7 @@ export class BrowserExtensionBridge {
       return failure('INVALID_ARGS', e instanceof Error ? e.message : 'Invalid browser action.');
     }
     const kind = action as BrowserExtensionAction;
-    const gate = checkBrowserExtensionPolicy(this.policy, kind, payload.url);
+    const gate = this.gate(kind, payload.url);
     if (!gate.ok) return { ...gate };
     const until = this.now() + (this.options.connectWait ?? 6000);
     while (!this.connected().length && this.now() < until)
@@ -1264,6 +1295,7 @@ export class BrowserExtensionBridge {
   }
 
   async close(): Promise<void> {
+    this.closed = true;
     this.relays.clear();
     for (const job of [...this.jobs.values()])
       this.finish(

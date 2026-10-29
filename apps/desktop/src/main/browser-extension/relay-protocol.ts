@@ -125,6 +125,13 @@ export function validateRelayRequest(input: unknown): RelayRequest {
   if (!raw || typeof raw.op !== 'string' || !OPERATIONS.has(raw.op))
     throw new Error('INVALID_OPERATION');
   const out: RelayRequest = { op: raw.op, source: source(raw.source) };
+  // The tab or document the request came from, so per-view state (the current video's subtitle
+  // task) is not shared across tabs. Opaque to the host; mirrors the plugin's learning-core rule.
+  if (raw.view !== undefined) {
+    if (typeof raw.view !== 'string' || !/^[A-Za-z0-9:_-]{1,64}$/.test(raw.view))
+      throw new Error('INVALID_INPUT');
+    out.view = raw.view;
+  }
   if (raw.target !== undefined) {
     if (!validTarget(raw.target)) throw new Error('INVALID_LANGUAGE');
     out.target = raw.target;

@@ -37,7 +37,7 @@ function extGhost(
     version?: string;
   } = {},
 ): InstalledGhost {
-  const id = options.id ?? 'ext-ghost';
+  const id = options.id ?? 'my-browser';
   return {
     manifest: {
       schemaVersion: 3,
@@ -45,13 +45,14 @@ function extGhost(
       name: 'Ext Ghost',
       version: options.version ?? '1.0.0',
       entry: 'main.js',
+      node: { entry: 'node/worker.cjs' },
       ...(options.declare !== false
         ? {
             browserExtension: {
               protocol: 'cindy-browser-extension/3',
               extensionIds: [CHROME_ID],
               ...(options.nativeHost !== false
-                ? { nativeHost: { name: 'com.example.browser', binary: 'native-host/bin' } }
+                ? { nativeHost: { name: 'com.makecindy.browser', binary: 'native-host/bin' } }
                 : {}),
               ...(options.pageControl !== false ? { pageControl: true as const } : {}),
             },
@@ -187,14 +188,14 @@ describe('browserExtensionSlot · 桥接随花名册启停', () => {
     await settle();
     expect(bridges).toHaveLength(1);
     expect(bridges[0].options).toMatchObject({
-      ghostId: 'ext-ghost',
+      ghostId: 'my-browser',
       installedVersion: '1.0.0',
       extensionIds: [CHROME_ID],
       nativeToken: 'f'.repeat(64),
     });
     expect(bridges[0].started).toBe(true);
     expect(natives[0].install).toHaveBeenCalledWith(18810, [CHROME_ID]);
-    expect(slot.getPageControl()).toMatchObject({ ghostId: 'ext-ghost', pluginName: 'Ext Ghost' });
+    expect(slot.getPageControl()).toMatchObject({ ghostId: 'my-browser', pluginName: 'Ext Ghost' });
     // 幂等:同一份花名册不重建。
     slot.reconcile(ghosts);
     await settle();
@@ -212,6 +213,19 @@ describe('browserExtensionSlot · 桥接随花名册启停', () => {
     await settle();
     expect(bridges[1].closed).toBe(true);
     expect(slot.getPageControl()).toBeNull();
+  });
+
+  // Native hosts run outside the sandbox and share one registration per account, so a plugin that
+  // is not the official Cindy Chrome must not get one, even under the official name.
+  it('只有官方 Cindy Chrome 能装 native host;其它插件声明了也只开桥接', async () => {
+    const ghosts = [extGhost({ id: 'impostor' })];
+    const { slot, bridges, natives, settle } = await makeSlot({}, ghosts);
+    slot.reconcile(ghosts);
+    await settle();
+    expect(bridges).toHaveLength(1);
+    expect(bridges[0].started).toBe(true);
+    expect(bridges[0].options.nativeToken).toBeUndefined();
+    expect(natives).toHaveLength(0);
   });
 
   it('没有 pageControl 的声明只做通道,不成为 Browser Use 执行端', async () => {
@@ -242,7 +256,7 @@ describe('browserExtensionSlot · 管子上行', () => {
       ok: false,
       errorCode: 'PERMISSION_DENIED',
     });
-    expect(await slot.handleRequest('_root__ext-ghost', { kind: 'status' })).toMatchObject({
+    expect(await slot.handleRequest('_root__my-browser', { kind: 'status' })).toMatchObject({
       ok: false,
       errorCode: 'HOST_NOT_READY',
     });
@@ -252,7 +266,7 @@ describe('browserExtensionSlot · 管子上行', () => {
     const { slot, bridges, dir, ghosts, settle } = await makeSlot();
     slot.reconcile(ghosts);
     await settle();
-    const id = '_root__ext-ghost';
+    const id = '_root__my-browser';
     expect(await slot.handleRequest(id, 'nope')).toMatchObject({
       ok: false,
       errorCode: 'INVALID_REQUEST',
@@ -284,7 +298,7 @@ describe('browserExtensionSlot · 管子上行', () => {
     });
     expect(
       JSON.parse(await fs.readFile(path.join(dir, encodeURIComponent(id) + '.json'), 'utf8')),
-    ).toEqual({ version: 1, policy });
+    ).toEqual({ version: 1, policy, trustedClients: [] });
     expect(await slot.handleRequest(id, { kind: 'setTrustedClients', clients: [] })).toEqual({
       ok: true,
     });
@@ -310,12 +324,30 @@ describe('browserExtensionSlot · 管子上行', () => {
       ok: false,
       errorCode: 'INVALID_REQUEST',
     });
-    // 重启(新槽、同目录):先恢复上次策略再 start。
+    // 重启(新槽、同目录):先恢复配对与上次策略再 start,不再向插件索要策略。
     const again = await makeSlot({ policyDir: () => dir });
     again.slot.reconcile(again.ghosts);
-    await again.settle();
-    expect(again.bridges[0].calls[0]).toEqual(['setPolicy', [policy]]);
-    expect(again.bridges[0].started).toBe(true);
+    await vi.waitFor(() => expect(again.bridges[0]?.started).toBe(true));
+    expect(again.bridges[0].calls.slice(0, 2)).toEqual([
+      ['setTrustedClients', [[]]],
+      ['setPolicy', [policy]],
+    ]);
+    expect(again.sent.some(([, payload]) => (payload as { name?: string }).name === 'browser-extension-policy-request')).toBe(false);
+  });
+
+  // Review 2026-10-29: with no cached policy the host bridge must not fall back to "allow every
+  // site" while the plugin still holds the user's blocklist; it waits and asks the plugin.
+  it('没有缓存策略时让桥接等待策略并向插件索要;配对随策略一起落盘', async () => {
+    const { slot, bridges, sent, dir } = await makeSlot();
+    slot.reconcile([extGhost()]);
+    await vi.waitFor(() => expect(bridges[0]?.started).toBe(true));
+    expect(bridges[0].options.awaitPolicy).toBe(true);
+    expect(sent).toContainEqual(['_root__my-browser', { type: 'event', name: 'browser-extension-policy-request' }]);
+    const clients = [{ id: 'c1', origin: 'chrome-extension://' + CHROME_ID, extensionId: CHROME_ID, publicKey: 'k' }];
+    expect(await slot.handleRequest('_root__my-browser', { kind: 'setTrustedClients', clients })).toEqual({ ok: true });
+    expect(
+      JSON.parse(await fs.readFile(path.join(dir, encodeURIComponent('_root__my-browser') + '.json'), 'utf8')),
+    ).toEqual({ version: 1, trustedClients: clients });
   });
 });
 
@@ -334,6 +366,7 @@ describe('browserExtensionSlot · 转交扩展请求', () => {
       }),
       wake,
     });
+    const relays = () => sent.filter(([, payload]) => (payload as { name?: string }).name === 'browser-extension-relay');
     slot.reconcile(ghosts);
     await settle();
     const notice = {
@@ -343,9 +376,9 @@ describe('browserExtensionSlot · 转交扩展请求', () => {
     };
     bridges[0].emitRelay(notice);
     await settle();
-    expect(sent).toHaveLength(1);
-    expect(sent[0][0]).toBe('_root__ext-ghost');
-    expect(sent[0][1]).toMatchObject({
+    expect(relays()).toHaveLength(1);
+    expect(relays()[0][0]).toBe('_root__my-browser');
+    expect(relays()[0][1]).toMatchObject({
       type: 'event',
       name: 'browser-extension-relay',
       id: 'req-1',
@@ -356,12 +389,12 @@ describe('browserExtensionSlot · 转交扩展请求', () => {
     bridges[0].emitRelay({ ...notice, id: 'req-2' });
     await settle();
     expect(wake).toHaveBeenCalledOnce();
-    expect(sent).toHaveLength(2);
+    expect(relays()).toHaveLength(2);
     online = false;
     wake.mockResolvedValueOnce(false);
     bridges[0].emitRelay({ ...notice, id: 'req-3' });
     await settle();
-    expect(sent).toHaveLength(2);
+    expect(relays()).toHaveLength(2);
     expect(bridges[0].calls.at(-1)).toEqual([
       'relayResult',
       ['req-3', { ok: false, error: 'PLUGIN_UNAVAILABLE' }],

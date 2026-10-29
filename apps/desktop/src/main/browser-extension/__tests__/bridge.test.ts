@@ -204,19 +204,33 @@ describe('policy · 站点策略与 URL 脱敏(与扩展侧同判据)', () => {
     expect(normalizeBrowserExtensionHost('*.example.test')).toBe('example.test');
     expect(normalizeBrowserExtensionHost('=example.test')).toBe('=example.test');
     for (const bad of [
-      'com',
+
       'https://example.test',
       'example.test/path',
       'example.test:443',
       'example.test@evil.test',
       '*',
-      '127.0.0.1',
     ]) {
       expect(() => normalizeBrowserExtensionHost(bad)).toThrow();
     }
+    // Local, private and single-label intranet hosts can be listed, so they can be blocked alone.
+    for (const host of ['127.0.0.1', '192.168.1.2', '[::1]', 'localhost', 'jira', 'nas.local'])
+      expect(() => normalizeBrowserExtensionHost(host)).not.toThrow();
     expect(() =>
       normalizeBrowserExtensionPolicy({ read: { block: 'example.test' }, interact: { allow: [] } }),
     ).toThrow();
+  });
+
+  // Review 2026-10-29: the protocol session took any DevTools method, so a recipe job could read
+  // every cookie in the profile. Mirrors the extension's list; it also keeps cookies on-site.
+  it('配方的协议命令只接受配方会发的方法;读 Cookie 必须指明站点地址', () => {
+    const cdp = (method: string, params?: unknown) =>
+      validateBrowserExtensionJob('cdp', { url: 'https://example.test', tabId: 1, op: 'command', method, params });
+    expect(() => cdp('Network.getAllCookies')).toThrow(/not available/);
+    expect(() => cdp('Runtime.evaluate', { expression: '1' })).toThrow(/not available/);
+    expect(() => cdp('Network.getCookies')).toThrow(/params.urls/);
+    expect(() => cdp('Network.getCookies', { urls: ['https://example.test/'] })).not.toThrow();
+    expect(() => cdp('Storage.getCookies', {})).not.toThrow();
   });
 
   it('提取属性是封闭集合;载荷校验保留空文本与空选项', () => {
@@ -295,6 +309,36 @@ describe('bridge · 连接与身份', () => {
     expect(statuses[0]).toMatchObject({ ok: true, extension_connected: false });
     const result = await bridge.act('text', { url: 'https://example.test' });
     expect(result).toMatchObject({ error: 'EXTENSION_DISCONNECTED', execution: 'not_executed' });
+  });
+
+  // Review 2026-10-29: a caller still holding a closed bridge reopened an ownerless listener the
+  // extension could connect to after the plugin was disabled or replaced.
+  it('关闭后的桥接不会被 status/act 重新拉起', async () => {
+    const { bridge } = await fixture();
+    await bridge.close();
+    expect(await bridge.status()).toMatchObject({ ok: false, error: 'BRIDGE_STOPPED' });
+    expect(await bridge.act('text', { url: 'https://example.test' })).toMatchObject({
+      ok: false,
+      error: 'BRIDGE_STOPPED',
+      execution: 'not_executed',
+    });
+    expect(bridge.listeningPort).toBe(0);
+  });
+
+  // Review 2026-10-29: without the user's saved permissions the permissive default must not stand
+  // in for a blocklist the plugin still holds.
+  it('等待策略的桥接在收到策略前拒绝页面作业', async () => {
+    const { bridge, client } = await fixture({ awaitPolicy: true });
+    await client({ native: true });
+    expect(await bridge.act('text', { url: 'https://example.test' })).toMatchObject({
+      ok: false,
+      error: 'POLICY_NOT_READY',
+      execution: 'not_executed',
+    });
+    await bridge.setPolicy(defaultBrowserExtensionPolicy());
+    expect(await bridge.act('text', { url: 'https://example.test' })).not.toMatchObject({
+      error: 'POLICY_NOT_READY',
+    });
   });
 
   it('回环 HTTP 拒绝网页、预检、改绑 Host、旧会话与任意端点', async () => {
@@ -641,7 +685,8 @@ describe('bridge · 转交请求(翻译/字幕)', () => {
     const c = await ready();
     const job = {
       id: crypto.randomUUID(),
-      request: { op: 'translate', text: 'hello', source: { url: 'https://example.test/' } },
+      // view: the tab the request came from; per-tab subtitle state depends on it reaching the plugin.
+      request: { op: 'translate', text: 'hello', view: 'tab:12', source: { url: 'https://example.test/' } },
     };
     expect(
       (await c.request('/learning/start', job, { Origin: 'https://example.test' })).status,
@@ -653,7 +698,7 @@ describe('bridge · 转交请求(翻译/字幕)', () => {
     expect(relays[0]).toMatchObject({
       id: job.id,
       clientId: c.id,
-      request: { op: 'translate', text: 'hello' },
+      request: { op: 'translate', text: 'hello', view: 'tab:12' },
     });
     // 改动请求体后旧证明失效。
     const challenge = await c.request('/learning/challenge');

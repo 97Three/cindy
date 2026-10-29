@@ -482,7 +482,12 @@ describe('UserBrowserBackend · 读取与动作', () => {
     expect(userBrowserCapabilities(fakeControl({ version: '0.4.43' }).control)).toBe(
       USER_BROWSER_PARITY_CAPABILITIES,
     );
-    expect(userBrowserCapabilities(null)).toBe(USER_BROWSER_CAPABILITIES);
+    // Not connected (reloading, reconnecting) means unknown, not "old": the backend reports the
+    // disconnect per job instead of the tool layer refusing screenshots with a misleading hint.
+    expect(userBrowserCapabilities(null)).toBe(USER_BROWSER_PARITY_CAPABILITIES);
+    expect(userBrowserCapabilities(fakeControl({ clients: [] }).control)).toBe(
+      USER_BROWSER_PARITY_CAPABILITIES,
+    );
   });
 
   it('新版扩展:open 开到后台窗口并按 tabId 寻址,不再逐次列标签页', async () => {
@@ -741,11 +746,68 @@ describe('UserBrowserBackend · 读取与动作', () => {
     const realStatus = (fake.control.bridge as unknown as { status: () => Promise<{ ok: boolean; clients: Array<{ connected: boolean }> }> }).status;
     (fake.control.bridge as unknown as { status: () => Promise<unknown> }).status = async () => {
       const s = await realStatus();
-      return ++calls < 3 ? { ...s, clients: s.clients.map((c) => ({ ...c, connected: false })) } : s;
+      // Connected first, then dropped for two reads (an extension reload), then back.
+      ++calls;
+      return calls === 2 || calls === 3 ? { ...s, clients: s.clients.map((c) => ({ ...c, connected: false })) } : s;
     };
     const b = new UserBrowserBackend({ getPageControl: () => fake.control, reconnectWaitMs: 5000, logger: { info: vi.fn(), warn: vi.fn() } });
     expect(await call(b, { action: 'status' })).toMatchObject({ ok: true, data: { connected: true } });
-    expect(calls).toBe(3);
+    expect(await call(b, { action: 'status' })).toMatchObject({ ok: true, data: { connected: true } });
+    expect(calls).toBe(4);
+  });
+
+  // Review 2026-10-29: an installed but unpaired extension waited 8 s and was then told to install
+  // the extension; it must be reported at once with its real reason.
+  // Review 2026-10-29: with many tabs the list is cut at its limit, and the handle of a tab the
+  // agent had just opened vanished because it was not in the truncated list.
+  it('标签页列表被截断时不丢掉没列出来的已记住标签', async () => {
+    const fake = fakeControl({ version: '0.4.46' });
+    fake.responses.set('open', (payload) => ({ ok: true, tabId: 42, window: 500, url: payload.url, title: 'New' }));
+    const b = backend(fake.control);
+    await call(b, { action: 'open', url: 'https://example.test/new', label: 'n' });
+    fake.responses.set('tabs', () => ({
+      ok: true,
+      tabs: [{ id: 7, url: 'https://example.test/a', title: 'A', active: true }],
+      truncated: true,
+    }));
+    await call(b, { action: 'tabs' });
+    await call(b, { action: 'act', targetId: 'n', request: { kind: 'click', ref: 'r1' } });
+    expect(fake.jobs.at(-1)).toMatchObject(['click', { tabId: 42 }]);
+  });
+
+  // Review 2026-10-29: tab ids start over after a browser restart while the client id stays, so a
+  // remembered handle could act on a tab the user restored.
+  it('浏览器重启(启动 id 变化)后忘掉之前记住的标签页', async () => {
+    const fake = fakeControl({ version: '0.4.46' });
+    let boot = '11111111-1111-1111-1111-111111111111';
+    const connected = fake.control.bridge.connectedClients.bind(fake.control.bridge);
+    (fake.control.bridge as unknown as { connectedClients: () => unknown[] }).connectedClients = () =>
+      connected().map((c) => ({ ...c, boot }));
+    fake.responses.set('open', (payload) => ({ ok: true, tabId: 42, window: 500, url: payload.url, title: 'New' }));
+    const b = backend(fake.control);
+    await call(b, { action: 'open', url: 'https://example.test/new', label: 'n' });
+    boot = '22222222-2222-2222-2222-222222222222';
+    const before = fake.jobs.length;
+    const result = await call(b, { action: 'act', targetId: 'n', request: { kind: 'click', ref: 'r1' } });
+    expect(result.ok).toBe(false);
+    expect(fake.jobs.slice(before).some(([action]) => action === 'click')).toBe(false);
+  });
+
+  it('扩展已连上但没配对时 status 立即说明需要配对,不空等', async () => {
+    const fake = fakeControl({ version: '0.4.46' });
+    const realStatus = (fake.control.bridge as unknown as { status: () => Promise<{ ok: boolean; clients: Array<Record<string, unknown>> }> }).status;
+    (fake.control.bridge as unknown as { status: () => Promise<unknown> }).status = async () => {
+      const s = await realStatus();
+      return { ...s, clients: s.clients.map((c) => ({ ...c, connected: false, trusted: false })) };
+    };
+    (fake.control.bridge as unknown as { connectedClients: () => unknown[] }).connectedClients = () => [];
+    const b = new UserBrowserBackend({ getPageControl: () => fake.control, reconnectWaitMs: 60_000, logger: { info: vi.fn(), warn: vi.fn() } });
+    const started = Date.now();
+    expect(await call(b, { action: 'status' })).toMatchObject({
+      ok: true,
+      data: { connected: false, reason: 'pairing-required' },
+    });
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 
   it('从没连过扩展时 status 立即报告未连接,不空等', async () => {

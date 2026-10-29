@@ -1,4 +1,6 @@
 import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts/dataOwnerGeneration';
+import { readInstalledGhostsSnapshot } from '@/cindy-brain/useInstalledGhosts';
+import { installedGhostStoragePart, resolvePluginInstanceQuery } from '../../../shared/pluginIdentity';
 import { drainPendingDeepLinks } from '@/lib/pendingDeepLinks';
 import { ChatInviteHost, reportMalformedChatInvite, requestChatInvite } from '@/features/bots/ChatInviteHost';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -768,7 +770,16 @@ export function MainLayout() {
         return;
       }
       if (payload.type === 'installed-plugin') {
-        navigate(payload.ghostId ? `/plugins?ghost=${encodeURIComponent(payload.ghostId)}` : '/plugins');
+        // The link carries the plugin's own id; the plugin page selects by instance key
+        // (`_root__my-browser`), so resolve it against what is installed.
+        const resolved = payload.ghostId
+          ? resolvePluginInstanceQuery(readInstalledGhostsSnapshot(), payload.ghostId)
+          : null;
+        navigate(
+          resolved?.status === 'unique'
+            ? `/plugins?ghost=${encodeURIComponent(installedGhostStoragePart(resolved.ghost))}`
+            : '/plugins',
+        );
         return;
       }
       if (payload.type === 'session') {

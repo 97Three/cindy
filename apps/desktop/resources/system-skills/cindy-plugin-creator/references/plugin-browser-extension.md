@@ -25,12 +25,19 @@
 
 ```js
 // 插件 → 宿主:向扩展投递作业、推送站点策略与配对身份、回传转交结果
-const status = await cindy.send({ type: 'browser-extension-request', kind: 'status' });
-if (!status.ok && status.errorCode) {
-  // 旧宿主不认识这个槽:回落到你自己的接线进程,不要把拒绝当作已连接
+let status;
+try {
+  status = await cindy.send({ type: 'browser-extension-request', kind: 'status' });
+} catch (err) {
+  // 只有旧宿主会拒绝这个管子类型([INVALID_PARAMS] 未知的管子消息类型):回落到你自己的
+  // 接线进程,并记住。不要把拒绝当作已连接。
 }
+// 新宿主也会返回 errorCode(HOST_NOT_READY、PERMISSION_DENIED 等):这表示宿主有这个槽,
+// 只是暂时不可用。不要据此回落,也不要缓存结果,下次再探测。
 await cindy.send({ type: 'browser-extension-request', kind: 'setPolicy', policy });
 await cindy.send({ type: 'browser-extension-request', kind: 'setTrustedClients', clients: paired });
+// 宿主还没有你的站点策略时,会拒绝页面作业并发来事件
+// { type: 'event', name: 'browser-extension-policy-request' }:收到后立即推送策略与配对身份。
 const result = await cindy.send({
   type: 'browser-extension-request',
   kind: 'act',
@@ -61,9 +68,14 @@ cindy.onHostMessage(async (msg) => {
 
 规则与红线:
 
-- **站点策略归你**:读取默认开放公网、交互按站点授权、本机与私网一律拒绝。你保存并在启动
-  与每次变更时 `setPolicy` 推给宿主;宿主缓存到用户私有目录并在每个作业上强制,新授权必须经
-  `cindy.confirm` 真实确认。
+- **站点策略归你**:读取与交互默认开放,本机、私网与单段内网主机名和公网网站一样可访问,也可以
+  写进名单单独屏蔽。你保存并在启动与每次变更时 `setPolicy` 推给宿主;宿主缓存到用户私有目录
+  并在每个作业上强制,没有缓存时在收到你的策略前拒绝页面作业,新授权必须经 `cindy.confirm`
+  真实确认。
+- **`nativeHost` 只给官方 Cindy Chrome**:Native Messaging 程序在插件沙箱外运行,且同一账号的
+  所有 Cindy 共用一份注册,宿主只为官方 Cindy Chrome(`my-browser`,名称
+  `com.makecindy.browser`,并声明了 Node 程序)安装它。其它插件声明了也只开桥接,扩展需要手动
+  配对。
 - **作业一次送达**:已送达的作业不会重投;结果 `execution` 为 `unknown` 时要让 Agent 核对
   页面,不能当成功或未执行报告。
 - **宿主代码不认识你**:桥接只按声明工作,不会为某个插件写特例;需要线协议之外的能力,先提

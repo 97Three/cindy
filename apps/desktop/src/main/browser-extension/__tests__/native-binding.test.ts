@@ -95,6 +95,29 @@ describe('native-binding', () => {
     await b.close();
   });
 
+  // Review 2026-10-29: registrations were never withdrawn. Every Cindy on the account shares one,
+  // so it may only go once no running Cindy still serves a connection.
+  it('withdraws the browser registration only after the last running Cindy closes', async () => {
+    const { binaryDir, profile, root } = await fixture();
+    const opts = {
+      hostName: 'com.example.browser',
+      binaryDir,
+      root,
+      profiles: [profile],
+      platform: 'darwin' as const,
+      arch: 'arm64',
+    };
+    const registration = path.join(profile, 'NativeMessagingHosts', 'com.example.browser.json');
+    const release = createNativeBinding(opts);
+    const dev = createNativeBinding(opts);
+    await release.install(18810, [EXT]);
+    await dev.install(18811, [EXT]);
+    await dev.close();
+    await expect(fs.access(registration)).resolves.toBeUndefined();
+    await release.close();
+    await expect(fs.access(registration)).rejects.toThrow();
+  });
+
   it('Windows registration uses only current-user fixed registry keys and argv', async () => {
     const { dir, binaryDir } = await fixture();
     await fs.mkdir(path.join(binaryDir, 'win32-x64'), { recursive: true });

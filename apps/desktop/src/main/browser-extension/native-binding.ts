@@ -89,6 +89,64 @@ export function createNativeBinding(options: NativeBindingOptions): NativeBindin
     }
   }
 
+  function browserProfiles(): string[] {
+    return (
+      options.profiles ??
+      (platform === 'darwin'
+        ? [
+            'Google/Chrome',
+            'Google/Chrome for Testing',
+            'Chromium',
+            'Microsoft Edge',
+            'BraveSoftware/Brave-Browser',
+          ].map((p) => path.join(home, 'Library/Application Support', p))
+        : [
+            'google-chrome',
+            'google-chrome-for-testing',
+            'chromium',
+            'microsoft-edge',
+            'BraveSoftware/Brave-Browser',
+          ].map((p) => path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), p)))
+    );
+  }
+
+  /**
+   * Withdraw the browser registrations once no Cindy still serves a connection. The registration
+   * is shared by every Cindy on this account (release and dev builds, both editions), and each
+   * running one keeps its own `connections/<port>.json`; removing it while another is live would
+   * cut that one off until it restarts.
+   */
+  async function unregisterIfUnused(): Promise<void> {
+    const live = await fs.readdir(path.join(root, 'connections')).catch(() => null);
+    if (live === null || live.some((name) => name.endsWith('.json'))) return;
+    const binaryName = 'cindy-browser-native' + (platform === 'win32' ? '.exe' : '');
+    const ours = path.join(root, binaryName);
+    if (platform === 'win32') {
+      const reg = path.join(env.SystemRoot || env.WINDIR || 'C:\\Windows', 'System32', 'reg.exe');
+      for (const vendor of ['Google\\Chrome', 'Microsoft\\Edge', 'BraveSoftware\\Brave-Browser']) {
+        await run!(
+          reg,
+          ['DELETE', 'HKCU\\Software\\' + vendor + '\\NativeMessagingHosts\\' + options.hostName, '/f'],
+          { windowsHide: true, timeout: 10000 },
+        ).catch(() => undefined);
+      }
+      await fs.rm(path.join(root, options.hostName + '.json'), { force: true });
+      return;
+    }
+    for (const profile of browserProfiles()) {
+      const file = path.join(profile, 'NativeMessagingHosts', options.hostName + '.json');
+      const registered = await fs.readFile(file, 'utf8').catch(() => null);
+      // Leave a registration that now points somewhere else (another installer took the name).
+      let target: unknown = null;
+      try {
+        target = registered === null ? null : (JSON.parse(registered) as { path?: unknown }).path;
+      } catch {
+        target = null;
+      }
+      if (target === ours) await fs.rm(file, { force: true });
+    }
+  }
+
   async function install(port: number, extensionIds: readonly string[]) {
     try {
       await privateDirectory(root);
@@ -132,24 +190,7 @@ export function createNativeBinding(options: NativeBindingOptions): NativeBindin
           );
         }
       } else {
-        const profiles =
-          options.profiles ??
-          (platform === 'darwin'
-            ? [
-                'Google/Chrome',
-                'Google/Chrome for Testing',
-                'Chromium',
-                'Microsoft Edge',
-                'BraveSoftware/Brave-Browser',
-              ].map((p) => path.join(home, 'Library/Application Support', p))
-            : [
-                'google-chrome',
-                'google-chrome-for-testing',
-                'chromium',
-                'microsoft-edge',
-                'BraveSoftware/Brave-Browser',
-              ].map((p) => path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), p)));
-        for (const profile of profiles) {
+        for (const profile of browserProfiles()) {
           const dir = path.join(profile, 'NativeMessagingHosts');
           await privateDirectory(dir);
           await atomic(path.join(dir, options.hostName + '.json'), JSON.stringify(manifest));
@@ -178,6 +219,7 @@ export function createNativeBinding(options: NativeBindingOptions): NativeBindin
     // 只删自己写的授权;同端口被另一实例接管时保留它的令牌。
     if (data === JSON.stringify({ token })) await fs.rm(config, { force: true });
     config = null;
+    await unregisterIfUnused().catch(() => undefined);
   }
 
   return { token, install, close, status: () => state };

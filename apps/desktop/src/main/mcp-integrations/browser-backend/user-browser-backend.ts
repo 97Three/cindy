@@ -57,6 +57,8 @@ interface TargetRecord {
   tabId: number;
   url: string;
   title?: string;
+  /** Browser launch the tab id belongs to; see forgetRestartedBrowsers. */
+  boot?: string;
 }
 
 export const USER_BROWSER_UNSUPPORTED_HINT =
@@ -106,11 +108,17 @@ export function extensionSupportsParity(version: string | null | undefined): boo
   return true;
 }
 
-/** 任一已连接的扩展是新版就给完整能力;具体作业落到旧版连接时再逐个拒绝。 */
+/**
+ * 任一已连接的扩展是新版就给完整能力;具体作业落到旧版连接时再逐个拒绝。
+ * 没有连接(断开、重连中、扩展刚刷新)时也按完整能力报:能力未知不等于不支持,
+ * 否则截图、evaluate 等会在工具层被直接拒绝,还错误地建议换专用浏览器;
+ * 真正的断开由后端按作业报告(并享有重连等待)。只有全部连接都是旧版时才收窄。
+ */
 export function userBrowserCapabilities(
   control: UserBrowserPageControl | null,
 ): Readonly<Record<keyof typeof USER_BROWSER_CAPABILITIES, boolean>> {
-  return control?.bridge.connectedClients().some((c) => extensionSupportsParity(c.version))
+  const clients = control?.bridge.connectedClients() ?? [];
+  return clients.length === 0 || clients.some((c) => extensionSupportsParity(c.version))
     ? USER_BROWSER_PARITY_CAPABILITIES
     : USER_BROWSER_CAPABILITIES;
 }
@@ -181,6 +189,9 @@ const NOT_CONFIGURED_MESSAGE =
 const DISCONNECTED_MESSAGE =
   '浏览器扩展未连接:请在用户的 Chrome / Edge 中安装并启用 Cindy 扩展,保持 Cindy 运行;连接后重新查询 status。';
 
+const UNPAIRED_MESSAGE =
+  '浏览器扩展已连到 Cindy,但还没完成配对或授权:请让用户在 Cindy Chrome 插件页确认这个浏览器,或重新启用插件后再查询 status。';
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export class UserBrowserBackend implements BrowserBackend {
@@ -189,6 +200,9 @@ export class UserBrowserBackend implements BrowserBackend {
   private readonly recipeSessions = new RecipeBrowserSessions();
   /** 任务(会话)→ 它操作过的标签页;任务停下时清掉这些页面上的「Cindy 正在操作」标记。 */
   private readonly sessionTabs = new Map<string, Map<string, { clientId: string; tabId: number }>>();
+  private readonly clientBoots = new Map<string, string>();
+  /** Clients that have been fully connected before: only these are worth a reconnect wait. */
+  private readonly everReady = new Set<string>();
   /** 配方会话 id → 取回扩展缓存的网络事件(事件随每条命令回传,读取抓包前再取一次)。 */
   private readonly recipePumps = new Map<string, () => Promise<void>>();
   private nextAlias = 1;
@@ -309,7 +323,28 @@ export class UserBrowserBackend implements BrowserBackend {
   }
 
   private connectedClients(control: UserBrowserPageControl): BrowserExtensionClientInfo[] {
-    return control.bridge.connectedClients();
+    const clients = control.bridge.connectedClients();
+    this.forgetRestartedBrowsers(clients);
+    for (const client of clients) if (client.connected) this.everReady.add(client.id);
+    return clients;
+  }
+
+  /**
+   * Tab ids start over when the browser restarts while the client id stays the same, so a
+   * remembered handle could reach a tab the user restored. Forget a browser's handles once its
+   * launch id changes. Older extensions send no launch id and keep the previous behaviour.
+   */
+  private forgetRestartedBrowsers(clients: readonly BrowserExtensionClientInfo[]): void {
+    for (const client of clients) {
+      if (!client.boot) continue;
+      const known = this.clientBoots.get(client.id);
+      this.clientBoots.set(client.id, client.boot);
+      if (known === undefined || known === client.boot) continue;
+      for (const [targetId, record] of this.targets)
+        if (record.clientId === client.id) this.targets.delete(targetId);
+      for (const tabs of this.sessionTabs.values())
+        for (const [targetId, tab] of tabs) if (tab.clientId === client.id) tabs.delete(targetId);
+    }
   }
 
   /** 这条连接的扩展是否已与专用浏览器对齐(按 tabId 寻址、提供完整动作)。 */
@@ -445,6 +480,8 @@ export class UserBrowserBackend implements BrowserBackend {
 
   private resolveTarget(id: string | undefined): TargetRecord | null {
     if (!id) return null;
+    const control = this.opts.getPageControl();
+    if (control) this.forgetRestartedBrowsers(control.bridge.connectedClients());
     const direct = this.targets.get(id);
     if (direct) return direct;
     for (const record of this.targets.values()) {
@@ -551,10 +588,12 @@ export class UserBrowserBackend implements BrowserBackend {
     // Right after an extension reload or update it reconnects within seconds: wait briefly before
     // reporting "not connected", so the agent does not give up on a browser that is coming back.
     const deadline = (this.opts.now ?? Date.now)() + (this.opts.reconnectWaitMs ?? 8000);
-    // Only an extension seen recently (now dropped) is worth waiting for; none at all is reported at once.
+    // Only an extension that was connected before (now dropped) is worth waiting for. One that never
+    // finished connecting, such as an unpaired install, is reported at once with its own reason.
+    if (status.ok) for (const c of status.clients) if (c.connected) this.everReady.add(c.id);
     while (
       status.ok &&
-      status.clients.length > 0 &&
+      status.clients.some((c) => this.everReady.has(c.id)) &&
       !status.clients.some((c) => c.connected) &&
       (this.opts.now ?? Date.now)() < deadline
     ) {
@@ -583,6 +622,8 @@ export class UserBrowserBackend implements BrowserBackend {
         fullFeatures: extensionSupportsParity(c.version),
       }));
     const outdatedClients = clients.filter((c) => !c.fullFeatures);
+    // Installed and reaching Cindy, but not allowed in yet: say so instead of "install the extension".
+    const unpaired = clients.length === 0 && status.clients.some((c) => !c.trusted);
     return actionOk(req.action, {
       ready: clients.length > 0,
       running: clients.length > 0,
@@ -592,7 +633,8 @@ export class UserBrowserBackend implements BrowserBackend {
       pluginName: control.pluginName,
       connected: clients.length > 0,
       clients,
-      ...(clients.length === 0 ? { message: DISCONNECTED_MESSAGE } : {}),
+      ...(clients.length === 0 ? { message: unpaired ? UNPAIRED_MESSAGE : DISCONNECTED_MESSAGE } : {}),
+      ...(unpaired ? { reason: 'pairing-required' } : {}),
       ...(outdatedClients.length
         ? {
             updateNote: `有 ${outdatedClients.length} 个连接的 Cindy 扩展低于 ${USER_BROWSER_PARITY_VERSION},只支持基础读取与交互;更新扩展后可用截图、上传、页面脚本等完整能力。`,
@@ -654,17 +696,23 @@ export class UserBrowserBackend implements BrowserBackend {
       return actionFailed(req.action, DISCONNECTED_MESSAGE, 'BROWSER_RUNTIME_UNAVAILABLE');
     const tabs: Array<Record<string, unknown>> = [];
     const seen = new Set<string>();
+    // Only a complete listing proves a remembered tab is gone; a truncated one (many tabs, size
+    // budget) would otherwise turn a tab the agent just opened into an unknown targetId.
+    const complete = new Set<string>();
     for (const client of clients) {
       const listed = await gate.control.bridge.act('tabs', {
         browser: client.id,
         limit: Math.min(100, Math.max(1, req.limit ?? 50)),
       });
       if (!listed.ok) return this.failureResult(req.action, listed);
+      if (listed.truncated !== true) complete.add(client.id);
       for (const tab of (Array.isArray(listed.tabs) ? listed.tabs : []) as Array<
         Record<string, unknown>
       >) {
         if (typeof tab.id !== 'number') continue;
         if (tab.redacted || typeof tab.url !== 'string') {
+          // Still open, only its details are withheld: keep any remembered handle.
+          seen.add(this.targetKey(client.id, tab.id));
           tabs.push({
             targetId: this.targetKey(client.id, tab.id),
             redacted: true,
@@ -689,8 +737,7 @@ export class UserBrowserBackend implements BrowserBackend {
     }
     // 已关闭的标签页从映射里清掉,别名不复用。
     for (const [targetId, record] of this.targets) {
-      if (clients.some((c) => c.id === record.clientId) && !seen.has(targetId))
-        this.targets.delete(targetId);
+      if (complete.has(record.clientId) && !seen.has(targetId)) this.targets.delete(targetId);
     }
     return actionOk(req.action, {
       backend: this.kind,

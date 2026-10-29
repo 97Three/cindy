@@ -131,12 +131,16 @@ Library 请求同时绑定迁移代次和安装批准，根解析、排队及开
 - `browserExtension` 是宿主承接随包浏览器扩展连接的直接字段（2026-10-27 由 Cindy Chrome
   插件自带接线进程迁入宿主）：`protocol` 必须是当前宿主实现的 `cindy-browser-extension/3`，
   `extensionIds` 是允许连接的扩展 id（装入时逐条展示并钉死），可选 `nativeHost{name,binary}`
-  由宿主复制包内平台二进制并注册 Native Messaging，可选 `pageControl: true` 表示扩展实现
+  由宿主复制包内平台二进制并注册 Native Messaging：该程序在插件沙箱外运行且同一账号的所有
+  Cindy 共用一份注册，宿主只为官方 Cindy Chrome（`my-browser`、`com.makecindy.browser`、
+  声明了 Node 程序）安装，其它插件的声明被忽略（2026-10-29 决定，宿主代码点名具体插件的唯一
+  例外）；注册在没有任何运行中的 Cindy 仍在使用时撤销。可选 `pageControl: true` 表示扩展实现
   页面控制契约、可作为 Browser Use 的「我的浏览器」执行端。宿主代码里不得出现具体插件名
   或专有协议：桥接按声明启停（`cindy-brain/browserExtensionSlot.ts`），扩展发起的请求经
   `browser-extension-relay` 事件转交给声明插件，插件经 `browser-extension-request` 投递作业、
   推送站点策略与配对身份。站点策略归插件所有，宿主只缓存到 owner 私有目录并在每个作业上
-  强制；新增 id 或新增 `pageControl` 视为权限变多，删减视为收权。
+  强制，没有缓存时在收到插件策略前拒绝页面作业；本机与私网地址和公网网站一样可访问，也可以
+  写进名单单独屏蔽（2026-10-28 决定）。新增 id 或新增 `pageControl` 视为权限变多，删减视为收权。
 - 无配置的布尔能力只接受字面量 `true`：`notify`、`badge`、`confirm`、`fs`、`library`、
   `sessionContext`、`pick`、`workspace`。不用就省略，写 `false` 是无效清单。
 - `card: {}` 与 `agent: {}` 分别表示基础卡片能力和由真实用户点击触发 Agent 回合；

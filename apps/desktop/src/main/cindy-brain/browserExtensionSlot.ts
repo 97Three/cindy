@@ -13,14 +13,17 @@
  * - 身份:允许连接的扩展 id 来自身份卡(装入时展示并钉死),宿主代码里不出现任何
  *   具体插件名;native host 的授权令牌只写本机私有连接文件;
  * - 策略归插件:站点策略由插件保存并推送(setPolicy),宿主只缓存、持久化到
- *   owner 私有目录并在每个作业上强制;宿主重启后先恢复上次策略再接受连接,
- *   没有策略时按线协议默认值(读开放公网、交互开放,本机/私网拒绝);
+ *   owner 私有目录并在每个作业上强制;宿主重启后先恢复上次策略与配对再接受连接,
+ *   没有可用缓存时桥接在收到插件策略前拒绝页面作业,并向插件索要策略;
+ * - native host 在插件沙箱外运行且全账号共用一份注册,只为官方 Cindy Chrome 安装
+ *   (见 OFFICIAL_NATIVE_HOSTS,宿主唯一点名具体插件的地方);
  * - 转交请求只投递给声明该扩展的插件(沙箱内处理),宿主不解释其业务内容。
  *
  * 纯逻辑 + 依赖注入(规则 14):ghost 查询、管子投递、目录与桥接工厂在
  * cindy-brain/index.ts 组装时注入。
  */
 
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -46,6 +49,27 @@ import {
 } from '../../shared/ghost.js';
 import { installedGhostStoragePart } from '../../shared/pluginIdentity.js';
 import type { UserBrowserPageControl } from '../mcp-integrations/browser-backend/user-browser-backend.js';
+
+/**
+ * Native Messaging hosts run outside the plugin sandbox and every Cindy on the account shares
+ * their registration, so only the official Cindy Chrome plugin may install one, under its own
+ * name. It must also declare its bundled Node program, which the install confirmation already
+ * presents as running unsandboxed. Any other declaration is ignored: the bridge still runs and
+ * the extension falls back to pairing.
+ */
+const OFFICIAL_NATIVE_HOSTS: ReadonlyMap<string, string> = new Map([
+  ['my-browser', 'com.makecindy.browser'],
+]);
+
+export function mayInstallNativeHost(ghost: InstalledGhost): boolean {
+  const name = ghost.manifest.browserExtension?.nativeHost?.name;
+  return (
+    name !== undefined &&
+    ghost.namespace == null &&
+    OFFICIAL_NATIVE_HOSTS.get(ghost.manifest.id) === name &&
+    ghost.manifest.node !== undefined
+  );
+}
 
 export interface BrowserExtensionSlotDeps {
   getGhost(id: string): InstalledGhost | null;
@@ -74,6 +98,17 @@ interface Entry {
   native: NativeBinding | null;
   ready: Promise<void>;
   closing: boolean;
+  /** Bumped per setPolicy; only the newest request may persist, however long older ones waited. */
+  policyRevision: number;
+  /** Last applied policy and paired clients, persisted together. */
+  saved: SavedBrowserExtensionState;
+  /** Serialises cache writes so an older write cannot land after a newer one. */
+  writes: Promise<void>;
+}
+
+interface SavedBrowserExtensionState {
+  policy: BrowserExtensionPolicy | null;
+  trustedClients: unknown[];
 }
 
 function fail(
@@ -121,7 +156,12 @@ export class GhostBrowserExtensionSlot {
 
   private start(instanceId: string, ghost: InstalledGhost, ownerScopeKey: string): void {
     const needs = ghost.manifest.browserExtension!;
-    const native = needs.nativeHost
+    if (needs.nativeHost && !mayInstallNativeHost(ghost))
+      this.deps.log?.warn('browser extension native host ignored: only the official plugin may install one', {
+        instanceId,
+        hostName: needs.nativeHost.name,
+      });
+    const native = needs.nativeHost && mayInstallNativeHost(ghost)
       ? (this.deps.createNativeBinding ?? createNativeBinding)({
           hostName: needs.nativeHost.name,
           binaryDir: path.join(ghost.dir, needs.nativeHost.binary),
@@ -129,6 +169,7 @@ export class GhostBrowserExtensionSlot {
       : null;
     const bridge = (this.deps.createBridge ?? ((options) => new BrowserExtensionBridge(options)))({
       ghostId: ghost.manifest.id,
+      awaitPolicy: true,
       installedVersion: ghost.manifest.version,
       extensionIds: needs.extensionIds,
       ...(native ? { nativeToken: native.token } : {}),
@@ -144,20 +185,41 @@ export class GhostBrowserExtensionSlot {
       native,
       ready: Promise.resolve(),
       closing: false,
+      policyRevision: 0,
+      saved: { policy: null, trustedClients: [] },
+      writes: Promise.resolve(),
     };
     entry.ready = (async () => {
-      const saved = await this.readPolicy(instanceId);
+      const saved = await this.readSaved(instanceId);
+      let restored = false;
       if (saved) {
+        entry.saved = saved;
         try {
-          await bridge.setPolicy(saved);
+          // Paired clients first, so an extension paired before the restart is not sent back to
+          // pairing while the plugin is still starting.
+          bridge.setTrustedClients(saved.trustedClients);
         } catch (err) {
-          this.deps.log?.warn('browser extension saved policy rejected; using defaults', {
+          this.deps.log?.warn('browser extension saved pairings rejected', {
             instanceId,
             error: errorText(err),
           });
         }
+        if (saved.policy) {
+          try {
+            await bridge.setPolicy(saved.policy);
+            restored = true;
+          } catch (err) {
+            this.deps.log?.warn('browser extension saved policy rejected; waiting for the plugin', {
+              instanceId,
+              error: errorText(err),
+            });
+          }
+        }
       }
       await bridge.start();
+      // Without a usable cached policy the bridge refuses page jobs; ask the plugin to push its
+      // stored permissions now instead of at its next tool call.
+      if (!restored) void this.requestPolicy(instanceId);
       if (native) {
         const installed = await native.install(bridge.listeningPort, needs.extensionIds);
         if (!installed.ok)
@@ -287,17 +349,22 @@ export class GhostBrowserExtensionSlot {
           } catch (err) {
             return fail('INVALID_REQUEST', errorText(err));
           }
+          const revision = ++entry.policyRevision;
           const applied = await entry.bridge.setPolicy(policy);
-          if (applied.ok || applied.applied === true)
-            await this.writePolicy(entry.instanceId, policy);
+          if ((applied.ok || applied.applied === true) && revision === entry.policyRevision)
+            await this.persist(entry, { policy });
           return applied as GhostPipeBrowserExtensionResult;
         }
-        case 'setTrustedClients':
+        case 'setTrustedClients': {
+          let applied: { ok: true };
           try {
-            return entry.bridge.setTrustedClients(req.clients);
+            applied = entry.bridge.setTrustedClients(req.clients);
           } catch (err) {
             return fail('INVALID_REQUEST', errorText(err));
           }
+          await this.persist(entry, { trustedClients: Array.isArray(req.clients) ? req.clients : [] });
+          return applied;
+        }
         case 'relayActive':
           if (typeof req.id !== 'string') return fail('INVALID_REQUEST', 'relayActive 需要 id');
           return entry.bridge.relayActive(req.id);
@@ -347,28 +414,71 @@ export class GhostBrowserExtensionSlot {
     return path.join(this.deps.policyDir(), encodeURIComponent(instanceId) + '.json');
   }
 
-  private async readPolicy(instanceId: string): Promise<BrowserExtensionPolicy | null> {
+  /** Saved permissions and pairings; null when missing or unreadable (treated as unknown). */
+  private async readSaved(instanceId: string): Promise<SavedBrowserExtensionState | null> {
     try {
       const raw = JSON.parse(await fs.readFile(this.policyFile(instanceId), 'utf8')) as {
         version?: unknown;
         policy?: unknown;
+        trustedClients?: unknown;
       };
       if (raw?.version !== 1) return null;
-      return normalizeBrowserExtensionPolicy(raw.policy);
+      let policy: BrowserExtensionPolicy | null = null;
+      if (raw.policy !== undefined) {
+        try {
+          policy = normalizeBrowserExtensionPolicy(raw.policy);
+        } catch {
+          policy = null;
+        }
+      }
+      return {
+        policy,
+        trustedClients: Array.isArray(raw.trustedClients) ? raw.trustedClients : [],
+      };
     } catch {
       return null;
     }
   }
 
-  private async writePolicy(instanceId: string, policy: BrowserExtensionPolicy): Promise<void> {
+  private persist(entry: Entry, change: Partial<SavedBrowserExtensionState>): Promise<void> {
+    entry.saved = { ...entry.saved, ...change };
+    const snapshot = entry.saved;
+    entry.writes = entry.writes.then(() => this.writeSaved(entry.instanceId, snapshot));
+    return entry.writes;
+  }
+
+  private async writeSaved(instanceId: string, saved: SavedBrowserExtensionState): Promise<void> {
+    const file = this.policyFile(instanceId);
+    const tmp = `${file}.${crypto.randomUUID()}.tmp`;
     try {
-      const file = this.policyFile(instanceId);
       await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-      const tmp = file + '.tmp';
-      await fs.writeFile(tmp, JSON.stringify({ version: 1, policy }), { mode: 0o600 });
+      await fs.writeFile(
+        tmp,
+        JSON.stringify({
+          version: 1,
+          ...(saved.policy ? { policy: saved.policy } : {}),
+          trustedClients: saved.trustedClients,
+        }),
+        { mode: 0o600 },
+      );
       await fs.rename(tmp, file);
     } catch (err) {
+      await fs.rm(tmp, { force: true }).catch(() => undefined);
       this.deps.log?.warn('browser extension policy not persisted', {
+        instanceId,
+        error: errorText(err),
+      });
+    }
+  }
+
+  /** Ask the plugin to push its stored permissions: wake it when offline, else send a request. */
+  private async requestPolicy(instanceId: string): Promise<void> {
+    const payload = { type: 'event', name: 'browser-extension-policy-request' };
+    try {
+      if (this.deps.sendToGhost(instanceId, payload)) return;
+      if (this.deps.wake && (await this.deps.wake(instanceId))) this.deps.sendToGhost(instanceId, payload);
+    } catch (err) {
+      this.deps.log?.warn('browser extension policy request failed', {
         instanceId,
         error: errorText(err),
       });

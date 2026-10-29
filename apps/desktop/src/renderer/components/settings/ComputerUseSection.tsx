@@ -462,9 +462,19 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
     useInstalledGhosts().find((ghost) => ghost.manifest.id === RECOMMENDED_PAGE_CONTROL_PLUGIN_ID) ??
     null;
   const [userBrowserSetupBusy, setUserBrowserSetupBusy] = useState(false);
+  const browserBackendHealthSeqRef = useRef(0);
+  const browserBackendKindRef = useRef(browserBackendKind);
+  browserBackendKindRef.current = browserBackendKind;
   const refreshUserBrowserHealth = useCallback(async () => {
+    const seq = browserBackendHealthSeqRef.current;
     const next = await window.electronAPI.browserBackend?.getHealth?.().catch(() => null);
-    if (next?.active === 'user-browser') setBrowserBackendHealth(next);
+    // A switch, recovery or newer read may have landed meanwhile (one read can take seconds);
+    // a late "My browser" answer must not replace the sidebar browser's state.
+    if (seq !== browserBackendHealthSeqRef.current || browserBackendKindRef.current !== 'user-browser') return;
+    if (next?.active === 'user-browser') {
+      browserBackendHealthSeqRef.current += 1;
+      setBrowserBackendHealth(next);
+    }
   }, []);
   // Step 1 happens right here: install the plugin from the market (Main still shows its usual
   // permission confirmation) or turn it on, then re-check so the guidance moves on to step 2.
@@ -533,15 +543,24 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
   // guidance turns into "connected" as soon as the user finishes a step elsewhere.
   useEffect(() => {
     if (browserBackendKind !== 'user-browser' || browserBackendHealth?.status !== 'error') return;
-    const timer = setInterval(() => void refreshUserBrowserHealth(), 3000);
-    return () => clearInterval(timer);
+    // Schedule the next check only after the previous one finished, so slow reads never pile up.
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      await refreshUserBrowserHealth();
+      if (!stopped) timer = setTimeout(() => void tick(), 3000);
+    };
+    timer = setTimeout(() => void tick(), 3000);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
   }, [browserBackendKind, browserBackendHealth?.status, refreshUserBrowserHealth]);
   const [useRealProfilePending, setUseRealProfilePending] = useState(false);
   const confirmDialog = useOptionalConfirmDialog();
   // Health can include an automatic embedded-browser recovery and therefore
   // take several seconds. Track the latest health owner so a late initial
   // probe cannot overwrite a newer user-initiated switch or recovery result.
-  const browserBackendHealthSeqRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -676,6 +695,8 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
       if (browserBackendPending) return;
       if (browserBackendKind === kind) return;
       const prev = browserBackendKind;
+      // Results of reads started for the previous browser no longer apply.
+      browserBackendHealthSeqRef.current += 1;
       setBrowserBackendKind(kind);
       setBrowserBackendPending(true);
       try {
