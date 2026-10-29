@@ -403,6 +403,7 @@
         "30d": "30日",
         "all": "すべて"
       },
+      "showCollapsedTeammateAvatars": "折りたたみ時にアバターを表示",
       "displayHeading": "表示",
       "view": {
         "text": "テキスト",

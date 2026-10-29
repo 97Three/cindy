@@ -2934,12 +2934,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       isDark: boolean,
       mode: 'system' | 'light' | 'dark',
       systemModeFollowsSystem: boolean,
+      wallpaperCovered?: boolean,
     ): void => {
       ipcRenderer.send('theme:apply-vibrancy', {
         familyId,
         isDark,
         mode,
         systemModeFollowsSystem,
+        wallpaperCovered,
       });
     },
   },
