@@ -22,8 +22,9 @@ import type { RelayLogger } from './logger';
 import { readTlsFiles, startRelayServer } from './server';
 import { initializeRelay } from './store';
 import { RELAY_VERSION } from './version';
+import { manageNginx } from './nginx';
 
-const BOOLEAN_FLAGS = new Set(['trust-proxy']);
+const BOOLEAN_FLAGS = new Set(['trust-proxy', 'ipv6', 'existing-certificate']);
 /** 首次申请证书失败后的重试间隔(Let's Encrypt 对同一名字每小时只允许几次失败验证)。 */
 const ACME_RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000, 60 * 60_000];
 const RENEWAL_CHECK_MS = 60 * 60 * 1000;
@@ -120,6 +121,15 @@ async function main(): Promise<void> {
   const { command, flags } = parseArgs(process.argv.slice(2));
   if (flags.has('version')) {
     emit({ event: 'version', relayVersion: RELAY_VERSION });
+    return;
+  }
+  if (command === 'nginx') {
+    const result = manageNginx(required(flags, 'action'), {
+      address: flags.get('address'),
+      ipv6: flags.has('ipv6'),
+      existingCertificate: flags.has('existing-certificate'),
+    });
+    emit({ event: 'nginx', ...result });
     return;
   }
   if (command === 'init') {
