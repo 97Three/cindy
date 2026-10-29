@@ -8265,7 +8265,8 @@ export async function installLocalPluginSharePackage(file: string, options: {
   rejectUnauthorizedTokenBroker(inspected.canonicalManifest, updateSource?.authorizationOverrides);
   const approval = existing ? ghostInstallApprovalToken(existing.approval) : undefined;
   const consent = await obtainGhostInstallConsent({ mode: 'prompt',
-    prompt: request => options.prompt(existing ? { ...request, purpose: 'share-replace' } : request),
+    prompt: Object.assign((request: Parameters<GhostInstallConsentPrompt>[0]) =>
+      options.prompt(existing ? { ...request, purpose: 'share-replace' } : request), options.prompt),
     initiator: 'user', origin: 'local-file', force: Boolean(existing),
     target: ghostInstallTargetContext(manager.list(), inspected.manifest.id, null, existing, updateSource?.sourceChanged === true) },
     existing, inspected.manifest, inspected.packageSha256);

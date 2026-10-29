@@ -1,5 +1,5 @@
 import { pluginHasToolUi, pluginToolVisible } from '@cindy/plugin-protocol';
-import { hasGhostUiPermission } from '../../../shared/ghost.js';
+import { ghostPermissionItems, hasGhostUiPermission } from '../../../shared/ghost.js';
 import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -15,6 +15,10 @@ import { GhostManager, type GhostManagerOptions } from '../GhostManager.js';
 import { effectiveInstallOrigin } from '../ghostInstallReceipt.js';
 import { classifyGhostLocalUpdateSource } from '../ghostLocalUpdateSource.js';
 import { runGhostSnapshotWorkerRequest } from '../ghostSnapshotWorkerProcess.js';
+import { RemotePluginManagement } from '../remotePluginManagement.js';
+import { PluginTaskApprovalGate } from '../taskCapability.js';
+import type { GhostInstallConsentPrompt } from '../ghostInstallConsent.js';
+import type { PluginManagementReceipt } from '../../../shared/pluginManagement.js';
 import { writeTestCindyPackage } from './cindyPackageFixture.js';
 
 const createCallbacks = createGhostProductionCallbacks<{
@@ -240,3 +244,80 @@ it.each([null, 'legacy', { ui: { resources: [{ uri: 'ui://run', file: '../page.h
     } finally { await fs.rm(directory, { recursive: true, force: true }); }
   },
 );
+
+const shareUiCallbacks = createGhostProductionCallbacks<{
+  installLocalPluginSharePackage: (file: string, options: Record<string, unknown>) => Promise<InstalledGhost>;
+  requestPluginUiApproval: (id: string, sender: undefined, explicit: boolean,
+    remote: { prompt: GhostInstallConsentPrompt; assertCurrent(): void }) => Promise<{ granted: boolean }>;
+}>({ functions: ['installLocalPluginSharePackage', 'installAndDock', 'installAndDockLocked', 'requestPluginUiApproval'] });
+
+// F01, unit with isolated archive I/O: RemotePluginManagement -> share installer/consent -> real
+// archive/receipt, then the separate UI approval entry. Existing share tests stubbed
+// the installer or used a package without pages, hiding lost prompt metadata.
+// Minimum: one page-capable package shared to an empty viewer; no uiConsentVersion.
+it('keeps remote share installation separate from later page capability approval', async () => {
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-share-ui-')));
+  let active = true;
+  let service: RemotePluginManagement | undefined;
+  try {
+    const file = await writeTestCindyPackage(path.join(directory, 'shared.cindy'), {
+      schemaVersion: 3, minCindyVersion: '99.0.0', id: 'shared-example', name: 'Shared Example', version: '1.0.0', entry: 'main.js',
+      tools: [{ name: 'run', description: 'Run' }],
+      mcpApps: { ui: { resources: [{ uri: 'ui://page', file: 'page.html' }], tools: { run: { resourceUri: 'ui://page' } } } },
+    }, { 'main.js': '// ok\n', 'page.html': '<!doctype html><p>Example</p>' });
+    const sha256 = createHash('sha256').update(await fs.readFile(file)).digest('hex');
+    const manager = new GhostManager({ getRootDir: () => path.join(directory, 'plugins'),
+      mutateSnapshot: async ({ parentDir, ...request }) => runGhostSnapshotWorkerRequest(request, parentDir) });
+    const callbacks = shareUiCallbacks({ confirmedUiCapability, getGhostManager: () => manager,
+      captureGhostMutationOwner: () => 'owner', beginGhostMutation: () => () => {},
+      findInstalledGhostForDeliveryTarget, obtainGhostInstallConsent, assertGhostInstallConsent, confirmedTaskCapability,
+      withGhostInstallLock: async (_id: string, run: () => unknown) => run(),
+      rejectReservedGhostId() {}, rejectBrokerWithoutDeclaredRedirectPort() {}, rejectUnauthorizedTokenBroker() {},
+      throwInstallError: (value: { reason: string }) => { throw new Error(value.reason); },
+      recordGhostAdded() {}, installedGhostStoragePart, spawnIfResident() {}, bindPluginUsage: async () => {}, log: { warn() {} },
+      findGhostForInstanceId: (id: string) => manager.findInstalledInstance(id), pluginHasToolUi, ghostPermissionItems,
+      getDeepLinkMainWindow: () => null, getActiveDataOwnerPushStamp: () => ({ dataOwnerId: 'viewer', ownerGeneration: 1 }),
+      isGhostBoundaryPending: () => false, taskApprovalGate: new PluginTaskApprovalGate(), broadcastGhostsChanged() {},
+    });
+    service = new RemotePluginManagement({ list: () => manager.list(), capture: () => () => active, captureReceipt: () => () => active,
+      market: { snapshot: async () => ({ items: [], unavailableReason: null, customSourceNames: [], unavailableCustomSourceNames: [] }),
+        detail: async () => { throw new Error('unused'); }, install: async () => { throw new Error('unused'); } },
+      setEnabled: async () => { throw new Error('unused'); }, uninstall: async () => { throw new Error('unused'); },
+      installShare: async (snapshot, prompt, assertCurrent) => {
+        await callbacks.installLocalPluginSharePackage(file, { ...snapshot, prompt, assertCurrent });
+      },
+      ui: { suppressed: () => false, defer() {}, approve: async (id, prompt, assertCurrent) =>
+        (await callbacks.requestPluginUiApproval(id, undefined, true, { prompt, assertCurrent })).granted },
+    });
+    const invoke = async (action: string, input: Record<string, unknown>, id?: string) => (await service!.invoke('source-desktop', {
+      collectionId: 'plugins', actionId: 'management:' + action, input, client: { protocolVersion: 1, primitives: ['action'] },
+      ...(id ? { resourceRef: { collectionId: 'plugins', kind: 'plugin', id } } : {}),
+    })).result as PluginManagementReceipt;
+    const answer = async (operationId: string, purpose?: string) => {
+      let receipt: PluginManagementReceipt;
+      await vi.waitFor(async () => { receipt = await invoke('operation', { operationId }); expect(receipt.phase).toBe('confirmation'); }, { interval: 10 });
+      if (purpose) expect(receipt!.consent?.purpose).toBe(purpose);
+      await invoke('answer', { operationId, requestId: receipt!.consent!.requestId, confirmed: true });
+      await vi.waitFor(async () => expect((await invoke('operation', { operationId })).phase).toBe('succeeded'), { interval: 10 });
+    };
+    expect(manager.list()).toEqual([]);
+    await invoke('begin', { operationId: 'share', kind: 'install-share', expectedSnapshot: {
+      schemaVersion: 1, snapshotId: 'a'.repeat(32), ghostId: 'shared-example', name: 'Shared Example', version: '1.0.0',
+      sha256, sizeBytes: (await fs.stat(file)).size, description: null, author: null, icon: null, createdAt: '2026-10-28T00:00:00.000Z',
+    } });
+    await answer('share');
+    const installed = manager.list()[0], id = installedGhostStoragePart(installed);
+    expect(installed.approval.state).toBe('approved');
+    expect(installed.uiCapabilityApproved ?? false).toBe(false);
+    expect(hasGhostUiPermission(installed)).toBe(false);
+    expect(manager.readApprovedInstallReceipt(id)?.uiCapabilityApproved ?? false).toBe(false);
+    await invoke('begin', { operationId: 'pages', kind: 'approve-ui', uiConsentVersion: 1,
+      expectedInstalledApproval: ghostInstallApprovalToken(installed.approval) }, id);
+    await answer('pages', 'ui-capability');
+    expect(manager.readApprovedInstallReceipt(id)?.uiCapabilityApproved).toBe(true);
+    expect(hasGhostUiPermission(manager.list()[0])).toBe(true);
+  } finally {
+    active = false; service?.invalidate();
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
