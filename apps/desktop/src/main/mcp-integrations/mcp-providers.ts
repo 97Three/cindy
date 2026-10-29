@@ -17,6 +17,7 @@ import { getRoutineEngine, routineTools } from '../routines/service.js';
 import { taskActionRoutineRevision } from '../maker-ipc/taskActionAuthorization.js';
 import { join as pathJoin } from 'node:path';
 import { homedir } from 'node:os';
+import { app } from 'electron';
 import { and, eq, inArray } from 'drizzle-orm';
 
 import {
@@ -341,7 +342,6 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         let installWorkingDir = hookInstallation.workingDir;
         if (!installWorkingDir && executionMode !== 'script' && targetSessionId)
           installWorkingDir = await resolveHookSessionWorkDir(targetSessionId) ?? installWorkingDir;
-        const { app } = await import('electron');
         return { ...definition, hookInstallation: { workingDir: installWorkingDir ?? workingDir,
           fallbackDir: pathJoin(app.getPath('userData'), 'schedule-hooks') } };
       },
