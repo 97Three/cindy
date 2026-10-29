@@ -28,11 +28,13 @@ async function fixture() {
   };
   return { root, deps, deposit, progress };
 }
-it('streams arbitrary picked files into the actual Library and returns a reference without a path', async () => {
+// PR #7924: 42-character generated prefix left only 22 characters for a source name.
+// Unit through importPickedFiles + real LibraryVault; old short-name fixture missed rejection.
+it.each(['note.txt', 'quarterly-financial-report-2026-final.txt'])('streams %s into the actual Library and preserves its display name', async (name) => {
   const { root, deps, progress } = await fixture();
-  const file = path.join(root, 'note.txt'); await fs.writeFile(file, 'user file');
+  const file = path.join(root, name); await fs.writeFile(file, 'user file');
   const result = await importPickedFiles(deps, 'plugin', [file], { into: 'library', assertCurrent() {} });
-  expect(result).toMatchObject({ ok: true, files: [{ name: 'note.txt', size: 9, mimeType: 'application/octet-stream' }] });
+  expect(result).toMatchObject({ ok: true, files: [{ name, size: 9, mimeType: 'application/octet-stream' }] });
   if (!result.ok) throw new Error('failed');
   const saved = result.files![0]!;
   expect(saved).not.toHaveProperty('path');

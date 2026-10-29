@@ -1,6 +1,6 @@
 import { getPluginToolUi } from '@cindy/plugin-protocol';
 import { randomUUID } from 'node:crypto';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolResultSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { pluginAppTool } from './pluginServer.js';
 import { getMcpAppsHost, readAppServer } from './runtime.js';
 import { pluginAppServerId } from '../mcp-integrations/plugin-app-registry.js';
@@ -12,7 +12,8 @@ export function pluginAppResult(result: unknown): CallToolResult {
     result &&
     typeof result === 'object' &&
     !Array.isArray(result) &&
-    Array.isArray((result as CallToolResult).content)
+    Array.isArray((result as CallToolResult).content) &&
+    CallToolResultSchema.safeParse(result).success
   )
     return result as CallToolResult;
   return {

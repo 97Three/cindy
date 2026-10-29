@@ -3792,6 +3792,29 @@ describe('plugin page audience and shared tool execution', () => {
     expect(result.result).not.toHaveProperty('_meta');
     expect(dispatchMock).toHaveBeenCalledOnce();
   });
+  // PR #7924 security: visibility-only and nonlocal/no-task model calls skipped
+  // View-only metadata redaction. Unit via production ghost_call dependency entry;
+  // existing test only covered resourceUri + local task. No live private data used.
+  it.each(['local', 'ssh', 'no-task'] as const)('withholds visibility-only metadata for %s model calls', async kind => {
+    const ghost = pageGhost();
+    ghost.manifest.mcpApps = { ui: { resources: [], tools: { run: { visibility: ['model', 'app'] } } } };
+    listMock.mockReturnValue([ghost]);
+    dispatchMock.mockResolvedValueOnce({ ok: true, result: { content: [{ type: 'text', text: 'public' }], _meta: { privatePageData: 'page-only' } } } as never);
+    const deps = getCindyGhostsMcpDeps({ agentKind: 'claude-code', workingDir: WORKDIR,
+      ...(kind === 'no-task' ? {} : { sessionId: 's1', sessionInstanceId: 's1-instance' }),
+      ...(kind === 'ssh' ? { remoteHostId: 'ssh-1' } : {}),
+    }, {});
+    const result = await deps.callGhostTool({ ghostId: 'art', tool: 'run', args: {} });
+    expect(result).toMatchObject({ ok: true, result: { content: [{ type: 'text', text: 'public' }] } });
+    expect(JSON.stringify(result)).not.toContain('page-only');
+  });
+  it('preserves ordinary legacy business metadata without a UI declaration', async () => {
+    const ghost = pageGhost(); delete ghost.manifest.mcpApps;
+    listMock.mockReturnValue([ghost]);
+    const business = { content: [{ id: 1 }], _meta: { business: 'legacy' } };
+    dispatchMock.mockResolvedValueOnce({ ok: true, result: business } as never);
+    expect(await makeDeps().callGhostTool({ ghostId: 'art', tool: 'run', args: {} })).toMatchObject({ ok: true, result: business });
+  });
   it('uses the explicit card task context and still enforces its workdir gate', async () => {
     const { withPluginPageTicket, consumePluginPageTicket } = await import('../../mcp-apps/pluginPageCall.js');
     listMock.mockReturnValue([pageGhost()]);

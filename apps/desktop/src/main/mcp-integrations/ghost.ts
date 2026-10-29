@@ -2534,7 +2534,12 @@ export function getCindyGhostsMcpDeps(
       if (result.ok && callSessionContext?.sessionId && !callSessionContext.remoteHostId) {
         await publishPluginAppResult(target, callSessionContext.sessionId, tool, args, result.result, pageAttachmentHashes)
           .catch(() => log.warn('Plugin App card could not be stored'));
-        if (getPluginToolUi(target.manifest)?.tools[tool]?.resourceUri) result.result = pluginModelResult(result.result);
+      }
+      // View-only metadata is independent of card creation (visibility-only tools,
+      // SSH and taskless model calls may not produce a local card). Legacy tools
+      // without a UI declaration retain their ordinary JSON result unchanged.
+      if (result.ok && getPluginToolUi(target.manifest)?.tools[tool]) {
+        result.result = pluginModelResult(result.result);
       }
       const requestedImages = result.ok ? result.images : undefined;
       const plainResult: GhostToolCallResult = result.ok && result.images ? { ok: true, result: result.result } : result;

@@ -36,7 +36,7 @@ export function replacePluginAppServers(next: Map<string, () => AppServerConfig>
       if (!before || !after || before.revision !== after.revision || before.packageSha256 !== after.packageSha256) revoked.add(id);
     } catch { revoked.add(id); }
   }
-  pagePermissionGrants.clearServers(new Set(pluginConfigs.keys()));
+  pagePermissionGrants.clearServers(revoked);
   pluginConfigs.clear();
   for (const [id, read] of next) pluginConfigs.set(id, read);
   void host?.revokePluginServers(revoked).catch(() => createLogger('plugin-ui').warn('plugin page revocation failed'));

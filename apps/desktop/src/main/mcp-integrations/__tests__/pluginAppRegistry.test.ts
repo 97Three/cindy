@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { getPluginToolUi } from '@cindy/plugin-protocol';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { AppServerConfig } from '../../mcp-apps/connection.js';
 import type { InstalledGhost } from '../../../shared/ghost.js';
@@ -8,22 +9,30 @@ const state = vi.hoisted(() => ({
   reads: 0,
 }));
 vi.mock('../../appSessionState.js', () => ({ activeOwnerScopeKey: () => state.owner }));
-vi.mock('../../mcp-apps/runtime.js', () => ({
-  replacePluginAppServers: (next: typeof state.configs) => {
-    state.configs = next;
-  },
-}));
+vi.mock('../../mcp-apps/runtime.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../mcp-apps/runtime.js')>();
+  return {
+    ...actual,
+    replacePluginAppServers: (next: typeof state.configs) => {
+      actual.replacePluginAppServers(next);
+      state.configs = next;
+    },
+  };
+});
 vi.mock('../../cindy-brain/ghostContentTree.js', () => ({
   resolveGhostContentPathSync: () => {
     state.reads++;
     throw new Error('no file may be read');
   },
 }));
+import { resetAppServers } from '../../mcp-apps/runtime.js';
+import { pagePermissionGrants } from '../../mcp-apps/pagePermissions.js';
 import { refreshPluginApps, pluginAppServerId } from '../plugin-app-registry.js';
 // Production registration entry, no Node process or network. Existing App host tests
 // do not own plugin receipts. Minimal failure: missing ui fact or old owner callback.
 // Tier: unit; mocks only external account/storage boundaries, real SDK discovery.
 afterEach(() => {
+  resetAppServers();
   state.owner = 'A';
   state.configs.clear();
   state.reads = 0;
@@ -123,3 +132,44 @@ it('keeps organization and personal instances separate', () => {
     pluginAppServerId({ ...ghost, namespace: 'xd' }),
   );
 });
+
+// PR #7924: list broadcasts discarded every remembered page approval. Unit through
+// production refresh/registry + page grant store; previous tests mocked replacement.
+// Minimum failure: refresh the unchanged approved package after granting one task/tool.
+it('preserves unchanged page grants across localization and unrelated plugin updates', () => {
+  const f = fixture();
+  const other = { ...f.ghost, manifest: { ...f.ghost.manifest, id: 'other' } };
+  const ghosts = [f.ghost, other];
+  const refresh = () => refreshPluginApps(ghosts, {
+    find: (id) => ghosts.find(g => g.manifest.id === id) ?? null,
+    evidence: () => ({ packageSha256: 'hash' }), available: () => true,
+  });
+  refresh();
+  const grant = { sessionId: 'task', serverId: pluginAppServerId(f.ghost), tool: 'open', revision: 'one', clearedAt: null };
+  const otherGrant = { ...grant, serverId: pluginAppServerId(other) };
+  pagePermissionGrants.allow('A', grant);
+  pagePermissionGrants.allow('A', otherGrant);
+  f.ghost.manifest.name = 'Localized title';
+  refresh();
+  expect(pagePermissionGrants.has('A', grant)).toBe(true);
+  other.approval = { state: 'approved', revision: 'two' };
+  refresh();
+  expect(pagePermissionGrants.has('A', grant)).toBe(true);
+  expect(pagePermissionGrants.has('A', otherGrant)).toBe(false);
+  expect(pagePermissionGrants.has('A', { ...grant, tool: 'another' })).toBe(false);
+  expect(pagePermissionGrants.has('A', { ...grant, sessionId: 'another' })).toBe(false);
+});
+it.each(['revision', 'resource-package', 'approval', 'instance', 'owner'] as const)(
+  'revokes remembered page grants when %s changes', kind => {
+    const f = fixture(); f.refresh();
+    const grant = { sessionId: 'task', serverId: pluginAppServerId(f.ghost), tool: 'open', revision: 'one', clearedAt: null };
+    pagePermissionGrants.allow('A', grant);
+    if (kind === 'revision') f.setGhost({ ...f.ghost, approval: { state: 'approved', revision: 'two' } });
+    if (kind === 'resource-package') { getPluginToolUi(f.ghost.manifest)!.resources[0].file = 'new.html'; f.setFingerprint(); }
+    if (kind === 'approval') delete f.ghost.uiCapabilityApproved;
+    if (kind === 'instance') f.setGhost({ ...f.ghost, namespace: 'another' });
+    if (kind === 'owner') state.owner = 'B';
+    f.refresh();
+    expect(pagePermissionGrants.has('A', grant)).toBe(false);
+  },
+);

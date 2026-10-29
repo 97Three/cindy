@@ -57,8 +57,9 @@ export async function importPickedFiles(deps: PickedFilesDeps, ghostId: string, 
           if (read !== stat.size) throw new Error('FILE_CHANGED');
         }
         if (input.into === 'library') {
-          // Avoid collisions and OS-reserved names while keeping the original display name.
-          const safeName = `file-${randomUUID()}-${name.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(-100).replace(/[.]+$/, '')}`;
+          // Keep the 42-character UUID prefix plus filename within the 64-character path segment limit.
+          // The original display name is returned separately, unchanged.
+          const safeName = `file-${randomUUID()}-${name.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(-22).replace(/[.]+$/, '')}`;
           const saved = await deps.importLibrary(ghostId, { path: `${directory}/${safeName}`, source: chunks(), totalBytes: stat.size,
             assertCurrent: input.assertCurrent, onProgress: bytes => progress?.(completed + bytes, undefined, '正在导入文件') });
           if (!saved.ok) return { ok: false, errorCode: 'INTERNAL', message: saved.message };

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { RESOURCE_MIME_TYPE } from '@modelcontextprotocol/ext-apps/server';
+import { pluginAppResult } from '../pluginCards.js';
 import { PluginAppFiles } from '../pluginFiles.js';
 import { createPluginAppTransport, PLUGIN_PAGE_TICKET } from '../pluginServer.js';
 import {
@@ -212,3 +213,22 @@ it('issues opaque per-View file URLs and rejects other plugin references and sta
   await expect(files.read(token, new Request(url))).rejects.toThrow();
   another.close();
 });
+
+// PR #7924 legacy compatibility: business content arrays are not MCP blocks.
+// Unit through the production adapter + real SDK transport; earlier fixtures
+// only returned standard text blocks, so malformed wire results went unnoticed.
+const legacyBusinessResult = { content: [{ id: 1 }], count: 1 };
+const standardPageResult = { content: [{ type: 'text', text: 'public' }], _meta: { page: 'private' } };
+it.each([
+  { business: legacyBusinessResult, expected: { content: [{ type: 'text', text: JSON.stringify(legacyBusinessResult) }] } },
+  { business: standardPageResult, expected: standardPageResult },
+])(
+  'preserves business JSON or standard page metadata through the page tool transport: %j', async ({ business, expected }) => {
+    const client = new Client({ name: 'legacy-page', version: '1' }); clients.push(client);
+    await client.connect(createPluginAppTransport({ instance: 'demo', revision: 'v1', tools, ui, hosts: ['api.example.com'],
+      assertCurrent() {}, readHtml: () => '<html></html>', call: async () => pluginAppResult(business) }));
+    const grant: PluginPageCall = { instance: 'demo', revision: 'v1', tool: 'save', sessionId: 'task', clientId: 'card', assertCurrent: async () => {} };
+    const result = await withPluginPageTicket(grant, ticket => client.callTool({ name: 'save', _meta: { [PLUGIN_PAGE_TICKET]: ticket } }));
+    expect(result).toEqual(expected);
+  },
+);
