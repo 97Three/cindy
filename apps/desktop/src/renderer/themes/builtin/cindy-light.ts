@@ -111,7 +111,7 @@ const GENERATED_OVERRIDES = {
   "cmd-palette-item-meta": "rgba(0, 0, 0, 0.56)", // 墨水 黑 56%: 次要文字(2026-10-22 用户裁决,取代实色灰)
   "sidebar-item-active-foreground": "#292A2C", // Soft selected pill with same-polarity readable foreground.
   "sidebar-item-active-border": "transparent", // 用户三次改稿 2026-07-20:选中胶囊彻底去描边
-  "sidebar-item-active": "214.3 6.0% 88.0%", // Soft selected pill with same-polarity readable foreground.
+  "sidebar-item-active": "214.3 6.0% 99.0%", // Soft selected pill with same-polarity readable foreground.
   "splash-bg": "60.0 16.1% 93.9%", // 页底 -> HSL
   "splash-text": "0.0 0.0% 0.0% / 0.56", // 墨水 黑 56%: 次要文字(2026-10-22 用户裁决,取代实色灰)
   "splash-text-destructive": "0.0 0.0% 10.2%", // 正文 -> HSL
