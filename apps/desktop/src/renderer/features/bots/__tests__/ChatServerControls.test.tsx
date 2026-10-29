@@ -6,11 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { ChatInviteButton, ChatMessageActions } from '../ChatServerControls';
 import { ChatInviteDialog } from '../ChatInviteDialog';
 import { ChatThreadPanel } from '../ChatThreadPanel';
+import { BotGroupThreadHint } from '../BotGroupThreadHint';
+import { GroupMaskContext, useReadLocatedMention, type GroupMaskPresentation } from '../groupMaskPresentation';
 import { botGroupThreadDraftKey } from '../botGroupAttachments';
 import { clearDraft } from '@/lib/composerDraftStore';
 import { flashThreadTarget } from '../BotGroupThreadViews';
 import { chatErrorKey } from '../chatError';
-import type { BotGroupDetail, BotGroupMessageView } from '../../../../shared/botGroupChat';
+import type { BotGroupDetail, BotGroupMessageView, BotGroupThreadSummary } from '../../../../shared/botGroupChat';
 import { shareSelectionStore } from '@/components/chat/shareSelectionStore';
 import { queryShareableMessageIds, stripInteractiveElements } from '@/lib/shareConversationImage';
 
@@ -54,6 +56,100 @@ beforeEach(() => {
 afterEach(() => { cleanup(); shareSelectionStore.reset(); vi.unstubAllGlobals(); });
 
 describe('chat interaction controls', () => {
+  // Unit regression for the human-read contract: prior inbox tests covered opening/dismissal,
+  // but not a located original becoming visible while the window is in the background.
+  // The production hook must acknowledge exactly that message, once, after foreground viewing.
+  it('reads only the located visible mention when the human returns to the foreground', () => {
+    const read = vi.fn();
+    const focus = vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    onTestFinished(() => { focus.mockRestore(); visibility.mockRestore(); });
+    let intersect: (entries: { isIntersecting: boolean; intersectionRect: { height: number } }[]) => void = () => {};
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(callback: typeof intersect) { intersect = callback; }
+      observe() {} disconnect() {}
+    });
+    function LocatedOriginal() {
+      const located = useReadLocatedMention('room');
+      return <button onClick={event => located('question', event.currentTarget)}>Original request</button>;
+    }
+    const mask = { groupId: 'room', unreadMentions: [{ messageId: 'question' }, { messageId: 'other' }], markMentionsRead: read } as unknown as GroupMaskPresentation;
+    render(<GroupMaskContext.Provider value={mask}><LocatedOriginal /></GroupMaskContext.Provider>);
+    fireEvent.click(screen.getByText('Original request'));
+    act(() => intersect([{ isIntersecting: false, intersectionRect: { height: 0 } }]));
+    expect(read).not.toHaveBeenCalled();
+    act(() => intersect([{ isIntersecting: true, intersectionRect: { height: 40 } }]));
+    expect(read).not.toHaveBeenCalled();
+    focus.mockReturnValue(true);
+    fireEvent.focus(window);
+    expect(read).toHaveBeenCalledExactlyOnceWith(['question']);
+    fireEvent.focus(window);
+    expect(read).toHaveBeenCalledOnce();
+  });
+
+  // Integration at the existing attention entry: mentions must extend this surface,
+  // preserve the old one-thread shortcut, and never acknowledge through navigation/dismissal.
+  it('keeps the original single followed-thread shortcut', () => {
+    const onOpen = vi.fn();
+    const thread = {rootId:'root',rootText:'Followed topic',replyCount:2,following:true,unread:{count:1,mentioned:false,latest:3}} as BotGroupThreadSummary;
+    render(<BotGroupThreadHint threads={[thread]} members={[]} openRootId={null} onOpen={onOpen} />);
+    fireEvent.click(screen.getByTestId('group-attention-hint'));
+    expect(onOpen).toHaveBeenCalledWith('root');
+  });
+
+  it('lists main and thread mentions in the existing hint without reading on locate or dismiss', async () => {
+    const locate = vi.fn(), read = vi.fn();
+    const mentions = [{messageId:'main',authorName:'Peer',text:'Please confirm'},
+      {messageId:'reply',threadRootId:'root',authorName:'Peer',text:'Topic question',reply:{companion:{id:'cindy',name:'Cindy'},text:'Waiting for the owner'}}];
+    const props = {threads:[],members:[],openRootId:null,onOpen:vi.fn(),mentions,onLocateMention:locate,onReadMentions:read};
+    const view=render(<BotGroupThreadHint {...props} />);
+    fireEvent.click(screen.getByTestId('group-attention-hint'));
+    fireEvent.click(await screen.findByText('Topic question'));
+    expect(locate).toHaveBeenCalledWith(mentions[1]);
+    expect(read).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button',{name:k('thread.hintDismiss')}));
+    expect(screen.queryByTestId('group-attention-hint')).toBeNull();
+    expect(read).not.toHaveBeenCalled();
+    view.rerender(<Tooltip.Provider><BotGroupThreadHint {...props} mentions={[...mentions,{messageId:'new',authorName:'Peer',text:'New request'}]} /></Tooltip.Provider>);
+    fireEvent.click(screen.getByTestId('group-attention-hint'));
+    const reply = await screen.findByText('Waiting for the owner');
+    const toggle = screen.getByRole('button', { name: 'bots.groupChat.mask.catchup.answered' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(reply.parentElement?.hidden).toBe(true);
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(reply.parentElement?.hidden).toBe(false);
+    expect(locate).toHaveBeenCalledTimes(1);
+    expect(read).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button',{name:'bots.groupChat.mask.catchup.markAll'}));
+    expect(read).toHaveBeenCalledOnce();
+  });
+
+  // Unit regression: a group update must not clear human unread while the window
+  // is in the background. Existing thread cases do not exercise window visibility.
+  // Minimal input: an open thread with its scroll at the bottom, then a background refresh.
+  it('preserves thread unread in the background and acknowledges on returning to the window', async () => {
+    const focus = vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    onTestFinished(() => { focus.mockRestore(); visibility.mockRestore(); });
+    let changed = () => {};
+    window.electronAPI.maker.onBotGroupChanged = callback => {
+      changed = () => callback({ groupId: group.id, change: 'messages' }, undefined);
+      return () => {};
+    };
+    render(<ChatThreadPanel group={group} rootId="root" onClose={vi.fn()} />);
+    await screen.findByText('Root message');
+    expect(mocks.thread).toHaveBeenLastCalledWith(expect.objectContaining({ markRead: false }));
+    focus.mockReturnValue(true);
+    visibility.mockReturnValue('hidden');
+    act(changed);
+    await waitFor(() => expect(mocks.thread).toHaveBeenCalledTimes(2));
+    expect(mocks.thread).toHaveBeenLastCalledWith(expect.objectContaining({ markRead: false }));
+    visibility.mockReturnValue('visible');
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(mocks.thread).toHaveBeenLastCalledWith(expect.objectContaining({ markRead: true })));
+  });
+
   it.each([{ archived: true }, { archived: false, dissolvedAt: '2026-10-15T00:00:00.000Z' }])('keeps terminal thread replies read-only and focuses close (%j)', async state => {
     render(<ChatThreadPanel group={{ ...group, ...state }} rootId="root" onClose={vi.fn()} />);
     await screen.findByText('Root message');

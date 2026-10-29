@@ -138,6 +138,7 @@ export interface BotGroupChatServiceDeps {
     plan?: { planId: string; workDir: string; sessionId?: string };
     threadRootId?: string;
     talkPlanId?: string;
+    personalDigest?: boolean;
   }) => Promise<LaneResult>;
   /** Same hidden, durable input path as Bot DMs; attachments go with the turn like a task message's. */
   dispatch: (params: {

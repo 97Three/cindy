@@ -177,7 +177,7 @@ export function useBotGroupChat(host: RemoteResourceHostTarget, groupId: string,
     } finally {
       // A refused action usually means the phone's copy is stale (PLAN_CLOSED, PLAN_OPEN): re-read either way.
       // A deleted group is left by the screen instead.
-      if (actionId !== 'delete' && actionId !== 'read' && identityRef.current === identity) reload();
+      if (actionId !== 'delete' && actionId !== 'read' && actionId !== 'mask' && actionId !== 'mask-mentions' && identityRef.current === identity) reload();
     }
   }, [cacheKey, namespace, groupId, host, i18n.language, identity, invoke, openLink, reload, server.acceptListState]);
 
