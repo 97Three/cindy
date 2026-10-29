@@ -71,6 +71,7 @@ import {
 } from './browser-real-profile/index.js';
 import { assertTrustedAppRendererEvent } from '../security/trustedAppRenderer.js';
 import { createBrowserBackendIpcHandlers } from './browser-backend/settings-ipc.js';
+import { ExternalLinkHandoff } from './browser-backend/external-link-handoff.js';
 import { resolveBrowserScreenshot } from './browserScreenshotResolver.js';
 import { compressInlineImage } from './inlineImageCompressor.js';
 import { raiseAgentBrowserWindow } from './raise-agent-browser-window.js';
@@ -240,6 +241,15 @@ const externalChromeBackend = new ExternalChromeBackend(
     createRuntime: createManagedRuntime,
     cdpHttpUrl: () => currentGuardIdentity().cdpHttpUrl,
     managedUserDataDir: () => currentGuardIdentity().managedUserDataDir,
+    ...(process.platform === 'darwin'
+      ? {
+          createLinkHandoff: (isAgentOpeningTab: () => boolean) => new ExternalLinkHandoff({
+            cdpHttpUrl: () => currentGuardIdentity().cdpHttpUrl,
+            isAgentOpeningTab,
+            logger,
+          }),
+        }
+      : {}),
   },
 );
 
