@@ -84,6 +84,7 @@ const DESCRIPTION = [
   '  要拿某条 message 的 workdir / agentKind / title, 用 sessions[message.sessionId] 查。',
   '',
   '【分页】游标分页, 默认 200/次, 最大 1000。串联 nextCursor 多次调用拿全量, 信息不丢。',
+  '源设备可按完整记录的 64 KiB 软预算提前分页；单条超大记录仍完整返回。limit 是条数上限，继续读 nextCursor，不要按返回条数判断结束。',
   '默认按 createdAt desc + id desc, 同毫秒多消息靠 id 兜底排序稳定。',
 ].join('\n');
 

@@ -113,7 +113,11 @@
   "taskActionConfirmation": {
     "title": "세션 작업 확인",
     "once": "아래 대상, 작업과 전체 내용을 확인하세요. 허용은 이번 작업에 한 번만 적용됩니다.",
-    "delegation": "독립 세션의 목표와 설정을 확인하세요. 허용하면 세션을 시작하고 위임이 끝날 때까지 범위 내 메시지 전송과 중지가 가능합니다. 대신 답변하기, 일시 정지 해제와 모델 변경은 별도 확인이 필요합니다."
+    "remove": "자동화를 삭제합니다. 대상을 확인하세요. 허용은 이번 작업에만 적용됩니다.",
+    "permission": "다른 작업의 권한 요청에 사용자를 대신해 답합니다. 내용을 확인하세요. 허용은 이번 작업에만 적용됩니다.",
+    "resume": "일시 중지된 실행을 재개합니다. 대상을 확인하세요. 허용은 이번 작업에만 적용됩니다.",
+    "command": "에이전트의 도구 승인 없이 컴퓨터에서 명령을 저장하거나 실행합니다. 명령과 작업 폴더를 확인하세요. 승인은 이번 한 번만 적용됩니다.",
+    "authority": "자동 실행 지침을 새로 만들거나 변경합니다. 이후 실행은 이 지침에 대한 권한을 따릅니다. 전체 지침을 확인하세요. 승인은 이번 저장에 적용됩니다."
   },
   "logSupport": {
     "title": "로그 및 피드백",
@@ -3594,7 +3598,7 @@
           "modelsAutoNote": "로그인 후 사용 가능한 모델을 자동으로 가져옵니다"
         },
         "advanced": {
-          "label": "고급 설정 (모델 / 요청 헤더)"
+          "label": "고급 연결 설정"
         },
         "runtimeFill": {
           "action": "다른 runtime 채우기",
@@ -3751,16 +3755,16 @@
           "defaultEffort": "기본 추론 강도",
           "defaultEffortHint": "새 작업의 초기 추론 강도입니다. 작업 안에서도 변경할 수 있습니다.",
           "contextLimit": "컨텍스트 상한",
-          "contextLimitHint": "이 모델의 모든 사용 가능한 엔진에 적용됩니다. 정수 K 단위로 편집합니다(1 K = 1,000 tokens). 수정하지 않은 값은 정밀도를 유지합니다. 저장한 변경 사항은 이후 실행에 적용되며 생성 중인 응답을 중단하지 않습니다. 실제로 사용할 수 있는 길이는 모델 서비스의 제한을 따릅니다.",
+          "contextLimitHint": "토큰 수 또는 K, M 단위로 입력하세요(예: 1000000, 1M). 이 모델의 모든 사용 가능한 엔진에서 다음 실행부터 적용됩니다. 실제 용량은 모델 서비스의 제한을 따릅니다.",
           "contextLimitLocalMillionHint": "기본 256K(262,144 tokens)에서 1M(1,000,000) 확장을 선택할 수 있습니다. 서비스가 실행 중이면 ‘서비스 관리’에서 다시 시작해야 변경 사항이 적용되며, 중지된 상태라면 다음 사용 시 적용됩니다. 긴 입력은 더 많은 메모리와 처리 시간이 필요합니다.",
-          "contextLimitAria": "컨텍스트 상한(천 tokens)",
+          "contextLimitAria": "컨텍스트 한도(tokens, K 또는 M)",
           "compaction": {
             "title": "자동 압축",
             "hint": "사용량이 선택한 비율에 도달하면 컨텍스트를 정리합니다. 값이 낮을수록 더 일찍 압축하며 엔진 제한이 적용됩니다.",
             "default": "{{pct}}% (기본값)",
             "timing": "이 공급 경로의 모델에서 사용 가능한 모든 엔진에 적용됩니다. 이후 실행부터 반영되며 생성 중인 응답은 중단하지 않습니다."
           },
-          "contextLimitRoute": "현재 {{tokens}} tokens · 1 K = 1,000 tokens",
+          "contextLimitRoute": "현재 {{tokens}} tokens",
           "contextLimitOverWindow": "공급업체가 명시한 한도를 초과하여 요청이 실패할 수 있습니다.",
           "restoreDefault": "기본값 복원",
           "engines": "엔진 지원",
@@ -3787,7 +3791,7 @@
           "close": "닫기",
           "maxOutput": "최대 출력",
           "catalogCapabilities": "카탈로그에 명시된 기능",
-          "contextInvalid": "{{min}}–100,000 K 범위의 정수를 입력하세요.",
+          "contextInvalid": "{{min}}–{{max}} tokens를 입력하세요. K, M도 사용할 수 있습니다.",
           "contextWriteFailed": "저장되지 않았습니다. 다시 시도하세요.",
           "contextMixed": "실행 환경별 설정이 다릅니다. 변경하거나 초기화하면 모두에 적용됩니다.",
           "inputModalities": "입력 형식",
@@ -10573,8 +10577,10 @@
         "reactorsUnavailable_one": "외 {{count}}명의 멤버 정보를 표시할 수 없습니다",
         "reactorsUnavailable_other": "외 {{count}}명의 멤버 정보를 표시할 수 없습니다",
         "invite": "그룹에 초대",
+        "groupCreated": "그룹 채팅이 생성되었습니다",
+        "inviteFriends": "친구를 초대해 함께 파트너를 사용해 보세요",
+        "generatingLink": "초대 링크 생성 중…",
         "join": "그룹 참여",
-        "inviteDescription": "초대를 수락하면 그룹 구성원이 되어 대화 기록을 볼 수 있습니다.",
         "revokeLink": "이 링크 취소",
         "revokeDescription": "이 링크로는 더 이상 그룹에 참여할 수 없습니다. 다른 초대 링크와 기존 구성원은 영향을 받지 않습니다.",
         "revokedLink": "이 초대 링크는 취소되었습니다.",
