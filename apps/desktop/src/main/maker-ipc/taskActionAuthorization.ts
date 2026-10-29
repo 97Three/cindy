@@ -100,13 +100,34 @@ const denied = (errorCode = 'TASK_ACTION_AUTHORIZATION_REQUIRED'): Decision => (
     'The host could not admit this action for the current turn. Prepare the target, action and content for the owner instead of retrying.',
 });
 
-/** A teammate acting on its own initiative must not act as the owner on the owner's tasks. */
-export const NEEDS_OWNER_REQUEST: Decision = {
-  ok: false,
-  errorCode: 'NEEDS_OWNER_REQUEST',
-  message:
-    'The owner did not ask for this in the current turn (host-verified). On your own initiative you may read, keep Todos, notify the owner, message teammates, manage background tasks you started and continue tasks already handed to you; changing the owner’s other tasks needs the owner’s request. Do not retry: record a Todo or notify the owner with the concrete task, action and reason so they can ask you to do it.',
-};
+export const HELPER_AUTOMATION_ACTION_TOOLS: ReadonlySet<string> = new Set([
+  'routine_save', 'routine_delete', 'routine_run_now', 'schedule_set_pre_run_hook',
+]);
+
+/** Side-effect coverage, not an allowlist of what autonomous teammates may do. */
+export const SCHEDULER_TASK_ACTION_TOOLS: ReadonlySet<string> = new Set([
+  'routine_save', 'routine_delete', 'routine_run_now',
+  'schedule_create', 'schedule_update', 'schedule_delete', 'schedule_run_now',
+  'schedule_pause', 'schedule_resume', 'schedule_set_pre_run_hook',
+]);
+
+export type TaskActionRisk = 'remove' | 'permission' | 'resume';
+export interface TaskActionConfirmation {
+  server: string;
+  risk?: TaskActionRisk;
+}
+
+/** A small, explicit risk list. Everything else follows the task's normal permissions. */
+export function taskActionRisk(call: Pick<Call, 'server' | 'tool' | 'args'>): TaskActionRisk | undefined {
+  const args = call.args && typeof call.args === 'object' && !Array.isArray(call.args)
+    ? call.args as Record<string, unknown> : {};
+  if (call.tool === 'routine_delete' || call.tool === 'schedule_delete')
+    return 'remove';
+  if (call.tool === 'message_session_task' && args.decision !== undefined) return 'permission';
+  if ((call.tool === 'message_session_task' && args.mode === 'resume') || call.tool === 'schedule_resume')
+    return 'resume';
+  return undefined;
+}
 
 export function taskActionFingerprint(call: Pick<Call, 'tool' | 'args'>): string {
   return createHash('sha256')
@@ -122,7 +143,8 @@ export function createTaskActionAuthorizer(deps: {
   return async (call) => {
     const protectedAction =
       call.server === 'cindy_helper'
-        ? TASK_ACTION_TOOLS.has(call.tool)
+        ? TASK_ACTION_TOOLS.has(call.tool) || HELPER_AUTOMATION_ACTION_TOOLS.has(call.tool)
+        : call.server === 'cindy_scheduler' ? SCHEDULER_TASK_ACTION_TOOLS.has(call.tool)
         : call.server === 'cindy_orca' && ORCA_TASK_ACTION_TOOLS.has(call.tool);
     if (!protectedAction) return { ok: true };
     const scope = await deps.capture(call);

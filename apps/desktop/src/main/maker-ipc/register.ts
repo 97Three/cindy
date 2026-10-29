@@ -969,7 +969,7 @@ import {
 } from './orcaInterAgentDispatcher.js';
 import { resolveOrcaImageAttachmentInput } from './orcaImageAttachments.js';
 import { OrcaWorkerPermissionConfirmBridge } from './orcaWorkerPermissionConfirmBridge.js';
-import { assertTaskActionCurrent, captureTaskActionGuard, bindTaskActionInput, hasTaskActionAuthorization, taskActionInputGuard, taskActionPrincipal, settleTaskActionInput, TaskActionAuthorizationError, type TaskActionDeliveryGuard } from './taskActionAuthorization.js';
+import { assertTaskActionCurrent, captureTaskActionGuard, bindTaskActionInput, hasTaskActionAuthorization, taskActionInputGuard, taskActionPrincipal, settleTaskActionInput, TaskActionAuthorizationError, type TaskActionDeliveryGuard, type TaskActionConfirmation } from './taskActionAuthorization.js';
 import {
   getOrcaWorkspaceInfoReadOnly,
   getOrcaWorkerDiagnosticStatusReadOnly,
@@ -3360,14 +3360,32 @@ const taskActionConfirmBridge = new OrcaWorkerPermissionConfirmBridge({
   logger: log,
 });
 
-export async function confirmTaskAction(sessionId: string, tool: string, args: unknown): Promise<boolean> {
-  const result = await taskActionConfirmBridge.request(sessionId, {
-    title: t('taskActionConfirmation.title'),
-    description: t(tool === 'start_session_task' ? 'taskActionConfirmation.delegation' : 'taskActionConfirmation.once'),
-    action: { toolName: `mcp__cindy_helper__${tool}`,
-      input: args as Record<string, unknown>, confirmation: 'task_action' },
+export async function confirmTaskAction(
+  sessionId: string, tool: string, args: unknown, context?: TaskActionConfirmation,
+): Promise<boolean> {
+  const session = getMakerIfReady()?.getSession(sessionId);
+  if (!session) return false;
+  const controller = new AbortController();
+  const unsubscribe = session.onStatusChange(status => {
+    if (status !== 'active') controller.abort();
   });
-  return result.confirmed;
+  const request: Extract<InteractionRequest, { kind: 'permission' }> = {
+    kind: 'permission', requestId: randomUUID(),
+    title: t('taskActionConfirmation.title'),
+    description: t(context?.risk ? `taskActionConfirmation.${context.risk}` : 'taskActionConfirmation.once'),
+    toolName: `mcp__${context?.server ?? 'cindy_helper'}__${tool}`,
+    input: structuredClone(args) as Record<string, unknown>,
+    metadata: { hostOwnedConfirmation: 'task_action' },
+  };
+  try {
+    // Publish the ordinary waiting/permission lifecycle before awaiting a decision.
+    // Desktop, remote phone and IM resolve the same pending request, never a retry.
+    const result = await session.runHostInteraction(request,
+      () => requestHostInteraction(session, request, controller.signal));
+    return result.kind === 'permission' && result.behavior === 'allow';
+  } finally {
+    unsubscribe();
+  }
 }
 
 /**

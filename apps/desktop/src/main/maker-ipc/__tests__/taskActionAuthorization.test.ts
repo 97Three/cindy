@@ -1,8 +1,8 @@
 /**
  * Value: production tool admission + queued dispatch guards, no real account or network.
  * Regression: task actions added owner consent checks after the normal runtime permission flow;
- * later (#6699) any live mode admitted a teammate's own wake-ups as if the owner had asked.
- * Rule: teammate-authority.md — the Host decides the turn's principal before the permission mode.
+ * 2026-10-29: missing owner provenance silently rejected routine_save and start_session_task.
+ * Rule: teammate-authority.md — separate source identity, account access and explicit operation risks.
  * Gap: workbench tests cover visibility; SDK approval tests cannot prove Host consent.
  * Minimum input: non-owner provenance + runtime change; live execution modes do not review twice.
  * Tier: unit. This file isolates the process-local authorization lifetime from SQLite/IPC.
@@ -19,6 +19,7 @@ import {
   bindTaskActionInput,
   createTaskActionAuthorizer,
   taskActionInputGuard,
+  taskActionPrincipal,
   hasTaskActionAuthorization,
   TASK_ACTION_TOOLS,
   ORCA_TASK_ACTION_TOOLS,
@@ -289,11 +290,10 @@ function desktopFixture(kind: 'private' | 'group' | 'automatic' = 'group') {
     reviewHostPermissionAction: vi.fn(async (): Promise<AutoReviewDecision> => ({ verdict: 'allow' })),
   };
   const getSession = vi.fn((): typeof runtime | undefined => runtime);
-  const entrusted = vi.fn(async () => false);
   const authorize = createDesktopTaskActionAuthorizer({
-    input: () => ({ ...activeInput }), confirm, getSession, isEntrustedTask: entrusted,
+    input: () => ({ ...activeInput }), confirm, getSession,
   });
-  return { authorize, confirm, activeInput, caller, rows, runtime, getSession, entrusted };
+  return { authorize, confirm, activeInput, caller, rows, runtime, getSession };
 }
 const ownerWrites = [
   ['cindy_helper', 'start_session_task'],
@@ -763,17 +763,17 @@ describe('teammate turn principal', () => {
     helper('set_workbench_task_responsibility', { task_id: 'owner-task', responsible: true }),
   ];
 
-  // The 2026-10-22 behavior: Full Access admitted a follow-up wake-up as the owner.
-  it.each(['bypassPermissions', 'auto', 'ask'])('rejects an autonomous turn acting on the owner\'s tasks under %s', async mode => {
+  // Ordinary actions retain the autonomous principal and use the existing permission mode.
+  it.each(['bypassPermissions', 'auto', 'ask'])('uses ordinary permissions without an extra provenance gate under %s', async mode => {
     const h = desktopFixture('automatic');
     live(h, mode);
     for (const request of [...ownerTaskWrites, { ...call('create_worker'), server: 'cindy_orca' as const }]) {
       const effect = vi.fn(async () => 'changed');
       const result = await withToolCallAuthority(h.authorize, request, effect);
-      expect(JSON.stringify(result)).toContain('NEEDS_OWNER_REQUEST');
-      expect(effect).not.toHaveBeenCalled();
+      expect(result).toBe('changed');
+      expect(effect).toHaveBeenCalledTimes(1);
     }
-    expect(h.confirm).not.toHaveBeenCalled();
+    expect(h.confirm).not.toHaveBeenCalled(); // reversible task controls are ordinary work
   });
 
   it('keeps the teammate\'s own scope on its own initiative', async () => {
@@ -785,9 +785,7 @@ describe('teammate turn principal', () => {
     expect(await admitted(helper('continue_workbench_task', { task_id: 'handed', message: 'Carry on' }))).toBe('changed');
     expect(await admitted(helper('set_workbench_task_responsibility', { task_id: 'handed', responsible: false }))).toBe('changed');
     expect(await admitted(helper('set_session_runtime', { model: 'self' }))).toBe('changed');
-    h.entrusted.mockResolvedValue(true);
     expect(await admitted(helper('set_session_runtime', { session_id: 'handed', model: 'next' }))).toBe('changed');
-    expect(h.entrusted).toHaveBeenCalledWith('companion', 'handed');
     h.rows.delegation = { status: 'completed', runSequence: 1, permissionSnapshotJson: '{}' };
     expect(await admitted(helper('message_session_task', { task_id: 'own', message: 'Fill the gap' }))).toBe('changed');
     expect(await admitted(helper('message_session_task', { task_id: 'own', answers: { q: 'a' } }))).toBe('changed');
@@ -795,18 +793,19 @@ describe('teammate turn principal', () => {
     expect(await admitted(helper('send_to_session', { target_session_id: 'own-child', message: 'Fix it' }))).toBe('changed');
     // Permission decisions and resuming a pause stay with the owner, even on its own task.
     for (const args of [{ task_id: 'own', decision: 'approve' }, { task_id: 'own', mode: 'resume' }])
-      expect(JSON.stringify(await admitted(helper('message_session_task', args)))).toContain('NEEDS_OWNER_REQUEST');
+      expect(await admitted(helper('message_session_task', args))).toBe('changed');
+    expect(h.confirm).toHaveBeenCalledTimes(2);
   });
 
-  it('continues its own Orca team from a Worker report, but cannot start a team', async () => {
+  it('uses normal permissions for Orca writes without a second team allowlist', async () => {
     const h = desktopFixture('automatic');
     live(h);
     h.activeInput.orcaSenderSessionId = 'worker-session';
     h.rows.team = { id: 'team' };
     const orca = (tool: string) => ({ ...call(tool), server: 'cindy_orca' as const });
     expect(await withToolCallAuthority(h.authorize, orca('send_to_worker'), async () => 'changed')).toBe('changed');
-    expect(JSON.stringify(await withToolCallAuthority(h.authorize, orca('start_team'), async () => 'changed')))
-      .toContain('NEEDS_OWNER_REQUEST');
+    expect(await withToolCallAuthority(h.authorize, orca('start_team'), async () => 'changed')).toBe('changed');
+    expect(h.confirm).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -817,9 +816,9 @@ describe('teammate turn principal', () => {
     const h = desktopFixture('automatic');
     live(h);
     h.runtime.getCurrentTurnOrigin = () => ({ kind: 'scheduler', scheduleId, runId: 'run' });
-    const result = await withToolCallAuthority(h.authorize, ownerTaskWrites[0], async () => 'changed');
-    if (entrusted) expect(result).toBe('changed');
-    else expect(JSON.stringify(result)).toContain('NEEDS_OWNER_REQUEST');
+    const result = await withToolCallAuthority(h.authorize, ownerTaskWrites[0], async () => taskActionPrincipal('companion'));
+    expect(result).toBe(entrusted ? 'entrusted' : 'autonomous');
+    expect(h.confirm).not.toHaveBeenCalled();
   });
 
   it.each([true, false])('lets the IM lane requester decide (owner=%s)', async requesterIsOwner => {
@@ -833,35 +832,33 @@ describe('teammate turn principal', () => {
     }));
     const result = await withToolCallAuthority(h.authorize, ownerTaskWrites[0], async () => 'changed');
     if (requesterIsOwner) expect(result).toBe('changed');
-    else expect(JSON.stringify(result)).toContain('NEEDS_OWNER_REQUEST');
+    else expect(JSON.stringify(result)).toContain('TASK_ACTION_SOURCE_UNAUTHORIZED');
   });
 
-  // A teammate must not create or fire an owner routine on its own: the next run would be
-  // entrusted, turning its own initiative into a standing grant.
+  // Creating/updating routines is ordinary work; deleting one needs an exact decision.
   it.each(['routine_save', 'routine_run_now', 'routine_delete', 'schedule_set_pre_run_hook'])(
-    'reserves %s for owner or entrusted turns', async tool => {
+    'allows %s through ordinary permissions and asks only for deletion', async tool => {
       const h = desktopFixture('automatic');
       live(h);
       const request = helper(tool, { name: 'r', prompt: 'Message the owner\'s task', enabled: true });
-      expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, async () => 'saved')))
-        .toContain('NEEDS_OWNER_REQUEST');
+      expect(await withToolCallAuthority(h.authorize, request, async () => 'saved')).toBe('saved');
+      expect(h.confirm).toHaveBeenCalledTimes(tool === 'routine_delete' ? 1 : 0);
       h.activeInput.ownerInput = true;
       expect(await withToolCallAuthority(h.authorize, request, async () => 'saved')).toBe('saved');
       expect(await withToolCallAuthority(h.authorize, helper('routine_list', {}), async () => 'listed')).toBe('listed');
     },
   );
 
-  // PR #6936 review: the scheduler surface addresses the same routine rows (and any schedule)
-  // by id. On its own initiative a teammate cannot change, fire, hook or create automations there.
+  // Both tool surfaces must apply the same narrow risk list to the same routine rows.
   it.each(['schedule_update', 'schedule_delete', 'schedule_run_now', 'schedule_set_pre_run_hook',
     'schedule_pause', 'schedule_resume', 'schedule_create', 'routine_save', 'routine_run_now', 'routine_delete'])(
-    'reserves cindy_scheduler %s for owner or entrusted turns', async tool => {
+    'uses the same risk policy for cindy_scheduler %s', async tool => {
       const h = desktopFixture('automatic');
       live(h);
       const request = { sessionId: 'companion', server: 'cindy_scheduler' as const, tool,
         args: { id: 'routine-owner-weekly', scheduleId: 'routine-owner-weekly', prompt: 'Merge everything' } };
-      expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, async () => 'changed')))
-        .toContain('NEEDS_OWNER_REQUEST');
+      expect(await withToolCallAuthority(h.authorize, request, async () => 'changed')).toBe('changed');
+      expect(h.confirm).toHaveBeenCalledTimes(['schedule_delete', 'routine_delete', 'schedule_resume'].includes(tool) ? 1 : 0);
       h.activeInput.ownerInput = true;
       expect(await withToolCallAuthority(h.authorize, request, async () => 'changed')).toBe('changed');
     },
@@ -875,6 +872,43 @@ describe('teammate turn principal', () => {
       expect(await withToolCallAuthority(h.authorize, request, async () => 'read')).toBe('read');
     },
   );
+
+  // 2026-10-29: a missing owner marker must not silently deny ordinary work.
+  // Risk decisions are visible, single-use, and invalidated by a new input.
+  // Production admission + effect; unit tier; minimum input is an autonomous deletion.
+  it('waits for the exact decision, executes once, and rejects a second consumption', async () => {
+    const h = desktopFixture('automatic');
+    live(h);
+    let decide!: (value: boolean) => void;
+    h.confirm.mockImplementation(() => new Promise(resolve => { decide = resolve; }));
+    const pending = h.authorize(helper('routine_delete', { id: 'test-routine' }));
+    await vi.waitFor(() => expect(h.confirm).toHaveBeenCalledTimes(1));
+    expect(h.confirm).toHaveBeenCalledWith('companion', 'routine_delete',
+      { id: 'test-routine' }, { server: 'cindy_helper', risk: 'remove' });
+    decide(true);
+    const admission = await pending;
+    if (!admission.ok || !admission.run) throw new Error('missing admission');
+    const effect = vi.fn(async () => 'deleted');
+    expect(await admission.run(effect)).toBe('deleted');
+    await expect(admission.run(effect)).rejects.toThrow('AUTHORIZATION_EXPIRED');
+    expect(effect).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['deny', 'input-changed', 'permission-changed'] as const)(
+    'does not execute after confirmation %s', async change => {
+      const h = desktopFixture('automatic');
+      live(h);
+      h.confirm.mockImplementation(async () => {
+        if (change === 'input-changed') h.activeInput.key = 'new-input';
+        if (change === 'permission-changed') h.activeInput.permission!.isCurrent = () => false;
+        return change !== 'deny';
+      });
+      const effect = vi.fn(async () => 'deleted');
+      const result = await withToolCallAuthority(h.authorize,
+        helper('routine_delete', { id: 'test-routine' }), effect);
+      expect(JSON.stringify(result)).toContain(change === 'deny' ? 'USER_CANCELLED' : 'AUTHORIZATION_EXPIRED');
+      expect(effect).not.toHaveBeenCalled();
+    });
 
   it('keeps the owner principal through an automatic resume of the owner\'s input', async () => {
     const h = desktopFixture('automatic');
@@ -934,7 +968,7 @@ describe('independent Desktop tool invocation', () => {
     const effect = vi.fn(async () => 'sent');
     await withToolCallAuthority(outer.authorize, call('start_session_task'), async () => {
       const result = await withToolCallAuthority(h.authorize, call('send_to_session'), effect);
-      expect(JSON.stringify(result)).toContain('NEEDS_OWNER_REQUEST');
+      expect(JSON.stringify(result)).toContain('TASK_ACTION_AUTHORIZATION_REQUIRED');
       expect(effect).not.toHaveBeenCalled();
       expect(approvedTaskDelegation('companion')).toBeDefined();
     });
