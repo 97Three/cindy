@@ -898,7 +898,10 @@
     }
   },
   "regionScreenshot": {
-    "editor": { "fitWidth": "Fit width", "loading": "Loading image…" },
+    "editor": {
+      "fitWidth": "Fit width",
+      "loading": "Loading image…"
+    },
     "moveToolbar": "Move toolbar left or right",
     "hint": "Click to select a window or element, or drag to select an area · Scroll to change scope · Space: full screen · C: copy color · Esc: exit",
     "hintWithLast": "Click to select a window or element, or drag to select an area · Scroll to change scope · Space: full screen · R: last area · C: copy color · Esc: exit",
@@ -3307,8 +3310,12 @@
         "modelsPending": "{{name}} is configured, but models could not be fetched. Retry in provider settings.",
         "busyWarning": "This change requires reloading the local Codex service and may interrupt {{count}} running sessions. Continue?",
         "close": "Close provider import",
-        "loadFailed": "This provider import link is invalid or has expired.",
-        "confirmFailed": "The provider could not be imported. Check the link or endpoint and try again.",
+        "fromFile": "Import from file",
+        "fileTooLarge": "The file exceeds 4 MiB. Reduce its size and try again.",
+        "fileInvalid": "This file is not a valid provider import configuration. Check the JSON format and configuration fields.",
+        "fileReadFailed": "The file could not be imported. Select it again and retry.",
+        "loadFailed": "This provider import is no longer valid. Open the link or select the file again.",
+        "confirmFailed": "The provider could not be imported. Check the configuration or endpoint and try again.",
         "oauthFailed": "The provider was added, but authorization did not finish. Try authorization again.",
         "done": "{{name}} was imported",
         "oauthDone": "{{name}} was added and authorized",
@@ -3332,6 +3339,47 @@
           "create": "A new local provider will be created as {{name}}.",
           "update": "The existing provider {{name}} will be updated.",
           "replace-key": "The locally stored API Key for {{name}} will be replaced."
+        },
+        "fileGuideDescription": "Cindy-format UTF-8 JSON files, up to 4 MiB.",
+        "fileGuideSteps": "Use the example to fill in the provider name, endpoint URL, API key and model details.",
+        "fileGuidePrivacy": "The example contains no real key. Keep files with your key private.",
+        "selectJsonFile": "Choose JSON file",
+        "downloadExample": "Download example",
+        "showFormat": "View format guide",
+        "hideFormat": "Collapse format guide",
+        "formatStructure": "The file contains one JSON object, without Base64, an import link or an extra wrapper. The fields below describe a custom API Key provider. Field names are case-sensitive; JSON does not allow comments.",
+        "formatIdentity": "Required. Set kind to \"custom\" and name to the provider name you want to display.",
+        "formatAuth": "Required. In this example, set method to \"apiKey\" and replace apiKey with the key from your provider.",
+        "formatEndpoint": "Required for each endpoint. protocol accepts \"openai-chat\", \"openai-responses\", \"anthropic-messages\" and \"google-generative-ai\". Set baseUrl to the full HTTP(S) endpoint URL; HTTPS is recommended.",
+        "formatTargets": "Optional engine array: \"claude-code\", \"codex\" or \"pi\". Omit it to match engines by protocol, or specify engines explicitly. Claude Code also supports OpenAI and Google protocols. The example enables only Pi.",
+        "formatModels": "Optional. Use model ID strings or objects with id (name is optional). Omit the list or leave it empty to fetch models after confirmation. A nonempty list skips automatic fetching.",
+        "formatMetadata": "Optional model fields: group is the model group, contextWindow is the context length, and maxOutputTokens is the output limit (both in tokens). Example numbers are illustrative; use the model’s actual capabilities.",
+        "formatEffort": "Optional model fields: efforts lists supported effort levels; defaultEffort selects one of them as the default. Remove both fields if unsure.",
+        "formatLimits": "Up to 8 endpoints per file and 10,000 models per endpoint, within the 4 MiB file limit.",
+        "exampleTitle": "JSON example (same as the download)",
+        "fileGuidePrepare": "Prepare Your File",
+        "fileGuideReview": "Preview and Confirm",
+        "fileGuideReviewHint": "Import one or more providers. Review the file first; nothing is saved until you confirm.",
+        "formatConversion": "Convert exports from other clients to this format first.",
+        "downloadBatchExample": "Download Batch Example",
+        "formatBatch": "For a batch, use { \"providers\": [config1, config2] } with the single-provider structure below for each entry. Maximum 50 entries and 4 MiB total. Built-in key slots and explicit ids must not repeat. If any entry has an invalid structure, no import drafts are created for the file.",
+        "batchTitle": "Import Providers ({{count}})",
+        "batchNote": "Select providers to import together. Review individually to update an existing connection or authorize. Saved entries are kept if another entry fails.",
+        "batchImport": "Import Selected ({{count}})",
+        "batchProgress": "{{count}} of {{total}} added or updated",
+        "batchItem": "Configuration {{index}}",
+        "batchReviewOne": "Review Individually",
+        "batchStatus": {
+          "loading": "Loading preview…",
+          "ready": "Ready to import",
+          "saving": "Importing…",
+          "saved": "Imported",
+          "modelsPending": "Imported; retry model discovery in provider settings",
+          "failed": "Import failed; retry or review individually",
+          "manual": "Individual confirmation or authorization required",
+          "invalid": "Preview unavailable; check the configuration or select the file again",
+          "skipped": "Skipped; select the file again to import this entry",
+          "authorizationPending": "Connection added; complete authorization in provider settings"
         }
       },
       "order": {
@@ -7914,7 +7962,6 @@
         "versionContent": "Version content",
         "loadMoreVersions": "Load more versions",
         "notSubmitted": "Not submitted for review",
-        "submitVersion": "Submit {{version}} for review",
         "publishingVersion": "Version for Review · {{version}}",
         "refreshSummary": "Refresh publishing summary",
         "versionConsumedHint": "Once a submission is accepted for review, its version number cannot be reused, even after cancellation or rejection.",
@@ -18188,10 +18235,5 @@
     "groupHint": "When off, all tasks routed through this group use standard speed, including Ultrafast.",
     "pending": "Some computers have not confirmed the setting. Keep them connected and update group computers that do not support this setting.",
     "saveFailed": "The setting may be saved, but some running tasks have not confirmed standard speed. Check the connection and retry."
-  },
-  "attachmentAccessConfirmation": {
-    "title": "Confirm Attachment Access",
-    "message": "Cindy cannot read this attachment. Select the original file to continue sending this message. Cancelling keeps your draft.",
-    "button": "Use Original File"
   }
 }

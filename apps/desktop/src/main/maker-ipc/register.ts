@@ -7606,6 +7606,15 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       return fetchProviderModels(spec);
     },
     builtinApiKeyDeps: options.builtinApiKeyDeps,
+    selectProviderImportFile: async (event) => {
+      const win = BrowserWindow.fromWebContents((event as IpcMainInvokeEvent).sender);
+      if (!win || win.isDestroyed()) throwIpcError('PERMISSION_DENIED', 'import window unavailable');
+      const selected = await dialog.showOpenDialog(win, {
+        properties: ['openFile'],
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      return selected.canceled ? null : selected.filePaths[0] ?? null;
+    },
     // 重新发现会用订阅凭证发起真实上游请求，限主页面 sender（子 frame / WebView 拒绝）。
     assertTrustedSender: (event) =>
       assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]),
