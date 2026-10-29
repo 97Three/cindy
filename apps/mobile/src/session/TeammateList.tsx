@@ -14,7 +14,7 @@ import { BotGroupListRow, OFFLINE_AVATAR_OPACITY } from './BotGroupList';
 import { orderedBotGroups } from './botGroupRemote';
 import { CompanionListRow, COMPANION_ROW_AVATAR_SIZE } from './CompanionListRow';
 import { TeammateStatusDot } from './TeammateStatusDot';
-import { remoteSessionStore } from './remoteSessionStore';
+import { useRosterActivities, teammateAttention } from './useTeammateStatus';
 import { formatRemoteSessionSidebarTime } from './sessionList';
 import { orderedTeammates } from './teammateNavigation';
 import { parseMobileMarkdownInlines } from './messageMarkdown';
@@ -44,17 +44,6 @@ interface TeammateRowOptions {
 export function conversationSessionId(row: HostedRemoteCollectionItem): string | null {
   const target = row.item.links.find(({ rel, target: link }) => rel === 'conversation' && link.kind === 'session')?.target;
   return target?.kind === 'session' ? target.sessionId : null;
-}
-
-/** A scalar subscription keeps streaming and unchanged roster objects out of row renders. */
-function useRosterActivities(items: readonly HostedRemoteCollectionItem[]): ReadonlyMap<string, string> {
-  const snapshot = useCallback(() => JSON.stringify(items.map(row => {
-    const id = conversationSessionId(row);
-    return [row.key, id ? remoteSessionStore.getPendingInteractions(id, row.host.deviceId).length
-      ? 'needs-interaction' : remoteSessionStore.getSessionLiveActivity(id, row.host.deviceId)?.phase ?? '' : ''];
-  })), [items]);
-  const key = useSyncExternalStore(remoteSessionStore.subscribe, snapshot);
-  return useMemo(() => new Map(JSON.parse(key)), [key]);
 }
 
 export type TeammateListEntry = { kind: 'bot' | 'group'; row: HostedRemoteCollectionItem };
@@ -107,9 +96,7 @@ export function useTeammateRowRenderer({ items, isOnline, connectionState, quiet
     const connected = connectionState ? connectionState(row.host) : online;
     const generating = online && !!display.generation
       && display.teammateActivity?.phase !== 'needs-interaction' && activities.get(row.key) !== 'needs-interaction';
-    const attention = display.status?.tone === 'warning' || display.status?.tone === 'critical'
-      ? resolveRemoteText(display.status.label, i18n.language) : '';
-    const waiting = online && activities.get(row.key) === 'needs-interaction';
+    const { attention, waiting } = teammateAttention(row, online, activities, i18n.language);
     const ambiguous = (duplicateNames.get(title.normalize('NFKC').toLocaleLowerCase(i18n.language)) ?? 0) > 1;
     const unread = isRemoteResourceUnread(user?.id ?? '', row.host.deviceId, row.item.ref.id, display.lastReplyAt);
     const timestamp = display.timestamp;

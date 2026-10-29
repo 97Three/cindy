@@ -403,6 +403,7 @@
         "30d": "30d",
         "all": "All"
       },
+      "showCollapsedTeammateAvatars": "Show avatars when collapsed",
       "displayHeading": "Display",
       "view": {
         "text": "Text",
