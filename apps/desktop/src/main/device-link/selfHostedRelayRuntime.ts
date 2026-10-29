@@ -247,7 +247,12 @@ async function prepareHostData(dataDir: string, config: RelayConfig): Promise<st
   if (existingId && readRelaySecrets(existingId) && fs.existsSync(stateFile)) return existingId;
   if (!authManager.getCurrentUserId()) throw new Error('NOT_SIGNED_IN');
   fs.rmSync(dataDir, { recursive: true, force: true });
-  if (existingId) deleteRelaySecrets(existingId);
+  if (existingId) {
+    const wasActive = readRelayConfig().active?.relayId === existingId;
+    deleteRelaySecrets(existingId);
+    // Missing secrets switch the routing source to official immediately.
+    if (wasActive) restartDeviceLinkForRelayChange();
+  }
   const relayId = randomUUID();
   const secrets = createOwnerSecrets(relayId);
   await initializeRelay({ dataDir, ...ownerInitArgs(relayId, secrets, deviceName().slice(0, 64) || 'Cindy') });
@@ -503,6 +508,8 @@ async function leaveMemberRelay(): Promise<void> {
   }
   assertOwner();
   deleteRelaySecrets(relay.relayId);
+  // Retire the old connection before the caller resumes on the official route.
+  restartDeviceLinkForRelayChange();
 }
 
 /** 切换到另一个中转前收尾:成员退出;本机中转停掉(不通知成员停用,切回时还能接着用)。 */
@@ -530,6 +537,8 @@ async function enableHost(command: Extract<SelfHostedRelayCommand, { type: 'enab
     host: { ...previous.host, enabled: true, port: command.port, listenAll: command.listenAll, externalUrl: command.externalUrl },
   };
   writeRelayConfig(config);
+  // Clearing an active route must retire its connection before host startup yields.
+  if (previous.active) restartDeviceLinkForRelayChange();
   await startHost(config);
   assertOwner();
   const relayId = readRelayConfig().host.relayId;
@@ -553,10 +562,11 @@ async function enableHost(command: Extract<SelfHostedRelayCommand, { type: 'enab
       ownerPublicKey: relayPublicKeyOf(crypto, secrets.seed)!,
     },
   });
+  // Publish the route and synchronously retire the old token/connection in one turn.
+  restartDeviceLinkForRelayChange();
   // 中转所在电脑一休眠,所有设备都会断开:开启时顺带打开「保持唤醒」。
   if (!readDeviceLinkSettings().keepAwake) await setKeepAwakeEnabled(true).catch(() => undefined);
   assertOwner();
-  restartDeviceLinkForRelayChange();
   return { state: getState() };
 }
 
