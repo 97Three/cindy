@@ -412,7 +412,8 @@ export class BrowserExtensionBridge {
       const capped = list.length > max ? list.slice(0, max) : list;
       if (capped !== list) out.truncated = true;
       out[key] = capped.map((entry) => {
-        if (!entry || typeof entry !== 'object') return entry;
+        // Tuples ([method, params] debugger events) keep their array shape; only the count is capped.
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
         const row: Record<string, unknown> = { ...(entry as Record<string, unknown>) };
         for (const [field, value] of Object.entries(row)) {
           if (typeof value === 'string' && value.length > ENTRY_STRING_MAX) {

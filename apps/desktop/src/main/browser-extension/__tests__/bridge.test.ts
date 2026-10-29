@@ -493,6 +493,26 @@ describe('bridge · 作业生命周期', () => {
     expect((await clicked).ok).toBe(true);
   });
 
+  // Review 2026-10-30 (Codex P1): debugger events are [method, params] tuples and must stay arrays.
+  it('cdp 事件列表保留元组形状并按数量封顶', async () => {
+    const { bridge, ready } = await fixture();
+    const c = await ready();
+    const pending = bridge.act('cdp', { url: 'https://example.test', tabId: 1, op: 'events' });
+    await sleep(5);
+    const { job } = await c.request('/poll');
+    await c.request('/ack', { id: job.id });
+    await c.request('/result', {
+      id: job.id,
+      result: { ok: true, events: Array.from({ length: 5200 }, (_, i) => ['Network.responseReceived', { requestId: String(i) }]) },
+    });
+    const result = await pending;
+    const events = result.events as Array<unknown>;
+    expect(events).toHaveLength(5000);
+    expect(Array.isArray(events[0])).toBe(true);
+    expect((events[0] as [string, unknown])[0]).toBe('Network.responseReceived');
+    expect(result.truncated).toBe(true);
+  });
+
   // Review 2026-10-30 (Codex P2): every read result is bounded, not only extract records.
   it('requests / links / text 等读取结果也有数量与大小上限', async () => {
     const { bridge, ready } = await fixture();
