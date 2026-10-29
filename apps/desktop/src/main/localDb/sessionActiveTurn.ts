@@ -57,7 +57,7 @@ import {
   getSessionInterruptionBootAt,
   setSessionInterruptionBootAtForTests,
 } from './sessionInterruptionBoot';
-import { botSessionLinks, messages, sessions } from './schema';
+import { botProfiles, botSessionLinks, messages, sessions } from './schema';
 import { createLogger } from '../logger';
 import { DESKTOP_TASK_LIST_SESSION_SOURCES } from '../../shared/sessionSource.js';
 import { boundedSummary } from '../maker-ipc/recoveryCoordinator.js';
@@ -392,13 +392,15 @@ export async function listInterruptedPendingRows(
           ? or(
               listedSource,
               // 能走普通「继续」路径的伙伴任务:主对话、委派任务有自己的页面,例行与渠道
-              // 专线列在普通任务列表里。history 只读(botSessionInputGuard 拒绝发送),群与
+              // 专线列在普通任务列表里。history 只读、伙伴未启用(botSessionInputGuard 拒绝发送),群与
               // 私聊话题专线是隐藏专线,由群聊 / 私聊收口,都不提示。
               and(
                 eq(sessions.source, 'bot'),
                 sql`EXISTS (SELECT 1 FROM ${botSessionLinks}
+                  JOIN ${botProfiles} ON ${botProfiles.id} = ${botSessionLinks.botId}
                   WHERE ${botSessionLinks.sessionId} = ${sessions.id}
-                    AND ${botSessionLinks.role} IN ('canonical', 'delegation', 'routine', 'channel'))`,
+                    AND ${botSessionLinks.role} IN ('canonical', 'delegation', 'routine', 'channel')
+                    AND ${botProfiles.status} = 'active')`,
               ),
             )
           : listedSource,

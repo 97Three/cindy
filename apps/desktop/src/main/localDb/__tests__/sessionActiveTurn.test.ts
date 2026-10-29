@@ -79,6 +79,11 @@ describe('sessionActiveTurn', () => {
       CREATE INDEX idx_messages_active_error_tail ON messages (session_id, created_at)
         WHERE role = 'error' AND rewind_at IS NULL;
 
+      CREATE TABLE bot_profiles (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'active'
+      );
+
       CREATE TABLE bot_session_links (
         id TEXT PRIMARY KEY,
         bot_id TEXT NOT NULL,
@@ -566,6 +571,7 @@ describe('sessionActiveTurn', () => {
     const { listInterruptedPendingSessionIds } = await import('../sessionActiveTurn.js');
     const client = createTestDbClient();
     const startedAt = Date.now() - 10_000;
+    await client.exec("INSERT INTO bot_profiles (id, status) VALUES ('bot-1', 'active'), ('bot-paused', 'paused')");
     await seedSession(client, 's-desktop', { startedAt });
     for (const role of ['canonical', 'delegation', 'routine', 'channel', 'history', 'group', 'thread']) {
       await seedSession(client, `bot-${role}`, { startedAt, source: 'bot' });
@@ -574,6 +580,12 @@ describe('sessionActiveTurn', () => {
         [`link-${role}`, 'bot-1', `bot-${role}`, role, startedAt],
       );
     }
+    // 伙伴未启用时继续会被 botSessionInputGuard 拒绝,不提示。
+    await seedSession(client, 'bot-paused-canonical', { startedAt, source: 'bot' });
+    await client.exec(
+      'INSERT INTO bot_session_links (id, bot_id, session_id, role, created_at) VALUES (?, ?, ?, ?, ?)',
+      ['link-paused', 'bot-paused', 'bot-paused-canonical', 'canonical', startedAt],
+    );
     // 没有伙伴关联的 bot 来源会话无处打开,不提示。
     await seedSession(client, 'bot-unlinked', { startedAt, source: 'bot' });
 
