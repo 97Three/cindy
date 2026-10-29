@@ -1,20 +1,7 @@
-import { useCallback, useSyncExternalStore } from 'react';
 import { View } from 'react-native';
 import { useTranslation } from 'react-i18next';
-import { TEAMMATE_AVATAR, resolveTeammateStatus, type TeammateStatus } from '@cindy/maker-shared/teammate-status';
+import { TEAMMATE_AVATAR, type TeammateStatus } from '@cindy/maker-shared/teammate-status';
 import { useTheme, radius } from '@/theme';
-import { remoteSessionStore } from './remoteSessionStore';
-
-export function useTeammateStatus(input: Parameters<typeof resolveTeammateStatus>[0] & {
-  sessionId?: string | null; deviceId?: string;
-}): TeammateStatus {
-  const { sessionId, deviceId } = input;
-  const snapshot = useCallback(() => !sessionId ? ''
-    : remoteSessionStore.getPendingInteractions(sessionId, deviceId).length ? 'needs-interaction'
-      : remoteSessionStore.getSessionLiveActivity(sessionId, deviceId)?.phase ?? '', [sessionId, deviceId]);
-  const phase = useSyncExternalStore(remoteSessionStore.subscribe, snapshot);
-  return resolveTeammateStatus({ ...input, activities: [...(input.activities ?? []), ...(phase ? [{ phase }] : [])] });
-}
 
 export function TeammateStatusDot({ status }: { status: TeammateStatus }) {
   const { colors } = useTheme();

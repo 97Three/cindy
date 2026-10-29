@@ -1,5 +1,6 @@
 import { TEAMMATE_AVATAR, resolveTeammateStatus } from '@cindy/maker-shared/teammate-status';
-import { TeammateStatusDot, useTeammateStatus } from './TeammateStatusDot';
+import { TeammateStatusDot } from './TeammateStatusDot';
+import { useTeammateStatus } from './useTeammateStatus';
 /**
  * 任务首页顶部的「伙伴」段（对照桌面 TeammatesSection.tsx 与 2026-10-24 手机「A+B 合一」定稿）：
  * 展开 = 伙伴行（CompanionListRow，默认 3 位，多了「显示全部」）；

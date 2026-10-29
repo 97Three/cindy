@@ -7,9 +7,6 @@ vi.mock('react-native', async () => { const { createElement } = await import('re
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }));
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 'owner' } }) }));
 vi.mock('@/session/BotGroupAvatars', () => ({ BotGroupDuoAvatar: () => null, useBotGroupIdentities: () => () => ({}) }));
-// This unit protects server read-sequence handling, not avatar rendering (covered
-// by BotGroupList.test.tsx). Keep the status component's runtime store out too.
-vi.mock('@/session/TeammateStatusDot', () => ({ TeammateStatusDot: () => null }));
 vi.mock('@/session/messageMarkdown', () => ({ parseMobileMarkdownInlines: () => [], mobileMarkdownPreviewText: (value: string) => value }));
 vi.mock('@/session/sessionList', () => ({ formatRemoteSessionSidebarTime: () => 'now' }));
 vi.mock('@/theme', () => ({ useThemedStyles: () => ({}) }));
