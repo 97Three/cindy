@@ -369,6 +369,27 @@ describe('browserExtensionSlot · 管子上行', () => {
     expect(again.sent.some(([, payload]) => (payload as { name?: string }).name === 'browser-extension-policy-request')).toBe(false);
   });
 
+  // Review 2026-10-30 (Codex P2): a failed startup is rebuilt by the next request instead of staying failed.
+  it('启动失败后下一次请求重建整套启动流程', async () => {
+    const { slot, bridges, natives, settle, ghosts } = await makeSlot();
+    slot.reconcile(ghosts);
+    await vi.waitFor(() => expect(bridges).toHaveLength(1));
+    // The first start fails (for example every compatible port is busy).
+    bridges[0].start = async () => {
+      throw new Error('ports busy');
+    };
+    await settle();
+    expect(await slot.handleRequest('_root__my-browser', { kind: 'status' })).toMatchObject({
+      ok: false,
+      errorCode: 'HOST_NOT_READY',
+    });
+    // The request rebuilt the whole sequence: a new bridge started and the native binding was installed.
+    await vi.waitFor(() => expect(bridges.at(-1)?.started).toBe(true));
+    expect(bridges.length).toBeGreaterThan(1);
+    expect(natives.length).toBeGreaterThan(0);
+    expect(await slot.handleRequest('_root__my-browser', { kind: 'status' })).toMatchObject({ ok: true });
+  });
+
   // Review 2026-10-30 (Codex P1): a plugin cannot name host paths for Chrome to open.
   it('插件管子不能按路径上传', async () => {
     const { slot, bridges, settle, ghosts } = await makeSlot();

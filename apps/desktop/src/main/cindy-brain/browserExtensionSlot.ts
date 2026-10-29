@@ -116,6 +116,8 @@ interface Entry {
   closing: boolean;
   /** Paired clients as last persisted. */
   saved: SavedBrowserExtensionState;
+  /** The startup sequence failed (for example every compatible port was busy); the next request rebuilds it. */
+  startFailed?: true;
   /** Where the installed package came from; pairings never carry over to a package from elsewhere. */
   source: string;
   /** Serialises cache writes so an older write cannot land after a newer one. */
@@ -260,12 +262,22 @@ export class GhostBrowserExtensionSlot {
         pageControl: needs.pageControl === true,
       });
     })().catch((err) => {
+      entry.startFailed = true;
       this.deps.log?.warn('browser extension bridge failed to start', {
         instanceId,
         error: errorText(err),
       });
     });
     this.entries.set(instanceId, entry);
+  }
+
+  private rebuild(failed: Entry): void {
+    const { instanceId, ghost } = failed;
+    if (this.disposed || this.entries.get(instanceId) !== failed) return;
+    const ownerScopeKey = this.deps.ownerScopeKey();
+    void this.stop(instanceId).then(() => {
+      if (!this.disposed && !this.entries.has(instanceId)) this.start(instanceId, ghost, ownerScopeKey);
+    });
   }
 
   private stop(instanceId: string): Promise<void> {
@@ -361,6 +373,13 @@ export class GhostBrowserExtensionSlot {
     const req = payload as Record<string, unknown>;
     const { entry } = gate;
     await entry.ready;
+    if (entry.startFailed) {
+      // A failed startup would otherwise stay failed for good (no pairing request, no native binding)
+      // even after the cause, such as busy ports, is gone. Rebuild it from the same request path the
+      // plugin already retries on HOST_NOT_READY; there is no timer.
+      this.rebuild(entry);
+      return fail('HOST_NOT_READY', 'Cindy 正在重新启动浏览器扩展桥接,请稍后重试');
+    }
     try {
       switch (req.kind) {
         case 'status': {
