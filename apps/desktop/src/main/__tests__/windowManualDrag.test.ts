@@ -132,6 +132,32 @@ describe('WindowManualDragController', () => {
     expect(bounds).not.toHaveBeenCalled();
   });
 
+  // #7898 review: a native offset read can throw during a Windows desktop
+  // switch. Unit tier: start must still move with fixed bounds and stop normally;
+  // prior native coverage only exercised a follower returning false after start.
+  it('falls back to fixed bounds when native drag initialization throws', () => {
+    const { screen, cursor } = makeScreen();
+    const win = makeWindow();
+    const error = new Error('GetCursorPos failed');
+    const report = vi.fn();
+    const controller = new WindowManualDragController(screen, 16, 1000, () => {
+      throw error;
+    }, report);
+
+    expect(() => controller.start(win)).not.toThrow();
+    expect(report).toHaveBeenCalledWith(error);
+    cursor.x += 40;
+    cursor.y += 20;
+    vi.advanceTimersByTime(16);
+    expect(win.position).toEqual([140, 120]);
+    expect(win.size).toEqual([813, 607]);
+    controller.stop(win);
+    cursor.x += 40;
+    vi.advanceTimersByTime(16);
+    expect(win.position).toEqual([140, 120]);
+    expect(controller.isDragging()).toBe(false);
+  });
+
   it('clamps window y to the display workArea top (menu bar)', () => {
     const { screen, cursor } = makeScreen(25);
     const win = makeWindow(100, 100);

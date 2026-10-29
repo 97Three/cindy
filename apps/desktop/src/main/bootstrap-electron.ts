@@ -5572,7 +5572,9 @@ const registerIpcHandlers = () => {
       if (!native || !handle) return null;
       const offset = native.windowDragOffset(handle);
       return () => native.moveWindowAtCursor(handle, offset.x, offset.y);
-    } : undefined);
+    } : undefined, (error: unknown) => {
+      windowDragLog.warn('Windows native window drag initialization failed; using DIP bounds fallback', error);
+    });
 
   // start / stop 都严格绑定 sender 窗口,解析不到(窗口销毁中)直接忽略,
   // 不 fallback 主窗:多窗口下副窗的延迟消息若落到主窗上,start 会让主窗

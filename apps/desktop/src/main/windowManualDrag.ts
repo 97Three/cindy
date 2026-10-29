@@ -62,6 +62,7 @@ export class WindowManualDragController {
     private readonly intervalMs: number = FOLLOW_INTERVAL_MS,
     private readonly maxDurationMs: number = MAX_DRAG_DURATION_MS,
     private readonly nativeFollower?: (win: DragWindowLike) => (() => boolean) | null,
+    private readonly onNativeStartError?: (error: unknown) => void,
   ) {}
 
   /**
@@ -77,7 +78,14 @@ export class WindowManualDragController {
     this.stop();
     if (win.isDestroyed() || win.isMaximized() || win.isFullScreen()) return;
 
-    const followNative = this.nativeFollower?.(win);
+    let followNative: (() => boolean) | null | undefined;
+    try {
+      followNative = this.nativeFollower?.(win);
+    } catch (error: unknown) {
+      // Offset reads may fail during a Windows desktop switch. Keep the drag
+      // available through the fixed-bounds fallback instead of escaping IPC.
+      this.onNativeStartError?.(error);
+    }
     const cursor = this.screen.getCursorScreenPoint();
     const { x: winX, y: winY, width, height } = win.getBounds();
     const offsetX = cursor.x - winX;
