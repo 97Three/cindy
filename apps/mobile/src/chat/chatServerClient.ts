@@ -541,6 +541,11 @@ export function createChatServerClient(request: ChatRequest, personalList = crea
     },
     /** Main-timeline messages of any room kind (a companion's room is `direct`), newest first. */
     history,
+    async message(roomId: string, messageId: string): Promise<ChatMessage> {
+      const room = chatId(roomId), id = chatId(messageId);
+      const stored = await cache();
+      return stored ? stored.message<ChatMessage>(room, id) : request<ChatMessage>(`/conversations/${room}/messages/${id}`);
+    },
     async snapshot(roomId: string, metadata = false): Promise<ChatSnapshot> {
       const stored = await cache();
       if (stored) { stored.invalidate(roomId, metadata); return stored.snapshot<ChatSnapshot>(chatId(roomId)); }
@@ -676,7 +681,11 @@ export function createChatServerClient(request: ChatRequest, personalList = crea
       }
       // A recent reply does not prove that its root is in the current window.
       // Resolve roots independently; a transient failure stays loading, never deleted.
-      for (const rootId of new Set(page.snapshot.messages.flatMap(message => message.threadRootId ?? []))) {
+      const rootIds = new Set([...known.values()].flatMap(message => {
+        const sharedRoot = readBotGroupThreadShareCard(message)?.threadRootId;
+        return [...(message.threadRootId ? [message.threadRootId] : []), ...(sharedRoot ? [sharedRoot] : [])];
+      }));
+      for (const rootId of rootIds) {
         if (known.has(rootId)) continue;
         read(`root:${rootId}`, async () => {
           try {
@@ -689,7 +698,14 @@ export function createChatServerClient(request: ChatRequest, personalList = crea
           }
         });
       }
-      if (!page.threadRootId) for (const root of page.messages) {
+      let index = 0;
+      const drain = () => Promise.all(Array.from({ length: Math.min(4, work.length) }, async () => {
+        while (index < work.length) await work[index++]!();
+      }));
+      await drain();
+      const previewRoots = new Map([...page.messages, ...[...rootIds].flatMap(id => threadRoots[id] ?? known.get(id) ?? [])]
+        .map(message => [message.id, message]));
+      if (!page.threadRootId) for (const root of previewRoots.values()) {
         if (root.threadRootId || root.deleted || !root.replyCount) continue;
         const latest = page.snapshot.messages.filter(message => message.threadRootId === root.id && !message.deleted);
         if (page.snapshot.messages.length < 100 || latest.length >= Math.min(root.replyCount, 2)) continue;
@@ -707,10 +723,7 @@ export function createChatServerClient(request: ChatRequest, personalList = crea
           previewMessages.push(...found);
         });
       }
-      let index = 0;
-      await Promise.all(Array.from({ length: Math.min(4, work.length) }, async () => {
-        while (index < work.length) await work[index++]!();
-      }));
+      await drain();
       return { ...page, threadSources, threadRoots, previewMessages, threadRetryAt };
     },
     async followThread(roomId: string, rootId: string, following: boolean, operationId: string) {

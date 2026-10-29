@@ -10,11 +10,12 @@ const h = vi.hoisted(() => ({
   targets: [] as { deviceId: string; deviceName: string }[],
   disk: new Map<string, string>(),
   history: new Map<string, string>(),
+  historyWriteFails: false,
   foreground: new Set<(state: string) => void>(),
 }));
 vi.mock('@/session/historyDiskStoreExpo', () => ({ createHistoryDiskIO: () => ({
   read: async (key: string) => h.history.get(key) ?? null,
-  write: async (key: string, value: string) => { h.history.set(key, value); },
+  write: async (key: string, value: string) => { if (h.historyWriteFails) throw new Error('disk full'); h.history.set(key, value); },
   remove: async (key: string) => { h.history.delete(key); },
   files: async () => [...h.history.keys()],
 }) }));
@@ -69,6 +70,7 @@ async function send(input: Record<string, unknown>) {
 }
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 beforeEach(async () => {
+  h.historyWriteFails = false;
   setMobileAuthOwner(null); peekChatMessages(id); await clearHistoryDisk();
   await clearRemoteResourceCache(); h.auth.user.id = 'owner';
   await mobileDurableOutbox.activate(''); h.disk.clear(); h.history.clear(); setMobileAuthOwner('owner');
@@ -850,6 +852,47 @@ it('restores a failed share after restart, keeps its body, and does not block la
   expect(bodies[1]).toEqual(bodies[0]);
   expect(store.getSnapshot().find(row => row.item.clientId === 'topic-and-main')?.chat?.shareToMain)
     .toMatchObject({ state: 'sent', messageId: shareId });
+});
+
+// #7847 review, integration: a saved share receipt survives restart beyond the
+// snapshot window. Retire it only after its canonical message reaches disk.
+it('recovers an off-window share receipt after restart and keeps it on a failed history write', async () => {
+  const storage = { getAllKeys: async () => [...h.disk.keys()], getItem: async (key: string) => h.disk.get(key) ?? null,
+    setItem: async (key: string, value: string) => { h.disk.set(key, value); }, removeItem: async (key: string) => { h.disk.delete(key); } };
+  const account = getMobileAuthOwner().accountKey;
+  let store = createDurableOutbox(storage); await store.activate(account);
+  const replyId = '00000000-0000-4000-8000-000000000041', shareId = '00000000-0000-4000-8000-000000000042';
+  const reply = { id: replyId, seq: '41', authorId: self, author: { kind: 'human', name: 'Me' },
+    content: [{ type: 'text', text: 'Reply' }], createdAt: '2026-10-29', deleted: false, threadRootId: self };
+  const shared = { ...reply, id: shareId, seq: '42', threadRootId: null, content: [{ type: 'card', namespace: 'cindy.thread-share', schemaRevision: 1,
+    data: { messageId: replyId, threadRootId: self }, fallback: '' }] };
+  await enqueueChatMessage(store, account, id, { clientId: 'confirmed-share', text: 'Reply', threadRootId: self,
+    mentions: { all: false, botIds: [] }, alsoSendToMain: true }, 0);
+  const row = store.getSnapshot()[0];
+  await store.update(row, { state: 'confirming', enqueueStarted: true,
+    chat: { ...row.chat!, messageId: replyId, shareToMain: { state: 'sent', messageId: shareId } } });
+  store = createDurableOutbox(storage); await store.activate(account);
+  const request = vi.fn(async (path: string, method?: string) => {
+    if (method === 'POST') throw new Error('Must not resend');
+    if (path === '/me') return { actor: { id: self, kind: 'human' } };
+    if (path.endsWith('/snapshot')) return { room, members: [], messages: [], cursor: '200' };
+    if (path.includes('/messages?')) return [reply];
+    if (path.endsWith(`/messages/${self}`)) return { ...reply, id: self, seq: '1', threadRootId: null };
+    if (path.endsWith(`/messages/${shareId}`)) return shared;
+    return [];
+  });
+  const runner = createChatOutboxDelivery({ store, client: createChatServerClient(request as any), current: () => true, canRun: () => true, accessLost: async () => {} });
+  h.historyWriteFails = true;
+  await runner.run();
+  expect(store.getSnapshot()).toHaveLength(1);
+  h.historyWriteFails = false;
+  await runner.run();
+  expect(store.getSnapshot()).toEqual([]);
+  const requests = request.mock.calls.length;
+  await runner.run(); expect(request).toHaveBeenCalledTimes(requests);
+  expect(request.mock.calls.some(([, method]) => method === 'POST')).toBe(false);
+  setMobileAuthOwner(null); peekChatMessages(id); setMobileAuthOwner('owner');
+  expect((await readChatMessages(id, self))?.page.snapshot.messages).toContainEqual(shared);
 });
 
 // The existing runner is the authority across account switches and crash windows.

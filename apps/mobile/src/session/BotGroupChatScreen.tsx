@@ -900,9 +900,8 @@ function BotGroupTimelineItem({
   const attachments = authoredShare?.attachments ?? message.attachments ?? [];
   const renderAttachments = (align: 'left' | 'right') => {
     if (!attachments.length) return null;
-    const media = <BotGroupMessageAttachments messageId={authoredShare?.messageId ?? message.id} attachments={attachments}
+    return <BotGroupMessageAttachments messageId={authoredShare?.messageId ?? message.id} attachments={attachments}
       align={align} onResolveRemoteMedia={resolveMedia} resolveServerMedia={resolveServerMedia} />;
-    return content.trim() || message.threadShare && !authoredShare ? media : renderContent(media);
   };
   const shareFooter = authoredShare ? <>
     {authoredShare.edited ? <Text style={styles.threadCaption}>{t('groupChat.thread.edited')}</Text> : null}
@@ -915,14 +914,16 @@ function BotGroupTimelineItem({
     return <View style={styles.userRow} testID="botGroup.message.user">
       <View style={styles.userColumn}>
         {quoteDisplay ? <BotGroupQuote display={quoteDisplay} align="right" onPress={onLocateQuote} /> : null}
-        {renderAttachments('right')}
-        {bubble ? <View style={[
-          styles.userBubble,
-          compact && styles.userBubbleCompact,
-          userBubbleColors && { backgroundColor: userBubbleColors.background, borderColor: userBubbleColors.border },
-        ]} testID="botGroup.message.userBubble" onLayout={event => setBubbleLeft(event.nativeEvent.layout.x)}>
-          {renderContent(<BotGroupUserText content={content} mentionLabels={mentionLabels} />)}
-        </View> : null}
+        <View style={styles.userMessageFrame}>{renderContent(<View style={styles.userMessageContent}>
+          {renderAttachments('right')}
+          {bubble ? <View style={[
+            styles.userBubble,
+            compact && styles.userBubbleCompact,
+            userBubbleColors && { backgroundColor: userBubbleColors.background, borderColor: userBubbleColors.border },
+          ]} testID="botGroup.message.userBubble" onLayout={event => setBubbleLeft(event.nativeEvent.layout.x)}>
+            <BotGroupUserText content={content} mentionLabels={mentionLabels} />
+          </View> : null}
+        </View>)}</View>
         <View style={styles.userFooter}>
           <View style={[styles.footerSpacer, { width: bubble ? bubbleLeft : 0 }]} />
           <View style={styles.footerContent}>{shareFooter}{footer}</View>
@@ -962,9 +963,11 @@ function BotGroupTimelineItem({
               the computer the group was opened through. */}
           {message.task ? <BotGroupTaskCard task={message.task} owned={member !== undefined && member.isOwned !== false}
             deviceId={member?.homeDeviceId || deviceId || ''} /> : null}
-          {renderAttachments('left')}
-          {message.threadShare && !authoredShare ? renderContent(<BotGroupThreadShare onRetry={onRetrySource} share={message.threadShare} resolveMedia={resolveMedia} resolveServerMedia={resolveServerMedia} />)
-            : content.trim() ? renderContent(<BotGroupMarkdownText content={content} authorKind={message.authorKind} />) : null}
+          {renderContent(<View style={styles.botMessageContent}>
+            {renderAttachments('left')}
+            {message.threadShare && !authoredShare ? <BotGroupThreadShare onRetry={onRetrySource} share={message.threadShare} resolveMedia={resolveMedia} resolveServerMedia={resolveServerMedia} />
+              : content.trim() ? <BotGroupMarkdownText content={content} authorKind={message.authorKind} /> : null}
+          </View>)}
           <BotGroupHandoffFiles files={message.files} />
           {shareFooter}
           {footer}
@@ -1013,6 +1016,9 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   userRow: { flexDirection: 'row', justifyContent: 'flex-end' },
   // Full width so the bubble keeps its 86% cap and attachments their own size limits.
   userColumn: { flex: 1, minWidth: 0, alignItems: 'flex-end', gap: spacing.xs },
+  userMessageFrame: { alignSelf: 'stretch' },
+  userMessageContent: { width: '100%', alignItems: 'flex-end', gap: spacing.xs },
+  botMessageContent: { gap: spacing.xs },
   // Give the summary its natural width first; only the alignment spacer shrinks
   // when a short bubble leaves too little room to its right.
   userFooter: { alignSelf: 'stretch', flexDirection: 'row' },

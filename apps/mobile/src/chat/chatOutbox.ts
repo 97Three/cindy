@@ -110,6 +110,12 @@ export function createChatOutboxDelivery(deps: {
             ?? row.chat!.afterServerSequence;
           const [page, self, actors] = await Promise.all([client.load(room, oldest, row.chat!.input.threadRootId), client.me(), client.actors().catch(() => [])]);
           guard();
+          const sharedId = row.chat!.shareToMain?.state === 'sent' ? row.chat!.shareToMain.messageId : undefined;
+          if (sharedId && !page.snapshot.messages.some(message => message.id === sharedId)) {
+            const shared = await client.message(room, sharedId);
+            guard();
+            page.snapshot = { ...page.snapshot, messages: [...page.snapshot.messages, shared] };
+          }
           if (await cacheChatMessages(room, { version: 1, page, self, actors })) {
             guard(); await settleChatOutbox(store, room, new Set(page.messages.map(message => message.id)),
               new Set(Object.entries(chatThreadMetadata(page, self).shares).filter(([, share]) => share.bySelf).map(([replyId]) => replyId)));

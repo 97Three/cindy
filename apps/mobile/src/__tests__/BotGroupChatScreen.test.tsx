@@ -1651,6 +1651,21 @@ describe('mobile group threads', () => {
     expect(h.push).toHaveBeenLastCalledWith({ pathname: '/companions/groups/[groupId]', params: { groupId: 'g1', threadRootId: rootId } });
   });
 
+  // #7847 review, unit: mixed messages left attachments outside the native menu.
+  // Dispatch from the actual attachment, then verify the existing thread action.
+  it.each(['user', 'bot'] as const)('opens the same message menu from a %s attachment beside text', async authorKind => {
+    h.chat.server = true;
+    await render(threadGroup({ messages: [message(rootId, 1, { authorKind, isSelf: authorKind === 'user', content: 'See attachment',
+      attachments: [{ id: 'media', name: 'brief.pdf', category: 'pdf', mimeType: 'application/pdf', size: 9, url: null, path: null }],
+    })] }), 'ready', undefined, '');
+    const attachment = byId('attachment.file')!;
+    expect(attachment).not.toBeNull();
+    await act(async () => attachment.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true })));
+    await click(`botGroup.thread.context.${rootId}.action.thread`);
+    expect(h.push).toHaveBeenLastCalledWith({ pathname: '/companions/groups/[groupId]', params: { groupId: 'g1', threadRootId: rootId } });
+    expect(all(`botGroup.thread.context.${rootId}`)).toHaveLength(1);
+  });
+
   // Unit regression: thread routing must not turn my plain-text message into a
   // teammate row, and posting my reply to main must not duplicate its author.
   it('keeps my thread root and reply in normal user bubbles, preserving raw text and incoming authors', async () => {
@@ -1695,6 +1710,25 @@ describe('mobile group threads', () => {
       if (threadShare.status === 'unavailable') expect(node.textContent).not.toContain('**My reply**');
       else expect(node.textContent).toContain('Other');
     }
+  });
+
+  // #7847 review, unit: the loading-source retry rendered a missing translation key.
+  // Check the actual button's label against every bundled locale, then activate it.
+  it('localizes the unresolved source retry and reloads the group', async () => {
+    const { i18n, SUPPORTED_LOCALES } = await import('@/i18n');
+    h.chat.server = true;
+    await render(threadGroup({ messages: [message('posted-loading', 2, { threadShare: {
+      messageId: 'source', threadRootId: rootId, status: 'loading', authorKind: 'user', authorBotId: null,
+      authorName: '', sharedByAuthor: false, content: '', attachments: [], createdAt: null, edited: false,
+    } })] }), 'ready', undefined, '');
+    const retry = byId('botGroup.thread.share')!.querySelector('button')!;
+    expect(retry).not.toBeNull();
+    for (const lng of SUPPORTED_LOCALES) {
+      expect(i18n.getResource(lng, 'common', retry.textContent!)).toBeTruthy();
+      expect(i18n.getFixedT(lng)(retry.textContent!)).not.toBe(retry.textContent);
+    }
+    await act(async () => retry.click());
+    expect(h.chat.reload).toHaveBeenCalled();
   });
 
   it('opens a direct thread independently of quote reply; unknown summaries do not invent counts', async () => {

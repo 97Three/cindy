@@ -60,7 +60,7 @@ export function BotGroupThreadShare({ share, resolveMedia, resolveServerMedia, o
   const { t } = useTranslation(); const styles = useThemedStyles(makeStyles); const { colors } = useTheme();
   return <View style={styles.share} testID="botGroup.thread.share">
     {share.status === 'available' ? <Text style={styles.note}>{t(share.sharedByAuthor ? 'groupChat.thread.sharedOwn' : 'groupChat.thread.sharedOther', { name: share.authorName })}</Text> : null}
-    {share.status === 'loading' ? <View style={styles.entry}><ActivityIndicator color={colors.textSecondary} /><Text style={styles.note}>{t('groupChat.thread.sourceLoading')}</Text>{onRetry ? <MainWindowActionButton density="compact" action={{ label: t('groupChat.thread.retry'), onPress: onRetry }} /> : null}</View>
+    {share.status === 'loading' ? <View style={styles.entry}><ActivityIndicator color={colors.textSecondary} /><Text style={styles.note}>{t('groupChat.thread.sourceLoading')}</Text>{onRetry ? <MainWindowActionButton density="compact" action={{ label: t('groupChat.settings.retry'), onPress: onRetry }} /> : null}</View>
       : share.status === 'unavailable' ? <Text style={styles.note}>{t('groupChat.thread.sourceUnavailable')}</Text>
       : <>
         <Text style={styles.count}>{share.authorName}{share.edited ? ` · ${t('groupChat.thread.edited')}` : ''}</Text>

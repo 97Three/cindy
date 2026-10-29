@@ -637,6 +637,26 @@ it('persists a self-directed share body before posting and retries identical byt
   expect(bodies[0]).toMatchObject({ operationId: `thread-share:${id(21)}`, mentions: [id(11)], content: [{ data: { messageId: id(21), threadRootId: id(20) } }] });
 });
 
+// #7847 review, unit: an old share can be the only visible reference to its thread.
+// Earlier hydration tests kept a recent reply in the snapshot and missed this case.
+it('hydrates the root and latest replies for an old share outside the snapshot', async () => {
+  const root = { ...message(20), replyCount: 17 };
+  const source = { ...message(21), threadRootId: root.id };
+  const latest = { ...message(29), threadRootId: root.id, createdAt: '2026-10-29T12:00:00Z' };
+  const share = { ...message(30), content: [{ type: 'card', namespace: 'cindy.thread-share', schemaRevision: 1,
+    data: { messageId: source.id, threadRootId: root.id }, fallback: '' }] };
+  const request = vi.fn(async (path: string) => {
+    if (path.endsWith(`/messages/${root.id}`)) return root;
+    if (path.endsWith(`/messages/${source.id}`)) return source;
+    if (path.includes(`threadRootId=${root.id}`)) return [latest, source];
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const page = { snapshot: { ...snapshot(), messages: Array.from({ length: 100 }, (_, i) => message(100 + i)) }, messages: [share], before: null };
+  const view = chatGroupView(await createChatServerClient(request as any).hydrateThreads(id(1), page), id(11));
+  expect(view.messages[0].threadShare).toMatchObject({ status: 'available', replyCount: 17,
+    threadPreview: { replies: [{ id: source.id }, { id: latest.id, createdAt: Date.parse(latest.createdAt) }] } });
+});
+
 it('resolves an off-window root and retries a failed source on its bounded deadline without leaking fallback', async () => {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-28T00:00:00Z'));
   try {
