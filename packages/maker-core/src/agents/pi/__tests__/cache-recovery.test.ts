@@ -23,9 +23,16 @@ function fixture(legacy = false) {
   files.set('/agent/pi-cache-compatibility.json', JSON.stringify(rules));
   let writeFails = false;
   const fs = {
+    mkdirSync() {}, rmdirSync() {}, closeSync() {}, readdirSync: () => [],
+    openSync: (name: string) => {
+      if (files.has(name)) throw Object.assign(new Error('exists'), { code: 'EEXIST' });
+      files.set(name, ''); return name;
+    },
+    linkSync: (from: string, to: string) => { files.set(to, files.get(from)!); },
+    lstatSync: (name: string) => fs.statSync(name),
     statSync: (name: string) => {
       if (!files.has(name)) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
-      return { size: Buffer.byteLength(files.get(name)!), mtimeMs: 1000 };
+      return { size: Buffer.byteLength(files.get(name)!), mtimeMs: 1000, dev: 1, ino: 1, isFile: () => true };
     },
     readFileSync: (name: string) => { fs.statSync(name); return files.get(name); },
     writeFileSync: (name: string, text: string) => { if (writeFails) throw new Error('read-only'); files.set(name, text); },
@@ -34,10 +41,11 @@ function fixture(legacy = false) {
   };
   const api = runInNewContext(PI_CACHE_RECOVERY_SOURCE + '\ninstallCindyCacheRecovery(pi)', {
     pi: { on: (name: string, fn: (...args: any[]) => void) => handlers.set(name, fn) },
-    process: { env: { PI_CODING_AGENT_DIR: '/agent', CINDY_PI_CACHE_COMPAT_FILE: '/compat.json' } },
+    process: { pid: 123, uptime: () => 1, kill() {}, env: { PI_CODING_AGENT_DIR: '/agent', CINDY_PI_CACHE_COMPAT_FILE: '/compat.json' } },
     // The in-memory filesystem uses POSIX keys on every host, including Windows.
     ...fs, path: path.posix, createHash, randomUUID, Buffer, setTimeout, clearTimeout, Date: { now: () => now }, homedir: () => '/home/fixture',
   });
+  if (!legacy) api.ownRegistry(modernRegistry);
   const startUser = (direct = true, followUp = false) => {
     if (direct) handlers.get('before_agent_start')?.({});
     handlers.get('message_start')?.({ message: { role: 'user', content: [{ type: 'text', text: 'OK' }] } }, {
@@ -98,7 +106,8 @@ describe('Pi native cache recovery', () => {
     const recovered = restarted.handlers.get('before_provider_request')!;
     expect(await recovered({ payload }, ctx)).not.toHaveProperty('prompt_cache_key');
     expect(await recovered({ payload }, { ...ctx, model: { ...selected, baseUrl: selected.baseUrl + '/other' } })).toBeUndefined();
-    expect(await recovered({ payload }, { ...ctx, modelRegistry: { ...ctx.modelRegistry, getRegisteredNativeProvider: vi.fn() } })).toBeUndefined();
+    restarted.api.ownRegistry(modernRegistry);
+    expect(await recovered({ payload }, { ...ctx, modelRegistry: modernRegistry })).toBeUndefined();
     restarted.clock(1086400001);
     // Expiry cannot change a tool continuation in the already-started input.
     restarted.handlers.get('tool_execution_start')!();

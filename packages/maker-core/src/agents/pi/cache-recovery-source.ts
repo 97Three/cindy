@@ -3,8 +3,8 @@ export const PI_CACHE_RECOVERY_SOURCE = String.raw`
 function installCindyCacheRecovery(pi) {
   const supported = (api) => api === 'openai-completions' || api === 'openai-responses';
   const fields = ['prompt_cache_key', 'prompt_cache_retention'];
-  const nativeRegistry = ctx => typeof ctx?.modelRegistry?.getProvider === 'function'
-    && typeof ctx.modelRegistry.getRegisteredNativeProvider === 'function';
+  const ownedRegistries = new WeakSet();
+  const nativeRegistry = ctx => ownedRegistries.has(ctx?.modelRegistry);
   const day = 24 * 60 * 60 * 1000;
   const home = process.env.CINDY_PI_CACHE_COMPAT_FILE;
   const file = home && home.replace(/^\$HOME(?=\/)/, () => homedir());
@@ -60,18 +60,112 @@ function installCindyCacheRecovery(pi) {
       && ['explicit', 'opaque'].includes(record.evidence)
       && record.expiresAt <= record.learnedAt + (record.evidence === 'explicit' ? 7 : 1) * day && record.expiresAt > now;
   }
-  function remember(key, evidence, startedAt) {
-    const record = { supportsLongCacheRetention: false, evidence, learnedAt: startedAt,
-      expiresAt: startedAt + (evidence === 'explicit' ? 7 : 1) * day };
-    if ((memory[key]?.learnedAt ?? 0) > startedAt) return;
-    memory[key] = record;
-    if (!file) return record;
+  // Participate in Desktop's ordinary advisory protocol, not its security lock.
+  // Only acquisition waits; the held read/merge/rename/release has no await.
+  function lockSnapshot(name) {
+    try {
+      const info = lstatSync(name);
+      if (!info.isFile() || info.size > 4096) return;
+      const text = readFileSync(name, 'utf8');
+      let record;
+      try { record = JSON.parse(text); } catch {}
+      return { info, text, record };
+    } catch { return; }
+  }
+  function dead(pid) {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    try { process.kill(pid, 0); return false; } catch (error) { return error?.code === 'ESRCH'; }
+  }
+  function stale(snapshot) {
+    return snapshot && Date.now() - snapshot.info.mtimeMs > 10000
+      && (!Number.isInteger(snapshot.record?.pid) || snapshot.record.pid <= 0 || dead(snapshot.record.pid));
+  }
+  function sameLock(left, right) {
+    return left && right && ['dev', 'ino', 'size', 'mtimeMs'].every(key => left.info[key] === right.info[key])
+      && left.text === right.text;
+  }
+  function gateBusy(lock, ownGate) {
+    // Legacy gates are still observed by released Desktop versions.
+    try {
+      lstatSync(lock + '.reclaim');
+      if (!stale(lockSnapshot(lock + '.reclaim'))) return true;
+    } catch (error) { if (error?.code !== 'ENOENT') return true; }
+    let entries;
+    try { entries = readdirSync(lock + '.reclaim.d'); }
+    catch (error) { return error?.code !== 'ENOENT'; }
+    const active = [];
+    for (const entry of entries) {
+      if (!entry.startsWith('gate-') || !entry.endsWith('.json')) continue;
+      const name = path.join(lock + '.reclaim.d', entry);
+      const snapshot = lockSnapshot(name);
+      if (!snapshot) return true;
+      const record = snapshot.record;
+      if (record?.state === 'released') continue;
+      if (stale(snapshot)) {
+        const pid = Number(/^gate-(\d+)-/.exec(entry)?.[1]);
+        if (record?.pid || dead(pid)) continue;
+      }
+      if (!Number.isFinite(record?.startedAt) || typeof record?.nonce !== 'string') return true;
+      active.push({ name, record });
+    }
+    active.sort((a, b) => a.record.startedAt - b.record.startedAt || a.record.nonce.localeCompare(b.record.nonce)
+      || a.name.localeCompare(b.name));
+    return active.length > 0 && active[0].name !== ownGate;
+  }
+  function reclaim(lock) {
+    const candidate = lockSnapshot(lock);
+    if (!stale(candidate)) return;
+    const nonce = randomUUID();
+    const directory = lock + '.reclaim.d';
+    mkdirSync(directory, { recursive: true });
+    const gate = path.join(directory, 'gate-' + process.pid + '-' + nonce + '.json');
+    const record = { pid: process.pid, startedAt: Date.now(), nonce, state: 'held',
+      processStartIdentity: 'start-ms:' + Math.round(Date.now() - process.uptime() * 1000) };
+    writeFileSync(gate, JSON.stringify(record), { flag: 'wx', mode: 0o600 });
+    const isolated = lock + '.stale-' + nonce;
+    try {
+      if (gateBusy(lock, gate) || !sameLock(lockSnapshot(lock), candidate)) return;
+      renameSync(lock, isolated);
+      if (sameLock(lockSnapshot(isolated), candidate)) rmSync(isolated);
+      else { try { linkSync(isolated, lock); rmSync(isolated); } catch {} }
+    } finally {
+      // Unique nonce names are never reused; a failed cleanup is recoverable
+      // after process exit, and cannot remove a different owner's gate.
+      try { rmSync(gate); } catch {}
+      try { rmdirSync(directory); } catch {}
+    }
+  }
+  async function persist(key, record) {
+    if (!file) return;
+    const lock = file + '.lock';
+    const nonce = randomUUID();
+    const deadline = Date.now() + 1000;
+    let held = false;
     let temporary;
     try {
+      mkdirSync(path.dirname(file), { recursive: true });
+      do {
+        try {
+          if (!gateBusy(lock)) {
+            const fd = openSync(lock, 'wx', 0o600);
+            held = true;
+            try { writeFileSync(fd, JSON.stringify({ pid: process.pid, startedAt: Date.now(), nonce })); }
+            catch (error) { rmSync(lock); held = false; throw error; }
+            finally { closeSync(fd); }
+            if (!gateBusy(lock)) break;
+            rmSync(lock); held = false;
+          }
+        } catch (error) {
+          if (!['EEXIST', 'EBUSY', 'EPERM', 'EACCES'].includes(error?.code)) throw error;
+          reclaim(lock);
+        }
+        if (Date.now() >= deadline) return;
+        await new Promise(resolve => setTimeout(resolve, 40));
+      } while (true);
       const current = load();
-      if (!current || (current.routes[key]?.learnedAt ?? 0) > startedAt) return;
+      if (!current || (current.routes[key]?.learnedAt ?? 0) > record.learnedAt) return;
       for (const [otherKey, otherRecord] of Object.entries(current.routes)) {
-        if (Number.isFinite(otherRecord?.expiresAt) && otherRecord.expiresAt <= startedAt) delete current.routes[otherKey];
+        if (Number.isFinite(otherRecord?.expiresAt) && otherRecord.expiresAt <= record.learnedAt) delete current.routes[otherKey];
       }
       current.routes[key] = record;
       const data = JSON.stringify(current);
@@ -79,9 +173,21 @@ function installCindyCacheRecovery(pi) {
       temporary = file + '.' + randomUUID() + '.tmp';
       writeFileSync(temporary, data, { mode: 0o600, flag: 'wx' });
       renameSync(temporary, file);
-      delete memory[key];
+      if (memory[key] === record) delete memory[key];
     } catch { /* Storage failure must never undo a successful response. */ }
-    finally { if (temporary) { try { rmSync(temporary, { force: true }); } catch {} } }
+    finally {
+      if (temporary) { try { rmSync(temporary, { force: true }); } catch {} }
+      if (held) {
+        try { if (lockSnapshot(lock)?.record?.nonce === nonce) rmSync(lock); } catch {}
+      }
+    }
+  }
+  function remember(key, evidence, startedAt) {
+    const record = { supportsLongCacheRetention: false, evidence, learnedAt: startedAt,
+      expiresAt: startedAt + (evidence === 'explicit' ? 7 : 1) * day };
+    if ((memory[key]?.learnedAt ?? 0) > startedAt) return;
+    memory[key] = record;
+    void persist(key, record);
     return record;
   }
   function withoutCache(payload) {
@@ -188,6 +294,7 @@ function installCindyCacheRecovery(pi) {
     // Pi represents both steer and followUp as user messages. Snapshot now,
     // but decide ownership only after the supervisor sees the public event.
     invalidate();
+    for (const [key, record] of Object.entries(memory)) void persist(key, record);
     const inputRules = readRules();
     const records = load()?.routes ?? Object.create(null);
     for (const [key, record] of Object.entries(memory)) {
@@ -255,6 +362,7 @@ function installCindyCacheRecovery(pi) {
   });
   return {
     refreshRules,
+    ownRegistry: registry => ownedRegistries.add(registry),
     accepts: model => Boolean(route(model)),
     wrap(model, options, invoke, provider = model.provider) {
       return (async function* () {

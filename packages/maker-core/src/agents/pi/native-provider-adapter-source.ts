@@ -94,7 +94,8 @@ async function registerCindyNativeProviderAdapters(pi: any, cacheRecovery?: any)
     if (Array.isArray(initial)) aliases = initial;
   } catch { /* A malformed startup hint cannot affect other Pi extensions. */ }
   const registered = new Set<string>();
-  const cacheRegistrations = new Map<string, { original: any; installed: any }>();
+  let cacheRuntime: any;
+  let wrappedPrepare: any;
   let apis: { lazyStream: any; envApiKeyAuth: any; getApiProvider: any } | undefined;
   async function loadApis() {
     if (!apis) {
@@ -109,20 +110,7 @@ async function registerCindyNativeProviderAdapters(pi: any, cacheRecovery?: any)
   function registerAliases(models: any[], currentAliases: CindyAdapterAlias[], ctx: any) {
     if (!apis) throw new Error('Native provider adapter is unavailable');
     const { lazyStream, envApiKeyAuth, getApiProvider } = apis;
-    const preserved = new Map<string, any>();
-    const automatic = cacheRecovery ? [...new Set(models.filter((model: any) => cacheRecovery.accepts(model)).map((model: any) => model.provider))]
-      .filter(id => !currentAliases.some(alias => alias.id === id))
-      .flatMap(id => {
-        if (typeof ctx.modelRegistry.getRegisteredNativeProvider !== 'function') return [];
-        const original = ctx.modelRegistry.getProvider?.(id);
-        // Older runtimes without this API keep their original provider intact.
-        if (!original || typeof original.stream !== 'function' || typeof original.streamSimple !== 'function') return [];
-        preserved.set(id, original);
-        return [{ id, name: original.name ?? id, provider: id }];
-      }) : [];
-    for (const alias of [...currentAliases, ...automatic]) {
-      const original = preserved.get(alias.id);
-      const nativeOriginal = original ? ctx.modelRegistry.getRegisteredNativeProvider(alias.id) : undefined;
+    for (const alias of currentAliases) {
       const providerModels = models.filter((model: any) => model.provider === alias.id
         && (!alias.models || alias.models.some(allowed => allowed.id === model.id)));
       if (providerModels.length === 0 && !alias.models) continue;
@@ -137,7 +125,7 @@ async function registerCindyNativeProviderAdapters(pi: any, cacheRecovery?: any)
           });
           if (!response.ok || (await response.json()).allowed !== true) throw new Error('The model is not authorized for this remote task');
         }
-        const api = original ?? getApiProvider(model.api);
+        const api = getApiProvider(model.api);
         if (!api) throw new Error('The selected native provider API is unavailable');
         const nativeModel = { ...model, provider: alias.provider };
         const nativeContext = { ...context, messages: context.messages.map((message: any) =>
@@ -172,17 +160,45 @@ async function registerCindyNativeProviderAdapters(pi: any, cacheRecovery?: any)
           };
         })();
       });
-      pi.registerProvider({ ...original, id: alias.id, name: alias.name,
+      pi.registerProvider({ id: alias.id, name: alias.name,
         // Pi's native Provider contract requires auth even when Cindy's proxy handles OAuth.
-        auth: original?.auth ?? (alias.keyEnv ? { apiKey: envApiKeyAuth('API key', [alias.keyEnv]) } : {}),
-        getModels: original ? () => original.getModels() : () => providerModels,
+        auth: alias.keyEnv ? { apiKey: envApiKeyAuth('API key', [alias.keyEnv]) } : {},
+        getModels: () => providerModels,
         stream: (model: any, context: any, options: any) => stream(model, context, options, false),
         streamSimple: (model: any, context: any, options: any) => stream(model, context, options, true),
       });
-      if (original) cacheRegistrations.set(alias.id, { original: nativeOriginal,
-        installed: ctx.modelRegistry.getRegisteredNativeProvider(alias.id) });
       registered.add(alias.id);
     }
+  }
+  function installCacheRequests(ctx: any) {
+    // Pi 1.x exposes a registry facade, while its own requests use this runtime.
+    // Wrap only the prepared request: registering a composed Provider would
+    // erase config registrations and their request-time model headers.
+    const registry = ctx.modelRegistry;
+    const runtime = registry?.runtime;
+    if (!cacheRecovery || typeof runtime?.prepareRequest !== 'function'
+      || typeof registry.getProvider !== 'function' || typeof registry.getRegisteredNativeProvider !== 'function') return;
+    if (cacheRuntime === runtime && runtime.prepareRequest === wrappedPrepare) return;
+    const prepare = runtime.prepareRequest;
+    wrappedPrepare = async function(this: any, ...args: any[]) {
+      const prepared = await prepare.apply(this, args);
+      if (!cacheRecovery.accepts(prepared.model)
+        || aliases.some(alias => alias.id === prepared.model.provider)) return prepared;
+      const original = prepared.provider;
+      if (typeof original?.stream !== 'function' || typeof original.streamSimple !== 'function') return prepared;
+      const provider = new Proxy({}, { get(_target, property) {
+        if (property === 'stream' || property === 'streamSimple') {
+          return (model: any, context: any, options: any) => apis!.lazyStream(model, async () =>
+            cacheRecovery.wrap(model, options, (next: any) => original[property].call(original, model, context, next), original.id));
+        }
+        const value = Reflect.get(original, property, original);
+        return typeof value === 'function' ? value.bind(original) : value;
+      } });
+      return { ...prepared, provider };
+    };
+    runtime.prepareRequest = wrappedPrepare;
+    cacheRuntime = runtime;
+    cacheRecovery.ownRegistry(registry);
   }
   if (aliases.length) await loadApis();
   pi.on('session_start', async (_event: any, ctx: any) => {
@@ -190,6 +206,7 @@ async function registerCindyNativeProviderAdapters(pi: any, cacheRecovery?: any)
     if (aliases.length || cacheRecovery && models.some((model: any) => cacheRecovery.accepts(model))) {
       if (!apis) await loadApis();
       registerAliases(models, aliases, ctx);
+      installCacheRequests(ctx);
     }
   });
   return {
@@ -207,18 +224,8 @@ async function registerCindyNativeProviderAdapters(pi: any, cacheRecovery?: any)
         process.env[name] = value;
         secretEnvNames.add(name);
       }
-      for (const id of registered) {
-        const registration = cacheRegistrations.get(id);
-        if (!registration) pi.unregisterProvider(id);
-        else if (ctx.modelRegistry.getRegisteredNativeProvider(id) === registration.installed) {
-          // Unregister restores built-ins, not a prior extension registration.
-          // Restore that registration only while this wrapper still owns it.
-          if (registration.original) pi.registerProvider(registration.original);
-          else pi.unregisterProvider(id);
-        }
-      }
+      for (const id of registered) pi.unregisterProvider(id);
       registered.clear();
-      cacheRegistrations.clear();
       const result = await ctx.modelRegistry.refresh({ allowNetwork: false });
       if (result?.aborted || result?.errors?.size) throw new Error('Native provider catalog refresh failed');
       aliases = snapshot.aliases;
@@ -231,6 +238,7 @@ async function registerCindyNativeProviderAdapters(pi: any, cacheRecovery?: any)
       // public refresh so the receipt reflects the final provider snapshot.
       const final = await ctx.modelRegistry.refresh({ allowNetwork: false });
       if (final?.aborted || final?.errors?.size) throw new Error('Native provider adapter refresh failed');
+      installCacheRequests(ctx);
     },
   };
 }

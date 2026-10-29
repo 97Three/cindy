@@ -4,12 +4,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { CINDY_BRIDGE_EXTENSION_SOURCE } from '../cindy-bridge-source.js';
 import { nativeProviderAdapterAliases, PI_NATIVE_PROVIDER_ADAPTER_SOURCE } from '../native-provider-adapter-source.js';
 
-type RegisteredProvider = { id: string; auth: { apiKey?: unknown; oauth?: unknown }; getModels: () => unknown[];
+type RegisteredProvider = { id: string; auth: { apiKey?: unknown; oauth?: unknown }; getModels: () => unknown[]; filterModels?: () => unknown;
   streamSimple(model: unknown, context: unknown, options: unknown): Promise<unknown> | AsyncIterable<unknown> };
 
 type Alias = { id: string; name: string; provider: string; keyEnv?: string; remoteProviderId?: string; models?: Array<{ id: string; grant: string }> };
 
-function loadAdapter(initialAliases: Alias[] = [], network?: { fetch: unknown; stream: unknown; guest?: boolean }) {
+function loadAdapter(initialAliases: Alias[] = [], network?: { fetch: unknown; stream: RegisteredProvider['streamSimple']; guest?: boolean }) {
   const env: Record<string, string> = {
     CINDY_PI_NATIVE_PROVIDER_ADAPTERS: JSON.stringify(initialAliases),
     CINDY_PI_KEY_OLD: 'old-secret',
@@ -34,11 +34,12 @@ function loadAdapter(initialAliases: Alias[] = [], network?: { fetch: unknown; s
   let nextModels = models;
   const ctx = {
     modelRegistry: {
+      runtime: { async prepareRequest(model: any, options: any) { return { model, options, provider: ctx.modelRegistry.getProvider(model.provider) }; } },
       getAll: () => models,
       getRegisteredNativeProvider: (id: string) => providers.get(id),
       getProvider: (id: string) => providers.get(id) ?? ({ id, name: id, auth: { apiKey: 'preserved-auth' },
         getModels: () => models.filter(model => model.provider === id),
-        filterModels: () => [], stream: network?.stream, streamSimple: network?.stream }),
+        filterModels: () => [], stream: network?.stream, streamSimple: network?.stream ?? (async function* () {}) }),
       async refresh(options: { allowNetwork?: boolean }) {
         expect(options).toEqual({ allowNetwork: false });
         actions.push('refresh');
@@ -79,13 +80,14 @@ describe('Cindy native provider refresh bridge', () => {
     h.setModels([{ provider: 'managed', id: 'wire' }, { provider: 'extension-owned', id: 'other' }]);
     await h.ctx.modelRegistry.refresh({ allowNetwork: false });
     const wrap = vi.fn((model, options, invoke) => invoke(options));
-    await h.adapter.registerCindyNativeProviderAdapters(h.pi, { accepts: (model: any) => model.provider === 'managed', wrap });
+    await h.adapter.registerCindyNativeProviderAdapters(h.pi, { accepts: (model: any) => model.provider === 'managed', wrap, ownRegistry: vi.fn() });
     await h.handlers.get('session_start')!({}, h.ctx);
-    expect([...h.providers.keys()]).toEqual(['managed']);
-    expect(h.providers.get('managed')).toMatchObject({ auth: { apiKey: 'preserved-auth' }, filterModels: expect.any(Function) });
+    expect([...h.providers.keys()]).toEqual([]);
     const model = { provider: 'managed', id: 'wire', api: 'openai-responses' };
     const options = { apiKey: 'fixture-key', onPayload: vi.fn() };
-    await h.providers.get('managed')!.streamSimple(model, { messages: [] }, options);
+    const prepared = await h.ctx.modelRegistry.runtime.prepareRequest(model, options);
+    expect(prepared.provider.auth).toEqual({ apiKey: 'preserved-auth' });
+    await prepared.provider.streamSimple(prepared.model, { messages: [] }, prepared.options);
     expect(wrap).toHaveBeenCalledWith(model, options, expect.any(Function), 'managed');
     expect(stream).toHaveBeenCalledWith(model, { messages: [] }, options);
   });
@@ -101,13 +103,13 @@ describe('Cindy native provider refresh bridge', () => {
     const original = provider('original-extension');
     const replacement = provider('newer-extension');
     h.pi.registerProvider(original);
-    const adapter = await h.adapter.registerCindyNativeProviderAdapters(h.pi, { accepts: () => true,
+    const adapter = await h.adapter.registerCindyNativeProviderAdapters(h.pi, { accepts: () => true, ownRegistry: vi.fn(),
       wrap: (_model: unknown, options: unknown, invoke: any) => invoke(options) });
     await h.handlers.get('session_start')!({}, h.ctx);
     if (owner === 'newer') h.pi.registerProvider(replacement);
     if (owner === 'removed') h.pi.unregisterProvider('managed');
     await adapter.refresh({ nonce: 'refresh', env: {}, aliases: [] }, h.ctx, new Set());
-    const current = h.providers.get('managed')!;
+    const current = (await h.ctx.modelRegistry.runtime.prepareRequest({ provider: 'managed', id: 'wire', api: 'openai-responses' }, {})).provider;
     if (owner === 'removed') {
       expect(current.auth).toEqual({ apiKey: 'preserved-auth' });
       expect(original.streamSimple).not.toHaveBeenCalled();
@@ -115,7 +117,8 @@ describe('Cindy native provider refresh bridge', () => {
     }
     const expected = owner === 'newer' ? replacement : original;
     expect(current.auth).toBe(expected.auth);
-    expect(current).toMatchObject({ filterModels: expected.filterModels });
+    current.filterModels!();
+    expect(expected.filterModels).toHaveBeenCalledOnce();
     await current.streamSimple({ provider: 'managed', id: 'wire', api: 'openai-responses' }, { messages: [] }, {});
     expect(expected.streamSimple).toHaveBeenCalledOnce();
     expect(fallbackStream).not.toHaveBeenCalled();
@@ -125,7 +128,7 @@ describe('Cindy native provider refresh bridge', () => {
     h.setModels([{ provider: 'managed', id: 'wire' }]);
     await h.ctx.modelRegistry.refresh({ allowNetwork: false });
     (h.ctx.modelRegistry as any)[missing] = undefined;
-    await h.adapter.registerCindyNativeProviderAdapters(h.pi, { accepts: () => true });
+    await h.adapter.registerCindyNativeProviderAdapters(h.pi, { accepts: () => true, ownRegistry: vi.fn() });
     await h.handlers.get('session_start')!({}, h.ctx);
     expect(h.providers.size).toBe(0);
   });

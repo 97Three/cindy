@@ -116,9 +116,11 @@ describe('writeProviderGroupCooling (real file)', () => {
     const members = Object.fromEntries(Array.from({ length: PROVIDER_GROUP_STORAGE_MEMBER_CAP }, (_, i) => [
       `device:${String(i).padStart(164, 'd')}:${providerId}`, scopes,
     ]));
-    await coolingStore.writeProviderGroupCooling({ [providerId]: members });
+    coolingStore.writeProviderGroupCooling({ [providerId]: members });
     const file = path.join(caseDir, 'provider-group-cooling.json');
-    expect(JSON.parse(fs.readFileSync(file, 'utf8')).cooling[providerId]).toEqual(members);
+    await vi.waitFor(() => {
+      expect(JSON.parse(fs.readFileSync(file, 'utf8')).cooling[providerId]).toEqual(members);
+    });
     expect(fs.statSync(file).size).toBeGreaterThan(1024 * 1024);
     // 新实例没有旧 store 的缓存，直接从实际文件恢复。
     // reset-modules: verify persisted cooldowns survive a fresh store instance.
@@ -133,11 +135,11 @@ describe('writeProviderGroupCooling (real file)', () => {
     const now = Date.now();
     const studioUntil = now + 120_000;
     const miniUntil = now + 60_000;
-    await Promise.all([
-      coolingStore.writeProviderGroupCooling({ anthropic: { 'device:studio:a': { '': studioUntil } } }),
-      coolingStore.writeProviderGroupCooling({ anthropic: { 'device:mini:a': { '': miniUntil } } }),
-    ]);
-    expect(coolingStore.readProviderGroupCooling().anthropic).toEqual({ 'device:studio:a': { '': studioUntil }, 'device:mini:a': { '': miniUntil } });
+    coolingStore.writeProviderGroupCooling({ anthropic: { 'device:studio:a': { '': studioUntil } } });
+    coolingStore.writeProviderGroupCooling({ anthropic: { 'device:mini:a': { '': miniUntil } } });
+    await vi.waitFor(() => {
+      expect(coolingStore.readProviderGroupCooling().anthropic).toEqual({ 'device:studio:a': { '': studioUntil }, 'device:mini:a': { '': miniUntil } });
+    });
   });
 
   it('旧文件的 512 个已过期成员释放容量，新成员冷却写盘并在重启后保留', async () => {
@@ -148,8 +150,10 @@ describe('writeProviderGroupCooling (real file)', () => {
     const current = { anthropic: { 'device:studio:a': { '': now + 120_000 } } };
     fs.writeFileSync(file, JSON.stringify({ cooling: { ...current, openai: expired } }));
     const next = { 'device:new:openai': { '': now + 60_000 } };
-    await coolingStore.writeProviderGroupCooling({ openai: next });
-    expect(JSON.parse(fs.readFileSync(file, 'utf8')).cooling.openai).toEqual(next);
+    coolingStore.writeProviderGroupCooling({ openai: next });
+    await vi.waitFor(() => {
+      expect(JSON.parse(fs.readFileSync(file, 'utf8')).cooling.openai).toEqual(next);
+    });
     // reset-modules: verify persisted cooldowns survive a fresh store instance.
     vi.resetModules();
     const restarted = await import('../coolingStore.js');

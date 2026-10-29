@@ -1,4 +1,9 @@
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { PI_CACHE_RECOVERY_SOURCE } from '../../../../../../packages/maker-core/src/agents/pi/cache-recovery-source.js';
+import { withCrossProcessLock } from '../../device-link/crossProcessLock.js';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -78,5 +83,187 @@ describe('learned cache compatibility', () => {
     expect(await record('a', 'model\n', fix, a)).toBe(false);
     expect(await record('a', 'model', { supportsStore: false }, a)).toBe(false);
     expect(fs.existsSync(file)).toBe(false);
+  });
+});
+
+
+// Real child processes execute the production bridge wrapper. A controlled
+// rename barrier holds one writer after its disk read, reproducing lost updates
+// without relying on scheduler timing; the other writer must observe the lock.
+function cacheProcess(id: string, options: { pause?: boolean; failWrite?: boolean } = {}) {
+  const release = path.join(root.path, 'release-' + id);
+  const script = `
+import * as fs from 'node:fs';
+import path from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { runInNewContext } from 'node:vm';
+import { createInterface } from 'node:readline';
+process.send = value => console.log(JSON.stringify(value));
+const file = ${JSON.stringify(file)}, release = ${JSON.stringify(release)};
+const model = { provider: 'fixture', id: ${JSON.stringify(id)}, api: 'openai-completions', baseUrl: 'http://127.0.0.1/v1' };
+const key = JSON.stringify(['child', model.id, 'c'.repeat(64)]);
+const rule = JSON.stringify([{ ...model, providerId: 'child', routeKey: 'c'.repeat(64) }]);
+const ruleFile = path.join('/fixture', 'pi-cache-compatibility.json');
+const handlers = new Map();
+const registry = { getProvider() {}, getRegisteredNativeProvider() {} };
+let pendingTimers = 0;
+let calls = 0, pause = ${Boolean(options.pause)}, failWrite = ${Boolean(options.failWrite)};
+const api = runInNewContext(${JSON.stringify(PI_CACHE_RECOVERY_SOURCE + '\ninstallCindyCacheRecovery(pi)')}, {
+  ...fs, path, process: { pid: process.pid, uptime: () => process.uptime(), kill: (...a) => process.kill(...a),
+    env: { PI_CODING_AGENT_DIR: '/fixture', CINDY_PI_CACHE_COMPAT_FILE: file } },
+  createHash, randomUUID, Buffer, clearTimeout, Date,
+  setTimeout: (fn, ms) => {
+    pendingTimers++;
+    return setTimeout(() => {
+      pendingTimers--; fn();
+      setImmediate(() => { if (!pendingTimers) process.send({ event: 'persistence-idle' }); });
+    }, ms);
+  }, homedir: () => '/fixture',
+  pi: { on: (event, fn) => handlers.set(event, fn) },
+  statSync: name => name === ruleFile ? { size: rule.length } : fs.statSync(name),
+  readFileSync: (name, ...a) => name === ruleFile ? rule : fs.readFileSync(name, ...a),
+  writeFileSync: (name, ...a) => {
+    if (failWrite && typeof name === 'string' && name.endsWith('.tmp')) throw new Error('fixture write failure');
+    return fs.writeFileSync(name, ...a);
+  },
+  renameSync: (from, to) => {
+    if (to === file && pause) {
+      pause = false; process.send({ event: 'before-rename' });
+      const deadline = Date.now() + 5000;
+      while (!fs.existsSync(release)) {
+        if (Date.now() >= deadline) throw new Error('barrier timed out');
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+      }
+    }
+    return fs.renameSync(from, to);
+  },
+});
+api.ownRegistry?.(registry);
+function start() {
+  handlers.get('before_agent_start')({});
+  handlers.get('message_start')({ message: { role: 'user', content: [{ type: 'text', text: 'OK' }] } }, { modelRegistry: registry });
+}
+async function request() {
+  const sent = [];
+  const invoke = async function* (options) {
+    calls++;
+    const payload = await options.onPayload({ model: model.id, prompt_cache_key: 'cache' }, model);
+    sent.push(payload);
+    if (payload.prompt_cache_key) yield { type: 'error', error: { stopReason: 'error', content: [], errorMessage: '400: {"error":{"message":"opaque refusal","type":"invalid_request_error"}}' } };
+    else yield { type: 'done', message: { stopReason: 'stop', content: [{ type: 'text', text: 'OK' }] } };
+  };
+  const events = [];
+  for await (const event of api.wrap(model, {}, invoke)) events.push(event.type);
+  return { calls, sent, events };
+}
+createInterface({ input: process.stdin }).on('line', async command => {
+  try {
+    if (command === 'start') { start(); process.send({ event: 'success', ...await request() }); }
+    if (command === 'next') { failWrite = false; start(); process.send({ event: 'next', ...await request() }); }
+    if (command === 'stop') { process.stdin.destroy(); }
+  } catch (error) { process.send({ event: 'error', message: String(error) }); process.exitCode = 1; process.stdin.destroy(); }
+});
+process.send({ event: 'ready', key });
+`;
+  const scriptFile = path.join(root.path, 'child-' + id + '.mjs');
+  fs.writeFileSync(scriptFile, script);
+  const child = spawn(process.execPath, [scriptFile], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let stderr = '';
+  child.stderr!.on('data', data => { stderr += data; });
+  const messages: any[] = [];
+  let stdout = '';
+  child.stdout!.on('data', data => {
+    stdout += data;
+    let newline;
+    while ((newline = stdout.indexOf('\n')) >= 0) {
+      messages.push(JSON.parse(stdout.slice(0, newline))); stdout = stdout.slice(newline + 1);
+    }
+  });
+  const send = (command: string) => child.stdin!.write(command + '\n');
+  return {
+    child, release, send,
+    async event(name: string) {
+      await vi.waitFor(() => {
+        expect(child.exitCode, stderr).toBeNull();
+        expect(messages.find(message => message.event === 'error'), stderr).toBeUndefined();
+        expect(messages.some(message => message.event === name), stderr).toBe(true);
+      }, { timeout: 2000 });
+      return messages.find(message => message.event === name);
+    },
+    async stop() {
+      fs.writeFileSync(release, 'release');
+      if (child.exitCode === null) { const exited = once(child, 'exit'); child.kill(); await exited; }
+      fs.rmSync(release, { force: true });
+    },
+  };
+}
+
+describe('native and Desktop cache writers share one lock', () => {
+  it.each(['native', 'desktop'])('merges an overlapping %s writer after a native read', async writer => {
+    const first = cacheProcess('first', { pause: true });
+    const second = writer === 'native' ? cacheProcess('second') : undefined;
+    try {
+      await first.event('ready');
+      if (second) await second.event('ready');
+      first.send('start');
+      await first.event('before-rename');
+      let attempted = false;
+      const open = fsp.open.bind(fsp);
+      const spy = vi.spyOn(fsp, 'open').mockImplementation((...args: Parameters<typeof fsp.open>) => {
+        if (args[0] === file + '.lock') attempted = true;
+        return open(...args);
+      });
+      const other = second
+        ? (second.send('start'), second.event('success'))
+        : record('desktop', 'second', fix, b);
+      if (second) await other;
+      else await vi.waitFor(() => expect(attempted).toBe(true));
+      spy.mockRestore();
+      fs.writeFileSync(first.release, 'release');
+      expect((await first.event('success')).events).toEqual(['done']);
+      await other;
+      await vi.waitFor(() => expect(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')).routes)).toHaveLength(2));
+      const records = JSON.parse(fs.readFileSync(file, 'utf8')).routes;
+      expect(records[JSON.stringify(['child', 'first', 'c'.repeat(64)])]).toMatchObject({ evidence: 'opaque' });
+      expect(records[JSON.stringify(writer === 'native' ? ['child', 'second', 'c'.repeat(64)] : ['desktop', 'second', b])]).toBeDefined();
+    } finally { vi.restoreAllMocks(); await first.stop(); await second?.stop(); }
+  });
+
+  it('returns successful generation while Desktop owns the lock, then merges after release', async () => {
+    const native = cacheProcess('waiting');
+    try {
+      await native.event('ready');
+      await withCrossProcessLock(file + '.lock', { label: 'fixture' }, async status => {
+        expect(status.held).toBe(true);
+        native.send('start');
+        expect((await native.event('success')).events).toEqual(['done']);
+        // Actual Desktop writer queues behind this same lock, as does native.
+        expect(fs.existsSync(file)).toBe(false);
+      });
+      expect(await record('desktop', 'other', fix, b)).toBe(true);
+      await vi.waitFor(() => expect(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')).routes)).toHaveLength(2));
+    } finally { await native.stop(); }
+  });
+
+  it.each(['busy', 'write', 'corrupt'])('keeps success and memory learning after %s persistence failure', async failure => {
+    if (failure === 'busy') fs.writeFileSync(file + '.lock', JSON.stringify({ pid: process.pid, nonce: 'fixture-owner', startedAt: Date.now() }));
+    if (failure === 'corrupt') fs.writeFileSync(file, '{bad-json');
+    const native = cacheProcess('failure', { failWrite: failure === 'write' });
+    try {
+      await native.event('ready');
+      native.send('start');
+      const result = await native.event('success');
+      expect(result.events).toEqual(['done']); expect(result.calls).toBe(2);
+      if (failure === 'corrupt') expect(fs.readFileSync(file, 'utf8')).toBe('{bad-json');
+      // Wait until the bounded lock attempt ends before allowing persistence.
+      if (failure === 'busy') await native.event('persistence-idle');
+      fs.rmSync(file + '.lock', { force: true });
+      if (failure === 'corrupt') fs.rmSync(file);
+      native.send('next');
+      const next = await native.event('next');
+      expect(next.events).toEqual(['done']); expect(next.calls).toBe(3);
+      expect(next.sent).toEqual([{ model: 'failure' }]);
+      await vi.waitFor(() => expect(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')).routes)).toHaveLength(1));
+    } finally { await native.stop(); fs.rmSync(file + '.lock', { force: true }); }
   });
 });

@@ -83,7 +83,7 @@ export const CINDY_BRIDGE_EXTENSION_SOURCE = String.raw`/**
  */
 import {
   closeSync, globSync, lstatSync, openSync, opendirSync, readFileSync, realpathSync,
-  renameSync, rmSync, statSync, writeFileSync,
+  renameSync, rmSync, statSync, writeFileSync, mkdirSync, readdirSync, rmdirSync, linkSync,
 } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
