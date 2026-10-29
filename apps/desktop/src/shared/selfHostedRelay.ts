@@ -70,6 +70,7 @@ export type RelayDeployErrorCode =
   | 'UNSUPPORTED_SYSTEM'
   /** 80 或 443 端口被其他程序占用。 */
   | 'PORT_BUSY'
+  | 'NGINX_FAILED'
   /** 下载运行环境失败(官方源与国内镜像都失败,或校验不符)。 */
   | 'DOWNLOAD_FAILED'
   /** 服务器上已有不属于这台电脑的中转。 */
