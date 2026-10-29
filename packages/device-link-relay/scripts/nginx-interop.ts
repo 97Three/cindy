@@ -80,14 +80,18 @@ async function inside() {
   }
   const websiteMaterial = certificate('website-tls', 'DNS:website.example.test');
   const initialMain =
-    'user nobody nogroup; worker_processes 1; pid /tmp/nginx.pid; error_log /tmp/nginx-error.log; events { worker_connections 128; } http { access_log /tmp/nginx-access.log; include /etc/nginx/conf.d/website.conf; }\n';
+    'user nobody nogroup; worker_processes 1; pid /tmp/nginx.pid; error_log /tmp/nginx-error.log; events { worker_connections 128; } http { access_log /tmp/nginx-access.log; error_page 502 /custom-error; recursive_error_pages on; include /etc/nginx/conf.d/website.conf; }\n';
   const initialSite = `server { listen 80 default_server; server_name website.example.test;
     location / { return 200 "website-home"; }
+    location = /website-offline { return 502; }
+    location = /custom-error { recursive_error_pages off; return 502 "website-custom-error"; }
     location ^~ /.well-known/acme-challenge/ { root /tmp/acme; try_files $uri =404; }
   }
   server { listen 443 ssl default_server; server_name _;
     ssl_certificate /tmp/website-tls/cert.pem; ssl_certificate_key /tmp/website-tls/key.pem;
     location / { return 200 "website-home"; }
+    location = /website-offline { return 502; }
+    location = /custom-error { recursive_error_pages off; return 502 "website-custom-error"; }
   }\n`;
   fs.writeFileSync(main, initialMain);
   fs.writeFileSync(site, initialSite);
@@ -212,7 +216,11 @@ async function inside() {
       publicUrl: 'https://127.0.0.1',
       trustProxyHeaders: true,
     });
+    const master = fs.readFileSync('/tmp/nginx.pid', 'utf8').trim();
+    const oldWorkers = fs.readFileSync(`/proc/${master}/task/${master}/children`, 'utf8').trim().split(/\s+/).filter(Boolean);
     cli('activate');
+    // 首个新 worker 能响应时，旧 worker 可能尚在退出；后续写请求须等旧证书监听停止接收。
+    await retry(async () => oldWorkers.every((pid) => !fs.existsSync(`/proc/${pid}`)), Boolean, 'initial TLS workers replaced');
     await retry(
       () => get('/api/device-link/relay/info'),
       (value) => value.status === 200,
@@ -320,6 +328,9 @@ async function inside() {
     await relay.close();
     relay = undefined;
     assert.equal((await get(signedPath)).status, 502);
+    const websiteError = await get('/website-offline');
+    assert.equal(websiteError.status, 502);
+    assert.equal(websiteError.body.toString(), 'website-custom-error');
     await retry(
       async () => fs.readFileSync('/tmp/nginx-access.log', 'utf8'),
       (value) => value.includes('GET / HTTP/1.1'),

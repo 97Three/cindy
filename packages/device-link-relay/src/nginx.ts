@@ -255,10 +255,18 @@ function location(port: number, tls: boolean): string {
     proxy_request_buffering off;
     proxy_cache off;
     proxy_intercept_errors off;
+    error_page 502 =502 @cindy_relay_unavailable;
+    recursive_error_pages off;
     client_max_body_size 0;
     auth_basic off;
     access_log off;
     error_log /dev/null;
+}
+location @cindy_relay_unavailable {
+    access_log off;
+    error_log /dev/null;
+    recursive_error_pages off;
+    return 502;
 }`;
 }
 
