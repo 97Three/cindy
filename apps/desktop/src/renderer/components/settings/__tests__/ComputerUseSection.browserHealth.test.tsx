@@ -526,14 +526,21 @@ describe('ComputerUseSection browser backend health loading', () => {
   // and the guidance moves on to step 2 as soon as the host reports the extension as the gap.
   it('installs the My browser plugin from settings and moves on to the extension step', async () => {
     const detail = {
-      pluginId: 'my-browser',
+      pluginId: 'market-opaque-id',
       releaseId: 'release-1',
       manifest: { id: 'my-browser' },
       installState: 'not-installed',
     };
+    // Market ids are opaque: the plugin has to be found by the ghost id it installs as.
+    const snapshot = vi.fn().mockResolvedValue({
+      items: [
+        { pluginId: 'other-id', ghostId: 'other-plugin' },
+        { pluginId: 'market-opaque-id', ghostId: 'my-browser' },
+      ],
+    });
     const marketDetail = vi.fn().mockResolvedValue(detail);
     const install = vi.fn().mockResolvedValue({ ghost: { manifest: { name: 'Cindy Chrome' } } });
-    Object.assign(window.electronAPI, { pluginMarket: { detail: marketDetail, install } });
+    Object.assign(window.electronAPI, { pluginMarket: { snapshot, detail: marketDetail, install } });
     api.getBackendState.mockResolvedValue({ active: 'user-browser' });
     api.getBackendHealth
       .mockResolvedValueOnce({ active: 'user-browser', status: 'error', reason: 'plugin-missing', canRecover: false })
@@ -554,7 +561,7 @@ describe('ComputerUseSection browser backend health loading', () => {
     expect(
       await screen.findByText('settings.computerUse.browserBackend.userBrowserSetup.installExtensionTitle'),
     ).toBeTruthy();
-    expect(install).toHaveBeenCalledWith('my-browser', {
+    expect(install).toHaveBeenCalledWith('market-opaque-id', {
       expectedReleaseId: 'release-1',
       expectedManifest: { id: 'my-browser' },
       allowSourceReplacement: false,

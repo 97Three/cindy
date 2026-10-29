@@ -468,10 +468,15 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
   }, []);
   // Step 1 happens right here: install the plugin from the market (Main still shows its usual
   // permission confirmation) or turn it on, then re-check so the guidance moves on to step 2.
-  // Step 2 and anything unexpected open the plugin's own page, which has the extension install entry.
+  // Step 2, an installed version too old to connect, and anything unexpected open the plugin's own
+  // page, which has the update button and the extension install entry.
   const handleSetUpUserBrowser = useCallback(async () => {
     const openPluginPage = () =>
-      navigate(`/plugins?market=${encodeURIComponent(RECOMMENDED_PAGE_CONTROL_PLUGIN_ID)}`);
+      navigate(
+        userBrowserPlugin
+          ? `/plugins?ghost=${encodeURIComponent(installedGhostStoragePart(userBrowserPlugin))}`
+          : '/plugins',
+      );
     if (browserBackendHealth?.reason !== 'plugin-missing' || userBrowserPlugin?.enabled) {
       openPluginPage();
       return;
@@ -485,8 +490,12 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
           ghostInstallApprovalToken(userBrowserPlugin.approval),
         );
       } else {
-        const detail = await window.electronAPI.pluginMarket.detail(RECOMMENDED_PAGE_CONTROL_PLUGIN_ID);
-        if (detail.installState !== 'not-installed') {
+        // Market ids are opaque; the plugin is found by the ghost id it installs as.
+        const item = (await window.electronAPI.pluginMarket.snapshot()).items.find(
+          (entry) => entry.ghostId === RECOMMENDED_PAGE_CONTROL_PLUGIN_ID,
+        );
+        const detail = item ? await window.electronAPI.pluginMarket.detail(item.pluginId) : null;
+        if (detail?.installState !== 'not-installed') {
           openPluginPage();
           return;
         }
@@ -1530,7 +1539,13 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
             health={browserBackendHealth}
             onSelect={(kind) => void handleSelectBackend(kind)}
             onRecover={() => void handleRecoverBrowserBackend()}
-            userBrowserPluginInstalled={userBrowserPlugin !== null}
+            userBrowserPluginState={
+              userBrowserPlugin === null
+                ? 'not-installed'
+                : userBrowserPlugin.enabled
+                  ? 'enabled'
+                  : 'disabled'
+            }
             userBrowserSetupBusy={userBrowserSetupBusy}
             onSetUpUserBrowser={() => void handleSetUpUserBrowser()}
           />

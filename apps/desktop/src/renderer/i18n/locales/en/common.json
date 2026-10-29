@@ -5318,7 +5318,10 @@
           "extensionBody": "Add the Cindy extension in Chrome or Edge; this turns to connected on its own once it is in. Already added? Turn it on in the browser’s extension settings, or reload it.",
           "installPlugin": "Install plugin",
           "enablePlugin": "Turn on",
-          "installExtension": "Add browser extension"
+          "installExtension": "Add browser extension",
+          "updatePluginTitle": "Step 1: Update the Cindy Chrome plugin",
+          "updatePluginBody": "The installed Cindy Chrome plugin is too old for My browser. Update it to the latest version, then follow its prompt to add the extension.",
+          "updatePlugin": "Update"
         }
       },
       "android": {

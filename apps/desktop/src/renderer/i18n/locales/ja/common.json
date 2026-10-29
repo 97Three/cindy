@@ -5286,7 +5286,10 @@
           "extensionBody": "Chrome または Edge に Cindy 拡張機能を追加すると、ここは自動的に「接続済み」になります。追加済みの場合は、ブラウザの拡張機能管理で有効にするか、再読み込みしてください。",
           "installPlugin": "プラグインをインストール",
           "enablePlugin": "有効にする",
-          "installExtension": "ブラウザ拡張機能を追加"
+          "installExtension": "ブラウザ拡張機能を追加",
+          "updatePluginTitle": "ステップ 1：Cindy Chrome プラグインを更新",
+          "updatePluginBody": "インストール済みの Cindy Chrome プラグインは古く、「自分のブラウザ」に対応していません。最新版に更新してから、案内に従って拡張機能を追加してください。",
+          "updatePlugin": "更新する"
         }
       },
       "android": {

@@ -29,13 +29,35 @@ interface BrowserBackendSubsectionProps {
   health: BrowserBackendHealth | null;
   onSelect: (kind: BackendKind) => void;
   onRecover: () => void;
-  /** 推荐的页面控制插件已装在本机(可能未启用);决定第 1 步写「安装」还是「启用」。 */
-  userBrowserPluginInstalled?: boolean;
+  /**
+   * 推荐的页面控制插件在本机的状态,决定第 1 步写「安装」「启用」还是「更新」:
+   * 已启用却仍报缺插件,说明装的版本还不支持「我的浏览器」。
+   */
+  userBrowserPluginState?: 'not-installed' | 'disabled' | 'enabled';
   /** 第 1 步就地安装或启用推荐插件;第 2 步打开插件详情,里面有装浏览器扩展的入口。 */
   onSetUpUserBrowser?: () => void;
   /** 正在就地安装或启用插件。 */
   userBrowserSetupBusy?: boolean;
 }
+
+const SETUP_KEY = 'settings.computerUse.browserBackend.userBrowserSetup';
+const PLUGIN_STEP_KEYS = {
+  'not-installed': {
+    title: `${SETUP_KEY}.installPluginTitle`,
+    body: `${SETUP_KEY}.pluginBody`,
+    action: `${SETUP_KEY}.installPlugin`,
+  },
+  disabled: {
+    title: `${SETUP_KEY}.enablePluginTitle`,
+    body: `${SETUP_KEY}.pluginBody`,
+    action: `${SETUP_KEY}.enablePlugin`,
+  },
+  enabled: {
+    title: `${SETUP_KEY}.updatePluginTitle`,
+    body: `${SETUP_KEY}.updatePluginBody`,
+    action: `${SETUP_KEY}.updatePlugin`,
+  },
+} as const;
 
 function healthReasonKey(reason: BrowserBackendHealthReason | undefined): string {
   switch (reason) {
@@ -64,7 +86,7 @@ export function BrowserBackendSubsection({
   health,
   onSelect,
   onRecover,
-  userBrowserPluginInstalled = false,
+  userBrowserPluginState = 'not-installed',
   onSetUpUserBrowser,
   userBrowserSetupBusy = false,
 }: BrowserBackendSubsectionProps) {
@@ -158,18 +180,18 @@ export function BrowserBackendSubsection({
             )}
             <div className="flex min-w-0 flex-col gap-0.5">
               <span className="font-medium text-[var(--settings-section-title)]">
-                {userBrowserHealth.reason === 'plugin-missing'
-                  ? t(
-                      userBrowserPluginInstalled
-                        ? 'settings.computerUse.browserBackend.userBrowserSetup.enablePluginTitle'
-                        : 'settings.computerUse.browserBackend.userBrowserSetup.installPluginTitle',
-                    )
-                  : t('settings.computerUse.browserBackend.userBrowserSetup.installExtensionTitle')}
+                {t(
+                  userBrowserHealth.reason === 'plugin-missing'
+                    ? PLUGIN_STEP_KEYS[userBrowserPluginState].title
+                    : 'settings.computerUse.browserBackend.userBrowserSetup.installExtensionTitle',
+                )}
               </span>
               <span className="text-[var(--settings-section-desc)]">
-                {userBrowserHealth.reason === 'plugin-missing'
-                  ? t('settings.computerUse.browserBackend.userBrowserSetup.pluginBody')
-                  : t('settings.computerUse.browserBackend.userBrowserSetup.extensionBody')}
+                {t(
+                  userBrowserHealth.reason === 'plugin-missing'
+                    ? PLUGIN_STEP_KEYS[userBrowserPluginState].body
+                    : 'settings.computerUse.browserBackend.userBrowserSetup.extensionBody',
+                )}
               </span>
             </div>
           </div>
@@ -181,13 +203,11 @@ export function BrowserBackendSubsection({
               onClick={onSetUpUserBrowser}
               disabled={pending || userBrowserSetupBusy}
             >
-              {userBrowserHealth.reason === 'plugin-missing'
-                ? t(
-                    userBrowserPluginInstalled
-                      ? 'settings.computerUse.browserBackend.userBrowserSetup.enablePlugin'
-                      : 'settings.computerUse.browserBackend.userBrowserSetup.installPlugin',
-                  )
-                : t('settings.computerUse.browserBackend.userBrowserSetup.installExtension')}
+              {t(
+                userBrowserHealth.reason === 'plugin-missing'
+                  ? PLUGIN_STEP_KEYS[userBrowserPluginState].action
+                  : 'settings.computerUse.browserBackend.userBrowserSetup.installExtension',
+              )}
             </Button>
           ) : null}
         </div>
