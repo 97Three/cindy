@@ -644,7 +644,6 @@ export function ChatThreadPanel({ group, rootId, quoteSources = group.messages, 
             <Button variant="secondary" size="sm" compact disabled={readOnly} loading={[...unposted].some(id => posting.has(id))} onClick={() => void retryUnposted()}>
               {t(key('thread.retryPost'))}</Button>
           </div>}
-          <div className="border-t border-[var(--border-default)]">
             <BotGroupComposer
               mode="thread"
               groupId={group.id}
@@ -668,7 +667,6 @@ export function ChatThreadPanel({ group, rootId, quoteSources = group.messages, 
               onSendSettled={onSendSettled}
               onSent={onSent}
             />
-          </div>
         </>}
   </ThreadPanel>;
 }
