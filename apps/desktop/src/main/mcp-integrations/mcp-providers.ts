@@ -1,3 +1,4 @@
+import { reportTaskDelivery } from '../bot-autonomy/hub.js';
 import { todoForCaller } from '../maker-ipc/botTodoAccess.js';
 import { getDeviceId } from '../authManager.js';
 import { buildHistorySessionDeepLink } from '../deepLink.js';
@@ -10,11 +11,15 @@ import { resolveHelperSurface } from './helperSurface.js';
 import { createProject } from './createProject.js';
 import { createMoveSession } from './moveSession.js';
 import { listProjects, renameProject, removeProject } from './projectManagement.js';
-import { activeOwnerScopeKey, getActiveAppSession, isAppSessionBoundaryPending } from '../appSessionState.js';
+import { activeOwnerScopeKey, getActiveAppSession, isAppSessionBoundaryPending, ownerScopedUserDataPath } from '../appSessionState.js';
+import { botProfileDir } from '../maker-ipc/botProfileFolder.js';
 import type { createBotCapabilityService } from '../maker-ipc/botCapabilityService.js';
-import { routineTools } from '../routines/service.js';
+import { getRoutineEngine, routineTools } from '../routines/service.js';
+import { taskActionRoutineRevision } from '../maker-ipc/taskActionAuthorization.js';
 import { join as pathJoin } from 'node:path';
-import { and, eq, inArray } from 'drizzle-orm';
+import { homedir } from 'node:os';
+import { app } from 'electron';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 
 import {
   createLiziMcpProviders,
@@ -37,6 +42,7 @@ import {
   type ToolResultImageDescription,
 } from './ghost.js';
 import { createGroupHistoryMcpServer } from './groupHistoryMcpServer.js';
+import { compressInlineImage } from './inlineImageCompressor.js';
 import { createTelegramBotMcpServer } from './telegramBotMcpServer.js';
 import { renderHtmlToPdf } from '../doc-tools/htmlPdfRenderer.js';
 import { writeDocsOutput } from '../doc-tools/docsOutputWriter.js';
@@ -67,6 +73,7 @@ import {
   getTaskActionInputState,
   getTaskActionSession,
   confirmTaskAction,
+  captureTaskActionPermissionRequest,
 } from '../maker-ipc/register.js';
 import { createBotProfile } from '../localDb/ipc/bots.js';
 import { submitGithubIssueForSession } from '../github-issue/index.js';
@@ -77,6 +84,7 @@ import {
 } from '../localDb/chatHistoryReader.js';
 import {
   isDbClientNotReadyError,
+  getDbClient,
   tryGetDbClient,
 } from '../localDb/client/current.js';
 import { searchChatHistoryHybrid } from '../localDb/chatHistorySearch.js';
@@ -86,7 +94,6 @@ import {
   saveBotSkillForSession,
 } from '../maker-ipc/botSkillService.js';
 import {
-  canBotContinueWorkbenchTask,
   captureBotCreatedTaskResponsibility,
   runBotWorkbenchTool,
   runBotProjectsTool,
@@ -125,6 +132,7 @@ import { createRemoteSessionsStatusSetter } from './sessionStatusRemote.js';
 import { isCindyLearnSkillEnabled } from '../skillhub/activationPreferences.js';
 import { botLearningTracker } from '../maker-ipc/botLearningTracker.js';
 import { getLearnController } from '../learn-host/index.js';
+import { HELP_KNOWLEDGE } from '../maker-ipc/helpKnowledge.generated.js';
 import { consumeLearnInvocationGrant } from '../learn-host/invocationGrant.js';
 import { createSkillhubAgentTools } from '../skillhub/agentTools.js';
 import { startGrokDeviceLogin, grokDeviceLoginStatus, cancelGrokDeviceLogin } from '../maker-host/grok-device-login-service.js';
@@ -305,12 +313,69 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     },
   }));
 
+  // Share the installer's directory resolver with its reviewed target snapshot.
+  const resolveHookSessionWorkDir = async (sessionId: string) => {
+    try {
+      const { getMaker } = await import('../maker-host/index.js');
+      const meta = await getMaker().getSessionMeta(sessionId);
+      return meta?.workDir?.trim() ? meta.workDir : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
   const authorizeTaskToolCall = createTaskToolCallAuthorizer({
     getDb: () => (isAppSessionBoundaryPending() ? null : tryGetDbClient()),
     isScopeCurrent: (db) => !isAppSessionBoundaryPending() && db === tryGetDbClient(),
     authorizeAction: createDesktopTaskActionAuthorizer({
       input: getTaskActionInputState, getSession: getTaskActionSession, confirm: confirmTaskAction,
-      isEntrustedTask: canBotContinueWorkbenchTask,
+      capturePermissionRequest: captureTaskActionPermissionRequest,
+      getSessionWorkDir: resolveHookSessionWorkDir,
+      getScheduleDefinition: async (id, hookInstallation) => {
+        const schedule = await getScheduler().get(id);
+        if (!schedule) return null;
+        const { name, prompt, persistentSession, useWorktree, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId } = schedule;
+        const preRunWorkingDir = preRunHook?.command?.trim()
+          ? (targetSessionId ? await resolveHookSessionWorkDir(targetSessionId) : undefined) ?? workingDir
+          : undefined;
+        const definition = { id, name, prompt, persistentSession, useWorktree, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId,
+          ...(preRunHook?.command?.trim() ? { preRunWorkingDir: preRunWorkingDir?.trim() ? preRunWorkingDir : homedir() } : {}) };
+        if (!hookInstallation) return definition;
+        let installWorkingDir = hookInstallation.workingDir;
+        if (!installWorkingDir && executionMode !== 'script' && targetSessionId)
+          installWorkingDir = await resolveHookSessionWorkDir(targetSessionId) ?? installWorkingDir;
+        return { ...definition, hookInstallation: { workingDir: installWorkingDir ?? workingDir,
+          fallbackDir: pathJoin(app.getPath('userData'), 'schedule-hooks') } };
+      },
+      captureRoutine: async (botId, id, forExecution) => {
+        const engine = await getRoutineEngine();
+        const routine = (await routineTools.list(botId)).find(row => row.id === id);
+        if (!routine) return undefined;
+        let execution: { targetSessionId: string | null; workingDir: string } | undefined;
+        if (forExecution && routine.preRunHook?.command?.trim()) {
+          // Match ensureBotOwnedLaneSession's read-only lookup. Fresh runs always
+          // create a lane in Home; persistent runs retain their existing meta cwd.
+          const [lane] = routine.sessionMode === 'fresh' ? [] : await getDbClient().drizzle
+            .select({ sessionId: botSessionLinks.sessionId }).from(botSessionLinks)
+            .innerJoin(sessions, eq(sessions.id, botSessionLinks.sessionId))
+            .where(and(eq(botSessionLinks.botId, botId), eq(botSessionLinks.role, 'routine'),
+              eq(botSessionLinks.routeKey, `routine:${id}`), isNull(botSessionLinks.archivedAt),
+              eq(sessions.source, 'bot'), eq(sessions.status, 'active'))).limit(1);
+          execution = { targetSessionId: lane?.sessionId ?? null, workingDir: lane
+            ? await resolveHookSessionWorkDir(lane.sessionId) ?? homedir()
+            : pathJoin(botProfileDir(ownerScopedUserDataPath(), botId), 'workspace') };
+        }
+        return {
+          enabled: routine.enabled, revision: routine.revision, prompt: routine.prompt,
+          builtin: !!routine.builtin, preRunCommand: routine.preRunHook?.command,
+          details: { routine: { id, name: routine.name, prompt: routine.prompt, enabled: routine.enabled,
+            revision: routine.revision, preRunHook: routine.preRunHook }, ...(execution ? { execution } : {}) },
+          assertCurrent() {
+            if (engine.list(botId).find(row => row.id === id)?.revision !== routine.revision)
+              throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
+          },
+        };
+      },
     }),
   });
   // Companion history uses the same account scope as ordinary task history.
@@ -471,6 +536,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     // 注册表取用(静态 import ipc.ts 会与 maker-host 闭环, 见 slackToolBridge
     // 模块头); 未注册 = null, provider isEnabled fail-closed。
     slackHook: {
+      compressInlineImage,
       withAccountDataAccess,
       getBridge: () => getSlackToolBridge(),
       logger: createLogger('mcp/cindy_slack'),
@@ -499,15 +565,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         },
         // 绑定会话(heartbeat)任务安装 hook 时解析会话真实工作目录 —— schedule
         // 行上的 workingDir 为空/过期,落盘与自测必须用会话 meta.workDir。
-        resolveSessionWorkDir: async (sessionId) => {
-          try {
-            const { getMaker } = await import('../maker-host/index.js');
-            const meta = await getMaker().getSessionMeta(sessionId);
-            return meta?.workDir?.trim() ? meta.workDir : undefined;
-          } catch {
-            return undefined;
-          }
-        },
+        resolveSessionWorkDir: resolveHookSessionWorkDir,
         stabilizeCommand: async ({ command, workingDir }) => {
           await assertPreRunHookCommandSyntax(command);
           return stabilizeHookCommand(command, workingDir);
@@ -518,6 +576,8 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
             import('../maker-host/index.js'),
             import('electron'),
           ]);
+          // Recheck after target resolution and lazy imports, before any script write/self-test.
+          await assertTaskActionCurrent();
           // maker 仅 description 生成模式需要;未就绪时传 null,script 模式照常工作,
           // description 模式由生成器报"maker not ready"。
           let maker = null;
@@ -626,6 +686,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     // (LLM 调工具时) registerMakerIpc 早已执行完毕, holder 已 ready。
     xdtHelper: {
       runtimeCapabilities: deps.runtimeCapabilities,
+      productHelpDocs: HELP_KNOWLEDGE,
       // Install / auto-update requests become owner-only Host cards (see agent-app-update/).
       appUpdate: createAgentAppUpdateCallbacks((sessionId, sessionInstanceId) =>
         deps.isCurrentLocalSessionInstance?.(sessionId, sessionInstanceId) === true),
@@ -795,6 +856,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         getSessionRuntime: wrap((service, params) => service.getSessionRuntime(params)),
         setSessionRuntime: wrap((service, params) => service.setSessionRuntime(params)),
       },
+      taskDelivery: { report: reportTaskDelivery },
       setCurrentSessionTitle: async ({ sessionId, title }) => {
         if (!tryGetDbClient()) {
           return { ok: false, errorCode: 'HOST_NOT_READY', message: 'localDb not ready' };
@@ -1023,7 +1085,12 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         },
       },
       botRoutines: {
-        service: routineTools,
+        service: {
+          ...routineTools,
+          save: (botId, input, id) => routineTools.save(botId, input, id,
+            taskActionRoutineRevision(botId, id)),
+          runNow: (botId, id) => routineTools.runNow(botId, id, taskActionRoutineRevision(botId, id)),
+        },
         resolveBotId: async (callerSessionId) => {
           const scope = activeOwnerScopeKey();
           if (!getActiveAppSession().dataOwnerId || isAppSessionBoundaryPending()) {
@@ -1039,7 +1106,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
               eq(botSessionLinks.sessionId, callerSessionId),
               eq(sessions.source, 'bot'),
               // The owner's Bot Chat: the main Chat or one of its private-chat topics.
-              inArray(botSessionLinks.role, ['canonical', 'thread']),
+              inArray(botSessionLinks.role, ['canonical', 'thread', 'routine']),
             ))
             .limit(1);
           if (isAppSessionBoundaryPending() || activeOwnerScopeKey() !== scope) {
@@ -1082,7 +1149,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
               and(
                 eq(botSessionLinks.sessionId, callerSessionId),
                 eq(sessions.source, 'bot'),
-                inArray(botSessionLinks.role, ['canonical', 'thread']),
+                inArray(botSessionLinks.role, ['canonical', 'thread', 'routine']),
               ),
             )
             .limit(1);

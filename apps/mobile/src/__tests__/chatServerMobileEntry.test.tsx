@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   disk: new Map<string, string>(),
   history: new Map<string, string>(),
   foreground: new Set<(state: string) => void>(),
+  put: vi.fn(async (..._args: unknown[]) => {}),
 }));
 vi.mock('@/session/historyDiskStoreExpo', () => ({ createHistoryDiskIO: () => ({
   read: async (key: string) => h.history.get(key) ?? null,
@@ -25,6 +26,7 @@ vi.mock('@/session/mobileDurableOutbox', async () => {
   return { mobileDurableOutbox: createDurableOutbox(storage) };
 });
 vi.mock('expo-crypto', () => ({ randomUUID: () => 'fixture-operation-id' }));
+vi.mock('@/session/mobileAttachmentUpload', () => ({ putMobileAttachmentUploadFromFile: (...args: unknown[]) => h.put(...args) }));
 vi.mock('react-native', () => ({ AppState: { currentState: 'active', addEventListener: (_: string, fn: (state: string) => void) => { h.foreground.add(fn); return { remove: () => h.foreground.delete(fn) }; } } }));
 vi.mock('expo-router', async () => { const { useEffect } = await import('react'); return { useFocusEffect: (fn: any) => useEffect(fn, [fn]) }; });
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ i18n: { language: 'en' } }) }));
@@ -70,14 +72,16 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 beforeEach(async () => {
   setMobileAuthOwner(null); peekChatMessages(id); await clearHistoryDisk();
   await clearRemoteResourceCache(); h.auth.user.id = 'owner';
-  await mobileDurableOutbox.activate(''); h.disk.clear(); setMobileAuthOwner('owner');
+  await mobileDurableOutbox.activate(''); h.disk.clear(); h.history.clear(); setMobileAuthOwner('owner');
   await mobileDurableOutbox.activate(getMobileAuthOwner().accountKey);
   vi.clearAllMocks(); h.foreground.clear(); showChat = false; h.auth.accountGeneration = 1; h.legacy.items = []; h.targets = []; h.legacy.isOnline.mockReturnValue(false);
+  h.put.mockImplementation(async () => {});
   vi.stubGlobal('WebSocket', class { close() {} });
   h.auth.apiFetch.mockImplementation(async (path: string, options: any) => {
     options.assertCurrent();
     if (path.startsWith('/v1/conversations?')) return [room];
     if (path === '/v1/me') return { actor: { id: self, kind: 'human' } };
+    if (path.startsWith('/v1/changes?')) return { head: '1', cursor: '1', changes: [], hasMore: false };
     if (path.endsWith('/members')) return [{ id: self, kind: 'human', state: 'joined', name: 'Me', ownerActorId: self, ownerName: '', role: 'member', avatar: null }];
     if (path.endsWith('/snapshot')) return { room, members: [{ id: self, kind: 'human', state: 'joined', name: 'Me', ownerActorId: self, ownerName: '', role: 'member', avatar: null }], messages: [], cursor: '1' };
     if ((path.endsWith('/executions') || path.includes('/execution-failures?'))) return [];
@@ -172,6 +176,54 @@ it('keeps the account owner label when quoting from a direct phone entry', async
     mentions: [botId], content: [expect.objectContaining({ data: expect.objectContaining({ authorName: 'Companion X (Account B)' }) }), { type: 'text', text: 'Agreed' }],
   }) }));
 });
+it.each(['', 'look at this'])('uploads and sends direct media with all computers offline, text=%s', async text => {
+  const mediaId = '00000000-0000-4000-8000-000000000003';
+  const original = h.auth.apiFetch.getMockImplementation()!;
+  h.auth.apiFetch.mockImplementation(async (path, options) => {
+    if (path.endsWith('/media')) return { id: mediaId, uploadUrl: 'https://upload.example.invalid/signed' };
+    if (path.endsWith('/complete')) return {};
+    return original(path, options);
+  });
+  showChat = true; await render();
+  expect(chat.state).toMatchObject({ kind: 'ready', group: { supportsAttachments: true } });
+  const attachment = await chat.uploadAttachment!({ name: 'photo.jpg', mimeType: 'image/jpeg', size: 42 }, 'file:///photo', { token: 'fixture' });
+  const input = { clientId: 'same-media-send', text, mentions: { all: false, botIds: [] }, attachments: [attachment] };
+  await act(async () => { await send(input); });
+  const posts = h.auth.apiFetch.mock.calls.filter(([path]) => path.endsWith('/messages'));
+  expect(posts).toHaveLength(1);
+  expect(posts[0][1].body).toEqual({ operationId: 'same-media-send', mentions: [],
+    content: [...(text ? [{ type: 'text', text }] : []), { type: 'media', mediaId, caption: 'photo.jpg' }] });
+  expect(h.put).toHaveBeenCalledWith('https://upload.example.invalid/signed', 'file:///photo', 'image/jpeg', {},
+    { signal: undefined, signedHeaders: { 'Content-Type': 'image/jpeg' } });
+  expect(h.link.invoke).not.toHaveBeenCalled(); expect(h.link.openLink).not.toHaveBeenCalled();
+});
+
+it('clears a group when the upload prepare rejects its membership', async () => {
+  const original = h.auth.apiFetch.getMockImplementation()!;
+  h.auth.apiFetch.mockImplementation(async (path, options) => {
+    if (path.endsWith('/media')) throw Object.assign(new Error('NOT_MEMBER'), { status: 403 });
+    return original(path, options);
+  });
+  showChat = true; await render();
+  await act(async () => {
+    await expect(chat.uploadAttachment!({ name: 'a.pdf', size: 42 }, 'file:///picked', { token: 'fixture' })).rejects.toMatchObject({ status: 403 });
+  });
+  expect(chat.state.kind).toBe('missing');
+  expect(h.put).not.toHaveBeenCalled();
+});
+
+it('refuses a late PUT result after account changes before media completion', async () => {
+  const original = h.auth.apiFetch.getMockImplementation()!;
+  h.auth.apiFetch.mockImplementation(async (path, options) => path.endsWith('/media')
+    ? { id: self, uploadUrl: 'https://upload.example.invalid/signed' } : original(path, options));
+  h.put.mockImplementation(async () => { h.auth.accountGeneration++; await render(); });
+  showChat = true; await render();
+  const upload = chat.uploadAttachment!;
+  await expect(upload({ name: 'a.pdf', size: 42 }, 'file:///picked', { token: 'fixture' })).rejects.toThrow('OWNER_CHANGED');
+  expect(h.auth.apiFetch.mock.calls.some(([path]) => path.endsWith('/complete'))).toBe(false);
+  expect(h.auth.apiFetch.mock.calls.some(([path]) => path.endsWith('/messages'))).toBe(false);
+});
+
 it('never includes the current human actor in explicit or everyone server mentions', async () => {
   const other = '00000000-0000-4000-8000-000000000003';
   const original = h.auth.apiFetch.getMockImplementation()!;
@@ -213,6 +265,43 @@ it('imports read_seq and acknowledges only displayed incoming messages with thei
   }));
   await act(async () => { await chat.markRead!([messages[0].id, messages[1].id]); });
   expect(h.auth.apiFetch.mock.calls.filter(([path]) => path.endsWith('/read'))).toHaveLength(1);
+});
+// Unit: conversation head is unchanged by another device's personal read position.
+// The actual roster refresh must replace snapshot.reads even when message delta is empty.
+it.each(['refresh', 'read-event', 'reconnect'] as const)('refreshes personal read metadata with an unchanged room head on %s', async trigger => {
+  const sockets: Array<{ onmessage: ((event: { data: string }) => void) | null; send: ReturnType<typeof vi.fn> }> = [];
+  vi.stubGlobal('WebSocket', class {
+    readyState = 1; onmessage = null; onopen = null; onclose = null; onerror = null;
+    send = vi.fn(); close() {}
+    constructor() { sockets.push(this); }
+  });
+  const frame = async (value: unknown) => { await act(async () => { sockets.at(-1)!.onmessage!({ data: JSON.stringify(value) }); }); };
+  let readSeq = '0';
+  const reply = { id: self, seq: '5', authorId: id, author: { kind: 'human', name: 'Other' },
+    content: [{ type: 'text', text: 'reply' }], createdAt: '2026-10-09T10:00:00Z', deleted: false, threadRootId: id };
+  const original = h.auth.apiFetch.getMockImplementation()!;
+  h.auth.apiFetch.mockImplementation(async (path, options) => {
+    if (path.startsWith('/v1/conversations?')) return [{ ...room, head: '5' }];
+    if (path.includes('/changes?')) return { head: '5', cursor: '5', changes: [], hasMore: false };
+    const value = await original(path, options);
+    return path.endsWith('/snapshot') ? { ...value, messages: [reply], cursor: '5', reads: [
+      { thread_key: 'main', read_seq: '0' }, { thread_key: id, read_seq: readSeq, following: true },
+    ] } : value;
+  });
+  await render();
+  const unread = () => (roster.items[0].chatUnread?.threadCount ?? 0) > 0;
+  expect(unread()).toBe(true);
+  await frame({ type: 'ready', actorId: self });
+  expect(sockets[0].send.mock.calls.some(([body]) => JSON.parse(body).type === 'subscribe')).toBe(true);
+  readSeq = '5';
+  if (trigger === 'refresh') await act(async () => { await roster.refresh(); });
+  else if (trigger === 'read-event') await frame({ type: 'changes', scope: `actor:${self}`, cursor: '6',
+    changes: [{ type: 'read.changed', entityId: id, data: {} }] });
+  else {
+    await act(async () => { for (const listener of h.foreground) listener('active'); });
+    await frame({ type: 'ready', actorId: self });
+  }
+  expect(unread()).toBe(false);
 });
 it('resolves everyone using authorized members at send time instead of the displayed snapshot', async () => {
   const joined = '00000000-0000-4000-8000-000000000003';
@@ -326,7 +415,7 @@ it('clears access on everyone member-read rejection and ignores an older authori
   h.auth.apiFetch.mockImplementation(async (path, options) => {
     if (path.endsWith('/members')) throw Object.assign(new Error('NOT_MEMBER'), { status: 403 });
     const value = await original(path, options);
-    if (path.endsWith('/snapshot')) await new Promise<void>(resolve => { finish = resolve; });
+    if (path.startsWith('/v1/changes?')) await new Promise<void>(resolve => { finish = resolve; });
     return value;
   });
   await act(async () => { chat.reload(); });
@@ -342,6 +431,25 @@ it('clears access on everyone member-read rejection and ignores an older authori
   await act(async () => { chat.reload(); });
   expect(chat.state.kind).toBe('ready');
 });
+it('deduplicates computer copies before the server roster discovers a new group', async () => {
+  h.auth.accountGeneration++;
+  h.targets = ['mac', 'pc'].map(deviceId => ({ deviceId, deviceName: deviceId }));
+  h.legacy.isOnline.mockReturnValue(true);
+  h.legacy.items = h.targets.map(host => ({ key: host.deviceId, host, item: {
+    ref: { collectionId: 'bot-groups', kind: 'bot-group', id }, revision: '1', display: { title: 'Discussion' }, links: [],
+  } }));
+  const original = h.auth.apiFetch.getMockImplementation()!;
+  let finish!: (rooms: typeof room[]) => void;
+  const pending = new Promise<typeof room[]>(resolve => { finish = resolve; });
+  h.auth.apiFetch.mockImplementation((path, options) => path.startsWith('/v1/conversations?') ? pending : original(path, options));
+  await render();
+  expect(roster.items.map(row => row.item.ref.id)).toEqual([id]);
+  expect(roster.items[0].host.deviceId).toBe('mac');
+  await act(async () => { finish([room]); });
+  expect(roster.items.map(row => row.item.ref.id)).toEqual([id]);
+  expect(roster.items[0].host.deviceId).toBe('');
+});
+
 it('deduplicates server copies from multiple computers while retaining a local legacy group', async () => {
   h.legacy.items = ['mac', 'pc'].map(deviceId => ({ key: deviceId, host: { deviceId, deviceName: deviceId }, item: { ref: { collectionId: 'bot-groups', kind: 'bot-group', id }, revision: '1', display: { title: 'Discussion' }, links: [] } }));
   h.legacy.isOnline.mockReturnValue(true);
@@ -452,7 +560,7 @@ it('exposes an actor-scope personal hide to the current screen and clears it aft
   h.auth.apiFetch.mockImplementation(async (path, options) => {
     if (path === '/v1/me') return { actor: { id: self, kind: 'human' }, capabilities: { conversationListStateVersion: 1 } };
     if (path.startsWith('/v1/conversation-list-state?')) return [];
-    if (path.startsWith('/v1/changes?')) return { head: '10' };
+    if (path.startsWith('/v1/changes?scope=actor:')) return { head: '10' };
     return allowed(path, options);
   });
   showChat = true; await render();
@@ -621,12 +729,13 @@ it.each(['missing', 'empty', 'read-error'] as const)('keeps initial loading corr
 
 // Integration: the actual ledger and HTTP adapter survive a process restart after
 // a committed POST loses its response. Existing direct-send tests cannot cover it.
-it('persists the exact uncertain send across restart and never rebuilds its recipients', async () => {
+it.each([false, true])('persists the exact uncertain send across restart and never rebuilds its recipients (media=%s)', async withMedia => {
   const storage = { getAllKeys: async () => [...h.disk.keys()], getItem: async (key: string) => h.disk.get(key) ?? null,
     setItem: async (key: string, value: string) => { h.disk.set(key, value); }, removeItem: async (key: string) => { h.disk.delete(key); } };
   const account = getMobileAuthOwner().accountKey;
   let store = createDurableOutbox(storage); await store.activate(account);
-  await enqueueChatMessage(store, account, id, { clientId: 'lost-response', text: 'saved offline', mentions: { all: true, botIds: [] } }, 1);
+  const attachments = withMedia ? [{ id, name: 'report.pdf', path: '', ext: 'pdf', size: 42, mimeType: 'application/pdf', category: 'file' as const }] : [];
+  await enqueueChatMessage(store, account, id, { clientId: 'lost-response', text: 'saved offline', mentions: { all: true, botIds: [] }, attachments }, 1);
   expect(store.getSnapshot()[0]).toMatchObject({ state: 'queued', item: { text: 'saved offline' } });
   const posted: unknown[] = [];
   let memberReads = 0;
@@ -639,7 +748,9 @@ it('persists the exact uncertain send across restart and never rebuilds its reci
   const delivery = () => createChatOutboxDelivery({ store, client, current: () => true, canRun: () => true, accessLost: async () => {} });
   await delivery().run();
   expect(store.getSnapshot()[0]).toMatchObject({ state: 'queued', enqueueStarted: true, chat: { body: { operationId: 'lost-response', mentions: [id] } } });
+  expect(posted[0]).toMatchObject({ content: [{ type: 'text', text: 'saved offline' }, ...(withMedia ? [{ type: 'media', mediaId: id, caption: 'report.pdf' }] : [])] });
   store = createDurableOutbox(storage); await store.activate(account);
+  expect(store.getSnapshot()[0].chat?.input.attachments).toEqual(attachments);
   await delivery().run();
   expect(posted).toHaveLength(2); expect(posted[1]).toEqual(posted[0]); expect(memberReads).toBe(1);
   expect(store.getSnapshot()[0]).toMatchObject({ state: 'confirming', chat: { messageId: self } });

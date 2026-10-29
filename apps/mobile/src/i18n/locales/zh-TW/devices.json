@@ -11,6 +11,7 @@
     "deleteMessage": "將此裝置從帳號中移除並中斷遠端連線。裝置上的任務和檔案會保留，重新登入後可再次加入。",
     "deleteFailed": "刪除裝置失敗。",
     "deleteOnline": "目前伺服器尚不支援移除線上裝置，請待服務升級後重試。",
+    "deleteRejectedWhileOffline": "未能刪除裝置：伺服器仍將它記為線上，與清單中的離線狀態不一致",
     "currentlyOnline": "目前在線",
     "availableSection": "在線裝置",
     "offlineSection": "離線裝置",
@@ -62,7 +63,7 @@
       "filterMeta": "{{available}} 臺可進入",
       "filterMetaWithUnavailable": "{{available}} 臺可進入 · {{unavailable}} 臺需處理",
       "showUnavailableReason": "展開裝置可查看無法使用的原因",
-      "emptyCopy": "在電腦端登入同一帳號，並在設定的遠端控制中開啟「允許同帳號裝置控制本機」。",
+      "emptyCopy": "在電腦端登入同一帳號，並在「設定 → 遠端連線」中開啟「允許同帳號裝置控制本機」。",
       "emptyTitle": "還沒有可顯示的電腦",
       "hideUnavailableA11y": "隱藏無法使用的電腦",
       "showUnavailableA11y": "顯示無法使用的電腦",
@@ -338,7 +339,9 @@
       "doneUnread": "已完成未讀",
       "running": "執行中",
       "close": "關閉",
-      "cancelRename": "取消重新命名"
+      "cancelRename": "取消重新命名",
+      "createdBy": "由 {{name}} 建立",
+      "ownedBy": "歸屬 {{name}}"
     },
     "accounts": {
       "title": "切換帳號",
@@ -401,6 +404,7 @@
         "30d": "30 天",
         "all": "全部"
       },
+      "showCollapsedTeammateAvatars": "收起時顯示頭像",
       "displayHeading": "顯示",
       "view": {
         "text": "文字",
@@ -415,7 +419,11 @@
       },
       "summaryNone": "無",
       "summarySeparator": "、",
-      "filterEmptyCopy": "可在顯示設定的「篩選」中調整或重設。"
+      "filterEmptyCopy": "可在顯示設定的「篩選」中調整或重設。",
+      "filterTeammatesHeading": "夥伴",
+      "filterAnySource": "全部",
+      "filterHideAllTeammates": "都不顯示",
+      "filterSelectedTeammates": "已選 {{count}} 位"
     },
     "search": {
       "placeholder": "搜尋標題或內容…",
@@ -688,7 +696,14 @@
     "createMenu": "新增",
     "awaiting": "等你確認",
     "taskResult": "任務結果",
-    "collapseResult": "收起結果"
+    "collapseResult": "收起結果",
+    "avatarStatus": {
+      "awaiting": "待你確認",
+      "error": "需要注意",
+      "running": "正在工作",
+      "done": "已完成",
+      "unread": "未讀"
+    }
   },
   "companionProfile": {
     "avatar": "頭像",
@@ -867,6 +882,10 @@
     "checkPrompt": "幫我查查已連接的信箱、訊息等來源裡，有沒有需要我處理的新事項，有就記成待辦。",
     "dailyCheck": "每天幫我查一次",
     "dailyCheckMeta": "工作日 9:00，沒有新待辦不打擾",
+    "recentTasks": "近期任務",
+    "unread": "未讀結果",
+    "stopDailyCheck": "停止每天檢查",
+    "openFailed": "無法開啟連結",
     "dailyCheckFailed": "沒能儲存，請重試",
     "loadFailed": "無法讀取待辦",
     "outputs": "輸出內容",

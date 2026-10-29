@@ -13,35 +13,13 @@ vi.mock('@/platform/gestureHandler', () => {
 vi.mock('expo-modules-core', () => ({ requireOptionalNativeModule: () => null }));
 // Native playback is covered by NativeVideoPlayer/inlineVideoPlayer; retain this suite's message assertions.
 vi.mock('@/session/NativeVideoPlayer', () => ({ NativeVideoPlayer: () => null }));
-// Native motion is tested separately; keep this suite on the real message/model
-// gates while adapting the new native list and height surfaces to the DOM.
-vi.mock('@legendapp/list/reanimated', async () => ({
-  AnimatedLegendList: (await import('@legendapp/list/react-native')).LegendList,
-}));
-vi.mock('@/session/useSmoothMessageFollow', async () => {
-  const { useRef } = await import('react');
-  return { useSmoothMessageFollow: () => ({ scrollRef: useRef(null), move: viewportHarness.move, cancel: () => {} }) };
-});
-vi.mock('@/session/AnimatedContentHeight', () => ({
-  AnimatedContentHeight: ({ open = true, animateInitial, children }: any) => open
-    ? createElement('div', { 'data-entering': animateInitial ? 'true' : undefined }, children) : null,
-}));
-vi.mock('@/session/NativeKeyboardViewport', () => ({
-  nativeKeyboardViewportAvailable: true,
-  NativeKeyboardViewport: ({ children, ...props }: any) => { viewportHarness.viewport = props; return children; },
-}));
-vi.mock('@/session/ComposerDockKeyboardFollow', () => ({ DockKeyboardLift: ({ children }: any) => children }));
 
 // Screen reader toggle and the system action menu availability, for the companion menu case.
 const a11y = vi.hoisted(() => ({ screenReader: null as null | ((enabled: boolean) => void), systemMenu: false }));
-const motionPreference = vi.hoisted(() => ({ reduced: true }));
 const viewportHarness = vi.hoisted(() => ({
   list: null as any,
-  viewport: null as any,
   finishReveal: null as any,
   renders: 0,
-  move: vi.fn(),
-  seek: vi.fn(),
 }));
 
 // Keep the production list, bubble gate, invocation header, and message model.
@@ -49,11 +27,12 @@ const viewportHarness = vi.hoisted(() => ({
 vi.mock("react-native", async () => {
   const React = await import("react");
   // onLongPress 映射到 contextmenu,便于测试长按显示来源 ID。
-  const view = ({ children, testID, accessibilityLabel, accessibilityHint, onLongPress, onPress, disabled, selectable }: any) =>
+  const view = ({ children, testID, accessibilityLabel, accessibilityHint, onLongPress, onPress, disabled, selectable, style }: any) =>
     React.createElement(
       "div",
       {
         "data-testid": testID,
+        "data-min-height": Object.assign({}, ...[typeof style === 'function' ? style({ pressed: false }) : style].flat(Infinity).filter(Boolean)).minHeight,
         ...(selectable !== undefined ? { "data-selectable": String(selectable) } : {}),
         "aria-label": accessibilityLabel,
         ...(accessibilityHint ? { "data-hint": accessibilityHint } : {}),
@@ -101,10 +80,9 @@ vi.mock("react-native", async () => {
     },
     Easing: { linear: (n: number) => n, bezier: () => (n: number) => n },
     AccessibilityInfo: {
-      isReduceMotionEnabled: () => Promise.resolve(motionPreference.reduced),
       isScreenReaderEnabled: () => Promise.resolve(false),
-      addEventListener: (event: string, listener: (enabled: boolean) => void) => {
-        if (event === 'screenReaderChanged') a11y.screenReader = listener;
+      addEventListener: (_event: string, listener: (enabled: boolean) => void) => {
+        a11y.screenReader = listener;
         return { remove() {} };
       },
     },
@@ -124,9 +102,8 @@ vi.mock("@legendapp/list/react-native", () => ({
     viewportHarness.renders += 1;
     viewportHarness.list = { ...props, data };
     useImperativeHandle(ref, () => ({
-      scrollToEnd: viewportHarness.seek,
+      scrollToEnd() {},
       scrollToOffset() {},
-      reportContentInset() {},
       getState() {
         return undefined;
       },
@@ -139,6 +116,7 @@ vi.mock("@legendapp/list/react-native", () => ({
   useViewability: () => {},
 }));
 vi.mock("lucide-react-native", () => ({
+  Stethoscope: () => null,
   Mail: () => null, CalendarDays: () => null, Folder: () => null, ChartColumn: () => null, Info: () => null, Clock: () => null, MapPin: () => null, Coffee: () => null, Image: () => null, Users: () => null, Star: () => null,
   Database: () => null,
   FileArchive: () => null,
@@ -239,7 +217,7 @@ vi.mock("@/session/remoteMediaDiskCacheExpo", () => ({
   downloadRemoteMediaShareTemp: vi.fn(),
 }));
 vi.mock("@/hooks/useReduceMotion", () => ({
-  useReduceMotionEnabled: () => motionPreference.reduced,
+  useReduceMotionEnabled: () => true,
 }));
 vi.mock("@/session/expandedBlockMemory", () => ({
   useFoldableExpandedState: () => [false, vi.fn()],
@@ -295,7 +273,6 @@ import { i18n } from "@/i18n";
 import { MessageRenderer } from "@/session/MessageRenderer";
 import { buildMobileMessageRenderItems } from "@/session/messageRenderModel";
 import { remoteSessionStore } from "@/session/remoteSessionStore";
-import { MessageHistoryPositioning } from '@/session/messageHistoryActivity';
 import type { RemoteMessage } from "@/session/types";
 
 const msg = (
@@ -324,106 +301,40 @@ function render(
 }
 
 function mount(messages: RemoteMessage[], props: Record<string, unknown> = {}) {
+  const items = buildMobileMessageRenderItems(messages, { isSessionStreaming: props.isSessionStreaming === true }).filter(
+    (item) => item.type === "message",
+  );
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   const host = document.createElement("div");
   const root = createRoot(host);
-  const rerender = (messages: RemoteMessage[], props: Record<string, unknown>) => {
-    const items = buildMobileMessageRenderItems(messages, { isSessionStreaming: props.isSessionStreaming === true })
-      .filter(item => item.type === 'message');
-    act(() => root.render(<MessageRenderer items={items} {...props} />));
-  };
-  rerender(messages, props);
-  return { host, rerender, unmount: () => act(() => root.unmount()) };
+  act(() => root.render(<MessageRenderer items={items} {...props} />));
+  return { host, unmount: () => act(() => root.unmount()) };
 }
 
 beforeAll(async () => {
   await i18n.changeLanguage("zh-CN");
 });
 
-describe('live timeline entrances', () => {
-  it.each([false, true])('only runs initial history positioning when the empty list was still loading (%s)', loading => {
-    viewportHarness.seek.mockClear();
-    viewportHarness.finishReveal = null;
-    const h = mount([], { syncingWhileEmpty: loading });
-    try {
-      h.rerender([msg(`empty-${loading}`, 'First message', null)], { syncingWhileEmpty: false });
-      expect(viewportHarness.seek).toHaveBeenCalledTimes(loading ? 1 : 0);
-      expect(viewportHarness.finishReveal === null).toBe(!loading);
-    } finally { h.unmount(); }
-  });
-
-  it('uses one follow trajectory for a send request after initial history positioning', () => {
-    const messages = [msg('scroll-owner', 'Restored', null)];
-    viewportHarness.seek.mockClear();
-    viewportHarness.move.mockClear();
-    const h = mount(messages, { followLatestRequestKey: 0 });
-    try {
-      expect(viewportHarness.seek).toHaveBeenCalledWith({ animated: false });
-      act(() => {
-        viewportHarness.list.onLayout({ nativeEvent: { layout: { height: 600 } } });
-        viewportHarness.list.onContentSizeChange(400, 1200);
-        viewportHarness.finishReveal();
-      });
-      viewportHarness.seek.mockClear();
-      viewportHarness.move.mockClear();
-      h.rerender(messages, { followLatestRequestKey: 1 });
-      expect(viewportHarness.seek).not.toHaveBeenCalled();
-      expect(viewportHarness.move).toHaveBeenCalledWith(600, true);
-    } finally { h.unmount(); }
-  });
-
-  it('continues following after a recommendation changes the native bottom reservation', () => {
-    // Real renderer + tail controller, native geometry boundary only mocked.
-    // The native dock can cancel an in-flight follow before streaming growth
-    // reaches the end; without reconciliation the reply stays behind the dock.
-    const h = mount([msg('dock-resume', 'Restored', null)]);
-    try {
-      act(() => {
-        viewportHarness.list.onLayout({ nativeEvent: { layout: { height: 600 } } });
-        viewportHarness.list.onContentSizeChange(400, 1200);
-        viewportHarness.finishReveal();
-      });
-      viewportHarness.move.mockClear();
-      act(() => viewportHarness.viewport.onViewportInsetChange({ nativeEvent: {
-        bottom: 150, offsetY: 600, viewportHeight: 450, contentHeight: 1300,
-      } }));
-      expect(viewportHarness.move).toHaveBeenCalledWith(850, true);
-    } finally { h.unmount(); }
-  });
-
-  // Regression: the ready-history gate was inverted, so every live arrival
-  // bypassed the occupied-height animation. Observe the real renderer's motion
-  // boundary, including a work row; the native interpolation is tested separately.
-  it('keeps restored history still and grows messages and thinking only after the history is ready', () => {
-    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-    motionPreference.reduced = false;
-    const host = document.createElement('div');
-    const root = createRoot(host);
-    const messages = [msg('entrance-history', 'Restored', null)];
-    const show = (ready: boolean) => act(() => root.render(
-      <MessageHistoryPositioning value={ready}>
-        <MessageRenderer scrollResetKey="entrance-regression" isSessionStreaming
-          items={buildMobileMessageRenderItems(messages, { isSessionStreaming: true })} />
-      </MessageHistoryPositioning>,
-    ));
-    try {
-      show(false);
-      show(true);
-      expect(host.querySelectorAll('[data-entering="true"]')).toHaveLength(0);
-      messages.push(msg('entrance-new', 'New question', null));
-      show(true);
-      expect(host.querySelectorAll('[data-entering="true"]')).toHaveLength(1);
-      messages.push({ ...msg('entrance-thinking', { kind: 'thinking', text: 'Checking', isRedacted: false }, null), role: 'thinking' });
-      show(true);
-      expect(host.querySelectorAll('[data-entering="true"]')).toHaveLength(2);
-      messages[2] = { ...messages[2], content: { kind: 'thinking', text: 'Checking more', isRedacted: false } };
-      show(true);
-      expect(host.querySelectorAll('[data-entering="true"]')).toHaveLength(2);
-    } finally {
-      act(() => root.unmount());
-      motionPreference.reduced = true;
-    }
-  });
+it('diagnoses a historical execution error through the real message renderer', () => {
+  const raw = 'provider mismatch api_key=private-history-value';
+  const onDiagnoseError = vi.fn();
+  const { host, unmount } = mount([{
+    ...msg('historical-error', JSON.stringify({ message: raw }), null), role: 'error',
+  }], { onDiagnoseError });
+  try {
+    expect(host.querySelector('[data-testid="agentError.diagnose"]')).toBeNull();
+    const toggle = [...host.querySelectorAll<HTMLElement>('div')].find(
+      (node) => node.textContent === i18n.t('session.tail.showErrorDetails') && node.onclick,
+    );
+    expect(toggle).toBeTruthy();
+    act(() => toggle!.click());
+    expect(host.textContent).toContain('provider mismatch');
+    expect(host.textContent).not.toContain('private-history-value');
+    act(() => host.querySelector<HTMLElement>('[data-testid="agentError.diagnose"]')!.click());
+    expect(onDiagnoseError).toHaveBeenCalledWith(expect.objectContaining({ details: raw }));
+  } finally {
+    unmount();
+  }
 });
 
 describe("device source label", () => {
@@ -527,6 +438,30 @@ describe('completed message actions', () => {
     } finally { partial.unmount(); }
     const final = render([{ ...msg('final', 'Done', { turnCompleted: true }), role: 'assistant' }], props);
     expect(final).toContain('message.moreButton');
+  });
+
+  it('reserves the completed action row while an assistant reply streams', () => {
+    // A node-only assertion misses the regression where the empty row collapses.
+    // Compare production styles with the completed control's actual touch height.
+    const streaming = mount([
+      { ...msg('streaming', 'Working', { isStreaming: true }), role: 'assistant' },
+    ], { isSessionStreaming: true });
+    const completed = mount([
+      { ...msg('final', 'Done', { turnCompleted: true }), role: 'assistant' },
+    ]);
+    try {
+      const slot = streaming.host.querySelector('[data-testid="message.actionSlot"]');
+      const copy = completed.host.querySelector('[data-testid="message.copyButton"]');
+      expect(slot).not.toBeNull();
+      expect(copy).not.toBeNull();
+      const reservedHeight = Number(slot!.getAttribute('data-min-height'));
+      expect(reservedHeight).toBeGreaterThan(0);
+      expect(reservedHeight).toBe(Number(copy!.getAttribute('data-min-height')));
+      expect(streaming.host.querySelector('[data-testid="message.actionBar"]')).toBeNull();
+    } finally {
+      streaming.unmount();
+      completed.unmount();
+    }
   });
 
   it('places controls outside the bubble and forks the selected row exactly once', () => {

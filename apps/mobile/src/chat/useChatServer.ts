@@ -15,7 +15,13 @@ import { useRemoteSyncCoordinator } from '@/device-link/remoteSyncTask';
 import type { BotGroupChatState } from '@/session/useBotGroupChat';
 import { chatAccessLost, chatCursor, chatGroupView, chatHttpsUrl, chatRoomRow, chatReadAt, chatReadSequence, chatLastReplyAt, chatLastReplySequence, createChatServerClient, type ChatActor, type ChatPage, type ChatRequest, type ChatSnapshot } from './chatServerClient';
 import { subscribeChatServer } from './chatServerSubscription';
+import { createChatHistory } from '@cindy/maker-shared/chat-history';
+import { createMobileChatHistoryStore } from './chatHistoryStore';
 import { cacheChatMessages, forgetChatMessages, peekChatMessages, readChatMessages, subscribeChatInvalidation } from './chatMessageCache';
+import { createChatServerUpload } from './chatServerUpload';
+import type { MobileLocalAttachmentUploadDeps } from '@/session/mobileLocalAttachmentUpload';
+import type { RemoteSerializedAttachment } from '@/session/types';
+import { useTranslation } from 'react-i18next';
 
 // Shared only within the current authenticated account generation and realm.
 let listOwner = '';
@@ -58,10 +64,28 @@ export function useChatClient() {
       const url = await endpoint(); check();
       const result = await deps.current.apiFetch<T>(`/v1${path}`, { baseUrl: url, method, cache: 'no-store', ...(body !== undefined ? { body } : {}),
         ...(actorId ? { headers: { 'X-Chat-Actor': actorId } } : {}), ...(signal ? { signal } : {}), assertCurrent: check });
-      check(); return result;
+      check();
+      if (method !== 'GET') {
+        const room = path.match(/^\/conversations\/([^/]+)/)?.[1];
+        if (room) client.invalidateHistory(room, path.endsWith('/read'));
+      }
+      return result;
     };
-    const client = createChatServerClient(request, listFor(owner));
-    return { owner, realm, userId: auth.user?.id ?? '', current, baseUrl, endpoint, request, client,
+    const client = createChatServerClient(request, listFor(owner), async human => {
+      const url = await endpoint(); check();
+      const { randomUUID } = await import('expo-crypto');
+      return createChatHistory({ api: request, current, newGeneration: randomUUID,
+        store: createMobileChatHistoryStore(auth.user!.id, realm, url, human, current) });
+    });
+    const upload = createChatServerUpload({ request, current,
+      operationId: () => `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      put: async (url, uri, type, signal) => {
+        const { putMobileAttachmentUploadFromFile } = await import('@/session/mobileAttachmentUpload');
+        check();
+        await putMobileAttachmentUploadFromFile(url, uri, type, {}, { signal, signedHeaders: { 'Content-Type': type } });
+      },
+    });
+    return { owner, realm, userId: auth.user?.id ?? '', current, baseUrl, endpoint, request, client, upload,
       token: async () => { check(); await client.me(); const token = await deps.current.getAccessToken(); check(); return token; }, enabled: !!auth.user };
   }, [owner, !!auth.user]);
 }
@@ -102,11 +126,15 @@ export function useChatServerRoster(enabled: boolean) {
           try {
             const cached = snapshots.current.get(room.id);
             const value = cached?.owner === api.owner && room.head !== undefined && cached.head === room.head
-              && !run.reasons.some(reason => ['changed', 'connected', 'visible'].includes(reason))
-              ? cached.value : await api.client.snapshot(room.id);
+              && !run.reasons.some(reason => ['focus', 'changed', 'connected', 'visible'].includes(reason))
+              ? cached.value : await api.client.snapshot(room.id, room.head === undefined
+                || run.reasons.some(reason => ['focus', 'connected', 'visible'].includes(reason)));
             fresh.set(room.id, { owner: api.owner, head: room.head, value });
             // An archive can land between the list and the newer snapshot.
-            if (!value.room.archived) rows.push(chatRoomRow(room, value, self));
+            if (!value.room.archived) {
+              const activity = await api.client.rosterActivity(room.id, value);
+              rows.push(chatRoomRow(room, value, self, activity));
+            }
           } catch (error) {
             if (!chatAccessLost(error)) {
               mobileDebugLog('warn', 'recovery', 'companion-roster-refresh', { source: 'group-detail', status: (error as { status?: number })?.status });
@@ -171,7 +199,17 @@ export function useChatServerRoster(enabled: boolean) {
           }
           await read({ reason: 'connected' });
           return { scope: `actor:${actorId}`, cursor };
-        }, reset: () => api.client.resyncListState(), changed: changes => { for (const change of changes ?? []) if (change.type === 'conversation.list.changed') api.client.personalList.merge(change.data); void read({ reason: 'changed' }); }, available: () => { subscribed = true; }, unavailable: () => { subscribed = false; } });
+        }, reset: async () => { await api.client.resyncListState(); await read({ reason: 'connected' }); }, changed: changes => {
+          for (const change of changes ?? []) {
+            if (change.type === 'conversation.list.changed') api.client.personalList.merge(change.data);
+            // Personal read positions live in actor scope and do not advance room.head.
+            if (change.type === 'read.changed' && typeof change.entityId === 'string') {
+              api.client.invalidateHistory(change.entityId, true);
+              snapshots.current.delete(change.entityId);
+            }
+          }
+          return read({ reason: 'changed' });
+        }, available: () => { subscribed = true; }, unavailable: () => { subscribed = false; } });
       }).catch(() => {}); // HTTP read presents endpoint errors.
     };
     start();
@@ -192,6 +230,7 @@ export function useChatServerRoster(enabled: boolean) {
 /** Reads and sends use the account's Chat Server identity, never its computer identity. */
 export function useChatServerGroup(groupId: string, enabled: boolean, threadRootId?: string) {
   const api = useChatClient();
+  const { t } = useTranslation();
   const identity = `${api.owner}:${groupId}:${threadRootId ?? 'main'}`;
   const active = useRef(identity); active.current = identity;
   const ledger = useSyncExternalStore(mobileDurableOutbox.subscribe, mobileDurableOutbox.getSnapshot);
@@ -258,7 +297,7 @@ export function useChatServerGroup(groupId: string, enabled: boolean, threadRoot
       else setState(old => ({ identity, value: old.identity === identity && old.value.kind === 'ready' ? old.value : { kind: 'error', message: error instanceof Error && error.message === 'CHAT_ENDPOINT_UNAVAILABLE' ? error.message : 'CHAT_READ_FAILED' }, online: false, loadingOlder: false }));
     }
   }, identity);
-  const reload = useCallback(() => { void request({ reason: 'changed' }); }, [request]);
+  const reload = useCallback(() => { api.client.invalidateHistory(groupId, true); void request({ reason: 'changed' }); }, [api, groupId, request]);
   useFocusEffect(useCallback(() => {
     if (!enabled || !api.enabled || !groupId) return;
     let stop: (() => void) | undefined;
@@ -281,12 +320,17 @@ export function useChatServerGroup(groupId: string, enabled: boolean, threadRoot
             if ((error as { code?: string }).code !== 'RESET_REQUIRED') throw error;
             return '0';
           }) : null;
+          api.client.invalidateHistory(groupId, true);
           await request({ reason: 'connected' });
           const latest = page.current;
           if (!freshRead.current || !latest || latest.identity !== identity) throw new Error('CHAT_READ_FAILED');
           return head === null ? { scope: `conversation:${groupId}`, cursor: latest.page.snapshot.cursor }
             : [{ scope: `conversation:${groupId}`, cursor: latest.page.snapshot.cursor }, { scope: `actor:${actorId}`, cursor: head }];
-        }, reset: () => api.client.resyncListState(), changed: changes => { for (const change of changes ?? []) if (change.type === 'conversation.list.changed') api.client.personalList.merge(change.data); reload(); }, available: () => { subscribed = true; }, unavailable: () => { subscribed = false; freshRead.current = false; } });
+        }, reset: async () => { await api.client.resyncListState(); await api.client.refreshHistory(groupId, true); await request({ reason: 'connected' }); }, changed: async changes => {
+          for (const change of changes ?? []) if (change.type === 'conversation.list.changed') api.client.personalList.merge(change.data);
+          try { await api.client.refreshHistory(groupId, changes?.some(change => change.type === 'read.changed')); }
+          finally { void request({ reason: 'changed' }); }
+        }, available: () => { subscribed = true; }, unavailable: () => { subscribed = false; freshRead.current = false; api.client.invalidateHistory(groupId); } });
       }).catch(() => {}); // Read presents endpoint errors.
     };
     start();
@@ -322,6 +366,11 @@ export function useChatServerGroup(groupId: string, enabled: boolean, threadRoot
     } finally { olderPending.current = false; if (valid()) setState(old => ({ ...old, loadingOlder: false })); }
   };
   const act = async (action: BotGroupRemoteActionId, input?: Record<string, unknown>): Promise<RemoteActionInvokeResponse> => {
+    if (action === 'stop') {
+      const operationId = (await import('expo-crypto')).randomUUID();
+      try { await api.client.stop(groupId, operationId); } finally { if (valid()) reload(); }
+      return { effects: [] };
+    }
     if (action === 'dissolve' || action === 'leave' || action === 'hide') {
       const operationId = (await import('expo-crypto')).randomUUID();
       if (action === 'hide') {
@@ -336,7 +385,7 @@ export function useChatServerGroup(groupId: string, enabled: boolean, threadRoot
       }
       return { effects: [] };
     }
-    if (action !== 'send' || !input || input.division || (Array.isArray(input.attachments) && input.attachments.length)) throw new Error('UNSUPPORTED_CHAT_ACTION');
+    if (action !== 'send' || !input || input.division) throw new Error('UNSUPPORTED_CHAT_ACTION');
     const latest = page.current;
     if (!latest || latest.identity !== identity) throw new Error('CHAT_READ_FAILED');
     const owner = getMobileAuthOwner();
@@ -348,6 +397,7 @@ export function useChatServerGroup(groupId: string, enabled: boolean, threadRoot
     await enqueueChatMessage(mobileDurableOutbox, owner.accountKey, groupId, {
       ...(latest.page.snapshot.room.kind === 'direct' ? { conversationKind: 'direct' as const } : {}),
       clientId: String(input.clientId), text: String(input.text), threadRootId,
+      attachments: input.attachments as RemoteSerializedAttachment[] | undefined,
       ...(input.quote && typeof input.quote === 'object' && 'messageId' in input.quote
         ? { quote: { messageId: String(input.quote.messageId) } } : {}),
       mentions: { all: mentions.all, botIds: [...new Set(recipients)] },
@@ -355,6 +405,23 @@ export function useChatServerGroup(groupId: string, enabled: boolean, threadRoot
     latest.page.messages.reduce<string | undefined>((seq, message) => !seq || BigInt(message.seq) > BigInt(seq) ? message.seq : seq, undefined));
     if (!isMobileAuthOwnerCurrent(owner)) throw new Error('OWNER_CHANGED');
     return { effects: [] };
+  };
+  const uploadAttachment: MobileLocalAttachmentUploadDeps['upload'] = async (candidate, uri, options) => {
+    const generation = accessGeneration.current;
+    if (!enabled || !valid() || page.current?.identity !== identity) throw new Error('OWNER_CHANGED');
+    try {
+      const attachment = await api.upload(groupId, candidate, uri, options.signal);
+      if (!valid() || generation !== accessGeneration.current) throw new Error('OWNER_CHANGED');
+      return attachment;
+    } catch (error) {
+      if (valid() && generation === accessGeneration.current && chatAccessLost(error)) loseAccess();
+      if (error instanceof Error && error.message === 'ATTACHMENT_TOO_LARGE') {
+        throw new Error(t('groupChat.server.attachmentTooLarge', { size: 100 }));
+      }
+      if (error instanceof Error && error.message === 'ATTACHMENT_UNAVAILABLE') throw new Error(t('composer.upload.noFileRead'));
+      if (error instanceof Error && error.message === 'UPLOAD_CANCELLED') throw new Error(t('composer.upload.cancelled'));
+      throw error;
+    }
   };
   const media = async (mediaId: string, signal?: AbortSignal): Promise<BotGroupAttachment> => {
     const generation = accessGeneration.current;
@@ -399,5 +466,5 @@ export function useChatServerGroup(groupId: string, enabled: boolean, threadRoot
     listHidden: api.current() && api.client.personalList.hidden(groupId),
     online: state.identity === identity && state.online, reload, act, pending, pendingAction,
     canQueue: enabled && api.enabled && state.identity === identity && state.value.kind === 'ready' && !api.client.personalList.hidden(groupId),
-    acceptListState, isListHidden: () => api.client.personalList.hidden(groupId), loadOlder, loadingOlder: state.loadingOlder, media, markRead };
+    acceptListState, isListHidden: () => api.client.personalList.hidden(groupId), loadOlder, loadingOlder: state.loadingOlder, media, markRead, uploadAttachment };
 }

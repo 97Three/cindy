@@ -83,6 +83,7 @@ vi.mock('ws', async () => {
 });
 import { ChatResponseError, REACTION_REVISION_MESSAGE_LIMIT, splitChatMessageText, withChatServer } from '../chatServer.js';
 import { t } from '../../i18n.js';
+import { signalBotAutonomyBotsChanged } from '../../bot-autonomy/botsChangedSignal.js';
 import { projectBotGroupExecutionFailures } from '@cindy/maker-shared/botGroupPresentation';
 import { botGroupRuntimeFailureCode, settleUndispatchedBotGroupTurn } from '../botGroupRuntimeFailure.js';
 import { authorizeGroupTool } from '../botGroupToolAuthorization.js';
@@ -180,6 +181,79 @@ describe('Chat Server result delivery and refresh', () => {
     service = withChatServer({ listGroups: vi.fn(async () => ({ ok: true, groups: [] })), settleLaneTurn: vi.fn(async () => false), dispose: vi.fn() } as unknown as BotGroupChatService, deps);
   });
   afterEach(() => { service.dispose(); vi.useRealTimers(); vi.unstubAllEnvs(); fixture.config = ''; vi.clearAllMocks(); });
+
+  // Unit: exercise the real transport and read.changed path. The former notification-only
+  // tests had no persistent group attention consumer, so read/mute/reconnect could not be observed.
+  it('projects one group reminder, follows server reads and mute, and restores reconnect history without alerting it', async () => {
+    service.dispose();
+    const attention = vi.fn();
+    const notify = vi.fn();
+    deps.onChatGroupAttention = attention;
+    deps.onChatMessageNotification = notify;
+    const peer = { id: botId, kind: 'human', name: 'Chris', state: 'joined', role: 'member', ownerActorId: botId, avatar: '👋' };
+    const message = (seq: string, threadRootId: string | null = null) => ({
+      id: `50000000-0000-4000-8000-${seq.padStart(12, '0')}`, seq, authorId: botId, author: { kind: 'human', name: 'Chris' },
+      content: [{ type: 'text', text: `Message ${seq}` }], createdAt: '2026-10-03T00:00:00Z', deleted: false, threadRootId,
+      mentions: threadRootId ? [selfId] : [],
+    });
+    const topic = '70000000-0000-4000-8000-000000000001';
+    const snapshot = { room: room(roomId), members: [peer], messages: [message('3'), message('2', topic)], cursor: '3',
+      reads: [{ thread_key: 'main', read_seq: '0', muted: false }, { thread_key: topic, read_seq: '0', muted: false }] };
+    fixture.handle.mockImplementation(route => {
+      if (route === '/conversations?limit=100') return { body: [snapshot.room] };
+      if (route === '/executions/claim') return { body: { execution: null } };
+      if (route.endsWith('/snapshot')) return { body: snapshot };
+      if (route.includes('/messages?')) return { body: snapshot.messages };
+      return response(route);
+    });
+    service = withChatServer({ dispose: vi.fn() } as unknown as BotGroupChatService, deps);
+    expect((await service.listGroups()).ok).toBe(true);
+    expect(attention.mock.calls.at(-1)?.[1]).toMatchObject({ groupId: roomId, messageId: message('2').id,
+      threadRootId: topic, mentioned: true, members: [{ name: 'Chris', avatar: '👋' }] });
+    expect(notify).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2000);
+    const socket = fixture.sockets.at(-1)!;
+    Object.defineProperty(socket, 'readyState', { value: 1 });
+    socket.emit('message', JSON.stringify({ type: 'ready' }));
+    await vi.advanceTimersByTimeAsync(150);
+    const readChanged = () => socket.emit('message', JSON.stringify({ type: 'changes', scope: `actor:${selfId}`, cursor: '5',
+      changes: [{ type: 'read.changed', entityId: roomId }] }));
+    snapshot.reads[1].read_seq = '2'; readChanged();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(attention.mock.calls.at(-1)?.[1]).toMatchObject({ messageId: message('3').id, mentioned: false });
+    snapshot.reads[0].muted = true; readChanged();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(attention.mock.calls.at(-1)?.[1]).toBeNull();
+    snapshot.reads[0].muted = false;
+    readChanged();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(attention.mock.calls.at(-1)?.[1]).toMatchObject({ messageId: message('3').id, mentioned: false });
+    const received = (seq: string) => socket.emit('message', JSON.stringify({ type: 'changes', scope: `conversation:${roomId}`, cursor: seq,
+      changes: [{ type: 'message.created', entityId: message(seq).id }] }));
+    received('3');
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(notify).not.toHaveBeenCalled();
+    snapshot.messages.unshift(message('6')); received('6');
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(notify).toHaveBeenCalledOnce();
+    expect(attention.mock.calls.at(-1)?.[1]).toMatchObject({ messageId: message('6').id, mentioned: false });
+    // Server/device timestamps deliberately stay equal: only server sequences decide replay.
+    socket.emit('close');
+    snapshot.messages.unshift(message('7'));
+    await vi.advanceTimersByTimeAsync(500);
+    const reconnected = fixture.sockets.at(-1)!;
+    Object.defineProperty(reconnected, 'readyState', { value: 1 });
+    reconnected.emit('message', JSON.stringify({ type: 'ready' }));
+    await vi.advanceTimersByTimeAsync(150);
+    reconnected.emit('message', JSON.stringify({ type: 'changes', scope: `conversation:${roomId}`, cursor: '7',
+      changes: [{ type: 'message.created', entityId: message('7').id }] }));
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(notify).toHaveBeenCalledOnce();
+    expect(attention.mock.calls.at(-1)?.[1]).toMatchObject({ messageId: message('7').id });
+    reconnected.emit('message', JSON.stringify({ type: 'scope_error', scope: `conversation:${roomId}`, error: { code: 'FORBIDDEN' } }));
+    await vi.advanceTimersByTimeAsync(150);
+    expect(attention.mock.calls.at(-1)?.[1]).toBeNull();
+  });
   // #6907: getGroup feeds Desktop and remote phones. Existing fixtures never pair group name A
   // with the bot's account ownerName B; exercise the production projection (unit tier).
   it.each(['Nickname A', 'Account B', '   ', null] as const)('uses the current room owner name %s with safe account fallback', async name => {
@@ -305,6 +379,31 @@ describe('Chat Server result delivery and refresh', () => {
   it('uses the mobile edited revision instead of a newer server snapshot when saving settings', async () => {
     await service.updateGroup({ groupId: roomId, name: 'Draft', expectedRevision: 7 });
     expect(fixture.handle).toHaveBeenCalledWith(`/conversations/${roomId}`, 'PATCH', expect.objectContaining({ name: 'Draft', expectedRevision: 7 }));
+  });
+  // Unit: renderer filtering alone left older servers callable with bot targets.
+  // Exercise production manage with a nonhuman/left target and the legacy bot-owner
+  // recovery path; assertions cover rejected writes and the delegated HTTP identity.
+  it.each(['bot', 'integration', 'left', 'human', 'legacy'] as const)('validates the ownership transfer recipient (%s) before sending', async mode => {
+    const targetId = mode === 'legacy' ? selfId : botId;
+    fixture.handle.mockImplementation(route => {
+      if (route.endsWith('/snapshot')) return { body: { room: room(roomId), members: [
+        { id: selfId, kind: 'human', ownerActorId: selfId, state: 'joined', role: mode === 'legacy' ? 'admin' : 'owner' },
+        { id: botId, kind: mode === 'bot' || mode === 'legacy' ? 'bot' : mode === 'integration' ? 'integration' : 'human',
+          ownerActorId: mode === 'legacy' ? selfId : botId, state: mode === 'left' ? 'left' : 'joined', role: mode === 'legacy' ? 'owner' : 'member' },
+      ], messages: [], cursor: '1' } };
+      return response(route);
+    });
+    const requestsStart = fixture.requests.length;
+    const result = await service.chatServer!.manage({ groupId: roomId, action: { type: 'transfer', actorId: targetId } });
+    const writes = fixture.handle.mock.calls.filter(([route, method]) => route === `/conversations/${roomId}/transfer` && method === 'POST');
+    if (mode === 'human' || mode === 'legacy') {
+      expect(result).toEqual({ ok: true });
+      expect(writes).toEqual([[`/conversations/${roomId}/transfer`, 'POST', { actorId: targetId, operationId: expect.any(String) }]]);
+      expect(fixture.requests.slice(requestsStart).find(r => r.url.endsWith('/transfer'))?.actor).toBe(mode === 'legacy' ? botId : selfId);
+    } else {
+      expect(result).toEqual({ ok: false, errorCode: mode === 'left' ? 'MEMBER_NOT_FOUND' : 'HUMAN_OWNER_REQUIRED' });
+      expect(writes).toEqual([]);
+    }
   });
   // Group avatar regression: exercise the production manage entry, real image
   // validation and HTTP payload, with only the network/image decoder faked.
@@ -1013,11 +1112,15 @@ describe('Chat Server result delivery and refresh', () => {
   });
 
   it.each([
-    ['NO_MODEL', 'MODEL_UNAVAILABLE'],
-    ['MEMBER_UNAVAILABLE', 'RUNTIME_ERROR'],
-  ])('settles the lane preparation failure %s without dispatching or exposing details', async (errorCode, failureCode) => {
+    // #6835: unit service entry must retain wrapped lane limits; the old matrix only covered codes.
+    ['NO_MODEL', 'MODEL_UNAVAILABLE', 'private preparation details'],
+    ['MEMBER_UNAVAILABLE', 'RUNTIME_ERROR', 'private preparation details'],
+    ['LAZY_CREATE_FAILED', 'REMOTE_DEVICE_LIMIT', '[REMOTE_AGENT_BUSY] [DEVICE_LIMIT] private preparation details'],
+    ['LAZY_CREATE_FAILED', 'REMOTE_TOTAL_LIMIT', '[REMOTE_AGENT_BUSY] [TOTAL_LIMIT] private preparation details'],
+    ['LAZY_CREATE_FAILED', 'RUNTIME_ERROR', '[REMOTE_AGENT_BUSY] private preparation details'],
+  ])('settles the lane preparation failure %s without dispatching or exposing details', async (errorCode, failureCode, message) => {
     fixture.profiles = [{ id: 'local-bot', displayName: 'Bot', avatar: null, status: 'active' }];
-    deps.ensureLane = vi.fn(async () => ({ ok: false as const, errorCode, message: 'private preparation details' }));
+    deps.ensureLane = vi.fn(async () => ({ ok: false as const, errorCode, message }));
     await vi.advanceTimersByTimeAsync(2000);
     expect(deps.dispatch).not.toHaveBeenCalled();
     expect(deps.abortLane).not.toHaveBeenCalled();
@@ -1066,6 +1169,8 @@ describe('Chat Server result delivery and refresh', () => {
 
   it.each([
     ['authentication_failed private credential', 'AUTH_REQUIRED'],
+    ['[REMOTE_AGENT_BUSY] [DEVICE_LIMIT] private credential', 'REMOTE_DEVICE_LIMIT'],
+    ['[REMOTE_AGENT_BUSY] [TOTAL_LIMIT] private credential', 'REMOTE_TOTAL_LIMIT'],
     ['ECONNRESET private endpoint', 'NETWORK_ERROR'],
     ['pi rpc timeout after 30000ms: prompt /private/path', 'RUNTIME_TIMEOUT'],
   ])('classifies an unqueued dispatch rejection from its local message: %s', async (message, code) => {
@@ -1498,16 +1603,20 @@ describe('Chat Server result delivery and refresh', () => {
     expect(deps.dispatch).toHaveBeenCalledOnce();
   });
 
-  // bot-group-chat.md §3: a companion may answer in several Threads at once.
-  it('shows a companion running in two Threads as one speaker', async () => {
+  // bot-group-chat.md §3: a companion may answer in several Threads at once;
+  // each execution keeps its identity so the UI can stop/open the exact task.
+  it('shows a companion running in two Threads as two execution speakers', async () => {
     fixture.handle.mockImplementation(route => {
       if (route.endsWith('/executions')) return { body: [{ ...execution, status: 'running' },
         { ...execution, id: '50000000-0000-4000-8000-000000000099', status: 'running' }] };
       return response(route);
     });
     const result = await service.getGroup(roomId);
-    expect(result).toMatchObject({ ok: true, group: { round: { status: 'running', speakers: [{ activity: 'reply' }] } } });
-    expect(result.ok && result.group.round.speakers).toHaveLength(1);
+    expect(result).toMatchObject({ ok: true, group: { round: { status: 'running', speakers: [
+      { activity: 'reply', executionId: execution.id, executionStatus: 'running' },
+      { activity: 'reply', executionId: '50000000-0000-4000-8000-000000000099', executionStatus: 'running' },
+    ] } } });
+    expect(result.ok && result.group.round.speakers).toHaveLength(2);
   });
 
   it.each(['IMAGE_INPUT_UNSUPPORTED', 'private token and path'])('projects a failed execution from its visible source with a safe code %s', async code => {
@@ -1623,21 +1732,27 @@ describe('Chat Server result delivery and refresh', () => {
     expect(retry).toMatchObject({ ok: true, executionFailures: [], hasMore: true });
   });
 
-  it('keeps the specific local failure on an older server and clears the notice after retry', async () => {
+  // #6835: unit readback must retain local limit reasons when an older server normalizes unknown codes.
+  it.each([
+    [undefined, 'IMAGE_INPUT_UNSUPPORTED', 'IMAGE_INPUT_UNSUPPORTED'],
+    ['RUNTIME_ERROR', 'REMOTE_DEVICE_LIMIT', 'REMOTE_DEVICE_LIMIT'],
+    ['RUNTIME_ERROR', 'REMOTE_TOTAL_LIMIT', 'REMOTE_TOTAL_LIMIT'],
+    ['AUTH_REQUIRED', 'REMOTE_DEVICE_LIMIT', 'AUTH_REQUIRED'],
+  ] as const)('keeps specific local failures with server code %s and clears them on retry', async (serverCode, localCode, expectedCode) => {
     await start();
-    await service.settleLaneTurn({ ...terminal, outcome: 'error', failureCode: 'IMAGE_INPUT_UNSUPPORTED' });
+    await service.settleLaneTurn({ ...terminal, outcome: 'error', failureCode: localCode });
     const source = { id: execution.source_message_id, seq: '7', authorId: selfId, author: { kind: 'human', name: 'Owner' },
       content: [{ type: 'text', text: 'Question' }], origin: 'user', deleted: false, threadRootId: null, createdAt: '2026-10-03T00:00:00Z' };
     let status = 'failed';
     fixture.handle.mockImplementation((route, method, body) => {
       if (route.includes('/messages?')) return { body: [source] };
       if (route.includes('/execution-failures?')) return { status: 404, body: { code: 'NOT_FOUND' } };
-      if (route.endsWith('/executions')) return { body: [{ ...execution, status }] };
+      if (route.endsWith('/executions')) return { body: [{ ...execution, status, failure_code: serverCode }] };
       return response(route);
     });
     const failed = await service.getGroup(roomId);
     if (!failed.ok) throw new Error('group missing');
-    expect(projectBotGroupExecutionFailures(failed.group.messages, failed.group.executionFailures)[1]).toMatchObject({ runtimeFailureCode: 'IMAGE_INPUT_UNSUPPORTED' });
+    expect(projectBotGroupExecutionFailures(failed.group.messages, failed.group.executionFailures)[1]).toMatchObject({ runtimeFailureCode: expectedCode });
     status = 'queued';
     const retrying = await service.getGroup(roomId);
     if (!retrying.ok) throw new Error('group missing');
@@ -2502,7 +2617,7 @@ describe('Chat Server result delivery and refresh', () => {
     fixture.handle.mockImplementation(route => route === '/actors'
       ? { body: [{ id: botId, kind: 'bot', externalId: 'local-bot', name: 'Renamed' }] } : response(route));
     // Reads return on the old registry; the next background registration replaces it afterwards.
-    await vi.advanceTimersByTimeAsync(6000);
+    await vi.advanceTimersByTimeAsync(60_000);
     await service.getGroup(roomId);
     await vi.advanceTimersByTimeAsync(300);
     expect(deps.onChanged).toHaveBeenCalledWith(expect.objectContaining({ groupId: '' }), undefined);
@@ -2526,6 +2641,7 @@ describe('Chat Server result delivery and refresh', () => {
     expect(deps.onChanged).toHaveBeenCalledWith(expect.objectContaining({ groupId: roomId }), undefined);
     vi.mocked(socket.send).mockClear();
     socket.emit('message', JSON.stringify({ type: 'changes', scope: `conversation:${roomId}`, cursor: '43', changes: [] }));
+    await vi.advanceTimersByTimeAsync(0);
     expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'ack', scope: `conversation:${roomId}`, cursor: '43' }));
   });
 
@@ -3222,6 +3338,65 @@ describe('Chat Server result delivery and refresh', () => {
       expect(claims()).toBe(before);
       await vi.advanceTimersByTimeAsync(1);
       expect(claims()).toBe(before + 1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(deps.dispatch).toHaveBeenCalledOnce();
+    });
+
+    // Unit: two-minute idle installations previously performed 60 claims per Bot and
+    // refreshed identity every six seconds. Preserve the bounded unopened-room fallback.
+    it('backs off idle claims independently from profile refresh while keeping a bounded fallback', async () => {
+      fixture.profiles = [{ id: 'local-bot', displayName: 'Bot', avatar: null, status: 'active' }];
+      claimed = true;
+      await vi.advanceTimersByTimeAsync(120_000);
+      const count = (path: string) => fixture.handle.mock.calls.filter(([route]) => route === path).length;
+      expect(count('/executions/claim')).toBeGreaterThanOrEqual(5);
+      expect(count('/executions/claim')).toBeLessThanOrEqual(12);
+      expect(count('/me')).toBeLessThanOrEqual(3);
+      expect(count('/actors')).toBeLessThanOrEqual(3);
+      expect(count('/profile/refresh')).toBe(1);
+    });
+
+    // PR #7242, unit: the idle cadence test never invalidated a recent registration.
+    // A failed forced refresh must still register a new bot when the poll backoff ends.
+    it.each(['/me', '/actors'])('retries a failed forced %s refresh before the idle throttle expires', async failedRoute => {
+      await vi.advanceTimersByTimeAsync(2000);
+      const requestStart = fixture.requests.length;
+      const newActor = { id: '20000000-0000-4000-8000-000000000002', kind: 'bot', externalId: 'new-bot', name: 'New' };
+      fixture.profiles = [{ id: 'new-bot', displayName: 'New', avatar: null, status: 'active' }];
+      let fail = true;
+      fixture.handle.mockImplementation((route, method) => {
+        if (fail && route === failedRoute) return { status: 503, body: { error: { code: 'UNAVAILABLE' } } };
+        if (route === '/actors') return { body: method === 'POST' ? newActor : [] };
+        if (route === '/executions/claim') return { body: { execution: null } };
+        return response(route);
+      });
+      signalBotAutonomyBotsChanged();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(fixture.handle.mock.calls.filter(([route, method]) => route === '/actors' && method === 'POST')).toHaveLength(0);
+      fail = false;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(fixture.handle.mock.calls.filter(([route, method]) => route === '/actors' && method === 'POST')).toHaveLength(1);
+      expect(fixture.requests.slice(requestStart).some(request => request.url.endsWith('/executions/claim') && request.actor === newActor.id)).toBe(true);
+      const registered = fixture.handle.mock.calls.filter(([route]) => route === '/me').length;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(fixture.handle.mock.calls.filter(([route]) => route === '/me')).toHaveLength(registered);
+    });
+
+    // Unit: a notice racing an old empty response must not inherit that response's idle delay.
+    it('claims immediately when a queued notice arrives during an empty claim', async () => {
+      fixture.profiles = [{ id: 'local-bot', displayName: 'Bot', avatar: null, status: 'active' }];
+      claimed = true;
+      const socket = await live();
+      let finish!: (value: unknown) => void;
+      fixture.handle.mockImplementation(route => route === '/executions/claim'
+        ? new Promise(resolve => { finish = resolve; }) : response(route));
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(finish).toBeTypeOf('function');
+      socket.emit('message', JSON.stringify({ type: 'changes', scope: `conversation:${roomId}`, cursor: '8',
+        changes: [{ type: 'execution.changed', entityId: execution.id, data: { status: 'queued', botId } }] }));
+      await vi.advanceTimersByTimeAsync(250);
+      claimed = false; fixture.handle.mockImplementation(response);
+      finish({ body: { execution: null } });
       await vi.advanceTimersByTimeAsync(0);
       expect(deps.dispatch).toHaveBeenCalledOnce();
     });
@@ -4079,6 +4254,8 @@ describe('Chat authentication recovery and polling backoff', () => {
     const meCalls = () => fixture.requests.filter(r => new URL(r.url).pathname === '/v1/me').length;
     expect(meCalls()).toBe(5);
     await vi.advanceTimersByTimeAsync(6_000);
+    expect(meCalls()).toBe(5);
+    await vi.advanceTimersByTimeAsync(54_000);
     expect(meCalls()).toBe(6);
     expect(fixture.refresh).not.toHaveBeenCalled();
   });

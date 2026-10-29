@@ -1,3 +1,5 @@
+import { emitSessionCreated } from './sessionCreatedBroadcast.js';
+import type { RoutineModel } from '@cindy/maker-scheduler';
 import { todoAccess } from '../../maker-ipc/botTodoAccess.js';
 import { botLinkedProjectAccess } from '../../maker-ipc/botLinkedProjects.js';
 import type { TodoPatch } from '@cindy/maker-shared/teammate-todo';
@@ -39,6 +41,7 @@ import { assertTrustedAppRendererEvent } from '../../security/trustedAppRenderer
 import { isDeviceLinkInvoke } from '../../device-link/invoke-context.js';
 import { requireObject, requireString, throwIpcError } from '../../utils/ipcValidate.js';
 import { collectPresentBotRemoteResourceSources } from './botRemoteResourceAbsence.js';
+import { isIpcError } from '../../../shared/ipc-errors.js';
 import { isBotVisibleRemotely } from './botRemoteVisibility.js';
 import { readRemoteBotSessionAccess, readRemoteBotSessionAccessBatch } from './botRemoteSessionAccess.js';
 import { setRemoteBotSessionLookup } from '../../device-link/remoteBotSessionBoundary.js';
@@ -105,7 +108,7 @@ import { createMessage } from './messages.js';
 import { syncBotLanePermission, syncBotLinkedLanePermissions, syncBotPermissionsByBotId } from '../../maker-ipc/botPermissionSync.js';
 import { withSessionPermissionChange } from '../../maker-ipc/sessionPermissionChange.js';
 import { withBotPermissionChangeForBot } from '../../maker-ipc/botPermissionDispatch.js';
-import { broadcastSessionPatched } from './sessions.js';
+import { broadcastSessionPatched, restoreArchivedSessionForSend } from './sessions.js';
 import { BOT_DELEGATION_CLIENT_ID } from '../../../shared/botCollaboration.js';
 
 import { generateBotCreationDraft, readBotCreationDraft, generateBotCreationAvatar } from '../../maker-ipc/botCreationDraft.js';
@@ -445,20 +448,53 @@ export type EnsureBotChannelLaneResult =
 
 /** Read-only lookup of an active IM channel lane (`role = 'channel'`). */
 export async function findBotChannelLaneSession(botId: string, routeKey: string): Promise<string | null> {
+  return findBotOwnedLaneSession(botId, routeKey, 'channel');
+}
+
+async function findBotOwnedLaneSession(
+  botId: string,
+  routeKey: string,
+  role: 'channel' | 'routine',
+  status: 'active' | 'archived' = 'active',
+): Promise<string | null> {
   const [existing] = await getDbClient()
     .drizzle.select({ sessionId: botSessionLinks.sessionId })
     .from(botSessionLinks)
     .innerJoin(sessions, eq(sessions.id, botSessionLinks.sessionId))
     .where(and(
       eq(botSessionLinks.botId, botId),
-      eq(botSessionLinks.role, 'channel'),
+      eq(botSessionLinks.role, role),
       eq(botSessionLinks.routeKey, routeKey),
       isNull(botSessionLinks.archivedAt),
       eq(sessions.source, 'bot'),
-      eq(sessions.status, 'active'),
+      eq(sessions.status, status),
     ))
+    .orderBy(desc(sessions.updatedAt))
     .limit(1);
   return existing?.sessionId ?? null;
+}
+
+/**
+ * The owner can archive these lanes from the task list. Like an archived automation
+ * target, the next trigger resumes the same Session (and its context) instead of
+ * starting another one. Only a lane deleted meanwhile falls through to a new Session;
+ * any other failure propagates so the caller retries rather than losing the context.
+ */
+async function resumeArchivedBotOwnedLaneSession(
+  botId: string,
+  routeKey: string,
+  role: 'channel' | 'routine',
+): Promise<string | null> {
+  const archived = await findBotOwnedLaneSession(botId, routeKey, role, 'archived');
+  if (!archived) return null;
+  try {
+    await restoreArchivedSessionForSend(archived);
+  } catch (error) {
+    if (!(isIpcError(error) && error.code === 'NOT_FOUND')) throw error;
+    log.warn('archived bot lane was deleted before it resumed; starting a new one', { sessionId: archived });
+    return null;
+  }
+  return archived;
 }
 
 /**
@@ -473,10 +509,20 @@ export async function ensureBotChannelLaneSession(input: {
   routeKey: string;
   title: string;
 }): Promise<EnsureBotChannelLaneResult> {
+  return ensureBotOwnedLaneSession(input, 'channel');
+}
+
+/** A persistent execution context for one standing instruction, sharing its companion's Home. */
+export async function ensureBotRoutineLaneSession(input: { botId: string; routineId: string; title: string; modelOverride?: RoutineModel | null }): Promise<EnsureBotChannelLaneResult> {
+  return ensureBotOwnedLaneSession({ ...input, routeKey: `routine:${input.routineId}` }, 'routine');
+}
+
+async function ensureBotOwnedLaneSession(input: { botId: string; routeKey: string; title: string; modelOverride?: RoutineModel | null }, role: 'channel' | 'routine'): Promise<EnsureBotChannelLaneResult> {
   const owner = captureBotOperationOwner();
   const client = getDbClient();
   const db = client.drizzle;
-  const existing = await findBotChannelLaneSession(input.botId, input.routeKey);
+  const existing = await findBotOwnedLaneSession(input.botId, input.routeKey, role)
+    ?? await resumeArchivedBotOwnedLaneSession(input.botId, input.routeKey, role);
   if (existing) {
     await syncBotLanePermission(existing);
     owner.assertCurrent();
@@ -496,7 +542,11 @@ export async function ensureBotChannelLaneSession(input: {
     .limit(1);
   if (!profileVersion) return { ok: false, errorCode: 'BOT_UNAVAILABLE', message: '伙伴资料版本不存在' };
   const config = parseJson(profileVersion.capabilitiesJson);
-  const primaryRoute = (await readEffectiveBotModelChain(config))[0] ?? null;
+  const override = input.modelOverride;
+  const primaryRoute = override ? { harness: override.agentKind === 'claude-code' ? 'claude' as const : override.agentKind,
+    model: override.model, providerId: override.providerId ?? null, effort: override.effort ?? '',
+    fastMode: override.fastMode ?? false, agentDeviceId: override.agentDeviceId ?? null }
+    : (await readEffectiveBotModelChain(config))[0] ?? null;
   if (!primaryRoute) return { ok: false, errorCode: 'NO_MODEL', message: '伙伴还没有可用模型' };
   const workspaceKind = 'dialogue' as const;
   const workingDir = await ensureBotWorkspaceDir(owner.userDataDir, input.botId, app.getPath('userData'));
@@ -508,7 +558,7 @@ export async function ensureBotChannelLaneSession(input: {
       {
         workspaceKind,
         workingDir,
-        ...botSessionRouteFields(config, primaryRoute),
+        ...botSessionRouteFields(override ? { ...config, providerId: null, effort: undefined } : config, primaryRoute),
         remoteHostId: undefined,
         source: 'bot',
       },
@@ -529,7 +579,7 @@ export async function ensureBotChannelLaneSession(input: {
   owner.assertCurrent();
   let result: BotGroupsCreateLaneResult;
   try {
-    result = await client.tx<BotGroupsCreateLaneResult>('bots.createChannelLane', {
+    result = await client.tx<BotGroupsCreateLaneResult>(role === 'routine' ? 'bots.createRoutineLane' : 'bots.createChannelLane', {
       botId: input.botId,
       routeKey: input.routeKey,
       session: {
@@ -563,6 +613,7 @@ export async function ensureBotChannelLaneSession(input: {
     await syncBotLinkedLanePermissions(result.permissionRepairCanonicalSessionId);
     owner.assertCurrent();
   }
+  if (result.created) emitSessionCreated(result.sessionId);
   return { ok: true, sessionId: result.sessionId, created: result.created };
 }
 
@@ -1326,9 +1377,11 @@ async function readProfile(
                   ? 'group'
                   : link.role === 'channel'
                     ? 'channel'
-                    : link.role === 'thread'
-                      ? 'thread'
-                      : 'history',
+                    : link.role === 'routine'
+                      ? 'routine'
+                      : link.role === 'thread'
+                        ? 'thread'
+                        : 'history',
           updatedAt: row.updatedAt,
           status: row.status,
           role: link.role,
@@ -1972,6 +2025,16 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
   const db = client.drizzle;
   const [current] = await db.select().from(botProfiles).where(eq(botProfiles.id, id)).limit(1);
   if (!current) throwIpcError('NOT_FOUND', 'Bot 不存在');
+  // Explicit recovery accepts the saved choice, rather than guessing that an
+  // unversioned automation baseline is stale because its provider is missing.
+  const acceptsSavedModel = body.acceptSavedModelSelectionVersion !== undefined;
+  if (acceptsSavedModel && (!Number.isSafeInteger(body.acceptSavedModelSelectionVersion)
+    || (body.acceptSavedModelSelectionVersion as number) < 1)) {
+    throwIpcError('INVALID_PARAMS', 'acceptSavedModelSelectionVersion must be a positive integer');
+  }
+  if (acceptsSavedModel && current.currentVersion !== body.acceptSavedModelSelectionVersion) {
+    throwIpcError('PRECONDITION_FAILED', '伙伴配置已更新，请重新读取后重试');
+  }
   if (expectedVersion !== undefined && current.currentVersion !== expectedVersion) {
     throwIpcError('PRECONDITION_FAILED', '伙伴配置已更新，请重新读取后重试');
   }
@@ -2081,7 +2144,8 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
   // Legacy chain-only profiles gain mirrored fields during normalization.
   // Compare the same representation so unrelated edits do not validate stale routes.
   const modelSelectionChanged = botProfileModelSelectionChanged(normalizeBotModelCapabilitiesOrThrow(previous), normalizedNextConfig);
-  if (modelSelectionChanged) {
+  const acceptsModelSelection = modelSelectionChanged || acceptsSavedModel;
+  if (acceptsModelSelection) {
     const primary = (await readEffectiveBotModelChain(normalizedNextConfig))[0];
     owner.assertCurrent();
     if (!primary || !await validateTaskModel(primary)) {
@@ -2115,9 +2179,9 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
   owner.assertCurrent();
   const changesPermissions = body.capabilities != null && typeof body.capabilities === 'object'
     && Object.prototype.hasOwnProperty.call(body.capabilities, 'permissions');
-  const modelFollowers = modelSelectionChanged ? await db.select({ sessionId: botSessionLinks.sessionId })
+  const modelFollowers = acceptsModelSelection ? await db.select({ sessionId: botSessionLinks.sessionId })
     .from(botSessionLinks).where(and(eq(botSessionLinks.botId, id),
-      inArray(botSessionLinks.role, ['canonical', 'group', 'channel', 'thread']),
+      inArray(botSessionLinks.role, ['canonical', 'group', 'channel', 'thread', 'routine']),
       isNull(botSessionLinks.archivedAt))) : [];
   const commitProfile = async () => {
     await coordinateBotModelSelection(modelFollowers.map((link) => link.sessionId), async () => {
@@ -2126,7 +2190,7 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
       owner.assertCurrent();
       await client.tx('bots.updateProfile', {
         id,
-        ...(modelSelectionChanged ? { clearScheduledModelBaseline: true } : {}),
+        ...(acceptsModelSelection ? { clearScheduledModelBaseline: true } : {}),
         ...(changesPermissions ? { canonicalPermissionMode: botSessionPermissionMode(normalizedNextConfig) } : {}),
         ...(restored?.allowSameName === true ? { allowDuplicateName: true } : {}),
         ...(patch.displayName !== undefined ? { displayName: patch.displayName } : {}),
@@ -2200,7 +2264,7 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
     await syncBotProfileFolder(id, folderPatch, owner.userDataDir);
     owner.assertCurrent();
   }
-  if (profileContentChanged) {
+  if (profileContentChanged || acceptsSavedModel) {
     const [canonical] = await db
       .select({ sessionId: botSessionLinks.sessionId })
       .from(botSessionLinks)
@@ -2214,7 +2278,7 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
     .limit(1);
     owner.assertCurrent();
     if (canonical) requestBotRuntimeEpochRefresh(canonical.sessionId,
-      modelSelectionChanged ? 'model' : 'profile');
+      acceptsModelSelection ? 'model' : 'profile');
   }
   const profile = await readProfile(client, id);
   owner.assertCurrent();
@@ -2783,7 +2847,7 @@ export function registerBotIpc(): void {
     const bots = await getDbClient().drizzle
       .select({ id: botProfiles.id })
       .from(botProfiles)
-      .where(eq(botProfiles.status, 'active'));
+      .where(ne(botProfiles.status, 'deleting'));
     // Older renderers receive empty directories rather than claiming projects.
     const scopes = await collectTaskResponsibilityScopes(
       bots.map((bot) => bot.id),

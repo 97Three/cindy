@@ -3,8 +3,6 @@ import { historyAfter } from './historyAfter';
 import { readMailCard } from '@cindy/maker-shared/ghost-card-form';
 import { animateFocusScroll } from './animateFocusScroll';
 import { simplifyBotRenderItems } from '@/features/bots/botConversationPresentation';
-import { useMessageEntrance } from './useMessageEntrance';
-import { useSmoothMessageFollow } from './useSmoothMessageFollow';
 import { isVisibleVoiceCallMessage } from '@/features/bots/voice/voiceCallPresentation';
 import { MessageViewport, type MessageViewportApi } from './MessageViewport';
 import { PAGE_TEXT_NAVIGATION_EVENT } from '@/lib/pageTextAccess';
@@ -334,6 +332,7 @@ import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
 import { MessageSourceLabels } from './MessageSourceLabels';
 import { AskUserQuestionBubble } from './AskUserQuestionBubble';
+import type { ErrorDiagnosisSource } from '@/lib/errorDiagnosisPrompt';
 import { ErrorMessageCard } from './ErrorMessageCard';
 import { APP_EXIT_INTERRUPTED_REASON } from '../../../shared/interruptedTurn';
 import { PlanReviewBubble } from './PlanReviewBubble';
@@ -458,6 +457,7 @@ interface MessageStreamProps {
   remoteHostId?: string | null;
   /** Task origin. Personal WeChat must not be told to switch to Full access. */
   sessionSource?: string | null;
+  onDiagnoseError?: (error: ErrorDiagnosisSource) => void;
   /** Session working directory; passed down so MarkdownRenderer / UserMessage
    *  can resolve relative paths in markdown links and inline @-chips
    *  (text-lightbox-trigger-extension F1 / F2). Stable within a session
@@ -2836,6 +2836,7 @@ function renderWorkGroupChild(
     agentKind?: 'cc' | 'codex' | 'pi';
     remoteHostId?: string | null;
     sessionSource?: string | null;
+    onDiagnoseError?: (error: ErrorDiagnosisSource) => void;
     isSessionStreaming: boolean;
     firstUserMessageClientId: string | null;
     lastUserMessageClientId: string | null;
@@ -2885,6 +2886,7 @@ function renderWorkGroupChild(
         agentKind={props.agentKind}
         remoteHostId={props.remoteHostId}
         sessionSource={props.sessionSource}
+        onDiagnoseError={props.onDiagnoseError}
         sessionRunning={props.isSessionStreaming}
         assistantForkBlocked={shouldBlockAssistantFork(
           props.isSessionStreaming,
@@ -2999,6 +3001,7 @@ export function MessageStream({
   agentKind,
   remoteHostId,
   sessionSource,
+  onDiagnoseError,
   workingDir,
   assistantAvatar,
   simplifiedBotConversation = false,
@@ -3095,7 +3098,6 @@ export function MessageStream({
   const contentRef = useRef<HTMLDivElement>(null);
   /** 渲染 item 的内层 flex 容器；按 data-render-item-key 定位，异步卡片可不占 DOM。 */
   const itemsRef = useRef<HTMLDivElement>(null);
-  const followMessageBottom = useSmoothMessageFollow(scrollRef, itemsRef);
 
   // ── 切会话恢复浏览位置(默认常开) ──
   // 父组件用 key={sessionId} 重挂载本组件,所以这里在 mount 时一次性读取快照即可:
@@ -3399,12 +3401,6 @@ export function MessageStream({
     workGroupProjection,
   ]);
   const renderMetadataItems = renderMetadataProjection(allRenderItems);
-  const entranceSignature = allRenderItems.flatMap(item => item.type === 'message'
-    && (item.message.role === 'user' || item.message.role === 'assistant') && !item.message.systemCardType
-    && (item.message.content.trim().length > 0 || item.message.images?.length || item.message.files?.length)
-    ? [item.key] : []).join('\0');
-  const entranceKeys = useMemo(() => entranceSignature ? entranceSignature.split('\0') : [], [entranceSignature]);
-  const enterMessage = useMessageEntrance(entranceKeys, !isLoadingMore && (!historySnapshot || historySnapshot.ready));
   const botMessageTimeGroups = useMemo(() => {
     if (!simplifiedBotConversation) return new Map<string, number>();
     return collectBotMessageTimeGroups(
@@ -5084,7 +5080,7 @@ export function MessageStream({
     if (scrollbarDragStartTopRef.current != null) return;
     const generation = beginProgrammaticScroll();
     suppressScrollbarActivation(el);
-    followMessageBottom();
+    el.scrollTop = el.scrollHeight;
     // Layout effects already flush their state updates before paint. Observer
     // and input callbacks need an explicit commit before the next scroll event.
     if (fromLayout) reconcileMessageViewport();
@@ -5097,7 +5093,7 @@ export function MessageStream({
         refreshViewportAnchor();
       }
     });
-  }, [beginProgrammaticScroll, finishProgrammaticScroll, refreshViewportAnchor, reconcileMessageViewport, syncMessageViewport, followMessageBottom]);
+  }, [beginProgrammaticScroll, finishProgrammaticScroll, refreshViewportAnchor, reconcileMessageViewport, syncMessageViewport]);
   pinToBottomRef.current = pinToBottom;
 
   // Composer send is an explicit "show me the result" intent. Don't wait for
@@ -6248,8 +6244,7 @@ export function MessageStream({
     root.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
   }, [railJumpRequest, allRenderItems, visibleRenderItems, beginChipJump]);
 
-  // 第一条 user 消息没有"上一条 assistant"作为 resumeSessionAt 锚点，
-  // rewind 必然抛 NO_PRIOR_ASSISTANT。直接在 UI 层把按钮藏掉，避免无效点击。
+  // 第一条 user 消息没有可 fork 的前文(fork 出来等价于复制整条任务),UI 层藏掉 fork 入口。
   // 注意:这里要用全量 messages 而不是 visibleRenderItems —— "首条 user" 的语义
   // 是整段对话的首条,不是当前窗口的首条;且 messages 本身也只是已加载的尾部
   // 切片,还有老页未加载(hasMoreMessages)时不能把切片首条误判为对话首条
@@ -6316,6 +6311,7 @@ export function MessageStream({
       agentKind,
       remoteHostId,
       sessionSource,
+      onDiagnoseError,
       isSessionStreaming,
       firstUserMessageClientId,
       lastUserMessageClientId,
@@ -6336,6 +6332,7 @@ export function MessageStream({
       agentKind,
       remoteHostId,
       sessionSource,
+      onDiagnoseError,
       isSessionStreaming,
       firstUserMessageClientId,
       lastUserMessageClientId,
@@ -6475,8 +6472,6 @@ export function MessageStream({
                 className="relative mx-auto w-full pt-7"
                 style={{
                   paddingBottom: resolvedBottomPadding,
-                  // The visual follow transform must not enlarge the native scroll range.
-                  overflow: 'clip',
                   // Match the input overlay's width so chat content + input box
                   // share the same horizontal bounds. Falls back to 880 only if
                   // the parent forgot to pass contentWidth.
@@ -6747,6 +6742,7 @@ export function MessageStream({
                         simplifiedBotConversation={simplifiedBotConversation}
                         starterOptionsLocked={Boolean(lastUserMessageClientId)}
                         sessionSource={sessionSource}
+                        onDiagnoseError={onDiagnoseError}
                       />
                     );
                     const highlightClass =
@@ -6771,7 +6767,6 @@ export function MessageStream({
                           key={item.key}
                           data-render-item-key={item.key}
                           data-message-client-id={msg.clientId}
-                          ref={node => enterMessage(node, item.key)}
                           className={cn('scroll-mt-20 transition-colors', highlightClass)}
                         >
                           {startsUnread ? (
@@ -6813,7 +6808,6 @@ export function MessageStream({
                         key={item.key}
                         data-render-item-key={item.key}
                         data-message-client-id={msg.clientId}
-                        ref={node => enterMessage(node, item.key)}
                         {...shareAttributes}
                         className={cn(
                           'scroll-mt-20 transition-colors',
@@ -6940,6 +6934,7 @@ const MessageItem = memo(function MessageItem({
   simplifiedBotConversation,
   starterOptionsLocked,
   sessionSource,
+  onDiagnoseError,
 }: {
   message: ChatMessage;
   toolResult?: string;
@@ -6994,6 +6989,7 @@ const MessageItem = memo(function MessageItem({
   /** True once the user has written anything in this task, which retires the opening's starter buttons. */
   starterOptionsLocked?: boolean;
   sessionSource?: string | null;
+  onDiagnoseError?: (error: ErrorDiagnosisSource) => void;
 }) {
   // silent-stop 自动续跑行(isSyntheticTrigger + systemCardType):渲染成
   // 「已自动继续」分隔线,必须在 synthetic early-return 之前检查,否则分隔线被吞。
@@ -7184,6 +7180,7 @@ const MessageItem = memo(function MessageItem({
           providerId={message.errorProviderId}
           toolLoop={message.toolLoop}
           sessionSource={sessionSource}
+          onDiagnose={onDiagnoseError}
         />
       );
     case 'thinking':

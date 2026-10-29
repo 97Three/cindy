@@ -37,7 +37,7 @@ import { getSessionListActivityAt } from '@cindy/maker-shared/session-activity';
  * 全部纯函数；输入为空 / 异常 → 静默返回合理默认。
  */
 
-import { extractDisplayName, splitPathSegments, tailJoin } from '../../../../shared/projectDisplayName';
+import { splitPathSegments, tailJoin } from '../../../../shared/projectDisplayName';
 export { extractDisplayName } from '../../../../shared/projectDisplayName';
 
 import type { DeviceLinkConnectionStatus, Session } from '@/lib/ccAgent.types';
@@ -116,6 +116,17 @@ export interface BotGroupNode {
   /** 该伙伴名下所有任务,已按 status 然后 sortTime desc 排序。 */
   sessions: Session[];
   latestActivityAt: string;
+}
+
+/** Filtering/sorting must not discard grouping's structural reuse when the
+ * actual rows and their order are unchanged. Compare objects, never just IDs:
+ * fresh titles/status and same-ID tasks on other devices must still propagate.
+ */
+export function withProjectSessions(project: ProjectNode, sessions: Session[]): ProjectNode {
+  return sessions.length === project.sessions.length &&
+    sessions.every((session, index) => session === project.sessions[index])
+    ? project
+    : { ...project, sessions };
 }
 
 /** 分组时用来认伙伴的最小信息。渲染层从 botStore 的会话投影现拼。 */
@@ -347,7 +358,7 @@ function extractDisplayNameFromIndex(
   return { name: fallback, segments: maxSegments };
 }
 
-function normalizeProjectAliases(
+export function normalizeProjectAliases(
   raw: GroupSessionsOptions['projectAliases'],
   localPlatform: string,
 ): Map<string, string> {

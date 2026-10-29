@@ -1,3 +1,4 @@
+import { emitSessionCreated } from '../sessionCreatedBroadcast.js';
 import { captureAgentRequest } from '../../../maker-ipc/forwardedRequest';
 import { admitTaskAction, assertTaskActionCurrent, TaskActionAuthorizationError } from '../../../maker-ipc/taskActionAuthorization';
 import { formatForwardedRequest } from '../../../../shared/forwardedRequest';
@@ -57,6 +58,7 @@ import {
 } from '../../schema';
 
 // Host preference storage is outside this database/runtime integration test.
+vi.mock('../sessionCreatedBroadcast.js', () => ({ emitSessionCreated: vi.fn(), emitSessionListChangedLocally: vi.fn() }));
 vi.mock('electron-store', () => ({ default: class {
   private values = new Map<string, unknown>();
   get(key: string, fallback?: unknown) { return this.values.get(key) ?? fallback; }
@@ -315,6 +317,7 @@ function createDb(filename = ':memory:'): void {
       cleared_at INTEGER,
       pinned_at INTEGER,
       hidden_at INTEGER,
+      notifications_muted INTEGER NOT NULL DEFAULT 0,
       summary TEXT,
       provider_id TEXT,
       user_send_at INTEGER,
@@ -2126,18 +2129,33 @@ describe('Bot canonical Session lifecycle', () => {
     );
   });
 
-  it('creates one hidden IM channel lane per route key, projects it as `channel` and keeps it out of history search', async () => {
+  it('creates one IM channel lane per route key, notifies the task list and keeps it out of private history search', async () => {
     const created = await invoke('local-db:bots:create-canonical-session', {
       botId: 'bot-1',
       expectedCanonicalSessionId: null,
       expectedProfileVersion: 1,
     });
+    vi.mocked(emitSessionCreated).mockClear();
     const routeKey = 'im:telegram:777:g:-100123';
     const first = await ensureBotChannelLaneSession({ botId: 'bot-1', routeKey, title: '[TG·群] 100123' });
     expect(first).toMatchObject({ ok: true, created: true });
     if (!first.ok) throw new Error(first.message);
     await expect(ensureBotChannelLaneSession({ botId: 'bot-1', routeKey, title: 'ignored' }))
       .resolves.toEqual({ ok: true, sessionId: first.sessionId, created: false });
+    // The owner archived the lane from the task list: the next message resumes it, not a second lane.
+    // Restoring re-reads the task row with its tags, as in the production schema.
+    h.sqlite!.exec(`CREATE TABLE IF NOT EXISTS task_tags(id TEXT PRIMARY KEY,name TEXT,color TEXT,favorite_order INTEGER,sort_order INTEGER,revision INTEGER,name_customized INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS session_task_tags(session_id TEXT,tag_id TEXT);`);
+    h.sqlite!.prepare("UPDATE sessions SET status = 'archived' WHERE id = ?").run(first.sessionId);
+    await expect(ensureBotChannelLaneSession({ botId: 'bot-1', routeKey, title: 'ignored' }))
+      .resolves.toEqual({ ok: true, sessionId: first.sessionId, created: false });
+    expect(h.sqlite!.prepare('SELECT status FROM sessions WHERE id = ?').get(first.sessionId)).toEqual({ status: 'active' });
+    // A restore failure other than deletion must surface for retry, never replace the lane.
+    h.sqlite!.prepare("UPDATE sessions SET status = 'archived', orca_role = 'worker' WHERE id = ?").run(first.sessionId);
+    await expect(ensureBotChannelLaneSession({ botId: 'bot-1', routeKey, title: 'ignored' }))
+      .rejects.toThrow(/Restore the managed task/);
+    h.sqlite!.prepare("UPDATE sessions SET status = 'active', orca_role = NULL WHERE id = ?").run(first.sessionId);
+    expect(emitSessionCreated).toHaveBeenCalledExactlyOnceWith(first.sessionId);
     await expect(findBotChannelLaneSession('bot-1', routeKey)).resolves.toBe(first.sessionId);
     const canonical = h.sqlite!.prepare(
       'SELECT working_dir AS workingDir, model, permission_mode AS permissionMode FROM sessions WHERE id = ?',
@@ -4571,12 +4589,16 @@ describe('Bot Session task end-to-end runtime', () => {
     agentKind: string;
   }
 
-  async function runOwnerAction<T>(tool: string, current: () => boolean, operation: () => Promise<T>): Promise<T> {
+  async function runOwnerAction<T>(tool: string, current: () => boolean, operation: () => Promise<T>, deliveryCurrent?: () => boolean): Promise<T> {
     const check = () => { if (!current()) throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED'); };
     const decision = await admitTaskAction({
       sessionId: 'session-1', server: 'cindy_helper', tool, args: {},
     }, { key: 'input', ownerInput: true, delegated: false,
-      assertCurrent: async () => check(), assertCurrentSync: check });
+      assertCurrent: async () => check(), assertCurrentSync: check,
+      ...(deliveryCurrent ? { assertDeliveryCurrent: async () => {
+        if (!deliveryCurrent()) throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
+      } } : {}),
+    });
     if (!decision.ok || !decision.run) throw new Error('Expected admission');
     return decision.run(operation);
   }
@@ -5994,7 +6016,9 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { read.mockRestore(); mkdir.mockRestore(); release(); runtime.dispose(); }
   });
 
-  it.each(['valid', 'revoked', 'ended', 'action-revoked'] as const)('cancels delegation input at the actual host accepted adapter: %s', async condition => {
+  // The adapter must retain real revocation and the legacy guard fallback,
+  // while normal source-turn completion alone must not cancel an admitted input.
+  it.each(['valid', 'revoked', 'ended', 'action-revoked', 'source-ended', 'delivery-revoked'] as const)('cancels delegation input at the actual host accepted adapter: %s', async condition => {
     await seedPair(); seedGroupLane();
     let draining = false;
     const release = registerGroupToolAuthority('group-lane', { botId: 'bot-a', mode: 'owner',
@@ -6017,13 +6041,15 @@ describe('Bot Session task end-to-end runtime', () => {
       const task = await runtime.delegation.startSessionTask({ callerSessionId: 'group-lane', objective: 'Accepted boundary fixture.' });
       if (!task.ok) throw new Error(task.message);
       armed = true;
-      const send = () => runtime.delegation.messageSessionTask(condition === 'action-revoked' ? 'session-1' : 'group-lane', task.delegationId, { kind: 'message', text: 'Follow-up input.' });
-      await (condition === 'action-revoked' ? runOwnerAction('message_session_task', () => !draining, send) : send());
+      const ownerAction = ['action-revoked', 'source-ended', 'delivery-revoked'].includes(condition);
+      const send = () => runtime.delegation.messageSessionTask(ownerAction ? 'session-1' : 'group-lane', task.delegationId, { kind: 'message', text: 'Follow-up input.' });
+      await (ownerAction ? runOwnerAction('message_session_task', () => condition === 'delivery-revoked' || !draining, send,
+        condition === 'source-ended' ? () => true : condition === 'delivery-revoked' ? () => !draining : undefined) : send());
       expect(input?.onAccepted).toBeTypeOf('function');
       const vendor = vi.fn();
       draining = true;
       const drain = async () => { await runAcceptedCallback(input!.onAccepted, input!.targetSessionId, input!.clientId!, { warn: vi.fn() }); vendor(); };
-      if (condition === 'valid') { await drain(); expect(vendor).toHaveBeenCalledOnce(); }
+      if (condition === 'valid' || condition === 'source-ended') { await drain(); expect(vendor).toHaveBeenCalledOnce(); }
       else { await expect(drain()).rejects.toBeInstanceOf(AcceptedCallbackDispatchCancelled); expect(vendor).not.toHaveBeenCalled(); }
     } finally { release(); runtime.dispose(); }
   });
@@ -7665,6 +7691,44 @@ describe('Bot Session task end-to-end runtime', () => {
         resultText: 'Queued result.', hadPendingInputAtTerminal: false });
       expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
         .toEqual({ status: 'completed', result_summary: 'Queued result.' });
+    } finally { runtime.dispose(); }
+  });
+
+  /**
+   * 测试价值：messageSessionTask → 真输入协调器 → onAccepted → SQLite 执行回执。
+   * Bug：已准入补充排队期间发起轮结束，旧 onAccepted 误用精确输入检查而拒绝续接。
+   * 缺口：既有队列用例没有绑定发起轮授权；仅 bindTaskActionInput 不能覆盖服务回调。
+   * 最小输入：忙碌子任务 + 一条已准入补充 + 发起 input 换新；unit，模型进程为替身。
+   */
+  it('delivers an admitted supplement after its source input changes without admitting a new mutation', async () => {
+    await seedPair();
+    let execution = { instanceId: 'native', generation: 1 };
+    let sourceCurrent = true;
+    const runtime = createDelegationRuntime({ taskControl: true, queueSnapshots: new Map(), readSessionExecution: () => execution });
+    const request = { sessionId: 'session-1', server: 'cindy_helper' as const, tool: 'message_session_task', args: {} };
+    const check = () => { if (!sourceCurrent) throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED'); };
+    try {
+      const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Original work.' });
+      if (!task.ok) throw new Error('missing task');
+      const scope = { key: 'original-input', ownerInput: true, delegated: false,
+        assertCurrent: async () => check(), assertCurrentSync: check, assertDeliveryCurrent: async () => {} };
+      const decision = await admitTaskAction(request, scope);
+      if (!decision.ok || !decision.run) throw new Error('missing admission');
+      await expect(decision.run(() => runtime.delegation.messageSessionTask('session-1', task.delegationId,
+        { kind: 'message', text: 'Already approved supplement.' }))).resolves.toMatchObject({ ok: true });
+      expect(runtime.coordinator!.getQueueControlSnapshot(task.childSessionId).pendingQueue).toHaveLength(1);
+      sourceCurrent = false;
+      // A new invocation cannot borrow the accepted input's delivery authority.
+      expect(await admitTaskAction(request, scope)).toMatchObject({ ok: false, errorCode: 'TASK_ACTION_AUTHORIZATION_EXPIRED' });
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Original result.', pendingInputClientIds: [], hadPendingInputAtTerminal: false });
+      execution = { instanceId: 'native', generation: 2 };
+      await runtime.settleChild(task.childSessionId, 'Original turn ended.');
+      await vi.waitFor(() => expect(runtime.started.filter(turn => turn.sessionId === task.childSessionId)).toHaveLength(2));
+      await runtime.delegation.settleSession({ childSessionId: task.childSessionId, outcome: 'done', execution,
+        resultText: 'Supplement result.', pendingInputClientIds: [], hadPendingInputAtTerminal: false });
+      expect(h.sqlite!.prepare('SELECT status, result_summary FROM bot_delegations WHERE id = ?').get(task.delegationId))
+        .toEqual({ status: 'completed', result_summary: 'Supplement result.' });
     } finally { runtime.dispose(); }
   });
 
@@ -9438,6 +9502,85 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { runtime.dispose(); vi.useRealTimers(); }
   });
 
+  it.each((['pending', 'snapshot', 'after-result'] as const).flatMap(stage =>
+    (['retry', 'restart'] as const).map(recovery => ({ stage, recovery })),
+  ))(
+    'recovers completion after a $stage read timeout via $recovery without duplicate wake-ups', async ({ stage, recovery }) => {
+      await seedPair();
+      vi.useFakeTimers();
+      const execution = { instanceId: 'completion-read-timeout', generation: 1 };
+      const runtime = createDelegationRuntime({ readSessionExecution: () => execution });
+      let restarted: ReturnType<typeof createDelegationRuntime> | undefined;
+      const originalDb = h.db;
+      try {
+        const task = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Report the completed result.' });
+        if (!task.ok) throw new Error(task.message);
+        const resultCount = () => h.sqlite!.prepare(
+          "SELECT count(*) FROM messages WHERE session_id='session-1' AND client_id LIKE 'bot-delegation-result:%'",
+        ).pluck().get();
+        const wakeCount = () => h.sqlite!.prepare(
+          "SELECT count(*) FROM messages WHERE session_id='session-1' AND client_id LIKE 'bot-delegation-completion:%'",
+        ).pluck().get();
+        const delivered = () => h.sqlite!.prepare(
+          'SELECT completion_delivered_at FROM bot_delegations WHERE id=?',
+        ).pluck().get(task.delegationId);
+        let failures = 0;
+        // Use the production async query proxy: both the initial delivery and
+        // its timer must handle a rejected worker read, not just sync SQLite.
+        const transport: DbTransport = {
+          async send<R>(op: string, args: unknown): Promise<R> {
+            const { sql, params } = args as { sql: string; params: unknown[] };
+            const pendingRead = sql.startsWith('select "status", "child_session_id", "run_sequence", "completion_delivered_at" from "bot_delegations"');
+            const snapshotRead = sql.startsWith('select "permission_snapshot_json" from "bot_delegations"');
+            if (failures < 2 && (stage === 'snapshot' ? snapshotRead
+              : pendingRead && (stage === 'pending' || resultCount() === 1))) {
+              failures++;
+              throw new Error('db-worker RPC timeout after 30000ms');
+            }
+            const statement = h.sqlite!.prepare(sql);
+            if (op === 'rawAll') return statement.raw().all(...params) as R;
+            if (op === 'rawGet') return statement.raw().get(...params) as R;
+            if (op === 'run') return statement.run(...params) as R;
+            throw new Error(`unexpected completion operation: ${op}`);
+          },
+          on() {}, onTerminated() {}, async close() {},
+        };
+        h.db = createDrizzleProxy(transport);
+        await expect(runtime.settleChild(task.childSessionId, 'Completed output', execution)).resolves.toBeUndefined();
+        expect(failures).toBe(1);
+        expect(delivered()).toBeNull();
+        expect(wakeCount()).toBe(0);
+        // Ownership suppresses autonomous follow-up while reliable delivery
+        // retries; it must not be mistaken for evidence of a successful send.
+        expect(await runtime.delegation.isCompletionHandledByTeammate(task.childSessionId, { pendingForBotId: 'bot-a', execution })).toBe(true);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(failures).toBe(2);
+        expect(delivered()).toBeNull();
+        expect(wakeCount()).toBe(0);
+        if (recovery === 'restart') {
+          runtime.dispose();
+          restarted = createDelegationRuntime({ readSessionExecution: () => execution });
+          await restarted.delegation.restore();
+        } else {
+          await vi.advanceTimersByTimeAsync(1_999);
+          expect(wakeCount()).toBe(0);
+          await vi.advanceTimersByTimeAsync(1);
+        }
+        expect(delivered()).not.toBeNull();
+        expect(resultCount()).toBe(1);
+        expect(wakeCount()).toBe(1);
+        runtime.dispose(); restarted?.dispose();
+        restarted = createDelegationRuntime({ readSessionExecution: () => execution });
+        await restarted.delegation.restore();
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(resultCount()).toBe(1);
+        expect(wakeCount()).toBe(1);
+      } finally {
+        runtime.dispose(); restarted?.dispose(); h.db = originalDb; vi.useRealTimers();
+      }
+    },
+  );
+
   // #6737 review / db: accepted input is not a terminal receipt. Fail both
   // sides of terminal persistence; follow-up must not be consumed as handled.
   it.each(['terminal', 'status'] as const)('does not consume completion when %s persistence fails', async stage => {
@@ -10397,6 +10540,59 @@ describe('Bot self control uses the same profile authority as settings', () => {
 
 
 describe('Teammate model selection shares profile persistence and route reconciliation', () => {
+  // #7177, DB tier: older clients leave an unversioned automation baseline
+  // after a permanent choice. Existing cases only change the saved model.
+  // Exercise the real IPC/transaction and cold send preparation: accepting the
+  // already-saved choice must fence the old restore without editing the choice.
+  it('accepts the saved permanent choice over a legacy baseline after restart', async () => {
+    const created = await invoke('local-db:bots:create-canonical-session', {
+      botId: 'bot-1', expectedCanonicalSessionId: null, expectedProfileVersion: 1,
+    });
+    const sessionId = created.session.id as string;
+    const before = await invoke('local-db:bots:get', 'bot-1');
+    const legacy = JSON.stringify({ scopeId: 'legacy', agentKind: 'codex', model: 'old-model',
+      providerId: 'removed-provider', effort: 'medium', fastMode: false });
+    h.sqlite!.prepare('UPDATE sessions SET scheduled_model_baseline = ? WHERE id = ?').run(legacy, sessionId);
+    const readBaseline = () => h.sqlite!.prepare('SELECT scheduled_model_baseline FROM sessions WHERE id = ?')
+      .pluck().get(sessionId) as string | null;
+    await invoke('local-db:bots:update', { id: 'bot-1', acceptSavedModelSelectionVersion: before.currentVersion });
+    const after = await invoke('local-db:bots:get', 'bot-1');
+    expect(after.capabilities).toEqual(before.capabilities);
+    expect(after.currentVersion).toBe(before.currentVersion + 1);
+    expect(JSON.parse(readBaseline()!)).toMatchObject({ pendingBotProfileVersion: after.currentVersion });
+    const chain = await modelSettings.readEffectiveBotModelChain(after.capabilities);
+    const restoreOld = vi.fn(async () => { throw new Error('removed provider must not be restored'); });
+    const cold = createBotModelRouteReconciler({ ownerEpoch: () => h.ownerScopeKey,
+      read: async () => ({ chain, current: { agentKind: 'codex', model: 'old-model', providerId: 'removed-provider',
+        effort: 'medium', fastMode: false }, hasRuntimeOverride: false, scheduledModelBaseline: readBaseline() }),
+      apply: async () => { throw new Error('route not ready'); },
+      onSelectionAccepted: async (id, expected) => h.sqlite!.prepare(
+        'UPDATE sessions SET scheduled_model_baseline = NULL WHERE id = ? AND scheduled_model_baseline IS ?',
+      ).run(id, expected ?? null).changes === 1,
+    });
+    const scope = createScheduledModelScope({ read: async () => ({ profile: {
+      agentKind: 'codex', model: 'old-model', providerId: 'removed-provider', effort: 'medium', fastMode: false,
+    }, baseline: readBaseline() }), write: async () => {}, apply: restoreOld, isBusy: () => false, createId: () => 'unused' });
+    await scope.restore(sessionId);
+    expect(restoreOld).not.toHaveBeenCalled();
+    await expect(cold(sessionId)).rejects.toThrow('route not ready');
+    expect(JSON.parse(readBaseline()!)).toMatchObject({ pendingBotProfileVersion: after.currentVersion });
+    const applied: unknown[] = [];
+    const ready = createBotModelRouteReconciler({ ownerEpoch: () => h.ownerScopeKey,
+      read: async () => ({ chain, current: { agentKind: 'codex', model: 'old-model', providerId: 'removed-provider',
+        effort: 'medium', fastMode: false }, hasRuntimeOverride: false, scheduledModelBaseline: readBaseline() }),
+      apply: async (_id, route) => { applied.push(route); },
+      onSelectionAccepted: async (id, expected) => h.sqlite!.prepare(
+        'UPDATE sessions SET scheduled_model_baseline = NULL WHERE id = ? AND scheduled_model_baseline IS ?',
+      ).run(id, expected ?? null).changes === 1,
+    });
+    await ready(sessionId);
+    expect(applied).toEqual([expect.objectContaining({ model: chain[0]!.model, providerId: chain[0]!.providerId })]);
+    expect(readBaseline()).toBeNull();
+    await expect(invoke('local-db:bots:update', { id: 'bot-1', acceptSavedModelSelectionVersion: before.currentVersion }))
+      .rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+  });
+
   // #6895 P1: the previous crash test stopped at the profile commit. A subsequent
   // automation could recreate A before runtime refresh. DB tier: exercise the
   // real save transaction, send locks, reconciler and baseline writer in both
@@ -10598,6 +10794,32 @@ describe('Teammate model selection shares profile persistence and route reconcil
       service: createBotCapabilityService(capabilityDeps),
       id: JSON.stringify(['pi', 'xd', model.id]), model };
   }
+
+  // #7177, DB tier: an explicit same-value tool selection must reach the
+  // acceptance transaction; a plain metadata edit must retain the old scope.
+  it('reaccepts the same model through the teammate tool without treating a rename as recovery', async () => {
+    const { service, sessionId, id } = await setupModelControl();
+    const modelChain = [{ id, effort: 'low', fastMode: false }];
+    expect(await service.updateProfile({ callerSessionId: sessionId, expectedVersion: 1, modelChain }))
+      .toMatchObject({ ok: true });
+    const before = await invoke('local-db:bots:get', 'bot-1');
+    const legacy = JSON.stringify({ scopeId: 'legacy', agentKind: 'codex', model: 'old-model',
+      providerId: 'removed-provider', effort: 'medium', fastMode: false });
+    h.sqlite!.prepare('UPDATE sessions SET scheduled_model_baseline = ? WHERE id = ?').run(legacy, sessionId);
+    const readBaseline = () => h.sqlite!.prepare('SELECT scheduled_model_baseline FROM sessions WHERE id = ?')
+      .pluck().get(sessionId) as string;
+    expect(await service.updateProfile({ callerSessionId: sessionId, expectedVersion: before.currentVersion, name: 'New name' }))
+      .toMatchObject({ ok: true });
+    expect(readBaseline()).toBe(legacy);
+    const renamed = await invoke('local-db:bots:get', 'bot-1');
+    expect(await service.updateProfile({ callerSessionId: sessionId, expectedVersion: renamed.currentVersion, modelChain }))
+      .toMatchObject({ ok: true });
+    const after = await invoke('local-db:bots:get', 'bot-1');
+    expect(after.capabilities).toEqual(before.capabilities);
+    expect(after.name).toBe('New name');
+    expect(JSON.parse(readBaseline())).toMatchObject({ pendingBotProfileVersion: after.currentVersion });
+    expect(after.currentVersion).toBe(renamed.currentVersion + 1);
+  });
 
   // DB regression: a per-teammate reset follows the teammate default even if
   // the new-task composer changes later; previously the two were coupled.

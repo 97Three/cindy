@@ -1,3 +1,4 @@
+import { teammateGroupActivity } from '@cindy/maker-shared/teammate-status';
 /**
  * Bot group chat for controllers (phones) through the Remote Resource protocol
  * (docs/product-rules/bot-group-chat.md §8, docs/dev-rules/remote-and-mobile-adaptation.md).
@@ -48,7 +49,7 @@ import {
   type BotGroupThreadShareView,
 } from '../../shared/botGroupChat.js';
 import type { BotGroupChatService } from './botGroupChatService.js';
-import { projectBotGroupExecutionFailures } from '@cindy/maker-shared/botGroupPresentation';
+import { botGroupActivityAt, projectBotGroupExecutionFailures } from '@cindy/maker-shared/botGroupPresentation';
 
 const FALLBACK_MESSAGES = 20;
 const FALLBACK_MESSAGE_CHARS = 280;
@@ -172,9 +173,10 @@ export function botGroupRemoteItem(group: BotGroupSummary): RemoteCollectionItem
     ref: groupRef(group.id),
     display: {
       title: group.name,
+      teammateActivity: teammateGroupActivity(group),
       subtitle: group.members.map((member) => member.name).join('、'),
       ...(preview ? { preview } : {}),
-      timestamp: group.lastMessage?.createdAt ?? group.updatedAt,
+      timestamp: botGroupActivityAt(group),
       lastReplyAt: group.lastReplyAt,
       ...(busy ? { generation: { phase: 'processing', startedAt: null } } : {}),
     },
@@ -187,6 +189,7 @@ export function botGroupRemoteItem(group: BotGroupSummary): RemoteCollectionItem
       label: member.name,
     })),
     revision: JSON.stringify([
+      teammateGroupActivity(group).phase,
       group.updatedAt,
       group.name,
       group.members.map((member) => [member.botId, member.name, member.status]),

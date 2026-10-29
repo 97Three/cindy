@@ -176,6 +176,8 @@ export function startCompanionCloud(input: {
   humanActorId: string;
   selfDeviceId?: string;
   current: () => boolean;
+  /** Durable Chat Server display projection; takeover and runtime reconstruction still read authoritative history. */
+  transcript?: (roomId: string, actorId: string, refresh: boolean) => Promise<CompanionTranscriptMessage[]>;
   /** Active local companions whose home is this computer (and not demoted). */
   bots: () => CompanionCloudBot[];
   /** A local companion the owner paused: not synced or moved, and a merge asks to resume it first. */
@@ -603,8 +605,12 @@ export function startCompanionCloud(input: {
         if (actor.kind !== 'bot') continue;
         const botId = actor.externalId;
         const local = localProfiles.find(profile => profile.id === botId);
-        const entry = state.bot(botId);
+        let entry = state.bot(botId);
+        // A local id may now refer to a different cloud actor. In particular, an old
+        // retirement must never disable that replacement (state.update uses the same boundary).
+        if (entry && entry.actorId !== actor.id) entry = state.update(botId, actor.id, () => undefined);
         if (actor.disabled) {
+          if (entry?.retirePending) state.update(botId, actor.id, next => { delete next.retirePending; });
           // Deleted on its main computer (perhaps while this one was offline): a copy here is no
           // longer the companion, so it is hidden and stopped like any other old copy.
           if (local && local.status !== 'deleting' && !entry?.demoted) {
@@ -763,9 +769,11 @@ export function startCompanionCloud(input: {
       if (!actor) throw new Error('COMPANION_NOT_FOUND');
       const roomId = await mirror.ensureRoom(actor.externalId, actor.id, actor.name);
       // The room orders by arrival (older history may be uploaded later): read it whole, show it
-      // by message time. The first page re-reads; older pages reuse that read.
+      // by message time. The durable reader validates its cached scan against room
+      // changes; the legacy reader reuses a recent scan for older pages.
       const cached = transcripts.get(roomId);
-      const messages = before && cached && Date.now() - cached.at < TRANSCRIPT_CACHE_MS ? cached.messages
+      const messages = input.transcript ? await input.transcript(roomId, actor.id, !before)
+        : before && cached && Date.now() - cached.at < TRANSCRIPT_CACHE_MS ? cached.messages
         : await readAllRoomMessages(input.api, roomId, actor.id);
       transcripts.set(roomId, { at: Date.now(), messages });
       return transcriptPageOf(messages, before ? Number(before) : undefined);
@@ -780,7 +788,7 @@ export function startCompanionCloud(input: {
         const profile = await profileOf(actor.id).catch(() => null);
         if (isCindyCompanion(actor.externalId, profile)) copies.push({ botId: actor.externalId, name: actor.name, homeDeviceId: actor.homeDeviceId ?? null });
       }
-      return copies.length > 1 ? copies : [];
+      return copies;
     },
 
     async mergeCindy(keepBotId, fromBotIds) {
@@ -833,9 +841,18 @@ export function startCompanionCloud(input: {
 
     async retire(botId) {
       const self = input.selfDeviceId;
-      const actor = actorOf(botId);
       // A demoted copy is not the companion: deleting it never touches the cloud.
-      if (!self || !live() || !actor || actor.homeDeviceId !== self || runtime.isShadowed(botId)) return;
+      if (!self || !live() || runtime.isShadowed(botId)) return;
+      const actor = actorOf(botId);
+      if (!actor) {
+        // The local deletion has already committed. Keep its intent for a previously
+        // known actor even when the registry cannot resolve it yet; reconcile checks the
+        // actor identity, current home and installation before sending any cloud mutation.
+        const entry = state.bot(botId);
+        if (entry) state.update(botId, entry.actorId, next => { next.retirePending = true; });
+        return;
+      }
+      if (actor.homeDeviceId !== self) return;
       state.update(botId, actor.id, entry => { entry.retirePending = true; });
       await retireOwned(actor);
     },

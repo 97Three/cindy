@@ -88,6 +88,7 @@ import {
 import { CONTINUE_AFTER_ERROR_PROMPT, syntheticTriggerKind } from '../../shared/interruptedTurn.js';
 import { isSyntheticTriggerText } from '@cindy/maker-shared/synthetic-trigger';
 import { attachSessionReferenceMetadata } from '../../shared/sessionReferenceMetadata.js';
+import { collectInlineMessageReferenceKeys } from '@cindy/maker-shared/agent-input-projection';
 import {
   appendRecoveryCheckpointPrompt,
   buildRecoveryCheckpoint,
@@ -260,6 +261,7 @@ export interface AgentInputSendOpts {
    * 也不参与任何权限判定;刻意不复用 `origin`(那是 scheduler 的 turn origin)。
    */
   sourceOrigin?: AgentInputQueuedMessage['origin'];
+  [FORWARDED_REQUEST_RECEIPT]?: AgentInputQueuedMessage['autoReviewUserText'];
   sourcePlugin?: AgentInputQueuedMessage['sourcePlugin'];
   sharedTaskAuthor?: AgentInputQueuedMessage['sharedTaskAuthor'];
   /** Main-owned clear token captured when this input became active. */
@@ -300,7 +302,7 @@ export interface AgentInputSendOpts {
     origin?: AgentInputQueuedMessage['origin'];
     shouldBroadcast?: () => boolean;
     onPersisting?: () => void;
-    onPersisted?: () => void | Promise<void>;
+    onPersisted?: (signal?: AbortSignal) => void | Promise<void>;
     onPersistFailed?: () => void;
   };
 }
@@ -486,6 +488,7 @@ export interface AgentInputCoordinatorDeps {
   /** 在 vendor dispatch 前读取用户选中的本地/在线会话引用。 */
   resolveSessionReferences?: (
     refs: AgentInputQueuedMessage['sessionRefs'],
+    options?: { inlineMessageKeys?: ReadonlySet<string> },
   ) => Promise<AgentInputSessionReferenceContext[]>;
   /**
    * Refresh ephemeral structured-reference state at the actual dispatch
@@ -529,6 +532,7 @@ export interface AgentInputCoordinatorDeps {
   beforeDispatchUserTurn?: (
     sessionId: string,
     item: AgentInputQueuedMessage,
+    signal?: AbortSignal,
   ) => void | Promise<void>;
   /**
    * Called when a user row crossed the persistence boundary but never reached
@@ -1348,12 +1352,21 @@ export class AgentInputCoordinator {
       retrySourceClientId: item.retrySourceClientId ?? item.supersedesUserClientId };
   }
 
+  /** Account-scoped tools may not borrow the Host identity from plugin or shared guest input. */
+  isActiveInputAccountScoped(sessionId: string): boolean {
+    const item = this.states.get(sessionId)?.activeTurn?.item;
+    return !!item && !item.sourcePlugin && !item.sharedTaskAuthor;
+  }
+
   /**
    * Owner-only Host actions (app update) require the active input itself to be text
    * this account's user typed on Desktop or a same-account remote device. Automation,
    * other tasks, Orca, plugins, shared-task guests and automatic resumes never qualify.
    */
-  isActiveInputOwnerAuthored(sessionId: string): boolean {
+  isActiveInputOwnerAuthored(sessionId: string, vendorGeneration?: number): boolean {
+    const active = this.states.get(sessionId)?.activeTurn;
+    if (vendorGeneration !== undefined && active?.vendorTurnGeneration != null
+      && vendorGeneration !== active.vendorTurnGeneration) return false;
     return this.activeInputHasOwnerAuthor(sessionId, false);
   }
 
@@ -1363,7 +1376,12 @@ export class AgentInputCoordinator {
    * Host actions such as app update.
    */
   isActiveInputOwnerContinuation(sessionId: string): boolean {
-    return this.activeInputHasOwnerAuthor(sessionId, true);
+    const item = this.states.get(sessionId)?.activeTurn?.item;
+    // A relay is not fresh owner input (updates and other owner-only actions
+    // still use isActiveInputOwnerAuthored), but task actions retain its scope.
+    const relayed = !!item && !item.sourcePlugin && !item.sharedTaskAuthor
+      && verifiedOwnerRequestText(item.autoReviewUserText) !== undefined;
+    return relayed || this.activeInputHasOwnerAuthor(sessionId, true);
   }
 
   private activeInputHasOwnerAuthor(sessionId: string, allowContinuation: boolean): boolean {
@@ -2642,6 +2660,10 @@ export class AgentInputCoordinator {
         ...(appMessageGuard ? { [MCP_APP_MESSAGE_GUARD]: appMessageGuard } : {}),
         ...(item.sharedTaskAuthor ? { sharedTaskAuthor: item.sharedTaskAuthor } : {}),
         [AUTO_REVIEW_SOURCE_CONTENT]: queuedAutoReviewText(item),
+        ...(verifiedOwnerRequestText(item.autoReviewUserText) !== undefined ? {
+          [AUTO_REVIEW_USER_INTENT]: verifiedOwnerRequestText(item.autoReviewUserText),
+          [FORWARDED_REQUEST_RECEIPT]: item.autoReviewUserText,
+        } : {}),
         ...(item.autoReviewUserText && typeof item.autoReviewUserText === 'object' && item.autoReviewUserText.kind === 'delegated-continuation'
           ? { [AUTO_REVIEW_DELEGATED_CONTINUATION]: true as const } : {}),
         ...(typeof item.autoReviewUserText !== 'object' && readAutoReviewUserText(item.persistedContent) === null
@@ -3232,17 +3254,28 @@ export class AgentInputCoordinator {
     let continueItem: AgentInputQueuedMessage | null = null;
     let progressKnown = false;
     const previousAutoResumeInfo = opts?.auto ? state.autoResumePending : null;
+    const providerRestart = state.errorReason === 'remote_agent_restarted';
+    // Keep quota/error details for other recoveries. A provider restart already
+    // has a localized reconnect label on Desktop and Mobile; it is not an error
+    // summary to append to an otherwise successful continuation.
     // 额度重置后的续跑记录带上当初的限额原文，作为活动行展开详情里的原因。
     const automaticResumeInfo = opts?.auto
       ? previousAutoResumeInfo
       : usageWait
-        ? { ...usageWait.info, ...(state.error ? { error: state.error } : {}) }
+        ? { ...usageWait.info, ...(state.error && !providerRestart ? { error: state.error } : {}) }
         : null;
     const attemptToken = opts?.auto ? (opts.attemptToken ?? null) : null;
-    const continuationOnly = Boolean(
+    const continuationOnly = providerRestart || Boolean(
       opts?.auto && isAcceptedTurnContinuationOnlyReason(previousAutoResumeInfo?.reason),
     );
     let continueText = CONTINUE_AFTER_ERROR_PROMPT;
+    if (providerRestart) {
+      continueText += '\n\n[Host recovery] The provider process stopped or restarted during the previous turn.'
+        + (automatic ? ' Cindy is automatically continuing the interrupted task in the original conversation.'
+          : ' Continue the interrupted task in the original conversation.')
+        + ' Some tools may already have executed on the task computer without their results reaching you.'
+        + ' Check the current files, processes and external state before continuing; do not repeat side effects.';
+    }
     let recoveryCheckpoint: RecoveryCheckpoint | undefined;
     if (recovery.kind === 'active-turn') {
       let hasProgress = false;
@@ -4589,7 +4622,10 @@ export class AgentInputCoordinator {
       throw new Error('Remote session reference snapshot is missing; edit and resend the message.');
     }
     try {
-      return await (this.deps.resolveSessionReferences?.(item.sessionRefs) ?? []);
+      return await (this.deps.resolveSessionReferences?.(item.sessionRefs, {
+        // 引用的消息正文已经在用户消息里逐字送达，引用载荷不再重复投递。
+        inlineMessageKeys: collectInlineMessageReferenceKeys(item.agentReferences),
+      }) ?? []);
     } catch (error) {
       // Session links are still useful as ordinary Agent-facing text when the
       // referenced session belongs to another account, was deleted, or is
@@ -5110,6 +5146,8 @@ export class AgentInputCoordinator {
         } } : {}),
         ...(head.supersedesUserClientId ? { retryUserClientId: head.supersedesUserClientId } : {}),
         [AUTO_REVIEW_SOURCE_CONTENT]: queuedAutoReviewText(head),
+        ...(verifiedOwnerRequestText(head.autoReviewUserText) !== undefined
+          ? { [AUTO_REVIEW_USER_INTENT]: verifiedOwnerRequestText(head.autoReviewUserText) } : {}),
         ...(head.autoReviewUserText && typeof head.autoReviewUserText === 'object' && head.autoReviewUserText.kind === 'delegated-continuation'
           ? { [AUTO_REVIEW_DELEGATED_CONTINUATION]: true as const } : {}),
         messageUuid: active.messageUuid,
@@ -5155,7 +5193,7 @@ export class AgentInputCoordinator {
               active.persisting = true;
             }
           },
-          onPersisted: async () => {
+          onPersisted: async (signal) => {
             // The DB row already owns any staged attachment references. This
             // callback intentionally runs before generation checks: a clear
             // or Stop may win the pre-vendor race after persistence, but it
@@ -5171,7 +5209,7 @@ export class AgentInputCoordinator {
               // 已送达的消息二次恢复(issue #761)。
               this.maybePersistQueueSnapshot(sessionId);
             }
-            await this.deps.beforeDispatchUserTurn?.(sessionId, head);
+            await this.deps.beforeDispatchUserTurn?.(sessionId, head, signal ?? this.getInputAbortSignal(sessionId, active.generation));
             if (!this.isActiveTurnCurrent(sessionId, active)) {
               throw new Error(
                 '[SEND_CANCELLED_BEFORE_DISPATCH] User turn was cancelled before vendor dispatch',

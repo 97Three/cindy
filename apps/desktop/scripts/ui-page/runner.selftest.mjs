@@ -3,11 +3,13 @@
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { scanPage, buildPage } from './build.mjs';
+import { adhocPage } from './registry.mjs';
 
 const cli = fileURLToPath(new URL('./cli.mjs', import.meta.url));
 const harness = fileURLToPath(new URL('./harness/index.tsx', import.meta.url));
@@ -51,10 +53,47 @@ async function entry(name, source) {
 }
 
 before(async () => {
-  dir = await mkdtemp(path.join(os.tmpdir(), 'cindy-ui-selftest-'));
+  dir = await realpath(await mkdtemp(path.join(os.tmpdir(), 'cindy-ui-selftest-')));
 });
 after(async () => {
   await rm(dir, { recursive: true, force: true });
+});
+
+// GIF encoding now imports a Vite worker. Guard the real worker runtime, transfer
+// semantics and source tracking; replacing it with a synchronous stub would hide
+// precisely the scheduling boundary the recording tests need. Explicit E2E tier.
+test('bundles a real worker and tracks its transitive sources for compare and changed scans', async () => {
+  const value = path.join(dir, 'worker-value.ts');
+  const worker = path.join(dir, 'sample.worker.ts');
+  await writeFile(value, 'export const value = 17;');
+  await writeFile(worker, `import { value } from './worker-value';
+self.onmessage = ({ data }) => {
+  if (typeof document !== 'undefined') throw new Error('Worker ran on the page');
+  data[0] += value;
+  self.postMessage(data, [data.buffer]);
+};`);
+  const file = await entry('worker', `import SampleWorker from './sample.worker.ts?worker';
+const worker = new SampleWorker();
+const input = new Uint8Array([3]);
+await new Promise<void>((resolve, reject) => {
+  worker.onerror = reject;
+  worker.onmessage = ({ data }) => { worker.terminate(); data[0] === 20 ? resolve() : reject(new Error('Wrong worker result')); };
+  worker.postMessage(input, [input.buffer]);
+  if (input.byteLength !== 0) reject(new Error('Input was not transferred'));
+});
+mountPage({ render: () => <div>Worker finished</div> });`);
+  const definition = adhocPage(file);
+  const scanned = await scanPage(definition);
+  assert.ok(scanned.inputs.includes(value));
+  const bundle = await buildPage(definition);
+  const alternate = await buildPage(definition, {
+    has: file => file === value,
+    get: file => file === value ? 'export const value = 18;' : undefined,
+    resolve: () => undefined,
+  });
+  assert.notEqual(bundle.fingerprints.get(value), alternate.fingerprints.get(value));
+  assert.notEqual(bundle.bundleDigest, alternate.bundleDigest);
+  assert.equal((await run(['--entry', file, '--theme', 'light', '--json'])).code, 0);
 });
 
 test('one run reports each failure kind on its own variant', async () => {
@@ -115,6 +154,33 @@ mountPage({
   assert.ok(existsSync(path.join(summary.evidence, 'summary.json')));
   // The PR description lists the failing variants it came from.
   assert.match(await readFile(summary.pr, 'utf8'), /未通过：`entry\.throws\./);
+});
+
+// Windows regression: forced 2x DPI plus native window decorations added one
+// CSS pixel, and hidden windows could not capture a frame. Drive the real CLI
+// across sizes/themes and inspect PNG dimensions; existing failure tests do not
+// verify resizing. Dedicated Electron integration tier, not default unit tests.
+test('captures exact viewports and overviews in a hidden Electron window', async () => {
+  const file = await entry('viewport', 'mountPage({ render: () => <div>Viewport ready</div> });');
+  const { code, stdout } = await run([
+    '--entry', file, '--engine', 'electron', '--theme', 'all',
+    '--viewport', '560x400,360x640', '--json',
+  ]);
+  const summary = JSON.parse(stdout);
+  assert.equal(code, 0, JSON.stringify(summary.variants.map((v) => v.errors)));
+  assert.equal(summary.variants.length, 4);
+  for (const variant of summary.variants) {
+    assert.equal(variant.status, 'passed');
+    assert.ok(variant.screenshots.length);
+    const png = await readFile(path.join(summary.evidence, variant.screenshots[0]));
+    assert.deepEqual(
+      { width: png.readUInt32BE(16), height: png.readUInt32BE(20) },
+      variant.viewport,
+    );
+  }
+  assert.ok(summary.overviews.length);
+  for (const overview of summary.overviews) assert.ok(existsSync(overview));
+  assert.equal(summary.cleanup.scratchRemoved, true);
 });
 
 test('a page that never mounts fails at the timeout and leaves no runtime behind', async () => {
