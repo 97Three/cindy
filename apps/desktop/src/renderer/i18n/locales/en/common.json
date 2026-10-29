@@ -1675,6 +1675,7 @@
     }
   },
   "settings": {
+    "newChatDefaults": { "title": "Default permission for new tasks" },
     "imConnection": {
       "reconnect": "Reconnect",
       "savedNote": "Your saved binding is retained. You can retry the connection.",

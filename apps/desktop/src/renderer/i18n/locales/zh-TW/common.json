@@ -1645,6 +1645,7 @@
     }
   },
   "settings": {
+    "newChatDefaults": { "title": "新任務預設權限" },
     "imConnection": {
       "reconnect": "重新連線",
       "savedNote": "繫結資訊已保留，可直接重試連線。",

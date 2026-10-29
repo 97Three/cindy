@@ -1645,6 +1645,7 @@
     }
   },
   "settings": {
+    "newChatDefaults": { "title": "新しいタスクのデフォルト権限" },
     "imConnection": {
       "reconnect": "再接続",
       "savedNote": "連携情報は保存されています。そのまま再接続できます。",
