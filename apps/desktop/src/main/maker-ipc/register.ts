@@ -1,7 +1,8 @@
 import { outboundFetch } from '../maker-host/outbound-fetch.js';
+import { assertSessionCreationCurrent, currentSessionCreationSignal } from '../localDb/sessionRuntimeCleanup.js';
 import { readTaskDeliveryNote } from '../bot-autonomy/hub.js';
 import { setVoiceTaskDispatch, setVoiceCallMemoryReader } from '../voice-conversation/taskBridge.js';
-import { buildBotMemoryScopeKey } from '@cindy/maker-core';
+import { buildBotMemoryScopeKey, SessionCreationCleanupPendingError } from '@cindy/maker-core';
 import { createOrcaWorkerProjectHandlers } from './orcaWorkerProjectHandlers';
 import { getTeamByWorkerSession } from '../localDb/orcaTeamStore';
 import { readWorkerProjectContext, createWorkerWorktree, rememberWorkerProject, probeWorkerProject, resolveWorkerWorktreeSource, getWorkerOwnedWorktree } from './orcaWorkerProject';
@@ -85,6 +86,7 @@ import {
   writeProviderGroupBinding,
 } from '../provider-group/bindings.js';
 import { getProviderGroupGuestSwitch } from '../provider-group/guestSwitch.js';
+import { liveDirectGuestSession } from '../remote-agent/controller/service.js';
 import { currentProviderPartyUsageStore } from '../usage/providerPartyUsageStore.js';
 import { recordSessionProviderPartyUsage } from './sessionProviderPartyUsage.js';
 import { createProviderGroupLeaseReporter, type ProviderGroupLeaseReporter } from '../provider-group/leaseReporter.js';
@@ -406,6 +408,8 @@ import * as cindyChatAttachments from '../cindy-media/chatAttachments.js';
 import { materializeSshRemoteMedia } from '../file-browser/ssh-media.js';
 import { readGeneratedImageFile, MAX_GENERATED_IMAGE_BYTES } from '../cindy-media/generatedMedia.js';
 import { createGeneratedImageDelivery } from '../cindy-media/generatedImageDelivery.js';
+import { authorizeSharedTaskHistory, liveSharedTaskTarget } from '../remote-agent/controller/providerShareTaskLocation.js';
+import { resolveRemoteAgentTarget } from '../device-link/providerShareGuest.js';
 import { setGeneratedImageRecovery } from '../cindy-media/generatedImageRecovery.js';
 import {
   getCurrentDbClientSnapshot,
@@ -8774,13 +8778,22 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     orcaRole: CreateOpts['orcaRole'],
   ): Promise<void> {
     if (orcaRole !== 'lead' && orcaRole !== 'worker') return;
+    const owner = getCurrentDbClientSnapshot();
+    const assertCurrent = () => {
+      assertSessionCreationCurrent();
+      if (!owner || getCurrentDbClientSnapshot() !== owner) {
+        throw new Error('[REMOTE_AGENT_EXPIRED] The task owner has changed.');
+      }
+    };
+    assertCurrent();
     await assertReviewSettingsUnlocked(sessionId);
+    assertCurrent();
     if (orcaRole === 'worker') {
       markKnownOrcaWorkerSession(sessionId);
       clearSuppressedOrcaWorkerAgentIslandSession(sessionId);
     }
     try {
-      await setSessionOrcaRole(sessionId, orcaRole);
+      await setSessionOrcaRole(sessionId, orcaRole, { owner: owner!, assertCurrent });
     } catch (err) {
       log.warn('failed to mark orca_role', {
         sessionId,
@@ -8992,6 +9005,15 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     didInjectOrcaInstructions: boolean;
     didInjectProjectContext: boolean;
   }> {
+    let session: Awaited<ReturnType<typeof maker.createSession>> | undefined;
+    const creationSignal = o.id ? currentSessionCreationSignal(o.id) : undefined;
+    const closeCancelled = () => {
+      if (session) void maker.closeSessionIfCurrent(session).catch(error => {
+        log.warn('Cancelled creation cleanup failed', { sessionId: o.id, error: String(error) });
+      });
+    };
+    creationSignal?.addEventListener('abort', closeCancelled, { once: true });
+    try {
     assertAccess?.();
     await applyPersistedCindyMakeMarker(o, readSessionSource);
     assertAccess?.();
@@ -9005,7 +9027,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       const agentDeviceId = await readSessionAgentDeviceId(o.id);
       if (agentDeviceId) o.agentDeviceId = agentDeviceId;
     }
+    assertAccess?.();
     let providerGroupStart = await applyProviderGroupAssignment(o);
+    assertAccess?.();
     // 模型与供应商来自那台电脑(由那台按它自己的目录校验)，本机目录里没有它们。
     const agentOnOtherDevice = Boolean(o.agentDeviceId) && !o.remoteHostId;
     if (o.id && !o.remoteHostId) worktreeManager.assertPrecreatedSessionNotCancelled(o.id);
@@ -9022,7 +9046,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       makerMemoryEnabled: o.makerMemoryEnabled,
       displayReasoning: o.displayReasoning,
     };
+    assertAccess?.();
     await options.waitForAccountProviderModelsReady();
+    assertAccess?.();
     const runtimeOverride =
       typeof o.id === 'string' ? getSessionRuntimeControlSnapshot(o.id).effectiveOverride : null;
     if (runtimeOverride && runtimeOverride.agentKind === o.agentKind) {
@@ -9037,6 +9063,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     }
     assertAccess?.();
     await applyPersistedReviewMode(o);
+    assertAccess?.();
     const didInjectOrcaInstructions = o.reviewMode === true ? false : applyOrcaInstructions(o);
     const didInjectProjectContext =
       o.reviewMode === true ? false : await applyProjectContextInjection(o);
@@ -9060,6 +9087,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       },
     });
 
+    assertAccess?.();
     await hydrateProviderIdBeforeSessionStart(o);
     assertAccess?.();
     /** 本机运行时的启动准入(Agent 在另一台电脑运行时由那台按它自己的目录裁决)。 */
@@ -9110,9 +9138,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     };
     if (!agentOnOtherDevice) await admitLocalRoute();
     assertAccess?.();
-    let session: Awaited<ReturnType<typeof maker.createSession>> | undefined;
     let nativeRelocation: Awaited<ReturnType<typeof relocateForFreshStart>> | undefined;
     while (!session) {
+      assertAccess?.();
       try {
         // Claude's ID is prefilled before the CLI accepts resume. Require its
         // native initialization handshake for every transferred copy, including
@@ -9121,7 +9149,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         delete vendorOptions._cindyRequireNativeResume;
         if (nativeHistoryResume || nativeRelocation?.nativeId) vendorOptions._cindyRequireNativeResume = true;
         o.vendorOptions = vendorOptions;
-        session = await maker.createSession(o);
+        session = await maker.createSession(o, creationSignal);
+        try { assertAccess?.(); } catch (error) {
+          const cancelledSession = session;
+          session = undefined;
+          await maker.closeSessionIfCurrent(cancelledSession, 'requested');
+          throw error;
+        }
         if (nativeRelocation?.nativeId && session.sdkSessionId !== nativeRelocation.nativeId) {
           const opened = session;
           session = undefined;
@@ -9130,6 +9164,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         }
         nativeRelocation = undefined;
       } catch (error) {
+        assertAccess?.();
+        // Native ownership is unresolved, not a route/resume failure. Do not
+        // relocate history or try another provider while the old handle lives.
+        if (error instanceof SessionCreationCleanupPendingError) throw error;
         if (nativeRelocation?.fallback) {
           const fallback = nativeRelocation.fallback;
           nativeRelocation = undefined;
@@ -9152,6 +9190,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               return null;
             })
           : null;
+        assertAccess?.();
         // 分享来的供应商被分享者建成了组：续接回到原来那台却接不下时，组所在电脑发来「需要换一台」凭证
         // (provider-groups.md §6.1 分享的人)：同一个分享位置带交接重新打开，打开时带回凭证，由组换一台。
         const guestRelocation = !next && o.id && o.resumeSessionId && isProviderShareAgentDeviceId(o.agentDeviceId)
@@ -9188,6 +9227,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       }
     }
     await markProjectContextIfNeeded(session.id, didInjectProjectContext);
+    assertAccess?.();
     wireSessionToIpc(session);
     markOrcaMcpHydratedIfNeeded(session.id, o);
 
@@ -9216,7 +9256,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             .limit(1);
           return pRow?.providerId;
         },
-        hydrateSessionProvider,
+        hydrateSessionProvider: (...args) => { assertAccess?.(); hydrateSessionProvider(...args); },
       });
       // bridge 会话态(effort / fast)同点 hydrate:让 resume / 重启后的首个 bridge 请求就带上
       // 用户上次选定的思维深度与 Fast(否则要等用户再点一次开关才写进内存 store)。
@@ -9225,6 +9265,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         .from(sessions)
         .where(eq(sessions.id, session.id))
         .limit(1);
+      assertAccess?.();
       if (runtimeOverride) {
         setSessionEffort(session.id, runtimeOverride.effort);
         setSessionFastMode(session.id, runtimeOverride.fastMode);
@@ -9264,6 +9305,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     // 统一补一次反范式快照(幂等;本地"先会话后 worktree"路径此时无绑定,天然跳过)。
     // 失败非致命 —— 徽标与回收都以 worktreeStore 为准。
     try {
+      assertAccess?.();
       const wtMeta = worktreeStore.get(session.id);
       if (wtMeta?.path) {
         const db = getDbClient().drizzle;
@@ -9279,7 +9321,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       });
     }
 
+    assertAccess?.();
     return { session, didInjectOrcaInstructions, didInjectProjectContext };
+    } finally { creationSignal?.removeEventListener('abort', closeCancelled); }
   }
 
   installLocalAgentVisibleSessionHost((localMaker) => {
@@ -9892,6 +9936,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         remoteHostIdToEnsure = await readSessionRemoteHostIdCached(sessionIdForLookup);
       }
     }
+    assertSessionCreationCurrent();
     if (!remoteHostIdToEnsure) return;
 
     if (createOpts && typeof createOpts === 'object') {
@@ -9914,7 +9959,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       }
     }
 
+    assertSessionCreationCurrent();
     await ensureRemoteHostReady(remoteHostIdToEnsure);
+    assertSessionCreationCurrent();
     const ensureAgentKind: 'claude-code' | 'codex' | 'pi' | null =
       session?.agentKind === 'codex' ||
       session?.agentKind === 'claude-code' ||
@@ -9947,6 +9994,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     // ensureRemoteAgentInstalledOrInstall 已对不 ready 抛 SSH_NOT_CONNECTED,
     // 这里只是 best-effort 增强(与 claude-code 分支的立即 throw 语义对齐点
     // 不同:pi 的 agent 二进制检查已兜底)。
+    assertSessionCreationCurrent();
     if (ensureAgentKind === 'pi') {
       const host = getRemoteSshPool().get(remoteHostIdToEnsure);
       if (host?.getStatus() === 'ready') {
@@ -9990,6 +10038,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     // remote-forward 直连本机 HTTP bridge):转发 / config.toml / daemon env
     // 就绪必须先于 transport 创建 (daemon discover/bootstrap)。best-effort —
     // 失败时 session 按"远端无 MCP"放行,与历史行为一致;协同类工具此时不可用。
+    assertSessionCreationCurrent();
     if (ensureAgentKind === 'codex') {
       const host = getRemoteSshPool().get(remoteHostIdToEnsure);
       if (host?.getStatus() === 'ready') {
@@ -10001,6 +10050,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         // 最后一次启动恒为携带双方的 MCP bootstrap;marker 一致时仅 1 次
         // cat RTT 零副作用。
         await reconcileCodexAgentProxyEnv(host);
+        assertSessionCreationCurrent();
         const result = await ensureRemoteCodexMcpBridge(host, {
           ensureBridgeStarted: ensureCodexMcpBridgeStartedForRemote,
           // config 漂移生效要重启 daemon, 重启会断同 host 的 live turn:
@@ -10013,6 +10063,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           // Maker Memory 全局开着时把 cindy_memory 一并注入远端 daemon config。
           isMakerMemoryEnabled: () => maker.makerMemory?.isEnabled() ?? false,
         });
+        assertSessionCreationCurrent();
         if (
           result.ok &&
           result.daemonRebootstrapped &&
@@ -10167,14 +10218,19 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   };
 
   const makerSessionRegistry = createElectronIpcHandlerRegistry();
-  registerMakerSessionCreateHandler(makerSessionRegistry, {
+  registerMakerSessionCreateHandler<Session>(makerSessionRegistry, {
     // CREATE_SESSION 同样先走 remote ensure:remote draft (尤其 collab
     // lead) 的 SSH 重连 / agent 安装 / codex daemon MCP 注入必须先于
     // bootstrap, 否则 lead 首个 turn 没有 cindy_orca, 与 orca 架构文档的
     // "session start/resume 前置" 契约不符。本地会话 ensure 内部直接返回。
+    creationOwner: getDbClient,
+    closeCancelledSession: async session => { await maker.closeSessionIfCurrent(session); },
     bootstrapSession: async (co) => {
+      assertSessionCreationCurrent();
       await ensureRemoteReadyForSessionStart({ createOpts: co });
-      const result = await bootstrapSession(co);
+      assertSessionCreationCurrent();
+      const result = await bootstrapSession(co, assertSessionCreationCurrent);
+      assertSessionCreationCurrent();
       // maker:create-session 是手机 / device-link 的创建入口，不经过
       // local-db:sessions:create，因此后者维护 recent_workdirs 的逻辑不会运行。
       // worktree 两步流此时 co.workingDir 已是隔离目录；picker 需要记住用户选的
@@ -11534,6 +11590,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     // 分享来的供应商被分享者建成了组：组所在电脑发来「需要换一台」时自动交接(provider-groups.md §6.1)。
     guestSwitch: getProviderGroupGuestSwitch(),
+    directGuestSession: liveDirectGuestSession,
     continueSession: async (sessionId, token, info) =>
       agentInputCoordinatorHolder
         ? agentInputCoordinatorHolder.continueAfterUsageLimitReset(sessionId, token, info)
@@ -25877,6 +25934,20 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
 
 const generatedImageDelivery = createGeneratedImageDelivery({
   invoke: remoteBackgroundInvoke,
+  liveSharedTaskTarget,
+  resolveSharedOwnerTarget: async (ownerRoute) => resolveRemoteAgentTarget(ownerRoute),
+  authorizeSharedTaskHistory: async (sessionId, ownerRoute) => {
+    const snapshot = getCurrentDbClientSnapshot();
+    if (!snapshot) throw new Error('REMOTE_SOURCE_REQUIRED');
+    const [session] = await snapshot.client.drizzle.select({ model: sessions.model })
+      .from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+    if (getCurrentDbClientSnapshot() !== snapshot) throw new Error('SCOPE_CHANGED');
+    if (!session) throw new Error('REMOTE_SOURCE_REQUIRED');
+    const authorized = await authorizeSharedTaskHistory(ownerRoute, sessionId, 'codex', session.model);
+    if (getCurrentDbClientSnapshot() !== snapshot) throw new Error('SCOPE_CHANGED');
+    // Pin legacy O as well, so a later direct assignment cannot move an old image's source.
+    return resolveRemoteAgentTarget(authorized.target);
+  },
   publish: (sessionId, event, persistId, resolvedContent) => {
     broadcastToAllWindows(MAKER_PUSH.EVENT, { sessionId, event, persistId, resolvedContent }, captureDataOwnerBroadcastScope());
   },
