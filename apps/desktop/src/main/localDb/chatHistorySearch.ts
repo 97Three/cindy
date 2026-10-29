@@ -39,6 +39,7 @@ import type {
 
 import { historyCompanionJson, parseHistoryCompanion } from './historyCompanion';
 import { getDbClient } from './client/current';
+import { historyPageWithinBudget } from './historyPageBudget';
 import { messages as messagesTable, sessions as sessionsTable } from './schema';
 import { messageToCamel } from './mapper';
 import { fuseRRF, buildMessagesFtsMatch, extractMessagesFtsTokens } from './chatHistorySearch.pure';
@@ -194,7 +195,7 @@ export async function searchChatHistoryHybrid(
   }
   const start = Math.max(0, Math.min(args.offset, pool.length));
   const pageEntries = pool.slice(start, start + args.limit);
-  const nextOffset = start + args.limit < pool.length ? start + args.limit : null;
+  let nextOffset = start + args.limit < pool.length ? start + args.limit : null;
 
   // radius=0 is the conversation-search hot path. Hydrate the whole page in
   // one worker RPC; callers that need neighbours keep the original window query.
@@ -234,10 +235,15 @@ export async function searchChatHistoryHybrid(
   }
 
   // 6) session 元数据(顶层 map, 避免逐条命中重复)
-  const sessions = await fetchSessionsMeta(hits.map((h) => h.sessionId));
+  const boundedHits = historyPageWithinBudget(hits);
+  if (boundedHits.length < hits.length) {
+    const last = boundedHits[boundedHits.length - 1];
+    nextOffset = start + pageEntries.findIndex(entry => entry.messageId === last.messageId) + 1;
+  }
+  const sessions = await fetchSessionsMeta(boundedHits.map((h) => h.sessionId));
 
   return {
-    hits,
+    hits: boundedHits,
     sessions,
     vectorUsed: vec.skipReason === null,
     vectorSkipReason: vec.skipReason,
