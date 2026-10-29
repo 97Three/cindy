@@ -22,6 +22,8 @@ function fixture(legacy = false) {
   const rules = [{ ...model, providerId: 'connection', routeKey }];
   files.set('/agent/pi-cache-compatibility.json', JSON.stringify(rules));
   let writeFails = false;
+  const removalFailures = new Map<string, (name: string) => string | undefined>();
+  const deadPids = new Set<number>();
   const fs = {
     mkdirSync() {}, rmdirSync() {}, closeSync() {}, readdirSync: () => [],
     openSync: (name: string) => {
@@ -37,11 +39,17 @@ function fixture(legacy = false) {
     readFileSync: (name: string) => { fs.statSync(name); return files.get(name); },
     writeFileSync: (name: string, text: string) => { if (writeFails) throw new Error('read-only'); files.set(name, text); },
     renameSync: (from: string, to: string) => { files.set(to, files.get(from)!); files.delete(from); },
-    rmSync: (name: string) => { files.delete(name); },
+    rmSync: (name: string) => {
+      const code = (removalFailures.get(name) ?? removalFailures.get('*'))?.(name);
+      if (code) throw Object.assign(new Error('fixture removal failure'), { code });
+      files.delete(name);
+    },
   };
   const api = runInNewContext(PI_CACHE_RECOVERY_SOURCE + '\ninstallCindyCacheRecovery(pi)', {
     pi: { on: (name: string, fn: (...args: any[]) => void) => handlers.set(name, fn) },
-    process: { pid: 123, uptime: () => 1, kill() {}, env: { PI_CODING_AGENT_DIR: '/agent', CINDY_PI_CACHE_COMPAT_FILE: '/compat.json' } },
+    process: { pid: 123, uptime: () => 1, kill(pid: number) {
+      if (deadPids.has(pid)) throw Object.assign(new Error('dead'), { code: 'ESRCH' });
+    }, env: { PI_CODING_AGENT_DIR: '/agent', CINDY_PI_CACHE_COMPAT_FILE: '/compat.json' } },
     // The in-memory filesystem uses POSIX keys on every host, including Windows.
     ...fs, path: path.posix, createHash, randomUUID, Buffer, setTimeout, clearTimeout, Date: { now: () => now }, homedir: () => '/home/fixture',
   });
@@ -75,11 +83,73 @@ function fixture(legacy = false) {
     for await (const event of api.wrap(selectedModel, options, invoke)) output.push(event);
     return output;
   };
-  return { api, handlers, fresh, startUser, interrupt, request, files, sent, clock: (value: number) => { now = value; },
+  return { api, handlers, fresh, startUser, interrupt, request, files, sent, failRemovals: (name: string, failure: (name: string) => string | undefined) => removalFailures.set(name, failure), deadPid: (pid: number) => deadPids.add(pid), clock: (value: number) => { now = value; },
     failWrites: () => { writeFails = true; }, record: () => JSON.parse(files.get('/compat.json') ?? '{"routes":{}}').routes[key] };
 }
 
 describe('Pi native cache recovery', () => {
+  it.each(['EPERM', 'EBUSY', 'EACCES'])('releases a live-owner lock after transient %s without replaying generation', async code => {
+    vi.useFakeTimers();
+    try {
+      const h = fixture();
+      let failures = 1;
+      h.failRemovals('/compat.json.lock', () => failures-- > 0 ? code : undefined);
+      h.fresh();
+      expect(await h.request()).toEqual([success]);
+      expect(h.files.has('/compat.json.lock')).toBe(true);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(h.files.has('/compat.json.lock')).toBe(false);
+      h.fresh(); await h.request([success]);
+      expect(h.sent).toHaveLength(3);
+      expect(h.sent[2]).not.toHaveProperty('prompt_cache_key');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('recovers an exhausted release on the next input even after learning was persisted', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = fixture(); let denied = true;
+      h.failRemovals('/compat.json.lock', () => denied ? 'EPERM' : undefined);
+      h.fresh(); expect(await h.request()).toEqual([success]);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(h.files.has('/compat.json.lock')).toBe(true);
+      expect(h.record()).toBeDefined();
+      expect(vi.getTimerCount()).toBe(0);
+      denied = false; h.fresh();
+      expect(h.files.has('/compat.json.lock')).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('retries removal of its reclaim gate without leaving a live-owner gate behind', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = fixture(); let failures = 1;
+      h.deadPid(42);
+      h.files.set('/compat.json.lock', JSON.stringify({ pid: 42, nonce: 'dead-owner' }));
+      h.failRemovals('*', name => name.includes('.reclaim.d/') && failures-- > 0 ? 'EBUSY' : undefined);
+      h.fresh(); expect(await h.request()).toEqual([success]);
+      expect([...h.files.keys()].some(name => name.includes('.reclaim.d/'))).toBe(true);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect([...h.files.keys()].some(name => name.includes('.reclaim.d/'))).toBe(false);
+      expect(h.files.has('/compat.json.lock')).toBe(false);
+      expect(h.record()).toBeDefined();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('does not remove a successor nonce during delayed release or next-input recovery', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = fixture();
+      h.failRemovals('/compat.json.lock', () => 'EPERM');
+      h.fresh(); expect(await h.request()).toEqual([success]);
+      const successor = JSON.stringify({ pid: 123, nonce: 'successor', startedAt: 1000000000 });
+      h.files.set('/compat.json.lock', successor);
+      h.failRemovals('/compat.json.lock', () => undefined);
+      await vi.advanceTimersByTimeAsync(1000); h.fresh();
+      expect(h.files.get('/compat.json.lock')).toBe(successor);
+    } finally { vi.useRealTimers(); }
+  });
+
   it.each(['openai-completions', 'openai-responses'])('keeps learned payload recovery without taking provider ownership on an older %s registry', async api => {
     const h = fixture(true);
     const selected = { ...model, api };

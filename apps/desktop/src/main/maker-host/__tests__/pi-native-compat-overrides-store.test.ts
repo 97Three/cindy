@@ -90,7 +90,7 @@ describe('learned cache compatibility', () => {
 // Real child processes execute the production bridge wrapper. A controlled
 // rename barrier holds one writer after its disk read, reproducing lost updates
 // without relying on scheduler timing; the other writer must observe the lock.
-function cacheProcess(id: string, options: { pause?: boolean; failWrite?: boolean } = {}) {
+function cacheProcess(id: string, options: { pause?: boolean; failWrite?: boolean; failRelease?: 'once' | 'held' } = {}) {
   const release = path.join(root.path, 'release-' + id);
   const script = `
 import * as fs from 'node:fs';
@@ -108,6 +108,7 @@ const handlers = new Map();
 const registry = { getProvider() {}, getRegisteredNativeProvider() {} };
 let pendingTimers = 0;
 let calls = 0, pause = ${Boolean(options.pause)}, failWrite = ${Boolean(options.failWrite)};
+let releaseFailure = ${JSON.stringify(options.failRelease ?? '')};
 const api = runInNewContext(${JSON.stringify(PI_CACHE_RECOVERY_SOURCE + '\ninstallCindyCacheRecovery(pi)')}, {
   ...fs, path, process: { pid: process.pid, uptime: () => process.uptime(), kill: (...a) => process.kill(...a),
     env: { PI_CODING_AGENT_DIR: '/fixture', CINDY_PI_CACHE_COMPAT_FILE: file } },
@@ -125,6 +126,13 @@ const api = runInNewContext(${JSON.stringify(PI_CACHE_RECOVERY_SOURCE + '\ninsta
   writeFileSync: (name, ...a) => {
     if (failWrite && typeof name === 'string' && name.endsWith('.tmp')) throw new Error('fixture write failure');
     return fs.writeFileSync(name, ...a);
+  },
+  rmSync: (name, ...args) => {
+    if (name === file + '.lock' && releaseFailure) {
+      if (releaseFailure === 'once') releaseFailure = '';
+      throw Object.assign(new Error('fixture release failure'), { code: 'EPERM' });
+    }
+    return fs.rmSync(name, ...args);
   },
   renameSync: (from, to) => {
     if (to === file && pause) {
@@ -159,7 +167,7 @@ async function request() {
 createInterface({ input: process.stdin }).on('line', async command => {
   try {
     if (command === 'start') { start(); process.send({ event: 'success', ...await request() }); }
-    if (command === 'next') { failWrite = false; start(); process.send({ event: 'next', ...await request() }); }
+    if (command === 'next') { failWrite = false; releaseFailure = ''; start(); process.send({ event: 'next', ...await request() }); }
     if (command === 'stop') { process.stdin.destroy(); }
   } catch (error) { process.send({ event: 'error', message: String(error) }); process.exitCode = 1; process.stdin.destroy(); }
 });
@@ -243,6 +251,29 @@ describe('native and Desktop cache writers share one lock', () => {
       expect(await record('desktop', 'other', fix, b)).toBe(true);
       await vi.waitFor(() => expect(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')).routes)).toHaveLength(2));
     } finally { await native.stop(); }
+  });
+
+  it.each(['once', 'held'] as const)('lets Desktop persist while Pi stays alive after %s release failure', async failRelease => {
+    const native = cacheProcess('release', { failRelease });
+    try {
+      await native.event('ready'); native.send('start');
+      const result = await native.event('success');
+      expect(result.events).toEqual(['done']); expect(result.calls).toBe(2);
+      if (failRelease === 'held') {
+        await native.event('persistence-idle');
+        expect(fs.existsSync(file + '.lock')).toBe(true);
+        // The successful learning is already durable, so there is no memory
+        // write to incidentally clean up this owner's abandoned lock.
+        native.send('next');
+        const next = await native.event('next');
+        expect(next.events).toEqual(['done']); expect(next.calls).toBe(3);
+        expect(next.sent).toEqual([{ model: 'release' }]);
+      }
+      await vi.waitFor(() => expect(fs.existsSync(file + '.lock')).toBe(false));
+      expect(native.child.exitCode).toBeNull();
+      expect(await record('desktop', 'after-release', fix, b)).toBe(true);
+      expect(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')).routes)).toHaveLength(2);
+    } finally { await native.stop(); fs.rmSync(file + '.lock', { force: true }); }
   });
 
   it.each(['busy', 'write', 'corrupt'])('keeps success and memory learning after %s persistence failure', async failure => {

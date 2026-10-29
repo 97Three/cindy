@@ -12,6 +12,7 @@ function installCindyCacheRecovery(pi) {
   let pendingInput;
   let directInput = false;
   let memory = Object.create(null);
+  const pendingReleases = new Map();
   let routeRules = new Map();
   function rules() {
     try {
@@ -112,6 +113,39 @@ function installCindyCacheRecovery(pi) {
       || a.name.localeCompare(b.name));
     return active.length > 0 && active[0].name !== ownGate;
   }
+  async function releaseOwned(name, nonce) {
+    pendingReleases.set(name, nonce);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const snapshot = lockSnapshot(name);
+        if (!snapshot) {
+          // An unreadable record is not proof that our lock disappeared.
+          try { lstatSync(name); } catch (error) {
+            if (error?.code === 'ENOENT' && pendingReleases.get(name) === nonce) pendingReleases.delete(name);
+          }
+          return;
+        }
+        if (snapshot.record?.nonce !== nonce) {
+          if (pendingReleases.get(name) === nonce) pendingReleases.delete(name);
+          return;
+        }
+        // The ownership check and removal stay synchronous. A delayed retry
+        // must never remove a successor belonging to this same live PID.
+        if (name !== file + '.lock' || !gateBusy(name)) {
+          rmSync(name);
+          if (pendingReleases.get(name) === nonce) pendingReleases.delete(name);
+          return;
+        }
+      } catch (error) {
+        if (!['EPERM', 'EBUSY', 'EACCES'].includes(error?.code)) return;
+      }
+      if (attempt < 4) await new Promise(resolve => setTimeout(resolve, 40 * (attempt + 1)));
+    }
+    // Keep only the nonce we can prove we own, for the next input/write.
+  }
+  function recoverReleases() {
+    for (const [name, nonce] of pendingReleases) void releaseOwned(name, nonce);
+  }
   function reclaim(lock) {
     const candidate = lockSnapshot(lock);
     if (!stale(candidate)) return;
@@ -129,9 +163,9 @@ function installCindyCacheRecovery(pi) {
       if (sameLock(lockSnapshot(isolated), candidate)) rmSync(isolated);
       else { try { linkSync(isolated, lock); rmSync(isolated); } catch {} }
     } finally {
-      // Unique nonce names are never reused; a failed cleanup is recoverable
-      // after process exit, and cannot remove a different owner's gate.
-      try { rmSync(gate); } catch {}
+      // Unique gate names are never reused; retry cleanup without leaving a
+      // live-owner gate behind or removing a different owner's gate.
+      void releaseOwned(gate, nonce);
       try { rmdirSync(directory); } catch {}
     }
   }
@@ -143,6 +177,7 @@ function installCindyCacheRecovery(pi) {
     let held = false;
     let temporary;
     try {
+      recoverReleases();
       mkdirSync(path.dirname(file), { recursive: true });
       do {
         try {
@@ -177,9 +212,7 @@ function installCindyCacheRecovery(pi) {
     } catch { /* Storage failure must never undo a successful response. */ }
     finally {
       if (temporary) { try { rmSync(temporary, { force: true }); } catch {} }
-      if (held) {
-        try { if (lockSnapshot(lock)?.record?.nonce === nonce) rmSync(lock); } catch {}
-      }
+      if (held) void releaseOwned(lock, nonce);
     }
   }
   function remember(key, evidence, startedAt) {
@@ -294,6 +327,7 @@ function installCindyCacheRecovery(pi) {
     // Pi represents both steer and followUp as user messages. Snapshot now,
     // but decide ownership only after the supervisor sees the public event.
     invalidate();
+    recoverReleases();
     for (const [key, record] of Object.entries(memory)) void persist(key, record);
     const inputRules = readRules();
     const records = load()?.routes ?? Object.create(null);
