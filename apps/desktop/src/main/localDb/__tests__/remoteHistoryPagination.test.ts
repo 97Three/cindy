@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getMessagesForHistory, listSessionsForHistory } from '../chatHistoryReader';
-import { XdtHelperToolRegistry, registerGetChatHistoryTool, historyPayload } from '@cindy/mcps';
+import { XdtHelperToolRegistry, registerGetChatHistoryTool, registerSearchChatHistoryTool, historyPayload } from '@cindy/mcps';
 import { searchChatHistoryHybrid } from '../chatHistorySearch';
 import { readRemoteBotSessionAccessBatch } from '../ipc/botRemoteSessionAccess';
 import { setChatEmbeddingEnabled } from '../../embedders/chat-history-embedder';
@@ -211,7 +211,9 @@ describe.each(modes)('%s remote history visibility', (mode) => {
     expect(ids).toEqual(['ordinary', 'visible', 'zero']);
   });
 
-  it('continues search at the consumed candidate rather than the requested page limit', async () => {
+  // r4411387401/r4411387386: real MCP entry must budget while reading, whereas
+  // fixed-page internal consumers keep their original complete hit count (unit/SQLite).
+  it.each([0, 2])('continues tool search at the consumed candidate without hydrating the remaining page (radius=%s)', async (radius) => {
     setChatEmbeddingEnabled(false);
     const text = 'budgetneedle ' + '文'.repeat(18000);
     const ids = ['budget-z', 'budget-a', 'budget-m'];
@@ -221,16 +223,33 @@ describe.each(modes)('%s remote history visibility', (mode) => {
       db.prepare('INSERT INTO messages_fts VALUES (?, ?)').run(id, 'budgetneedle');
     }
     const found: string[] = [];
-    let offset = 0;
+    const registry = new XdtHelperToolRegistry();
+    registerSearchChatHistoryTool(registry, { history: {
+      listWorkdirs: vi.fn(), listSessions: vi.fn(), getMessages: vi.fn(),
+      searchChatHistory: async args => ({ ok: true, result: await searchChatHistoryHybrid(args) }),
+    } });
+    let cursor: string | undefined;
     for (let i = 0; i < 3; i++) {
-      const page = await searchChatHistoryHybrid({ ...searchArgs, query: 'budgetneedle', limit: 10, offset });
+      const reads = vi.spyOn(state.client.drizzle, 'select');
+      const page = historyPayload(await registry.call('search_chat_history', {
+        query: 'budgetneedle', limit: 10, context_radius: radius, ...(cursor ? { cursor } : {}),
+      })) as any;
       expect(page.hits).toHaveLength(1);
-      expect(page.hits[0].context[0].content).toBe(text);
+      expect(page.hits[0].context.find((row: any) => row.isHit).content).toBe(text);
       found.push(page.hits[0].messageId);
       expect(page.hasMore).toBe(i < 2);
-      if (page.nextOffset !== null) { expect(page.nextOffset).toBe(offset + 1); offset = page.nextOffset; }
+      if (radius === 2) {
+        // This single full context exceeds the budget. Only its anchor + two
+        // neighbour queries and one session metadata query should run.
+        expect(reads).toHaveBeenCalledTimes(4);
+      }
+      reads.mockRestore();
+      if (page.nextCursor !== null) { expect(page.nextCursor).not.toBe(cursor); cursor = page.nextCursor; }
     }
     expect(found.sort()).toEqual(ids.sort());
+    const internal = await searchChatHistoryHybrid({ ...searchArgs, query: 'budgetneedle', limit: 10, contextRadius: radius });
+    expect(internal.hits.map(hit => hit.messageId).sort()).toEqual(ids.sort());
+    expect(internal.hasMore).toBe(false);
   });
 
   // Regression: old-created, recently active chats were lost by workdir/creation

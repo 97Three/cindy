@@ -166,7 +166,10 @@ export function registerSearchChatHistoryTool(
       const cursorWasBad = cursor !== undefined && cursor !== '' && offset === null;
       const effectiveRoles: HistoryRole[] = roles ?? [...DEFAULT_QA_ROLES];
 
-      const res = await deps.history.searchChatHistory({
+      // Host-only hint travels with normalized args through the existing local
+      // adapter (and the source device's tool registry). Public input has no knob.
+      // Internal UI/learn callers omit it and keep count-based result pages.
+      const searchArgs = {
         query: query.trim(),
         sessionIds: scope.sessionIds,
         ...(args.teammate_id ? { teammateId: args.teammate_id } : {}),
@@ -179,7 +182,9 @@ export function registerSearchChatHistoryTool(
         contextRadius: context_radius,
         limit,
         offset: offset ?? 0,
-      });
+        historyToolPageBudget: true,
+      };
+      const res = await deps.history.searchChatHistory(searchArgs);
       if (!res.ok) {
         if (res.errorCode === 'HOST_NOT_READY') {
           return errorPayload(
