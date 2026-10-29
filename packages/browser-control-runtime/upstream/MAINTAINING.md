@@ -236,7 +236,7 @@ pnpm --filter @cindy/browser-control-runtime test    # 契约 + SSRF guard
   - 更旧的扩展只有基础能力(tabs / open / navigate / snapshot / extract / act),由 `deps.backendCapabilities()`(`userBrowserCapabilities`)让 MCP 层在派发前拒绝其余动作,错误文案要求模型告知用户而不是自行切换。没有任何连接时按完整能力报,具体断开由后端按作业报告。
   - extract 与登录墙检测走 PR #7432 的声明式 `domRead`,不需要任意脚本。
 - 寻址:新版扩展(≥ 0.4.43)按 tabId 寻址,后端维护 targetId ↔ {连接, 浏览器启动标识, tabId, url};targetId 带启动标识,浏览器重启后旧句柄不再解析。旧版扩展仍按精确 URL 寻址:作业前用 `tabs` 核对,URL 变化报 `PAGE_CHANGED` 并刷新记录,不猜新页。
-- 站点策略归插件:读与交互默认开放,本机与私网和公网网站一样可访问、也可写进名单屏蔽(2026-10-28);宿主没有缓存时在收到插件策略前拒绝作业;宿主缓存在 `ownerScopedUserDataPath('browser-extension')`,每个作业经桥接强制。`cindy_browser` 的免审批前提在该目标下由这套策略补上。
+- 没有站点名单(2026-10-30 取消,取代 2026-10-28 的名单口径):读与交互对本机、私网和公网网站一视同仁。线上 `policy` 字段只为旧端兼容、恒为「全部允许」,`setPolicy` 应答但不生效;宿主不缓存也不等待插件策略,配对缓存只存已配对的浏览器。作业在桥接处只校验动作与无凭证 http(s) 地址。`cindy_browser` 的免审批前提由 `setBackend user-browser` 与 `upload` 的逐次任务审批(询问档问用户、自动档审核、完全访问放行)和任务权限档位承担,不再有站点层兜底。
 - 回归:`browser-extension/__tests__/bridge.test.ts`(协议)、`cindy-brain/__tests__/browserExtensionSlot.test.ts`(槽)、`browser-backend/__tests__/user-browser-backend.test.ts`(翻译)、`lizi-mcps` 的 capability gating 用例;真实 Chrome 验收用 Google Play 发包案例与插件翻译。
 
 ## 10. 相关文档

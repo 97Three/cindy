@@ -5,8 +5,8 @@
  * 与 Cindy 专用浏览器一致。线上的 policy 字段只为兼容旧扩展与旧插件保留,恒为「全部允许」。
  *
  * - 只接受无内嵌凭证的 http(s) URL;本机与私网地址同样允许(2026-10-28 决定);
- * - 交给模型之前的每个 URL 都过 redactUrl:OAuth code、重置令牌、implicit-flow
- *   fragment 与 Basic Auth userinfo 不离开本机。
+ * - Agent 读到的地址与链接原样返回(2026-10-30 决定);只有转交给插件的翻译来源地址仍过
+ *   redactUrl(bridge.ts),OAuth code、重置令牌与 Basic Auth userinfo 不随它离开本机。
  */
 
 export const BROWSER_EXTENSION_READ_ACTIONS = [
