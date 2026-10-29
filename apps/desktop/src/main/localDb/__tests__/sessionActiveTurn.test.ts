@@ -567,7 +567,7 @@ describe('sessionActiveTurn', () => {
     const client = createTestDbClient();
     const startedAt = Date.now() - 10_000;
     await seedSession(client, 's-desktop', { startedAt });
-    for (const role of ['canonical', 'history', 'delegation', 'group', 'channel']) {
+    for (const role of ['canonical', 'delegation', 'routine', 'channel', 'history', 'group', 'thread']) {
       await seedSession(client, `bot-${role}`, { startedAt, source: 'bot' });
       await client.exec(
         'INSERT INTO bot_session_links (id, bot_id, session_id, role, created_at) VALUES (?, ?, ?, ?, ?)',
@@ -579,8 +579,9 @@ describe('sessionActiveTurn', () => {
 
     expect((await listInterruptedResumeCandidateRows()).map((r) => r.sessionId).sort()).toEqual([
       'bot-canonical',
+      'bot-channel',
       'bot-delegation',
-      'bot-history',
+      'bot-routine',
       's-desktop',
     ]);
     // 侧栏红点不展示伙伴任务,口径不变。

@@ -391,13 +391,14 @@ export async function listInterruptedPendingRows(
         options.includeBotTasks
           ? or(
               listedSource,
-              // 伙伴的主对话、历史与委派任务有自己的页面,可以继续;群专线与 IM 专线
-              // 是隐藏专线,由群聊 / 渠道收口,不单独提示。
+              // 能走普通「继续」路径的伙伴任务:主对话、委派任务有自己的页面,例行与渠道
+              // 专线列在普通任务列表里。history 只读(botSessionInputGuard 拒绝发送),群与
+              // 私聊话题专线是隐藏专线,由群聊 / 私聊收口,都不提示。
               and(
                 eq(sessions.source, 'bot'),
                 sql`EXISTS (SELECT 1 FROM ${botSessionLinks}
                   WHERE ${botSessionLinks.sessionId} = ${sessions.id}
-                    AND ${botSessionLinks.role} IN ('canonical', 'history', 'delegation'))`,
+                    AND ${botSessionLinks.role} IN ('canonical', 'delegation', 'routine', 'channel'))`,
               ),
             )
           : listedSource,
