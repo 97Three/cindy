@@ -67,6 +67,8 @@ export function projectPiRequestDiagnostics(value: unknown): Record<string, numb
     const count = row[key];
     if (typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 && count <= 1_000_000) result[key] = count;
   }
+  if (typeof row.preparationMs === 'number' && Number.isFinite(row.preparationMs)
+      && row.preparationMs >= 0 && row.preparationMs <= 60_000) result.preparationMs = Math.round(row.preparationMs);
   result.wireEffort = typeof row.wireEffort === 'string' &&
     ['none', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(row.wireEffort)
     ? row.wireEffort : null;
@@ -4602,6 +4604,7 @@ export default async function cindyBridge(piApi: any) {
   });
   if (!currentPermissionState().reviewOnly) registerCindyQuestionTool(pi);
   pi.on('before_provider_request', async (event, ctx) => {
+    const preparationStarted = performance.now();
     const payload = astraResponsesPayload(event.payload, ctx.model) ?? event.payload;
     const next = (await nativeFastPayload(payload, ctx.model, ctx)) ?? payload;
     // A one-way native notification adds no host round trip. This is the payload
@@ -4612,6 +4615,7 @@ export default async function cindyBridge(piApi: any) {
         const messages = next?.messages ?? next?.input ?? next?.contents;
         ctx.ui.notify(${JSON.stringify(CINDY_PI_REQUEST_DIAGNOSTICS_PREFIX)} + token + ':' + JSON.stringify(
           projectPiRequestDiagnostics({
+            preparationMs: performance.now() - preparationStarted,
             toolCount: Array.isArray(next?.tools) ? next.tools.length : undefined,
             messageCount: Array.isArray(messages) ? messages.length : undefined,
             wireEffort: next?.reasoning_effort ?? next?.reasoning?.effort ?? next?.output_config?.effort,
