@@ -896,7 +896,7 @@ import { dbToMakerAgentKind, makerToDbAgentKind } from '../../shared/agentKindCo
 import { normalizeSessionContextWindowBoundsRoute } from '../../shared/sessionContextWindowBounds.js';
 import { readWorkflowProgressForSession } from '../workflow-progress/reader.js';
 import { readSessionBackgroundTaskOutputTail } from '../background-task-output/reader.js';
-import { AgentInputCoordinator } from './agent-input-coordinator.js';
+import { AgentInputCoordinator, markManualSchedulerContinuation } from './agent-input-coordinator.js';
 import { bindSilentStopContinuationGeneration } from './silentStopContinuationBinding.js';
 import { notePromptPredictionSessionStopped } from './promptPredictionStopLedger.js';
 import {
@@ -1135,7 +1135,7 @@ import {
   takeOverLocalAgentVisibleSession,
 } from '../local-agent/visibleSessions.js';
 import { ingestChatImageFromPath } from '../cindy-media/chatAttachments.js';
-import { UI_ACTION_TRIGGER_PREFIX } from '@cindy/maker-shared/synthetic-trigger';
+import { UI_ACTION_TRIGGER_PREFIX, CONTINUE_AFTER_APP_EXIT_PROMPT } from '@cindy/maker-shared/synthetic-trigger';
 import {
   createContextOverflowRollover,
   canContinueContextRecovery,
@@ -21787,16 +21787,64 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         // 排队可取消时旧中断提示必须能恢复；accepted 但仍可能 cancelled-before-dispatch
         // 时也不能提前 ack。续跑项本身由 coordinator 插到队首（普通输入仍 FIFO）。
         let duplicate = false;
-        const projection = inputCoordinator.enqueue(sid, queued, {
-          ...(opts && typeof opts === 'object' ? (opts as { sendAtMs?: number }) : undefined),
-          // 本机与远控用户显式输入可放行崩溃恢复暂停，避免「继续任务」再次排进暂停队列。
-          // 远端 Orca 派活也经此 IPC。来源盖章会剥掉 wire 的 origin，因此从规范化远控载荷
-          // 读取自动投递意图，只用于收紧恢复暂停，不授予来源身份或权限；本机仍按显式输入处理。
-          resumeRestorePausedQueue: !(deviceLinkInvoke && isAutomaticInputOriginKind(parsed.origin?.kind)),
-          onDuplicate: () => {
-            duplicate = true;
-          },
-        });
+        const enqueueInput = (input: AgentInputQueuedMessage) => {
+          assertCurrentInputGeneration();
+          if (inputOwner !== getCurrentDbClientSnapshot()) throwIpcError('PRECONDITION_FAILED', 'Account changed before input');
+          assertRemoteInputClearNotInFlight(sid, deviceLinkInvoke);
+          return inputCoordinator.enqueue(sid, input, {
+            ...(opts && typeof opts === 'object' ? (opts as { sendAtMs?: number }) : undefined),
+            // 本机与远控用户显式输入可放行崩溃恢复暂停，避免「继续任务」再次排进暂停队列。
+            // 远端 Orca 派活也经此 IPC。来源盖章会剥掉 wire 的 origin，因此从规范化远控载荷
+            // 读取自动投递意图，只用于收紧恢复暂停，不授予来源身份或权限；本机仍按显式输入处理。
+            resumeRestorePausedQueue: !(deviceLinkInvoke && isAutomaticInputOriginKind(parsed.origin?.kind)),
+            onDuplicate: () => {
+              duplicate = true;
+            },
+          });
+        };
+        let projection: ReturnType<typeof enqueueInput> | undefined;
+        if (queued.text === CONTINUE_AFTER_APP_EXIT_PROMPT
+          && !(deviceLinkInvoke && isAutomaticInputOriginKind(parsed.origin?.kind))) {
+          const { resumeInterruptedScheduleRun } = await import('../scheduler-host/index.js');
+          assertCurrentInputGeneration();
+          if (inputOwner !== getCurrentDbClientSnapshot()) throwIpcError('PRECONDITION_FAILED', 'Account changed before input');
+          let didEnqueue!: () => void;
+          const enqueued = new Promise<void>((resolve) => { didEnqueue = resolve; });
+          const resumed = await resumeInterruptedScheduleRun(sid, async (req) => {
+            assertCurrentInputGeneration();
+            const clientId = queued.clientId;
+            const continuation = markManualSchedulerContinuation({ ...queued, origin: req.origin });
+            if (req.onDiscarded) schedulerQueuedPromptDiscardWatchers.set(clientId, req.onDiscarded);
+            if (req.onPreparing) schedulerQueuedPromptPreparations.set(clientId, {
+              onPreparing: req.onPreparing, onPreparationFailed: req.onPreparationFailed,
+            });
+            orcaInterAgentDispatcher.registerQueuedOrcaInterAgentAcceptedCallback(
+              clientId,
+              () => req.onAccepted({ permissionMode: queued.createOpts.permissionMode, planMode: queued.createOpts.planMode }),
+              req.onAcceptedRollback,
+            );
+            try {
+              projection = enqueueInput(continuation);
+              didEnqueue();
+              return { clientId };
+            } catch (error) {
+              schedulerQueuedPromptDiscardWatchers.delete(clientId);
+              schedulerQueuedPromptPreparations.delete(clientId);
+              orcaInterAgentDispatcher.discardQueuedOrcaInterAgentAcceptedCallback(clientId);
+              throw error;
+            }
+          });
+          if (resumed) {
+            // IPC acknowledges the original input at enqueue, not at turn end.
+            // Early preparation failures must not silently send an untracked turn.
+            const completion = resumed.completion.then(() => {
+              if (!projection) throw new Error('Interrupted scheduled run could not be queued; please continue again');
+            });
+            void completion.catch((error) => log.warn('manual scheduled continuation failed', { sessionId: sid, error: String(error) }));
+            await Promise.race([enqueued, completion]);
+          }
+        }
+        projection ??= enqueueInput(queued);
         if (duplicate) {
           if (attachmentOwnerId) {
             await materialized.cleanupBeforeAcceptance?.();

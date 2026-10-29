@@ -391,6 +391,7 @@ export class Scheduler extends EventEmitter {
   private readonly schedulerInstanceId: string;
   private readonly processId?: number;
   private readonly inflightAttempts = new Map<string, InflightAttempt>();
+  private readonly manualContinuations = new Set<string>();
   private readonly waitingSchedules = new Map<string, SchedulerWaitingSchedule>();
   private lastGateLogAt = 0;
   /**
@@ -538,11 +539,18 @@ export class Scheduler extends EventEmitter {
     this.started = true;
   }
 
-  async stop(): Promise<void> {
+  async stop(options?: { interrupted?: boolean }): Promise<void> {
     if (this.tickHandle) {
       clearInterval(this.tickHandle);
       this.tickHandle = null;
     }
+    // Fence late provider-close events before aborting any runner. A normal app
+    // exit interrupts work; it is neither a user cancellation nor a run failure.
+    const interrupted = options?.interrupted
+      ? [...this.inflightAttempts.values()].filter((run) =>
+          run.phase !== 'finalizing' && !this.abandonedRuns.has(run.runId))
+      : [];
+    for (const run of interrupted) this.abandonedRuns.add(run.runId);
     // 切账号 / 进程退出前主动 abort 所有 in-flight —— 不然 runner 还在跑,事件流
     // 已断,run 行 stuck 在 'running'(心跳过期后由任一实例的清扫/start() 兜底,
     // 但当下的 agent 子进程仍在烧 token)。
@@ -579,6 +587,14 @@ export class Scheduler extends EventEmitter {
     this.activeSchedules.clear();
     this.started = false;
     this.emitRuntimeState();
+    await Promise.all(interrupted.map(async (run) => {
+      await this.storage.updateRun(run.runId, {
+        status: 'interrupted',
+        finishedAt: this.clock.now(),
+        errorMsg: 'app restarted',
+      });
+      this.emitEvent({ type: 'changed', scheduleId: run.scheduleId });
+    }));
   }
 
   // Public for testing — tests construct Scheduler with a long tickIntervalMs to disable
@@ -632,7 +648,7 @@ export class Scheduler extends EventEmitter {
     await this.retryPendingReplans(now);
     const due: Schedule[] = [];
     for (const sch of this.activeSchedules.values()) {
-      if (sch.nextFireAt !== undefined && sch.nextFireAt <= now) {
+      if (sch.nextFireAt !== undefined && sch.nextFireAt <= now && !this.inflightByschedule.has(sch.id)) {
         due.push(sch);
       }
     }
@@ -1059,12 +1075,49 @@ export class Scheduler extends EventEmitter {
     }
   }
 
-  private async runNowInner(id: string, runId: string, options?: { deferToCaller?: boolean; internalRoutine?: true; canDispatch?: () => boolean }): Promise<{ runId: string; deferred?: boolean }> {
+  /** Only an explicit user continuation can reclaim an interrupted run. */
+  async resumeInterruptedRun(
+    sessionId: string,
+    runner: ScheduleRunner = this.runner,
+  ): Promise<{ completion: Promise<{ runId: string; deferred?: boolean }> } | null> {
+    if (!this.storage.claimInterruptedRun || !this.started) return null;
+    if (this.manualContinuations.has(sessionId)) {
+      throw new Error('Interrupted scheduled run is already continuing');
+    }
+    this.manualContinuations.add(sessionId);
+    try {
+      const run = await this.storage.claimInterruptedRun(sessionId, this.clock.now());
+      if (!run) {
+        this.manualContinuations.delete(sessionId);
+        return null;
+      }
+      if (!this.started) {
+        await this.storage.updateRun(run.id, { status: 'interrupted', errorMsg: 'app restarted' });
+        throw new Error('scheduler stopped while resuming interrupted run');
+      }
+      this.beginInflightAttempt({ scheduleId: run.scheduleId, runId: run.id, source: 'run-now', phase: 'loading' });
+      const completion = this.runNowInner(run.scheduleId, run.id, undefined, run, runner)
+        .finally(() => {
+          this.finishInflightAttempt(run.id);
+          this.manualContinuations.delete(sessionId);
+        });
+      return { completion };
+    } catch (error) {
+      this.manualContinuations.delete(sessionId);
+      throw error;
+    }
+  }
+
+  private async runNowInner(id: string, runId: string, options?: { deferToCaller?: boolean; internalRoutine?: true; canDispatch?: () => boolean }, recovery?: ScheduleRun, runner: ScheduleRunner = this.runner): Promise<{ runId: string; deferred?: boolean }> {
     const schedule = await this.storage.get(id);
     if (!schedule || (schedule.source === 'bot' && !options?.internalRoutine))
       throw new Error(`Schedule not found: ${id}`);
+    if (recovery && schedule.status !== 'active') {
+      await this.storage.updateRun(runId, { status: 'interrupted', errorMsg: 'app restarted' });
+      return { runId, deferred: true };
+    }
     this.updateInflightAttempt(runId, 'persisting', schedule);
-    const firedAt = this.clock.now();
+    const firedAt = recovery?.firedAt ?? this.clock.now();
     const initialRun: ScheduleRun = {
       id: runId,
       scheduleId: schedule.id,
@@ -1073,12 +1126,12 @@ export class Scheduler extends EventEmitter {
       costAttribution: schedule.executionMode === 'script' ? 'zero' : 'unavailable',
       heartbeatAt: firedAt,
     };
-    await this.storage.insertRun(initialRun);
+    if (!recovery) await this.storage.insertRun(initialRun);
     // 立刻把 lastFiredAt 落到 schedule row —— 不等 finished，让 UI 列表立刻反映
     // "刚跑了一次"。同时若 activeSchedules 里有这条，同步内存副本。
-    await this.storage.update(schedule.id, { lastFiredAt: firedAt });
+    if (!recovery) await this.storage.update(schedule.id, { lastFiredAt: firedAt });
     const cached = this.activeSchedules.get(schedule.id);
-    if (cached) this.activeSchedules.set(schedule.id, { ...cached, lastFiredAt: firedAt });
+    if (cached && !recovery) this.activeSchedules.set(schedule.id, { ...cached, lastFiredAt: firedAt });
     // stop() 竞态守卫,与 fireOneInner 同款(codex review P1):storage.get/insertRun/
     // update 期间 stop() 清掉 attempt 后不得再登记 controller/索引。runNow 契约上
     // 以抛错收场(调用方显式动作,静默吞掉会让"没跑"看起来像"跑了")。
@@ -1114,13 +1167,15 @@ export class Scheduler extends EventEmitter {
     let knownSessionId: string | undefined;
     this.updateInflightAttempt(runId, 'running');
     try {
-      if (schedule.targetSessionId) {
-        await this.validateTargetSession?.(schedule.targetSessionId, 'fire', schedule);
+      const targetSessionId = recovery?.sessionId ?? schedule.targetSessionId;
+      if (targetSessionId) {
+        await this.validateTargetSession?.(targetSessionId, 'fire', schedule);
       }
-      const result = await this.runner.fire(schedule, {
+      const result = await runner.fire(schedule, {
         runId,
         firedAt,
         deferToCaller: options?.deferToCaller,
+        resumeSessionId: recovery?.sessionId,
         canDispatch: options?.canDispatch,
         signal: controller.signal,
         onSessionBound: this.buildOnSessionBound(schedule.id, runId),
@@ -1160,6 +1215,14 @@ export class Scheduler extends EventEmitter {
     // tick 在会话空闲后接力真跑(否则手动触发撞忙就石沉大海)。
     // deferToCaller 由宿主持久队列接力，保留原 nextFireAt，不建立第二个重试来源。
     if (deferred && !wasAborted) {
+      if (recovery) {
+        await this.storage.updateRun(runId, {
+          status: 'interrupted', finishedAt, errorMsg: 'app restarted',
+        });
+        this.silencedRuns.delete(runId);
+        this.emitEvent({ type: 'changed', scheduleId: schedule.id });
+        return { runId, deferred: true };
+      }
       try {
         await this.storage.deleteRun(runId);
       } catch (err) {
@@ -1243,6 +1306,7 @@ export class Scheduler extends EventEmitter {
       // 静默语义与 fireOne 一致:success 落库带 readAt,失败路径不豁免。
       await this.storage.updateRun(runId, {
         status: 'success',
+        ...(recovery ? { errorMsg: undefined } : {}),
         sessionId: runSessionId,
         finishedAt,
         resultText: runResultText,

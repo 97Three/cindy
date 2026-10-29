@@ -100,6 +100,9 @@ const SCHEDULER_DDL = [
       workspace_kind TEXT NOT NULL DEFAULT 'project',
       working_dir TEXT,
       user_send_at INTEGER,
+      active_turn_started_at INTEGER,
+      last_turn_ended_at INTEGER,
+      cleared_at INTEGER,
       created_at INTEGER NOT NULL DEFAULT 0,
       updated_at INTEGER NOT NULL DEFAULT 0,
       total_cost_usd REAL,
@@ -277,6 +280,35 @@ function createStorageHarness(queries?: { query: string; params: unknown[] }[]) 
     storage: new DrizzleScheduleStorage(() => db),
   };
 }
+
+// DB-tier regression for app-exit recovery: claim the original run exactly once,
+// and respect user takeover/stop and the current task owner. The old storage had no
+// recovery claim; a successful continuation could never repair its failed run.
+it.each(['eligible', 'paused', 'archived', 'finished', 'manual-continue', 'running-owner', 'newer-other-task', 'script'])('claims only resumable interrupted runs: %s', async (mode) => {
+  const h = createStorageHarness();
+  try {
+    h.sqlite.prepare(`INSERT INTO sessions (id, title, active_turn_started_at, last_turn_ended_at, status)
+      VALUES ('task', 'task', 20, ?, ?)`).run(mode === 'finished' ? 30 : 0, mode === 'archived' ? 'archived' : 'active');
+    await h.storage.insert(baseSchedule({ status: mode === 'paused' ? 'paused' : 'active',
+      executionMode: mode === 'script' ? 'script' : 'agent' }));
+    await h.storage.insertRun({ id: 'interrupted', scheduleId: 'sch-1', sessionId: 'task',
+      firedAt: 10, finishedAt: 25, status: 'interrupted', errorMsg: 'app restarted' });
+    const origin = mode === 'manual-continue' ? {} : { origin: { kind: 'scheduler', scheduleId: 'sch-1', runId: 'interrupted' } };
+    h.sqlite.prepare(`INSERT INTO messages (id, client_id, session_id, role, content, agent_meta, created_at)
+      VALUES ('input', 'input', 'task', 'user', 'continue', ?, 15)`).run(JSON.stringify(origin));
+    if (mode === 'running-owner' || mode === 'newer-other-task') await h.storage.insertRun({
+      id: 'newer', scheduleId: 'sch-1', sessionId: mode === 'running-owner' ? 'task' : undefined,
+      firedAt: 40, status: 'running',
+    });
+    expect(await h.storage.claimInterruptedRun('another-task', 49)).toBeNull();
+    const claimed = await h.storage.claimInterruptedRun('task', 50);
+    if (mode === 'eligible' || mode === 'newer-other-task') {
+      expect(claimed).toMatchObject({ id: 'interrupted', sessionId: 'task', firedAt: 10, status: 'running', heartbeatAt: 50 });
+      expect(claimed?.errorMsg).toBeUndefined();
+      expect(await h.storage.claimInterruptedRun('task', 51)).toBeNull();
+    } else expect(claimed).toBeNull();
+  } finally { h.close(); }
+});
 
 it.each(['api', 'subscription', 'tool-only'])('includes media in both run history and schedule totals for %s runs', async (mode) => {
   const harness = createStorageHarness();

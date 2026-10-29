@@ -10,7 +10,7 @@ import { AUTO_REVIEW_DELEGATED_CONTINUATION, restoreAutoReviewUserIntent, type A
 import { createPluginTaskReviewResolver, type PluginReviewSnapshot } from '../pluginTaskReviewContext.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { admitTaskAction, bindTaskActionInput, taskActionInputGuard } from '../taskActionAuthorization.js';
-import { AgentInputCoordinator } from '../agent-input-coordinator.js';
+import { AgentInputCoordinator, markManualSchedulerContinuation } from '../agent-input-coordinator.js';
 import { ProviderGroupUsageLimitError } from '../../provider-group/failurePolicy.js';
 import type { Session } from '@cindy/maker-core';
 import { createSessionBindingLifecycle, createSessionCloseTeardown } from '../sessionBindingLifecycle.js';
@@ -377,16 +377,29 @@ describe('INPUT_ENQUEUE crash-restored remote Worker pause', () => {
   const handlerStart = source.indexOf('    async (event, sessionId: unknown, item: unknown, opts?: unknown) => {', start);
   const handlerEnd = source.indexOf('\n  );', handlerStart);
   const handler = source.slice(handlerStart, handlerEnd).trim().replace(/,$/, '');
-  const compiled = transpileModule(`return (${handler});`, {
+  const compiled = transpileModule(`return (${handler.replace("await import('../scheduler-host/index.js')", 'await loadSchedulerHost()')});`, {
     compilerOptions: { target: ScriptTarget.ES2022 },
   }).outputText;
 
-  function hostInput(h: ReturnType<typeof createHarness>, remote = true, mobile = false) {
+  function hostInput(
+    h: ReturnType<typeof createHarness>, remote = true, mobile = false,
+    resumeInterruptedScheduleRun: typeof import('../../scheduler-host/index.js').resumeInterruptedScheduleRun = async () => null,
+  ) {
     const noop = () => undefined;
     const sameItem = (item: AgentInputQueuedMessage) => item;
     const owner = {};
     const bindings = {
       inputCoordinator: h.coordinator,
+      CONTINUE_AFTER_APP_EXIT_PROMPT,
+      markManualSchedulerContinuation,
+      loadSchedulerHost: async () => ({ resumeInterruptedScheduleRun }),
+      schedulerQueuedPromptDiscardWatchers: new Map(),
+      schedulerQueuedPromptPreparations: new Map(),
+      orcaInterAgentDispatcher: {
+        registerQueuedOrcaInterAgentAcceptedCallback: vi.fn(),
+        discardQueuedOrcaInterAgentAcceptedCallback: vi.fn(),
+      },
+      log: { warn: vi.fn() },
       requireSessionId: (id: string) => id,
       requireQueuedMessage: sameItem,
       prepareSharedTaskInput: (_sid: string, item: AgentInputQueuedMessage) => item,
@@ -427,6 +440,93 @@ describe('INPUT_ENQUEUE crash-restored remote Worker pause', () => {
     return new Function(...Object.keys(bindings), compiled)(...Object.values(bindings)) as
       (event: object, sid: string, item: AgentInputQueuedMessage, opts?: unknown) => Promise<AgentInputProjection>;
   }
+
+  // Execute the actual shared Desktop/device-link handler with the real queue.
+  // The scheduler runner is stubbed so no provider or GitHub code executes.
+  it.each([['phone', true, true], ['remote desktop', true, false], ['local desktop', false, false]] as const)(
+    'reconnects an explicit %s Continue to its run without waiting for completion', async (_name, remote, mobile) => {
+      const h = createHarness();
+      const sid = 'interrupted-scheduled-task';
+      h.setLoadQueueSnapshot(async () => [makeItem('later', 'queued later task')]);
+      const done = deferred<void>();
+      const resume = vi.fn<typeof import('../../scheduler-host/index.js').resumeInterruptedScheduleRun>(async (sessionId, enqueue) => ({
+        completion: Promise.resolve().then(async () => {
+          await enqueue({ sessionId, text: CONTINUE_AFTER_APP_EXIT_PROMPT,
+            persistedContent: CONTINUE_AFTER_APP_EXIT_PROMPT,
+            origin: { kind: 'scheduler', scheduleId: 'schedule', scheduleName: 'Review', runId: 'original-run' },
+            onAccepted: vi.fn(),
+          });
+          await done.promise;
+          return { runId: 'original-run' };
+        }),
+      }));
+      const enqueue = hostInput(h, remote, mobile, resume);
+      const input = makeItem('manual-click', CONTINUE_AFTER_APP_EXIT_PROMPT);
+      await enqueue({}, sid, input);
+      await flush();
+      expect(resume).toHaveBeenCalledOnce();
+      expect(h.sendToAgent).toHaveBeenCalledOnce();
+      expect(h.sendToAgent.mock.calls[0]?.[3]?.persistUserMessage).toMatchObject({
+        clientId: 'manual-click', content: CONTINUE_AFTER_APP_EXIT_PROMPT,
+        origin: { kind: 'scheduler', runId: 'original-run' },
+      });
+      expect(h.coordinator.getProjection(sid)).toMatchObject({
+        queuePaused: false, continuationInFlightClientId: 'manual-click',
+      });
+      expect(h.coordinator.getProjection(sid).pendingQueue.map(item => item.clientId)).toEqual(['later']);
+      // A weak-link resend acknowledges the same input without claiming again.
+      await enqueue({}, sid, input);
+      expect(resume).toHaveBeenCalledOnce();
+      done.resolve();
+    },
+  );
+
+  it('does not send an untracked continuation when the scheduler cannot prepare it', async () => {
+    const h = createHarness();
+    const resume = vi.fn(async () => ({ completion: Promise.resolve({ runId: 'original', deferred: true }) }));
+    await expect(hostInput(h, false, false, resume)(
+      {}, 'task', makeItem('click', CONTINUE_AFTER_APP_EXIT_PROMPT),
+    )).rejects.toThrow('could not be queued');
+    expect(h.sendToAgent).not.toHaveBeenCalled();
+  });
+
+  it('rejects a continuation if the task is cleared while its scheduled run is being prepared', async () => {
+    const h = createHarness();
+    const entered = deferred<void>();
+    const prepare = deferred<void>();
+    const resume: typeof import('../../scheduler-host/index.js').resumeInterruptedScheduleRun = async (sessionId, enqueue) => ({
+      completion: Promise.resolve().then(async () => {
+        entered.resolve();
+        await prepare.promise;
+        await enqueue({ sessionId, text: CONTINUE_AFTER_APP_EXIT_PROMPT,
+          persistedContent: CONTINUE_AFTER_APP_EXIT_PROMPT,
+          origin: { kind: 'scheduler', scheduleId: 'schedule', scheduleName: 'Review', runId: 'original' },
+          onAccepted: vi.fn(),
+        });
+        return { runId: 'original' };
+      }),
+    });
+    const pending = hostInput(h, false, false, resume)({}, 'task', makeItem('click', CONTINUE_AFTER_APP_EXIT_PROMPT));
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    await entered.promise;
+    h.coordinator.clearSession('task');
+    prepare.resolve();
+    await rejected;
+    expect(h.sendToAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not treat an automatic remote delivery as a manual scheduled continuation', async () => {
+    const h = createHarness();
+    h.setLoadQueueSnapshot(async () => [makeItem('restored', 'existing work')]);
+    const resume = vi.fn(async () => null);
+    const input = { ...makeItem('automatic', CONTINUE_AFTER_APP_EXIT_PROMPT),
+      origin: { kind: 'scheduler' as const, scheduleId: 'schedule', scheduleName: 'Review' },
+    };
+    await hostInput(h, true, false, resume)({}, 'task', input);
+    expect(resume).not.toHaveBeenCalled();
+    expect(h.coordinator.getProjection('task').queuePaused).toBe(true);
+    expect(h.sendToAgent).not.toHaveBeenCalled();
+  });
 
   function leadInput(clientId = 'lead-input') {
     return buildRemoteWorkerQueuedMessage({

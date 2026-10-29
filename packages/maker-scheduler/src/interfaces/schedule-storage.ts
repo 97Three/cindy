@@ -22,6 +22,10 @@ export interface ScheduleStorage {
   insertRun(run: ScheduleRun): Promise<ScheduleRun>;
   updateRun(id: string, patch: Partial<ScheduleRun>): Promise<ScheduleRun | null>;
   listRuns(scheduleId: string, limit?: number): Promise<ScheduleRun[]>;
+  /** Atomically claim one interrupted agent run whose last turn still belongs
+   * to it. Hosts must exclude paused/deleted schedules, taken-over sessions and
+   * sessions owned by another running attempt. Optional for stores without session history. */
+  claimInterruptedRun?(sessionId: string, heartbeatAt: number): Promise<ScheduleRun | null>;
   /** Returns the deleted run for callers that want to know its scheduleId, or null if not found. */
   deleteRun(id: string, options?: { excludeBotSchedules?: boolean }): Promise<ScheduleRun | null>;
 

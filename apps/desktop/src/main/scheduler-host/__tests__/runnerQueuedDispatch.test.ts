@@ -515,6 +515,28 @@ beforeEach(() => {
 });
 
 describe('MakerScheduleRunner queued dispatch (busy bound session)', () => {
+  // App-exit regression / unit: a passed precheck may become idle after partial
+  // effects. Recovery must continue the saved conversation and keep its run id.
+  it('resumes the original task without replaying its initial prompt or precheck', async () => {
+    const h = createSessionHarness(async () => ({ accepted: true }));
+    const queue = createQueueHarness({ busy: false });
+    const { runner, maker } = createRunnerHarness(h.session, queue.deps);
+    const ctx = { ...createFireContext(), resumeSessionId: SESSION_ID };
+    const fire = runner.fireManualContinuation(heartbeatSchedule({ targetSessionId: undefined,
+      preRunHook: { command: 'already-passed-check' } }), ctx, queue.deps.enqueuePrompt);
+    await vi.waitFor(() => expect(queue.enqueueCalls).toHaveLength(1));
+    const input = enqueueLast(queue);
+    expect(input.text).toContain('continue from where it left off');
+    expect(input.text).not.toContain('PR #971 heartbeat prompt');
+    expect(input.origin).toMatchObject({ runId: ctx.runId });
+    expect(input.sessionId).toBe(SESSION_ID);
+    expect(mocks.executePreRunHook).not.toHaveBeenCalled();
+    expect(maker.createSession).toHaveBeenCalledWith(expect.objectContaining({ id: SESSION_ID }));
+    await queue.accept();
+    h.emit({ type: 'done', data: { text: 'recovered' }, source: 'claude-code' });
+    await expect(fire).resolves.toMatchObject({ sessionId: SESSION_ID });
+  });
+
   // PR #7104 / unit: retrying an old message must still yield to the human,
   // even though its persisted send-time sorting key no longer advances.
   it('defers a heartbeat after recent human recovery instead of enqueueing it', async () => {

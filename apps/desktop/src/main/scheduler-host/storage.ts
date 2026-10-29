@@ -558,6 +558,37 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     return row ? scheduleRunToCamel(row) : null;
   }
 
+  /** Claim only the interrupted turn in the task the user chose to continue.
+   * Ordinary user input, completed/cleared turns and another running owner
+   * invalidate the claim. Later runs in other tasks do not rewrite this run. */
+  async claimInterruptedRun(sessionId: string, heartbeatAt: number): Promise<ScheduleRun | null> {
+    const [row] = await this.getDb().update(scheduleRuns).set({
+      status: 'running', heartbeatAt, finishedAt: null, errorMsg: null, readAt: null,
+    }).where(sql`${scheduleRuns.id} = (
+      SELECT r.id FROM schedule_runs r
+      JOIN schedules s ON s.id = r.schedule_id
+      JOIN sessions t ON t.id = r.session_id
+      WHERE r.session_id = ${sessionId}
+        AND r.status = 'interrupted' AND r.error_msg = 'app restarted'
+        AND s.status = 'active' AND s.source != 'bot'
+        AND COALESCE(s.execution_mode, 'agent') = 'agent'
+        AND COALESCE(s.job_type, 'prompt') = 'prompt'
+        AND t.status = 'active'
+        AND t.active_turn_started_at > COALESCE(t.last_turn_ended_at, 0)
+        AND t.active_turn_started_at > COALESCE(t.cleared_at, 0)
+        AND (SELECT CASE WHEN json_valid(m.agent_meta)
+               THEN json_extract(m.agent_meta, '$.origin.runId') END
+             FROM messages m WHERE m.session_id = t.id AND m.role = 'user'
+               AND m.rewind_at IS NULL
+             ORDER BY m.created_at DESC, m.id DESC LIMIT 1) = r.id
+        AND NOT EXISTS (SELECT 1 FROM schedule_runs owner
+          WHERE owner.session_id = r.session_id AND owner.status = 'running')
+      ORDER BY r.fired_at, r.id LIMIT 1
+    )`).returning();
+    if (row) this.bumpSidebarIndexCache();
+    return row ? scheduleRunToCamel(row) : null;
+  }
+
   /** Same failure stays quiet until the existing recovery contract observes success. */
   async hasUnrecoveredMatchingFailure(run: ScheduleRun): Promise<boolean> {
     if (!run.errorMsg) return false;

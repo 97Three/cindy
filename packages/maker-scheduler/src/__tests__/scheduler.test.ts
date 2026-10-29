@@ -19,6 +19,7 @@ import type { Logger } from '../interfaces/logger.js';
 class InMemoryStorage implements ScheduleStorage {
   schedules = new Map<string, Schedule>();
   runs = new Map<string, ScheduleRun>();
+  claimInterruptedRun?: ScheduleStorage['claimInterruptedRun'];
 
   async list(filter?: ListFilter): Promise<Schedule[]> {
     const all = [...this.schedules.values()];
@@ -113,6 +114,69 @@ class InMemoryStorage implements ScheduleStorage {
     return { ...ex };
   }
 }
+
+// Regression: quitting while a runner is active must preserve an interrupted run,
+// even when closing the provider produces a late rejection. Unit, in-memory I/O.
+it('preserves interrupted runs on app exit instead of recording a provider-close failure', async () => {
+  let reject!: (error: Error) => void;
+  let entered!: () => void;
+  const ready = new Promise<void>((resolve) => { entered = resolve; });
+  const h = makeHarness({ runnerImpl: async (_schedule, ctx) => {
+    await ctx.onSessionBound?.('interrupted-session');
+    ctx.onTurnActive?.('interrupted-session');
+    entered();
+    return new Promise<FireResult>((_resolve, fail) => { reject = fail; });
+  } });
+  await h.scheduler.start();
+  const schedule = await h.scheduler.create(baseInput);
+  const pending = h.scheduler.runNow(schedule.id);
+  await ready;
+  const runId = h.fireCalls[0]!.ctx.runId;
+  await h.scheduler.stop({ interrupted: true });
+  expect(h.scheduler.isRunAbandoned(runId)).toBe(true);
+  expect(h.storage.runs.get(runId)).toMatchObject({ status: 'interrupted', sessionId: 'interrupted-session' });
+  reject(new Error('scheduler session ended without a terminal event (closed)'));
+  await pending;
+  expect(h.storage.runs.get(runId)?.status).toBe('interrupted');
+});
+
+it('waits for manual continuation after restart, then restores the same run and silence lookup', async () => {
+  const storage = new InMemoryStorage();
+  const clock = new FakeClock();
+  let finish!: (result: FireResult) => void;
+  const h = makeHarness({ storage, clock, runnerImpl: async (_schedule, ctx) => {
+    await ctx.onSessionBound?.(ctx.resumeSessionId!);
+    ctx.onTurnActive?.(ctx.resumeSessionId!);
+    return new Promise<FireResult>((resolve) => { finish = resolve; });
+  } });
+  const schedule = await h.scheduler.create(baseInput);
+  const oldRun: ScheduleRun = { id: 'old-run', scheduleId: schedule.id,
+    sessionId: 'original-task', firedAt: clock.now() - 5000,
+    status: 'interrupted', errorMsg: 'app restarted' };
+  await storage.insertRun(oldRun);
+  storage.claimInterruptedRun = vi.fn(async () => {
+    if (storage.runs.get(oldRun.id)?.status !== 'interrupted') return null;
+    return storage.updateRun(oldRun.id, { status: 'running', errorMsg: undefined });
+  });
+  await h.scheduler.start();
+  await h.scheduler.tick();
+  expect(storage.claimInterruptedRun).not.toHaveBeenCalled();
+  expect(h.fireCalls).toHaveLength(0);
+  const resumed = await h.scheduler.resumeInterruptedRun('original-task');
+  expect(resumed).not.toBeNull();
+  await expect(h.scheduler.resumeInterruptedRun('original-task')).rejects.toThrow('already continuing');
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+  expect(h.fireCalls[0]!.ctx).toMatchObject({ runId: oldRun.id, firedAt: oldRun.firedAt, resumeSessionId: oldRun.sessionId });
+  expect(h.scheduler.resolveInflightRunForSession('original-task')).toBe(oldRun.id);
+  expect(h.scheduler.silenceRun(oldRun.id)).toBe(true);
+  finish({ sessionId: 'original-task', resultText: 'continued and completed' });
+  await resumed!.completion;
+  await vi.waitFor(() => expect(storage.runs.get(oldRun.id)?.status).toBe('success'));
+  expect(storage.runs.size).toBe(1);
+  expect(storage.runs.get(oldRun.id)).toMatchObject({ firedAt: oldRun.firedAt,
+    errorMsg: undefined, resultText: 'continued and completed', readAt: clock.now() });
+  await h.scheduler.stop();
+});
 
 class FakeClock {
   current = Date.UTC(2026, 0, 1, 0, 0, 30); // start at 2026-01-01 00:00:30 UTC

@@ -10,7 +10,7 @@ import {
   type ScheduledModelSelection,
   type ScheduledModelSelectionLease,
 } from '../maker-ipc/scheduledModelSelection';
-import { UI_ACTION_TRIGGER_PREFIX } from '../../shared/interruptedTurn.js';
+import { CONTINUE_AFTER_APP_EXIT_PROMPT, UI_ACTION_TRIGGER_PREFIX } from '../../shared/interruptedTurn.js';
 import {
   routinePermissionSnapshot,
   settledRoutinePermissionMismatch,
@@ -497,7 +497,25 @@ export class MakerScheduleRunner implements ScheduleRunner {
     { signature: string; count: number }
   >();
 
+  private readonly manualContinuationEnqueues = new Map<string, SchedulerQueueDeps['enqueuePrompt']>();
+
   constructor(private readonly deps: MakerScheduleRunnerDeps) {}
+
+  /** Keep the normal completion/cancellation path while enqueueing the user's
+   * already prepared Continue input (same clientId and device provenance). */
+  async fireManualContinuation(
+    schedule: Schedule,
+    ctx: FireContext,
+    enqueuePrompt: SchedulerQueueDeps['enqueuePrompt'],
+  ): Promise<FireResult> {
+    if (!this.deps.schedulerQueue) throw new Error('scheduler queue bridge not ready');
+    this.manualContinuationEnqueues.set(ctx.runId, enqueuePrompt);
+    try {
+      return await this.fire(schedule, ctx);
+    } finally {
+      this.manualContinuationEnqueues.delete(ctx.runId);
+    }
+  }
 
   /** scheduler-host/index.ts 在 startScheduler 内调一次，让 runner 反向 pause schedule */
   attachScheduler(scheduler: Scheduler): void {
@@ -791,6 +809,18 @@ export class MakerScheduleRunner implements ScheduleRunner {
    * 事件流进行中不能关;这里在 run 终态(done/error 已收)之后关,不冲突。
    */
   async fire(schedule: Schedule, ctx: FireContext): Promise<FireResult> {
+    if (ctx.resumeSessionId) {
+      // The original precheck may now say "nothing to do" because the agent
+      // already applied effects. Resume its transcript, never replay that gate
+      // or create a replacement task/worktree. Keep the task's current route.
+      schedule = {
+        ...schedule, targetSessionId: ctx.resumeSessionId,
+        persistentSession: false, useWorktree: false, preRunHook: undefined,
+        prompt: CONTINUE_AFTER_APP_EXIT_PROMPT,
+        model: undefined, providerId: undefined, effort: undefined,
+        fastMode: undefined, modelAgentKind: undefined,
+      };
+    }
     const holder: EphemeralSessionHolder = {};
     const closeQuietOutput = hidesScheduledTranscript(schedule)
       ? beginQuietScheduledOutput(schedule.id, ctx.runId)
@@ -2571,7 +2601,8 @@ export class MakerScheduleRunner implements ScheduleRunner {
       );
     };
 
-    const enqueueResult = await sq.enqueuePrompt({
+    const enqueuePrompt = this.manualContinuationEnqueues.get(ctx.runId) ?? sq.enqueuePrompt.bind(sq);
+    const enqueueResult = await enqueuePrompt({
       sessionId,
       text: promptToSend,
       inheritTargetPlanMode: true,
