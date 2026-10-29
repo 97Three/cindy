@@ -1417,16 +1417,18 @@ async function readRemoteBotProfile(client: ReturnType<typeof getDbClient>, botI
   const canonicalResolution = await reconcileCanonicalLink(botId, client);
   owner.assertCurrent();
   // Personal transcript links let search entries open the exact historical task.
-  // No group/channel lanes, prompts, credentials or runtime configuration.
+  // Include only the root binding for private topics, never prompts or runtime configuration.
   const personalSessions = await db.select({
     id: sessions.id,
     role: botSessionLinks.role,
+    routeKey: botSessionLinks.routeKey,
     status: sessions.status,
   }).from(botSessionLinks)
     .innerJoin(sessions, eq(sessions.id, botSessionLinks.sessionId))
     .where(and(
       eq(botSessionLinks.botId, botId),
-      inArray(botSessionLinks.role, ['canonical', 'history']),
+      inArray(botSessionLinks.role, ['canonical', 'history', 'thread']),
+      or(ne(botSessionLinks.role, 'thread'), isNull(botSessionLinks.archivedAt)),
       ne(sessions.status, 'deleted'),
     ));
   owner.assertCurrent();
@@ -1434,7 +1436,10 @@ async function readRemoteBotProfile(client: ReturnType<typeof getDbClient>, botI
   return {
     ...visibleProfile,
     canonicalSessionId: canonicalResolution.canonicalSessionId ?? undefined,
-    sessions: personalSessions,
+    dmThreadsSupported: true,
+    sessions: personalSessions.map(({ routeKey, ...row }) => ({ ...row,
+      ...(row.role === 'thread' ? { threadRoot: parseBotDmThreadRouteKey(routeKey) } : {}),
+    })),
   };
 }
 
@@ -2877,9 +2882,11 @@ export function registerBotIpc(): void {
 
   // 私聊话题：打开话题时建（或复用）它的隐藏 Session；时间线读本私聊的话题入口。
   ipcMain.handle('local-db:bots:dm-thread:ensure', async (event, raw: unknown) => {
-    assertTrustedAppRendererEvent(event);
+    const remote = isDeviceLinkInvoke();
+    if (!remote) assertTrustedAppRendererEvent(event);
     const body = requireObject(raw, 'body');
     const botId = readText(body.botId, 'botId', 128, true);
+    if (remote && await readRemoteBotSessionAccess(botId, 'bot') !== 'visible') throwIpcError('NOT_FOUND', 'Bot 不存在');
     const rootSessionId = readText(body.rootSessionId, 'rootSessionId', 128, true);
     const rootClientId = readText(body.rootClientId, 'rootClientId', 256, true);
     if (!parseBotDmThreadRouteKey(`dm-thread:${rootSessionId}:${rootClientId}`)) {
@@ -2889,9 +2896,11 @@ export function registerBotIpc(): void {
     return ensureBotDmThreadSession({ botId, rootSessionId, rootClientId, title: title || '话题' });
   });
   ipcMain.handle('local-db:bots:dm-thread:list', async (event, raw: unknown) => {
-    assertTrustedAppRendererEvent(event);
+    const remote = isDeviceLinkInvoke();
+    if (!remote) assertTrustedAppRendererEvent(event);
     const body = requireObject(raw, 'body');
     const botId = readText(body.botId, 'botId', 128, true);
+    if (remote && await readRemoteBotSessionAccess(botId, 'bot') !== 'visible') throwIpcError('NOT_FOUND', 'Bot 不存在');
     const rootSessionId = readText(body.rootSessionId, 'rootSessionId', 128, true);
     return listBotDmThreads(botId, rootSessionId);
   });

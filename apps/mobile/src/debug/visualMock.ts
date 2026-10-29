@@ -22,7 +22,7 @@ import type {
 } from '@/device-link/mobileMakerTransport';
 import { remoteSessionStore } from '@/session/remoteSessionStore';
 import { pluginVisualFixture } from '@/debug/pluginVisualFixture';
-import { teammateVisualFixture, VISUAL_TEAMMATE_SESSION_ID } from '@/debug/teammateVisualFixture';
+import { teammateVisualFixture, VISUAL_TEAMMATE_SESSION_ID, VISUAL_TEAMMATE_THREAD_ROOT_ID, visualTeammateThreads } from '@/debug/teammateVisualFixture';
 import { markdownPreviewFixture } from '@/debug/markdownPreviewFixture';
 import type { InputProjection, PendingInteraction, RemoteMessage, RemoteSession } from '@/session/types';
 
@@ -304,6 +304,8 @@ async function visualMockInvoke<T = unknown>(
       return (args[0] as string[]).map(visualMockSession) as T;
     case 'local-db:sessions:get':
       return visualMockSession(String(args[0] ?? VISUAL_MOCK_SESSION_ID)) as T;
+    case 'local-db:messages:around-client-id':
+      return visualMockMessages(String(args[0])).filter(row => row.clientId === args[1]) as T;
     case 'local-db:messages:list':
       return visualMockMessages(String(args[0] ?? VISUAL_MOCK_SESSION_ID)) as T;
     case 'local-db:messages:view': {
@@ -543,7 +545,7 @@ function catalogSession(row: UiMockSessionRow): RemoteSession {
 }
 
 function visualMockSession(id: string): RemoteSession {
-  if (id === VISUAL_TEAMMATE_SESSION_ID) return {
+  if (id === VISUAL_TEAMMATE_SESSION_ID || [...visualTeammateThreads.values()].some(thread => thread.sessionId === id)) return {
     ...visualMockSession('ui-mock-rich-answer'), id, source: 'bot', title: 'Cindy · 演示群任务',
   };
   return visualMockSessions('all').find((session) => session.id === id) ?? visualMockSessions()[0];
@@ -567,9 +569,14 @@ function sessionFromShared(
 }
 
 function visualMockMessages(sessionId: string): RemoteMessage[] {
-  if (sessionId === VISUAL_TEAMMATE_SESSION_ID) return visualMockMessages('ui-mock-rich-answer').map(row => ({
+  const topic = [...visualTeammateThreads.values()].find(thread => thread.sessionId === sessionId);
+  if (topic) return topic.replyCount ? [
+    message(sessionId, 'visual-topic-user', 'user', '把移动端和群聊的话题入口统一起来。', -180_000),
+    message(sessionId, 'visual-topic-reply', 'assistant', '两处都会使用堆叠头像，回复数和时间保持同一字号。', -120_000),
+  ] : [];
+  if (sessionId === VISUAL_TEAMMATE_SESSION_ID) return [...visualMockMessages('ui-mock-rich-answer').map(row => ({
     ...row, id: `${sessionId}-${row.id}`, clientId: `${sessionId}-${row.clientId}`, sessionId,
-  }));
+  })), message(sessionId, VISUAL_TEAMMATE_THREAD_ROOT_ID, 'assistant', '我们在话题里确认移动端样式，主聊天继续处理其他事情。', -300_000)];
   if (sessionId === VISUAL_MOCK_SESSION_ID) {
     return SHARED_REMOTE_CONTROL_FIXTURE.rawMessages.map((message) => ({
       ...message,
