@@ -322,7 +322,6 @@ stream 匹配后才处理；信令不进入业务可靠 FIFO，也不走直连�
   扩容、数据库或监控调整，或已有通用转发足够支持本次变化，可以写明无需同步修改的具体依据；
   不得仅写「不涉及」或假定官方与自建中转会自动保持一致。
 
-
 ## 灵动岛完成卡操作
 
 `local-db:sessions:activity` 追加可选的 `completionToken`，由任务所属进程按完成卡代次签发。
@@ -3174,7 +3173,6 @@ PC 同源 ghostPermissionItems 声明摘要投影并排除 tool，以请求 loca
 空数组仅表示 Host 明确投影的声明为空。工具、about 和 version 使用原字段。
 不增加 channel、allowlist、relay 帧、授权或协议版本，服务端无改动，Mobile 指纹不变。
 
-
 ## 移动插件 Details 事实
 
 同一 plugin-capabilities.data 可选追加 details（key/title/value 数组），由本插件 InstalledGhost
@@ -3184,7 +3182,6 @@ PC 同源 ghostPermissionItems 声明摘要投影并排除 tool，以请求 loca
 当前 PC 窗口的停靠位置不在此声明投影内，有面板只报告存在，无面板沿用 PC 文案。
 旧 Host 缺字段时新手机仅显示原有 Version 与资源 Identifier，说明其余数据未提供；旧控制端忽略新增字段。
 服务端、relay、协议版本及原生 fingerprint 均不变。
-
 
 ## 同账号远程插件管理
 
@@ -3783,7 +3780,6 @@ Share Server 在创建时保存已验签的分享者 `membershipId` 与身份权
 
 方形 SVG 为 1080×1080，Desktop PNG 为 2160×2160，接收界限 1 MiB。素材用于人工复制/保存；网页只展示与承接，不提供发送面板工具。`cindy://plugin/:pluginId` 仍只导航，拒绝 query/fragment/安装参数，沿冷启动、登录恢复、兼容包选择和原安装批准。通用市场详情入口接受服务端解析后的当前区域 ID，再与当前可见目录核对身份及发布；新旧 ID 映射仍归 Plugin Server，分享层不新增转换。已有目录 ID 的请求仍严格绑定原条目，不能借规范化跳到其他插件。不扩 device-link 或 Mobile 能力，没有“我的分享”、移除已发署名、分享统计、转发链、平台 SDK 或资料快照。
 
-
 本版分享接收限于插件页选择本机且目录正常的情况；不承接远程电脑的分享导航或断线恢复，不自动切换所选电脑。组织目录不可用时继续遵守未下发条目不读取详情的既有限制；历史或跨区域公开编号的解析也可能被该限制拒绝，本版不新增解析入口或放宽访问边界。
 
 ## 本地插件按次分享
@@ -3926,7 +3922,6 @@ changing their wire protocol or triggering any companion merge. Identity is cach
 清空普通任务；撤权沿原处理路径上报。设备／状态代次失效时丢弃迟到回复，保留其它设备的
 镜像，不重启链路或重新授权。离线镜像仅保存归属的 id/role/channel，恢复时仍可筛选和显示头像。
 
-
 Mobile follows the same read-only compatibility path for teammate task attribution and independent
 routine/channel Sessions. `taskTeammate` is a client-local display projection (ID/name/avatar), not a
 new wire field or permission. Its slim home cache keeps it with `companion`; optional read failure
@@ -3977,3 +3972,32 @@ contacts 在每次 begin 投递前核对原元素仍连接、仍声明 contacts�
 旧接收端仍可能丢弃核实状态或把接收回复标成私密；完整修复需要执行交接的宿主升级。
 账号、群与 IM 发言人校验、权限档、Plan、输入代次和撤销校验保持不变。
 不改变连接恢复或重放策略；单次派发失败只影响该请求，不重启连接或扩大设备访问。
+
+## Telegram 群历史按消息号取图（2026-10-29）
+
+`GroupMessagePayload.imageRefs` 为可选字段，最多 4 个 `{fileId, name, mimeType,
+downloadToken?}`；无此字段的旧包继续接受，旧客户端忽略新增字段。客户端与服务端
+`@cindy/slack-hook-protocol` 同步边界校验（ID 1024、名称 256、证明 8192 字符；图片类型白名单）。
+官方 relay 对每个接收设备绑定签发 HMAC 图片证明，绑定群、话题、消息与文件身份。
+新增只读 `POST /telegram/group-image` 使用正常桌面登录 JWT 验签，不接受调用者提供设备 ID；
+下载前后核对当前绑定。证明不能单独访问接口，不新增 env、WS envelope 或 capability。
+
+先部署 telegram-hook-server，再更新客户端（用户确认更新，不能强更）。旧端保持文字
+历史，旧服务不发送证明时新端明确不可取回。客户端新增 nullable `image_refs` 数据库列，
+通过追加 Drizzle migration 升级；服务端不持久化群图片或消息正文，无服务端数据库迁移。
+验收入口为 groupHistoryMcpServer / groupHistorySearch / groupHistoryImages、个人 TelegramIM、
+两端 protocol-group-relay 和服务端 telegramController / groupImageHttp 测试；正式 Telegram
+跨进程收发需部署后另验。
+
+同一取图工具覆盖飞书/Lark、企业微信、钉钉、Discord 私聊与个人微信。前三方无历史
+接口的路径仅保存已收到的托管媒体引用，不接受模型提供的路径/URL，不补抓全量群图。
+飞书/Lark 通过该 bot 的消息接口校验精确 chat/topic 后下载；企业微信/钉钉仍只看到
+渠道实际投递的消息，Discord/微信当前只支持私聊。微信排队 payload 追加 optional
+`platformMessageId`，旧队列无此字段时正常执行，但不把内部 task ID 冒充平台消息号。
+
+Slack 复用既有 user-token 工具网关，在 `listTools` 增加 `cindy_get_message_images`；
+参数为 channel_id/message_ts/可选 thread_ts，返回标准 MCP image blocks。客户端网关
+透传图片，不再将 base64 当成文字 JSON 泄洪；旧端仍按原方式交付 JSON，需升级客户端
+才能直接看图。Slack 权限继续由原绑定用户的 Slack 授权决定，无新增 scope/env。
+
+X 属于公开帖子接入，本轮不新增付费历史抓取；其已有推文上下文自动带图路径不变。
