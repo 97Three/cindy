@@ -5,7 +5,7 @@ import { ActivityIndicator, Animated, Pressable, StyleSheet, View } from 'react-
 import { ChevronRight, Layers, Sparkles, Terminal, CircleAlert } from 'lucide-react-native';
 import { Text } from '@/components/AppText';
 import { useTheme, useThemedStyles, type ThemeColors } from '@/theme';
-import { spacing, typeScale, lineHeight, listDisclosureMotion } from '@/theme/tokens';
+import { spacing, typeScale, lineHeight, listDisclosureMotion, iconSize } from '@/theme/tokens';
 import { useReduceMotionEnabled } from '@/hooks/useReduceMotion';
 import { useFoldableExpandedState } from './expandedBlockMemory';
 
@@ -34,7 +34,7 @@ export function TeammateProcessLink({ title, onPress }: { title: string; onPress
   return <Pressable accessibilityRole="button" accessibilityLabel={title} onPress={onPress} style={styles.header}
     onLayout={event => footer.setRowHeight(event.nativeEvent.layout.height)}>
     <Text style={[styles.title, styles.secondary]} onLayout={event => footer.setTextHeight(event.nativeEvent.layout.height)}>{title}</Text>
-    <ChevronRight size={14} color={colors.textTertiary} />
+    <ChevronRight size={iconSize.sm} color={colors.textTertiary} />
   </Pressable>;
 }
 
@@ -95,10 +95,10 @@ export function TeammateProcess({ id, title, running = false, children, secondar
         onPress={toggle} testID={secondary ? 'message.processRecords' : 'message.teammateProcess'}
         style={styles.header} onLayout={event => footer.setRowHeight(event.nativeEvent.layout.height)}>
         {(statusIcon || !secondary) && <View style={styles.statusIcon}>{statusIcon ?? <>{running ? <ActivityIndicator color={colors.textSecondary} size="small" style={styles.spinner} />
-          : <Layers size={14} color={colors.textSecondary} />}</>}</View>}
+          : <Layers size={iconSize.sm} color={colors.textSecondary} />}</>}</View>}
         <Text style={[styles.title, secondary && styles.secondary]} onLayout={event => footer.setTextHeight(event.nativeEvent.layout.height)}>{title}</Text>
         <Animated.View style={{ transform: [{ rotate: rotation.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '90deg'] }) }] }}>
-          <ChevronRight size={14} color={colors.textTertiary} />
+          <ChevronRight size={iconSize.sm} color={colors.textTertiary} />
         </Animated.View>
       </Pressable>
       {(expanded || mounted) && <Animated.View style={{ height, overflow: 'hidden' }}
@@ -136,11 +136,11 @@ export function TeammateWorkSegment({ id, title, running, hasTools, failed, chil
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   if (!hasTools) return <View style={styles.segmentStatus}>
-    <View style={styles.statusIcon}>{running ? <ActivityIndicator color={colors.textSecondary} size="small" style={styles.spinner} /> : <Sparkles size={14} color={colors.textSecondary} />}</View>
+    <View style={styles.statusIcon}>{running ? <ActivityIndicator color={colors.textSecondary} size="small" style={styles.spinner} /> : <Sparkles size={iconSize.sm} color={colors.textSecondary} />}</View>
     <Text style={styles.title}>{title}</Text>
   </View>;
   return <TeammateProcess id={id} secondary railFooter={last} running={running} title={title}
-    statusIcon={failed ? <CircleAlert size={14} color={colors.errorText} /> : running ? <ActivityIndicator color={colors.textSecondary} size="small" style={styles.spinner} /> : <Terminal size={14} color={colors.textSecondary} />}>
+    statusIcon={failed ? <CircleAlert size={iconSize.sm} color={colors.errorText} /> : running ? <ActivityIndicator color={colors.textSecondary} size="small" style={styles.spinner} /> : <Terminal size={iconSize.sm} color={colors.textSecondary} />}>
     {children}
   </TeammateProcess>;
 }
