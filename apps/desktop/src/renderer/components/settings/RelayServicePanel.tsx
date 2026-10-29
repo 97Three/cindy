@@ -1325,7 +1325,7 @@ function RouteRow({
             <span aria-hidden className="shrink-0 text-[var(--text-tertiary)]">{icon}</span>
             <span className="truncate text-13 font-medium text-[var(--text-primary)]">{title}</span>
             {tag ? (
-              <span className="shrink-0 rounded-full border border-[var(--border-default)] px-1.5 text-11 leading-[18px] text-[var(--text-secondary)]">
+              <span className="shrink-0 rounded-full border border-[var(--border-default)] px-1.5 text-11 leading-[1.636] text-[var(--text-secondary)]">
                 {tag}
               </span>
             ) : null}
