@@ -257,8 +257,7 @@ import type { SessionMoveTarget } from './sidebar/sessionMoveTarget';
 import {
   DIALOGUE_FILTER_KEY,
   projectFilterIncludes,
-  mergeVisibleReorder,
-  normalizeManualPinnedOrder,
+  buildManualPinnedReorder,
 } from './hooks/helpers/sidebarFilterCore';
 import {
   activePinnedSidebarEntryIds,
@@ -740,13 +739,13 @@ export function CCAgentSidebarUpper() {
       );
       const comparisonKey = (entryId: string) =>
         pinnedSidebarEntryComparisonKey(entryId, localPlatform);
-      const baseOrder = normalizeManualPinnedOrder(
+      const { baseOrder, order } = buildManualPinnedReorder(
         filter.manualPinnedOrder,
         fullActivePinnedIds,
+        visibleNewOrder,
         comparisonKey,
       );
-      const merged = mergeVisibleReorder(baseOrder, visibleNewOrder, comparisonKey);
-      void filter.setManualPinnedOrder(merged, fullActivePinnedIds, baseOrder).catch((err) => {
+      void filter.setManualPinnedOrder(order, fullActivePinnedIds, baseOrder).catch((err) => {
         log.warn('failed to persist rail pinned order', err);
         toast.error(t('ccAgent.sidebar.pinFailed'));
       });
@@ -2160,13 +2159,13 @@ function ExpandedView({
       );
       const comparisonKey = (entryId: string) =>
         pinnedSidebarEntryComparisonKey(entryId, localPlatform);
-      const baseOrder = normalizeManualPinnedOrder(
+      const { baseOrder, order } = buildManualPinnedReorder(
         filter.manualPinnedOrder,
         fullActivePinnedIds,
+        visibleNewOrder,
         comparisonKey,
       );
-      const merged = mergeVisibleReorder(baseOrder, visibleNewOrder, comparisonKey);
-      void filter.setManualPinnedOrder(merged, fullActivePinnedIds, baseOrder).catch((err) => {
+      void filter.setManualPinnedOrder(order, fullActivePinnedIds, baseOrder).catch((err) => {
         log.warn('failed to persist pinned order', err);
         toast.error(t('ccAgent.sidebar.pinFailed'));
       });

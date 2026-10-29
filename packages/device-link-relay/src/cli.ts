@@ -22,8 +22,11 @@ import type { RelayLogger } from './logger';
 import { readTlsFiles, startRelayServer } from './server';
 import { initializeRelay } from './store';
 import { RELAY_VERSION } from './version';
+import { manageNginx } from './nginx';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 
-const BOOLEAN_FLAGS = new Set(['trust-proxy']);
+const BOOLEAN_FLAGS = new Set(['trust-proxy', 'ipv6', 'existing-certificate']);
 /** 首次申请证书失败后的重试间隔(Let's Encrypt 对同一名字每小时只允许几次失败验证)。 */
 const ACME_RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000, 60 * 60_000];
 const RENEWAL_CHECK_MS = 60 * 60 * 1000;
@@ -120,6 +123,21 @@ async function main(): Promise<void> {
   const { command, flags } = parseArgs(process.argv.slice(2));
   if (flags.has('version')) {
     emit({ event: 'version', relayVersion: RELAY_VERSION });
+    return;
+  }
+  if (command === 'nginx') {
+    const action = required(flags, 'action');
+    const address = flags.get('address');
+    const resolvedAddresses = action === 'prepare' && address
+      ? isIP(address) ? [address] : (await lookup(identifierFor(address).value, { all: true })).map((entry) => entry.address)
+      : undefined;
+    const result = manageNginx(action, {
+      address,
+      resolvedAddresses,
+      ipv6: flags.has('ipv6'),
+      existingCertificate: flags.has('existing-certificate'),
+    });
+    emit({ event: 'nginx', ...result });
     return;
   }
   if (command === 'init') {
