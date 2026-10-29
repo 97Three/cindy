@@ -333,7 +333,7 @@ describe('browserExtensionSlot · 管子上行', () => {
     });
     expect(
       JSON.parse(await fs.readFile(path.join(dir, encodeURIComponent(id) + '.json'), 'utf8')),
-    ).toEqual({ version: 1, trustedClients: [] });
+    ).toEqual({ version: 1, source: '[null,null]', trustedClients: [] });
     expect(await slot.handleRequest(id, { kind: 'relayActive', id: 'r1' })).toEqual({
       ok: true,
       active: true,
@@ -368,6 +368,37 @@ describe('browserExtensionSlot · 管子上行', () => {
     expect(again.sent.some(([, payload]) => (payload as { name?: string }).name === 'browser-extension-policy-request')).toBe(false);
   });
 
+  // Review 2026-10-29 (Codex P1): a package from another source reused the old package's pairings.
+  it('换成其它来源的包时不沿用旧配对', async () => {
+    const { slot, bridges, sent, dir } = await makeSlot();
+    const clients = [{ id: 'c1', origin: 'chrome-extension://' + CHROME_ID, extensionId: CHROME_ID, publicKey: 'k' }];
+    await fs.writeFile(
+      path.join(dir, encodeURIComponent('_root__my-browser') + '.json'),
+      JSON.stringify({ version: 1, source: JSON.stringify([{ kind: 'local', source: 'manual' }, null]), trustedClients: clients }),
+    );
+    slot.reconcile([extGhost()]);
+    await vi.waitFor(() => expect(bridges[0]?.started).toBe(true));
+    expect(bridges[0].calls.some(([name]) => name === 'setTrustedClients')).toBe(false);
+    expect(sent).toContainEqual(['_root__my-browser', { type: 'event', name: 'browser-extension-policy-request' }]);
+  });
+
+  // Review 2026-10-29 (Codex P2): disabling the plugin while its bridge was still starting left queued
+  // jobs deliverable until startup finished.
+  it('启动未完成就停用时立即关闭桥接', async () => {
+    let finishStart: () => void = () => undefined;
+    const { slot, bridges } = await makeSlot();
+    const ghost = extGhost();
+    slot.reconcile([ghost]);
+    await vi.waitFor(() => expect(bridges).toHaveLength(1));
+    bridges[0].start = () => new Promise<void>((resolve) => (finishStart = resolve));
+    // The slot awaits the cached read before start; give it time to reach the held start.
+    await new Promise((r) => setTimeout(r, 25));
+    const stopping = slot.reconcile([]);
+    expect(bridges[0].closed).toBe(true);
+    finishStart();
+    await stopping;
+  });
+
   it('没有配对缓存时向插件索要一次;配对单独落盘', async () => {
     const { slot, bridges, sent, dir } = await makeSlot();
     slot.reconcile([extGhost()]);
@@ -377,7 +408,7 @@ describe('browserExtensionSlot · 管子上行', () => {
     expect(await slot.handleRequest('_root__my-browser', { kind: 'setTrustedClients', clients })).toEqual({ ok: true });
     expect(
       JSON.parse(await fs.readFile(path.join(dir, encodeURIComponent('_root__my-browser') + '.json'), 'utf8')),
-    ).toEqual({ version: 1, trustedClients: clients });
+    ).toEqual({ version: 1, source: '[null,null]', trustedClients: clients });
   });
 });
 

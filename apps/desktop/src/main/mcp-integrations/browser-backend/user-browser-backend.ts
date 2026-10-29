@@ -26,7 +26,7 @@ import type {
   BrowserExtensionClientInfo,
   BrowserExtensionJobResult,
 } from '../../browser-extension/bridge.js';
-import { resolveUploadFiles } from './rsb-webview-upload-policy.js';
+import { readRecipeInputFileSync, resolveUploadFiles } from './rsb-webview-upload-policy.js';
 import type { BackendRequest, BackendResult, BrowserBackend } from './types.js';
 
 export interface UserBrowserPageControl {
@@ -147,6 +147,16 @@ function outdated(action: BackendRequest['action'], what: string): BackendResult
   return actionFailed(
     action,
     `${what}需要 Cindy 浏览器扩展 ${USER_BROWSER_PARITY_VERSION} 或更新版本:请告知用户在扩展管理页更新或重新加载 Cindy 扩展;也可以改用 Cindy 专用浏览器(external),不要自行切换。`,
+    'BROWSER_RUNTIME_INVALID_REQUEST',
+  );
+}
+
+/** Bytes per upload the extension accepts (its job validation caps base64 at 40 million characters). */
+const UPLOAD_BATCH_BYTES_MAX = 30_000_000;
+function uploadTooLarge(action: BackendRequest['action']): BackendResult {
+  return actionFailed(
+    action,
+    '上传文件总大小超过约 30 MB:浏览器扩展一次只能接收这么多,请分批上传',
     'BROWSER_RUNTIME_INVALID_REQUEST',
   );
 }
@@ -1263,13 +1273,24 @@ export class UserBrowserBackend implements BrowserBackend {
         ? await this.opts.resolveUploadRoots(sessionId)
         : [];
     const paths = await resolveUploadFiles(req.paths, roots);
-    const files = await Promise.all(
-      paths.map(async (file) => ({
+    // The extension takes about 30 MB per upload (its base64 limit); refuse before reading anything.
+    let total = 0;
+    for (const file of paths) total += (await fs.stat(file)).size;
+    if (total > UPLOAD_BATCH_BYTES_MAX) return uploadTooLarge(req.action);
+    const files: Array<{ name: string; data: string; mimeType: string }> = [];
+    let read = 0;
+    for (const file of paths) {
+      // Read from the descriptor that was checked, so a file swapped for a link after the check
+      // cannot pull bytes from outside the allowed roots. One file at a time bounds memory.
+      const bytes = readRecipeInputFileSync(file, roots);
+      read += bytes.length;
+      if (read > UPLOAD_BATCH_BYTES_MAX) return uploadTooLarge(req.action);
+      files.push({
         name: path.basename(file),
-        data: (await fs.readFile(file)).toString('base64'),
+        data: bytes.toString('base64'),
         mimeType: UPLOAD_MIME[path.extname(file).toLowerCase()] ?? '',
-      })),
-    );
+      });
+    }
     const ref = req.inputRef ?? req.ref;
     const job = await this.pageJob(gate.control, record, 'upload', {
       ...(ref ? { ref } : req.selector ? { selector: req.selector } : { selector: 'input[type=file]' }),

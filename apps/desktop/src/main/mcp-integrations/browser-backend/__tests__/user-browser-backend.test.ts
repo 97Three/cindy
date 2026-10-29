@@ -635,6 +635,15 @@ describe('UserBrowserBackend · 读取与动作', () => {
         ref: 'r9',
         files: [{ name: 'a.png', data: 'AQID', mimeType: 'image/png' }],
       });
+      // Review 2026-10-29: a batch over the extension's ~30 MB limit is refused before any file is read.
+      const big = pathMod.join(root, 'big.bin');
+      await fsp.writeFile(big, '');
+      await fsp.truncate(big, 31_000_000);
+      const jobsBefore = fake.jobs.length;
+      expect(
+        await call(b, { action: 'upload', targetId: 't1', paths: [big], __mcpSessionId: 's1' }),
+      ).toMatchObject({ ok: false, message: expect.stringContaining('30 MB') });
+      expect(fake.jobs.length).toBe(jobsBefore);
       expect(
         await call(b, {
           action: 'upload',

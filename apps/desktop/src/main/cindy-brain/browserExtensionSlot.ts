@@ -108,6 +108,8 @@ interface Entry {
   closing: boolean;
   /** Paired clients as last persisted. */
   saved: SavedBrowserExtensionState;
+  /** Where the installed package came from; pairings never carry over to a package from elsewhere. */
+  source: string;
   /** Serialises cache writes so an older write cannot land after a newer one. */
   writes: Promise<void>;
   /**
@@ -127,6 +129,11 @@ function fail(
   message: string,
 ): GhostPipeBrowserExtensionResult {
   return { ok: false, errorCode, message };
+}
+
+/** Install provenance of a package: a replacement from another source starts without saved pairings. */
+function packageSource(ghost: InstalledGhost): string {
+  return JSON.stringify([ghost.publishingSource ?? null, ghost.namespace ?? null]);
 }
 
 function entrySignature(ghost: InstalledGhost, ownerScopeKey: string): string {
@@ -199,6 +206,7 @@ export class GhostBrowserExtensionSlot {
       ready: Promise.resolve(),
       closing: false,
       saved: { trustedClients: [] },
+      source: packageSource(ghost),
       writes: Promise.resolve(),
       cacheDir,
     };
@@ -206,7 +214,7 @@ export class GhostBrowserExtensionSlot {
     entry.ready = (async () => {
       // The old bridge must release its port and native registration before this one claims them.
       await previous?.catch(() => undefined);
-      const saved = await this.readSaved(cacheDir, instanceId);
+      const saved = await this.readSaved(cacheDir, instanceId, entry.source);
       if (saved) {
         entry.saved = saved;
         try {
@@ -252,6 +260,9 @@ export class GhostBrowserExtensionSlot {
     entry.closing = true;
     this.entries.delete(instanceId);
     const stopped = (async () => {
+      // Close first: queued jobs end and new ones are refused at once, even while startup (native
+      // registration can take seconds) is still finishing. Closing again after it is harmless.
+      await entry.bridge.close();
       await entry.ready;
       await entry.bridge.close();
       await entry.native?.close();
@@ -415,14 +426,28 @@ export class GhostBrowserExtensionSlot {
     return path.join(cacheDir, encodeURIComponent(instanceId) + '.json');
   }
 
-  /** Saved pairings; null when missing or unreadable. A site list saved by older versions is ignored. */
-  private async readSaved(cacheDir: string, instanceId: string): Promise<SavedBrowserExtensionState | null> {
+  /**
+   * Saved pairings; null when missing, unreadable or saved for a package from another source. A file
+   * without a source predates this check and is taken once. A site list saved by older versions is ignored.
+   */
+  private async readSaved(
+    cacheDir: string,
+    instanceId: string,
+    source: string,
+  ): Promise<SavedBrowserExtensionState | null> {
     try {
       const raw = JSON.parse(await fs.readFile(this.policyFile(cacheDir, instanceId), 'utf8')) as {
         version?: unknown;
+        source?: unknown;
         trustedClients?: unknown;
       };
       if (raw?.version !== 1) return null;
+      if (raw.source !== undefined && raw.source !== source) {
+        this.deps.log?.warn('browser extension pairings ignored: the package came from another source', {
+          instanceId,
+        });
+        return null;
+      }
       return {
         trustedClients: Array.isArray(raw.trustedClients) ? raw.trustedClients : [],
       };
@@ -434,13 +459,16 @@ export class GhostBrowserExtensionSlot {
   private persist(entry: Entry, change: Partial<SavedBrowserExtensionState>): Promise<void> {
     entry.saved = { ...entry.saved, ...change };
     const snapshot = entry.saved;
-    entry.writes = entry.writes.then(() => this.writeSaved(entry.cacheDir, entry.instanceId, snapshot));
+    entry.writes = entry.writes.then(() =>
+      this.writeSaved(entry.cacheDir, entry.instanceId, entry.source, snapshot),
+    );
     return entry.writes;
   }
 
   private async writeSaved(
     cacheDir: string,
     instanceId: string,
+    source: string,
     saved: SavedBrowserExtensionState,
   ): Promise<void> {
     const file = this.policyFile(cacheDir, instanceId);
@@ -449,7 +477,7 @@ export class GhostBrowserExtensionSlot {
       await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
       await fs.writeFile(
         tmp,
-        JSON.stringify({ version: 1, trustedClients: saved.trustedClients }),
+        JSON.stringify({ version: 1, source, trustedClients: saved.trustedClients }),
         { mode: 0o600 },
       );
       await fs.rename(tmp, file);
