@@ -156,6 +156,40 @@ const historyWithRows = (rows: ProviderUsageHistoryView['self']['days']): Provid
   members: [],
 });
 
+// PR #7772: settings classification must not renew the management page's fast-poll window
+// or calculate usage. Existing management tests only read full owned/usage responses.
+// Minimal input: active, paused, pending-only and duplicate-provider shares. Tier: unit.
+describe('shared provider classification', () => {
+  it.each(['local', 'same-account'] as const)('reads only established provider IDs without activating polling (%s)', async (entry) => {
+    host.snapshot.mockReturnValue([
+      { providerId: 'anthropic', members: [{ memberId: 'm1', status: 'active' }] },
+      { providerId: 'openai', members: [{ memberId: 'm2', status: 'paused' }] },
+      { providerId: 'anthropic', members: [{ memberId: 'm3', status: 'active' }] },
+      { providerId: 'pending-only', members: [], requests: [{ requestId: 'r1' }] },
+    ]);
+    const raw = { action: 'shared-provider-ids' } as const;
+    let result: unknown;
+    if (entry === 'local') {
+      const handle = vi.spyOn(ipcMain, 'handle');
+      try {
+        registerProviderShareIpc();
+        const handler = handle.mock.calls.find(([channel]) => channel === 'provider-share:command')![1];
+        result = await handler({} as Electron.IpcMainInvokeEvent, raw);
+      } finally {
+        handle.mockRestore();
+      }
+    } else {
+      result = await executeProviderShareManagementCommand(parseProviderShareCommand(raw) as ProviderShareManagementCommand);
+    }
+    expect(result).toEqual({ ready: true, providerIds: ['anthropic', 'openai'] });
+    expect(host.active).not.toHaveBeenCalled();
+    expect(host.refresh).not.toHaveBeenCalled();
+    expect(memberNotes.read).not.toHaveBeenCalled();
+    expect(usageStores.memberTokenSnapshot).not.toHaveBeenCalled();
+    expect(listProviders).not.toHaveBeenCalled();
+  });
+});
+
 describe('provider share usage history wire budget', () => {
   it('caps the global row count even when the newest day alone has more rows', () => {
     const trimmed = trimProviderUsageHistory(historyWithRows(Array.from({ length: 5_001 }, (_, index) => historyRow(index))));
@@ -259,6 +293,7 @@ describe('same-account share management during account transitions', () => {
     { action: 'set-run-limits', limits: { perDevice: 16, total: 64 } },
     { action: 'reset-run-limits' },
     { action: 'owned', range: '7d' },
+    { action: 'shared-provider-ids' },
     { action: 'own-usage', providerId: 'anthropic', range: '7d' },
     { action: 'usage-history', providerId: 'anthropic' },
   ] satisfies ProviderShareManagementCommand[])('refuses $action at entry while teardown is pending', async (command) => {
