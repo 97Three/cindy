@@ -40,6 +40,7 @@ import { createOutboundHttpAgent } from '../maker-host/outbound-fetch.js';
 import { serverApiFetch } from '../serverApiClient.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
 import { deviceName } from './deviceName.js';
+import { desktopDirectRuntime } from './directLink.js';
 import { fetchIdentityCard, rethrowProviderShareError, sha256Hex } from './providerShareApi.js';
 
 const log = createLogger('provider-share:cross-region');
@@ -232,10 +233,20 @@ async function recoverExistingMembership(rt: Runtime | null, region: Region, err
   if (current(rt)) await refreshRegion(rt, region);
 }
 
+/** An invitation belongs to the account/runtime that began it, including before startup. */
+function assertRequestCurrent(rt: Runtime | null, account: string | null): void {
+  if (!account || accountKey() !== account || runtime !== rt || (rt && !current(rt))) {
+    throwIpcError('DEVICE_LINK_NOT_CONNECTED', 'Account changed');
+  }
+}
+
 export async function crossRegionPreview(region: Region, invitation: string): Promise<ProviderShareLinkPreview> {
+  const account = accountKey();
   const rt = runtime;
   const base = await peerApiBase(region);
+  assertRequestCurrent(rt, account);
   const identityCard = await fetchIdentityCard('share-request', sha256Hex(invitation));
+  assertRequestCurrent(rt, account);
   const value = await peerRequest(base, '/preview', { invitation, identityCard }).catch(async (error: unknown) => {
     await recoverExistingMembership(rt, region, error);
     throw error;
@@ -253,7 +264,9 @@ export async function crossRegionSendRequest(region: Region, invitation: string)
   if (!account) throwIpcError('DEVICE_LINK_NOT_CONNECTED', 'Not signed in');
   const rt = runtime;
   const base = await peerApiBase(region);
+  assertRequestCurrent(rt, account);
   const identityCard = await fetchIdentityCard('share-request', sha256Hex(invitation));
+  assertRequestCurrent(rt, account);
   const value = await peerRequest(base, '/requests', { invitation, identityCard }).catch(async (error: unknown) => {
     await recoverExistingMembership(rt, region, error);
     throw error;
@@ -287,6 +300,9 @@ export async function crossRegionWithdraw(region: Region, requestId: string, req
 function createClient(rt: Runtime, state: RegionState): DeviceLinkClient {
   const wsUrl = state.apiBase.replace(/^http/, 'ws') + WS_PATH;
   const client = new DeviceLinkClient({
+    // The capture process is shared with the local-region client. A cross-region
+    // socket closing must only close its own sessions, never suspend that process.
+    directRuntime: { create: (id, events) => desktopDirectRuntime.create(id, events) },
     getWsUrl: () => wsUrl,
     authorizationScheme: 'ProviderShareGuest',
     getToken: async () => {
@@ -363,7 +379,9 @@ function refreshRegion(rt: Runtime, region: Region): Promise<void> {
       const deviceId = getDeviceId();
       if (!deviceId) return;
       const base = await peerApiBase(region);
+      if (!isCurrent()) return;
       const identityCard = await fetchIdentityCard('share-session', sha256Hex(deviceId));
+      if (!isCurrent()) return;
       const value = await peerRequest(base, '/session', {
         identityCard,
         deviceId,
@@ -545,12 +563,24 @@ export function isCrossRegionProviderShareTarget(peerKey: string): boolean {
   return peer?.role === 'host' && isCrossRegionShare(peer.shareId);
 }
 
+/** Relay-confirmed link renewal refreshes the bounded direct lease on both peers. */
+export async function renewCrossRegionProviderShareLink(peerKey: string): Promise<void> {
+  const peer = parseProviderSharePeer(peerKey);
+  const client = peer ? stateForShare(peer.shareId)?.client : null;
+  if (!client) throw new DeviceLinkError('NOT_CONNECTED', 'cross-region provider share is not connected');
+  await client.waitUntilOnline(ONLINE_WAIT_MS);
+  await client.openLink(peerKey, {
+    controllerName: deviceName(), protocolVersion: 1, appVersion: app.getVersion(),
+    capabilities: [PROVIDER_SHARE_RELAY_CAPABILITY, DEVICE_LINK_CAPABILITY_BACKGROUND_LINK_V1],
+  });
+}
+
 export async function crossRegionInvoke(peerKey: string, channel: string, args: unknown[], timeoutMs?: number): Promise<InvokeResultPayload> {
   const peer = parseProviderSharePeer(peerKey);
   const state = peer ? stateForShare(peer.shareId) : null;
   const client = state?.client;
   if (!client) throw new DeviceLinkError('NOT_CONNECTED', 'cross-region provider share is not connected');
-  await client.waitUntilOnline(ONLINE_WAIT_MS);
+  if (!client.hasOfflineDirectPath(peerKey)) await client.waitUntilOnline(ONLINE_WAIT_MS);
   const open = () => client.openLink(peerKey, {
     controllerName: deviceName(),
     protocolVersion: 1,
