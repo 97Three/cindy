@@ -315,6 +315,12 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     authorizeAction: createDesktopTaskActionAuthorizer({
       input: getTaskActionInputState, getSession: getTaskActionSession, confirm: confirmTaskAction,
       capturePermissionRequest: captureTaskActionPermissionRequest,
+      getScheduleDefinition: async id => {
+        const schedule = await getScheduler().get(id);
+        if (!schedule) return null;
+        const { name, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId } = schedule;
+        return { id, name, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId };
+      },
       captureRoutine: async (botId, id) => {
         const engine = await getRoutineEngine();
         const routine = (await routineTools.list(botId)).find(row => row.id === id);

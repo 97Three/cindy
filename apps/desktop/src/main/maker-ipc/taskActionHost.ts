@@ -23,6 +23,7 @@ import {
   type TaskActionConfirmation,
   type TaskActionTarget,
   type TaskActionRoutineSnapshot,
+  type TaskActionScheduleDefinition,
   taskActionFingerprint,
   type TaskActionPrincipal,
   type TaskActionScope,
@@ -112,6 +113,7 @@ export function createDesktopTaskActionAuthorizer(deps: {
   confirm(sessionId: string, tool: string, args: unknown, context?: TaskActionConfirmation): Promise<boolean>;
   capturePermissionRequest(sessionId: string, taskId: string): Promise<TaskActionTarget | null>;
   captureRoutine(botId: string, id: string): Promise<TaskActionRoutineSnapshot | undefined>;
+  getScheduleDefinition(id: string): Promise<TaskActionScheduleDefinition | null>;
 }): ToolCallAuthorizer {
   return isolateTaskActionAuthorizer(async (call) => {
     // Per invocation: a concurrent automatic call must never inherit owner evidence.
@@ -222,6 +224,14 @@ export function createDesktopTaskActionAuthorizer(deps: {
         const routine = principal === 'autonomous' && runtimePermissionApplies &&
           call.tool === 'routine_save' && args.enabled === true && routineBotId && routineId
           ? await deps.captureRoutine(routineBotId, routineId) : undefined;
+        // Read saved commands for execution/partial updates; the card must show
+        // what a bare schedule ID will run, and a changed definition expires it.
+        const scheduleId = principal === 'autonomous' && runtimePermissionApplies &&
+          call.server === 'cindy_scheduler' && (!args.device || args.device === 'local') &&
+          ['schedule_update', 'schedule_run_now'].includes(call.tool) && typeof args.id === 'string'
+          ? args.id : undefined;
+        const schedule = scheduleId ? await deps.getScheduleDefinition(scheduleId) : undefined;
+        const scheduleSignature = JSON.stringify(schedule);
         const readDelegation = async (rechecking = false) => {
           if (
             !taskId ||
@@ -351,17 +361,20 @@ export function createDesktopTaskActionAuthorizer(deps: {
             if (fingerprint !== taskActionFingerprint(call))
               throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
             await assertDeliveryCurrent();
+            if (scheduleId && JSON.stringify(await deps.getScheduleDefinition(scheduleId)) !== scheduleSignature)
+              throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
             assertCurrentSync();
           },
         };
         // Missing owner provenance no longer disables ordinary work. Only explicit
         // risks on autonomous turns need an exact, visible owner decision. The decision
         // does not change the principal or grant future calls; admission stays single-use.
-        const risk = principal === 'autonomous' ? taskActionRisk(call, { routineEnabled: routine?.enabled }) : undefined;
+        const risk = principal === 'autonomous' ? taskActionRisk(call, { routineEnabled: routine?.enabled, schedule }) : undefined;
         if (risk && runtimePermissionApplies) {
           await scope.assertCurrent();
           const confirmed = await deps.confirm(sessionId, call.tool, structuredClone(call.args),
-            { server: call.server, risk, ...(permissionTarget ? { details: permissionTarget.details } : {}) });
+            { server: call.server, risk, ...(permissionTarget ? { details: permissionTarget.details }
+              : risk === 'command' && schedule ? { details: { schedule } } : {}) });
           if (!confirmed) {
             rejectedDecision = { ok: false, errorCode: 'USER_CANCELLED',
               message: 'The action was not approved. Do not execute or retry it without a new request.' };

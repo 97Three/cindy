@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import type { ToolCallAuthorizer } from '@cindy/mcps';
+import type { Schedule } from '@cindy/maker-scheduler';
 import type { AgentInputQueuedMessage } from '../../shared/agentInputQueue.js';
 
 type Call = Parameters<ToolCallAuthorizer>[0];
@@ -113,7 +114,9 @@ export const SCHEDULER_TASK_ACTION_TOOLS: ReadonlySet<string> = new Set([
   'schedule_pause', 'schedule_resume', 'schedule_set_pre_run_hook',
 ]);
 
-export type TaskActionRisk = 'remove' | 'permission' | 'resume';
+export type TaskActionRisk = 'remove' | 'permission' | 'resume' | 'command';
+export type TaskActionScheduleDefinition = Pick<Schedule,
+  'id' | 'name' | 'executionMode' | 'scriptConfig' | 'preRunHook' | 'workingDir' | 'targetSessionId'>;
 export interface TaskActionConfirmation {
   server: string;
   risk?: TaskActionRisk;
@@ -133,9 +136,24 @@ export interface TaskActionRoutineSnapshot {
 
 /** A small, explicit risk list. Everything else follows the task's normal permissions. */
 export function taskActionRisk(call: Pick<Call, 'server' | 'tool' | 'args'>,
-  facts?: { routineEnabled?: boolean }): TaskActionRisk | undefined {
+  facts?: { routineEnabled?: boolean; schedule?: TaskActionScheduleDefinition | null }): TaskActionRisk | undefined {
   const args = call.args && typeof call.args === 'object' && !Array.isArray(call.args)
     ? call.args as Record<string, unknown> : {};
+  // The local scheduler is a trusted MCP, but its script runner bypasses the
+  // harness's shell approval. Classify the command effect, not all scheduler writes.
+  if (call.server === 'cindy_scheduler') {
+    if (call.tool === 'schedule_set_pre_run_hook' &&
+      [args.script, args.description].some(value => typeof value === 'string' && value.trim()))
+      return 'command'; // installs and self-tests code
+    if (['schedule_create', 'schedule_update', 'schedule_run_now'].includes(call.tool)) {
+      const definition = call.tool === 'schedule_run_now' ? facts?.schedule
+        : { ...facts?.schedule, ...args };
+      const hook = definition?.preRunHook;
+      if (definition?.executionMode === 'script' ||
+        (hook && typeof hook === 'object' && 'command' in hook && typeof hook.command === 'string' && hook.command.trim()))
+        return 'command';
+    }
+  }
   if (call.tool === 'routine_delete' || call.tool === 'schedule_delete')
     return 'remove';
   if (call.tool === 'message_session_task' && args.decision !== undefined) return 'permission';

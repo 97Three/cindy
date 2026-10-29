@@ -3369,12 +3369,16 @@ export async function confirmTaskAction(
   const unsubscribe = session.onStatusChange(status => {
     if (status !== 'active') controller.abort();
   });
+  const input = structuredClone(context?.details ? { action: args, ...context.details } : args) as Record<string, unknown>;
+  const description = t(context?.risk ? `taskActionConfirmation.${context.risk}` : 'taskActionConfirmation.once');
   const request: Extract<InteractionRequest, { kind: 'permission' }> = {
     kind: 'permission', requestId: randomUUID(),
     title: t('taskActionConfirmation.title'),
-    description: t(context?.risk ? `taskActionConfirmation.${context.risk}` : 'taskActionConfirmation.once'),
+    // Generic tool previews are shortened. The owner must see the complete
+    // command and working directory here, including on remote permission cards.
+    description: context?.risk === 'command' ? `${description}\n\n${JSON.stringify(input, null, 2)}` : description,
     toolName: `mcp__${context?.server ?? 'cindy_helper'}__${tool}`,
-    input: structuredClone(context?.details ? { action: args, ...context.details } : args) as Record<string, unknown>,
+    input,
     metadata: { hostOwnedConfirmation: 'task_action' },
   };
   try {

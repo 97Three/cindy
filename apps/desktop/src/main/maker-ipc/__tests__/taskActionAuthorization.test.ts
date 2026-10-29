@@ -21,6 +21,7 @@ import {
   taskActionInputGuard,
   taskActionPrincipal,
   taskActionRoutineRevision,
+  type TaskActionScheduleDefinition,
   hasTaskActionAuthorization,
   TASK_ACTION_TOOLS,
   ORCA_TASK_ACTION_TOOLS,
@@ -304,9 +305,11 @@ function desktopFixture(kind: 'private' | 'group' | 'automatic' = 'group') {
     };
   });
   const routines = new Map<string, { enabled: boolean; revision: number }>();
+  const schedules = new Map<string, TaskActionScheduleDefinition>();
   const authorize = createDesktopTaskActionAuthorizer({
     input: () => ({ ...activeInput }), confirm, getSession,
     capturePermissionRequest,
+    getScheduleDefinition: async id => structuredClone(schedules.get(id) ?? null),
     captureRoutine: async (_botId, id) => {
       const row = routines.get(id);
       if (!row) return undefined;
@@ -318,7 +321,7 @@ function desktopFixture(kind: 'private' | 'group' | 'automatic' = 'group') {
     },
   });
   return { authorize, confirm, activeInput, caller, rows, runtime, getSession,
-    permissionRequest, capturePermissionRequest, routines };
+    permissionRequest, capturePermissionRequest, routines, schedules };
 }
 const ownerWrites = [
   ['cindy_helper', 'start_session_task'],
@@ -917,6 +920,68 @@ describe('teammate turn principal', () => {
     expect(await admission.run(effect)).toBe('deleted');
     await expect(admission.run(effect)).rejects.toThrow('AUTHORIZATION_EXPIRED');
     expect(effect).toHaveBeenCalledTimes(1);
+  });
+
+  // Security review r4409127909: trusted local scheduler commands bypass the
+  // harness approval policy. Production admission must wait before persistence/fire.
+  // Unit tier; a script schedule is the minimum failing input.
+  it.each(['schedule_create', 'schedule_update', 'schedule_run_now'])(
+    'waits for an exact decision before autonomous %s can execute shell commands', async tool => {
+      const h = desktopFixture('automatic');
+      live(h);
+      const definition = { id: 'script', name: 'Command check', executionMode: 'script' as const,
+        workingDir: '/tmp/check', scriptConfig: { command: 'printf reviewed', capabilities: [] } };
+      h.schedules.set('script', definition);
+      const args = tool === 'schedule_run_now' ? { id: 'script' } : definition;
+      const request = { sessionId: 'companion', server: 'cindy_scheduler' as const, tool, args };
+      h.confirm.mockResolvedValue(false);
+      const effect = vi.fn(async () => 'executed');
+      expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, effect))).toContain('USER_CANCELLED');
+      expect(effect).not.toHaveBeenCalled();
+      expect(h.confirm).toHaveBeenCalledWith('companion', tool, args,
+        expect.objectContaining({ server: 'cindy_scheduler', risk: 'command' }));
+      h.confirm.mockResolvedValue(true);
+      expect(await withToolCallAuthority(h.authorize, request, effect)).toBe('executed');
+      expect(effect).toHaveBeenCalledTimes(1);
+      if (tool !== 'schedule_create') expect(h.confirm).toHaveBeenLastCalledWith('companion', tool, args,
+        expect.objectContaining({ details: { schedule: definition } }));
+      h.activeInput.ownerInput = true;
+      h.confirm.mockClear();
+      expect(await withToolCallAuthority(h.authorize, request, effect)).toBe('executed');
+      expect(h.confirm).not.toHaveBeenCalled();
+    },
+  );
+
+  it('expires a command decision when the saved schedule changes', async () => {
+    const h = desktopFixture('automatic');
+    live(h);
+    h.schedules.set('script', { id: 'script', name: 'Command check', executionMode: 'script',
+      scriptConfig: { command: 'printf reviewed', capabilities: [] } });
+    h.confirm.mockImplementation(async () => {
+      h.schedules.get('script')!.scriptConfig!.command = 'printf replacement';
+      return true;
+    });
+    const effect = vi.fn(async () => 'executed');
+    expect(JSON.stringify(await withToolCallAuthority(h.authorize,
+      { sessionId: 'companion', server: 'cindy_scheduler', tool: 'schedule_run_now', args: { id: 'script' } },
+      effect))).toContain('AUTHORIZATION_EXPIRED');
+    expect(effect).not.toHaveBeenCalled();
+  });
+
+  it('recognizes raw pre-run hooks without prompting for ordinary prompt schedules', async () => {
+    const h = desktopFixture('automatic');
+    live(h);
+    const call = (tool: string, args: Record<string, unknown>) => withToolCallAuthority(h.authorize,
+      { sessionId: 'companion', server: 'cindy_scheduler', tool, args }, async () => 'done');
+    await call('schedule_create', { prompt: 'Check progress', preRunHook: { command: 'node check.mjs' } });
+    await call('schedule_set_pre_run_hook', { script: 'process.exit(2)' });
+    expect(h.confirm).toHaveBeenCalledTimes(2);
+    h.confirm.mockClear();
+    await call('schedule_create', { prompt: 'Remind me tomorrow' });
+    h.schedules.set('prompt', { id: 'prompt', name: 'Reminder', executionMode: 'agent' });
+    await call('schedule_update', { id: 'prompt', name: 'Updated reminder' });
+    await call('schedule_run_now', { id: 'prompt' });
+    expect(h.confirm).not.toHaveBeenCalled();
   });
 
   // Review #7782: approval must describe and bind the child's exact request, not
