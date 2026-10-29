@@ -716,6 +716,30 @@ describe('UserBrowserBackend · 读取与动作', () => {
     expect(evaluations).toBe(2);
   });
 
+  // Review 2026-10-30 (Codex P1): every action that names a tab refuses a profile of another connection.
+  it('act 的 targetId 与 profile 不属于同一连接时拒绝', async () => {
+    const fake = fakeControl({
+      version: '0.4.56',
+      clients: ['client-aaaaaaaa', 'client-bbbbbbbb'],
+      tabs: { 'client-aaaaaaaa': [{ id: 1, url: 'https://a.test/' }], 'client-bbbbbbbb': [] },
+    });
+    const b = backend(fake.control);
+    const listed = (await call(b, { action: 'tabs', profile: 'client-aaaaaaaa' })) as {
+      data?: { tabs?: Array<{ targetId?: string }> };
+    };
+    const targetId = listed.data?.tabs?.[0]?.targetId;
+    const jobsBefore = fake.jobs.length;
+    expect(
+      await call(b, { action: 'act', targetId, profile: 'client-bbbbbbbb', request: { kind: 'click', ref: 'r1' } }),
+    ).toMatchObject({ ok: false, message: expect.stringContaining('不一致') });
+    expect(await call(b, { action: 'snapshot', targetId, profile: 'client-bbbbbbbb' })).toMatchObject({ ok: false });
+    expect(fake.jobs.length).toBe(jobsBefore);
+    // The matching profile (or none) still works.
+    expect(
+      await call(b, { action: 'act', targetId, profile: 'client-aaaa', request: { kind: 'click', ref: 'r1' } }),
+    ).toMatchObject({ ok: true });
+  });
+
   // Review 2026-10-30 (Codex P1): a profile that disagrees with the tab's own connection must be refused.
   it('navigate 的 targetId 与 profile 属于不同连接时拒绝', async () => {
     const fake = fakeControl({

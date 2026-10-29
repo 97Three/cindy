@@ -552,6 +552,7 @@ export class UserBrowserBackend implements BrowserBackend {
     action: BackendRequest['action'],
     control: UserBrowserPageControl,
     id: string | undefined,
+    profile?: string,
   ): Promise<{ ok: true; record: TargetRecord } | { ok: false; result: BackendResult }> {
     const record = this.resolveTarget(id);
     if (!record) {
@@ -565,6 +566,20 @@ export class UserBrowserBackend implements BrowserBackend {
           'BROWSER_RUNTIME_INVALID_REQUEST',
         ),
       };
+    }
+    // The tab belongs to one connection. A profile that names a different one is a conflict, never a
+    // reason to act in another signed-in browser (or to ignore what the caller asked for).
+    if (profile) {
+      const named = matchProfile(this.connectedClients(control), profile);
+      if (named.length !== 1 || named[0].id !== record.clientId)
+        return {
+          ok: false,
+          result: actionFailed(
+            action,
+            `标签页 ${record.targetId} 属于另一个浏览器连接,和 profile ${profile} 不一致;去掉 profile 或用 tabs 重新选择`,
+            'BROWSER_RUNTIME_INVALID_REQUEST',
+          ),
+        };
     }
     // 新版扩展按 tabId 寻址并自己核对标签页,不必为每个作业列一遍所有标签页。
     if (this.parity(control, record.clientId)) return { ok: true, record };
@@ -900,7 +915,7 @@ export class UserBrowserBackend implements BrowserBackend {
   private async handleSnapshot(req: BackendRequest): Promise<BackendResult> {
     const gate = this.control(req.action);
     if (!gate.ok) return gate.result;
-    const located = await this.locate(req.action, gate.control, req.targetId);
+    const located = await this.locate(req.action, gate.control, req.targetId, req.profile);
     if (!located.ok) return located.result;
     if (req.frame) return unsupported(req.action, '按 frame 快照');
     const maxChars = Math.min(30000, Math.max(256, req.maxChars ?? 6000));
@@ -973,7 +988,7 @@ export class UserBrowserBackend implements BrowserBackend {
         waitedMs: Math.min(30000, Math.max(0, request.timeMs)),
       });
     }
-    const located = await this.locate(req.action, gate.control, targetId);
+    const located = await this.locate(req.action, gate.control, targetId, req.profile);
     if (!located.ok) return located.result;
     const record = located.record;
     const control = gate.control;
@@ -1162,7 +1177,7 @@ export class UserBrowserBackend implements BrowserBackend {
   private async handleTabAction(req: BackendRequest): Promise<BackendResult> {
     const gate = this.control(req.action);
     if (!gate.ok) return gate.result;
-    const located = await this.locate(req.action, gate.control, req.targetId);
+    const located = await this.locate(req.action, gate.control, req.targetId, req.profile);
     if (!located.ok) return located.result;
     const record = located.record;
     if (!this.parity(gate.control, record.clientId))
@@ -1261,7 +1276,7 @@ export class UserBrowserBackend implements BrowserBackend {
       );
     const gate = this.control(req.action);
     if (!gate.ok) return gate.result;
-    const located = await this.locate(req.action, gate.control, req.targetId);
+    const located = await this.locate(req.action, gate.control, req.targetId, req.profile);
     if (!located.ok) return located.result;
     const record = located.record;
     const control = gate.control;
@@ -1323,7 +1338,7 @@ export class UserBrowserBackend implements BrowserBackend {
   private async handleUpload(req: BackendRequest): Promise<BackendResult> {
     const gate = this.control(req.action);
     if (!gate.ok) return gate.result;
-    const located = await this.locate(req.action, gate.control, req.targetId);
+    const located = await this.locate(req.action, gate.control, req.targetId, req.profile);
     if (!located.ok) return located.result;
     const record = located.record;
     if (!this.parity(gate.control, record.clientId)) return outdated(req.action, '上传文件');
