@@ -929,11 +929,23 @@ it('retains the chat discount inferred from standard and effective prices', () =
 });
 
 // Unit: real editor commits normalized tokens, preserving precision and rejecting fractional tokens.
-it.each([['1000000', 1_000_000], ['1M', 1_000_000], ['1.5m', 1_500_000], ['100万', 1_000_000], ['262144', 262_144], ['1.000001M', 1_000_001], ['262.144K', 262_144]])('accepts context %s as %s tokens', (value, tokens) => {
+it.each([['1000000', 1_000_000], ['1M', 1_000_000], ['1.5m', 1_500_000], ['100万', 1_000_000], ['100萬', 1_000_000], ['262144', 262_144], ['1.000001M', 1_000_001], ['262.144K', 262_144]])('accepts context %s as %s tokens', (value, tokens) => {
   draw();
   const input = screen.getByRole('textbox');
   fireEvent.change(input, { target: { value } }); fireEvent.blur(input);
   expect(mocks.setLimit).toHaveBeenLastCalledWith(tokens);
+});
+// Review #7836: the bare-number rejection does not exercise unit precision.
+// Unit tier: the real editor must show invalid input and never persist fractional tokens.
+// Use the local-runtime 1K floor so the 1.0001K case cannot pass on the 100K guard alone.
+it.each(['1.0001K', '1.0000001M', '1.00001万'])('rejects context %s that converts to fractional tokens', (value) => {
+  render(drawer(model, model.defaultEffort, model.efforts, { ...provider, id: 'ollama', source: 'user' }));
+  const input = screen.getByRole('textbox');
+  fireEvent.change(input, { target: { value } });
+  expect(input.getAttribute('aria-invalid')).toBe('true');
+  expect(screen.getByText('settings.providers.models.advanced.contextInvalid')).toBeTruthy();
+  fireEvent.blur(input);
+  expect(mocks.setLimit).not.toHaveBeenCalled();
 });
 it('does not label an unverified working default as the upstream capacity', () => {
   draw({ ...model, contextWindow: 200_000, contextWindowMax: undefined, contextWindowVerified: false });
