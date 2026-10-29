@@ -375,6 +375,10 @@ export class GhostBrowserExtensionSlot {
     const req = payload as Record<string, unknown>;
     const { entry } = gate;
     await entry.ready;
+    // The plugin may have been disabled, removed or replaced while the bridge was starting: a request
+    // that began before that must not act (re-pair, reinstall the native binding) on the old instance.
+    if (entry.closing || this.entries.get(entry.instanceId) !== entry)
+      return fail('HOST_NOT_READY', '浏览器扩展桥接已重建;稍后重试');
     if (entry.startFailed) {
       // A failed startup would otherwise stay failed for good (no pairing request, no native binding)
       // even after the cause, such as busy ports, is gone. Rebuild it from the same request path the

@@ -332,6 +332,9 @@ describe('UserBrowserBackend · 读取与动作', () => {
     expect(
       await call(b, { action: 'act', targetId: 't1', request: { kind: 'wait', selector: '.ready', timeMs: 500 } }),
     ).toMatchObject({ ok: false, message: expect.stringContaining('组合') });
+    expect(
+      await call(b, { action: 'act', targetId: 't1', request: { kind: 'wait', loadState: 'networkidle' } }),
+    ).toMatchObject({ ok: false, message: expect.stringContaining('networkidle') });
     // Review 2026-10-30 (Codex P2): a loadState wait on an older extension must not navigate the tab.
     fake.responses.set('tabs', () => ({ ok: true, tabs: [{ id: 7, url: 'https://example.test/a', status: 'complete' }] }));
     const navigatesBefore = fake.jobs.filter(([name]) => name === 'navigate').length;
@@ -714,6 +717,23 @@ describe('UserBrowserBackend · 读取与动作', () => {
       await call(b, { action: 'act', targetId: 't1', request: { kind: 'wait', selector: '#x', fn: '() => ready', timeoutMs: 1000 } }),
     ).toMatchObject({ ok: true, data: { kind: 'wait', result: true } });
     expect(evaluations).toBe(2);
+  });
+
+  // Review 2026-10-30 (Codex P2): connections whose ids share a prefix must not share targetIds.
+  it('前缀相同的两个连接各有自己的 targetId', async () => {
+    const fake = fakeControl({
+      version: '0.3.9',
+      clients: ['abcdefgh-1111', 'abcdefgh-2222'],
+      tabs: {
+        'abcdefgh-1111': [{ id: 1, url: 'https://a.test/' }],
+        'abcdefgh-2222': [{ id: 1, url: 'https://b.test/' }],
+      },
+    });
+    const b = backend(fake.control);
+    const listed = (await call(b, { action: 'tabs' })) as { data?: { tabs?: Array<{ targetId?: string; url?: string }> } };
+    const tabs = listed.data?.tabs ?? [];
+    expect(tabs).toHaveLength(2);
+    expect(new Set(tabs.map((t) => t.targetId)).size).toBe(2);
   });
 
   // Review 2026-10-30 (Codex P1): every action that names a tab refuses a profile of another connection.

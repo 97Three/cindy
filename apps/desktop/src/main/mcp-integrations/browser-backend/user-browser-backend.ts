@@ -490,7 +490,15 @@ export class UserBrowserBackend implements BrowserBackend {
     // The browser launch is part of the handle: after a restart the same tab number is a different
     // tab, and an old handle the agent still holds must not resolve to it.
     const boot = this.clientBoots.get(clientId);
-    return `${clientId.slice(0, 8)}${boot ? '.' + boot.slice(0, 8) : ''}:${tabId}`;
+    const suffix = `${boot ? '.' + boot.slice(0, 8) : ''}:${tabId}`;
+    // Shown abbreviated, but never shared between connections: if another connection already holds the
+    // key, the connection part grows until it is unique.
+    for (let n = 8; n < clientId.length; n++) {
+      const key = clientId.slice(0, n) + suffix;
+      const holder = this.targets.get(key);
+      if (!holder || holder.clientId === clientId) return key;
+    }
+    return clientId + suffix;
   }
 
   private register(
@@ -1425,6 +1433,8 @@ export class UserBrowserBackend implements BrowserBackend {
         waitedMs: (this.opts.now ?? Date.now)() - started,
       });
     }
+    if (request.loadState === 'networkidle')
+      return unsupported(req.action, 'wait.loadState=networkidle(旧版扩展只能确认页面 load 完成)');
     if (request.loadState) {
       // Older extensions cannot wait inside the page: poll the tab's own load state. (Navigating to
       // the recorded address here would reload a page that was just submitted.)

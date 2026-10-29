@@ -397,6 +397,21 @@ describe('browserExtensionSlot · 管子上行', () => {
     expect(installs).toBe(2);
   });
 
+  // Review 2026-10-30 (Codex P1): a request that waited for startup must not act after the plugin went away.
+  it('等待启动期间插件被停用时,旧请求不再执行', async () => {
+    let finishStart: () => void = () => undefined;
+    const { slot, bridges, settle, ghosts } = await makeSlot();
+    slot.reconcile(ghosts);
+    await vi.waitFor(() => expect(bridges).toHaveLength(1));
+    bridges[0].start = () => new Promise<void>((resolve) => (finishStart = resolve));
+    await settle();
+    const pending = slot.handleRequest('_root__my-browser', { kind: 'setTrustedClients', clients: [] });
+    slot.reconcile([]);
+    finishStart();
+    expect(await pending).toMatchObject({ ok: false, errorCode: 'HOST_NOT_READY' });
+    expect(bridges[0].calls.some(([name]) => name === 'setTrustedClients')).toBe(false);
+  });
+
   // Review 2026-10-30 (Codex P2): a failed startup is rebuilt by the next request instead of staying failed.
   it('启动失败后下一次请求重建整套启动流程', async () => {
     const { slot, bridges, natives, settle, ghosts } = await makeSlot();
