@@ -60,6 +60,7 @@ import { EXEC_SERVER_WS_PATH } from '../controller/execServerRelay';
 import { RemoteAgentRunClient, type RemoteAgentInvoke, type RemoteAgentPoller } from '../controller/runClient';
 import { EventLog, waitForAny } from '../eventLog';
 import { createExecServerShortcut, type ExecServerShortcutLayout } from './execServerShortcut';
+import { createExecServerStartupBatch } from './execServerStartupBatch';
 import { createGuestUsageMeter, type GuestUsageSample } from './guestUsage';
 import {
   GROUP_SWITCH_STATE_KEY,
@@ -436,6 +437,7 @@ interface Run {
   closing: boolean;
   handle?: AgentSessionHandle;
   tunnel?: RunTunnel;
+  execStartupBatches?: Map<string, ReturnType<typeof createExecServerStartupBatch>>;
   attachmentsDir: string;
   /** 影子工作区根(按 hostSessionId 复用，任务收尾后清理)。 */
   workspaceDir?: string;
@@ -1473,6 +1475,19 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
             if (wsPath.split('?')[0] === EXEC_SERVER_WS_PATH) {
               execConns.add(connId);
               if (!startupComplete) execServerStats.connections += 1;
+              if (!startupComplete && shortcut) {
+                (run.execStartupBatches ??= new Map()).set(connId, createExecServerStartupBatch({
+                  shortcut,
+                  forward: data => {
+                    if (!startupComplete) execServerStats.forwarded += 1;
+                    append(run, { t: 'ws', connId, kind: 'message', data });
+                  },
+                  answer: data => {
+                    if (!startupComplete) execServerStats.answered += 1;
+                    run.tunnel?.sendWs(connId, data);
+                  },
+                }));
+              }
             }
             append(run, { t: 'ws', connId, kind: 'open', path: wsPath });
           },
@@ -1483,12 +1498,14 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
               run.tunnel?.sendWs(connId, local);
               return;
             }
+            if (run.execStartupBatches?.get(connId)?.request(data)) return;
             if (!startupComplete && execConns.has(connId)) execServerStats.forwarded += 1;
             append(run, { t: 'ws', connId, kind: 'message', data });
           },
           wsClose: (connId) => {
             run.localWs?.delete(connId);
             execConns.delete(connId);
+            run.execStartupBatches?.delete(connId);
             append(run, { t: 'ws', connId, kind: 'close' });
           },
         }),
@@ -1607,6 +1624,7 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
       await finishRun(run, 'start-failed', 'navigation', false);
     } finally {
       startupComplete = true;
+      for (const batch of run.execStartupBatches?.values() ?? []) batch.finish();
       timing.finish(status, execServerStats);
     }
   }
@@ -1658,6 +1676,7 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     run.ownerRoute?.release();
     run.ownerRoute = undefined;
     await run.tunnel?.close().catch(() => undefined);
+    run.execStartupBatches?.clear();
     await imagePreparation.get(run);
     run.tunnel = undefined;
     // 本机这次尝试里已告诉受邀者打开的连接一并关掉(隧道关闭不会逐个回调)；中转的连接编号带尝试前缀，不会撞上。
@@ -2313,6 +2332,7 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     run.ownerRoute?.release();
     run.ownerRoute = undefined;
     await run.tunnel?.close().catch(() => undefined);
+    run.execStartupBatches?.clear();
     // Native image materialization must finish before the log becomes unreadable.
     await imagePreparation.get(run);
     // 收尾事件绕过 closing 判断直接写入。
@@ -3360,14 +3380,17 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
               // 单条消息拼接上限与反向请求载荷一致，防止无限累积。
               if (joined.length > REMOTE_AGENT_MAX_PAYLOAD_BYTES) {
                 run.pushParts.delete(frame.connId);
+                run.execStartupBatches?.delete(frame.connId);
                 run.tunnel?.closeWs(frame.connId);
               } else run.pushParts.set(frame.connId, joined);
               continue;
             }
             run.pushParts.delete(frame.connId);
-            run.tunnel?.sendWs(frame.connId, joined);
+            if (!run.execStartupBatches?.get(frame.connId)?.response(joined)) run.tunnel?.sendWs(frame.connId, joined);
           } else {
             run.pushParts.delete(frame.connId);
+            // closeWs removes its connection before the close event; wsClose will not run.
+            run.execStartupBatches?.delete(frame.connId);
             run.tunnel?.closeWs(frame.connId);
           }
         }
