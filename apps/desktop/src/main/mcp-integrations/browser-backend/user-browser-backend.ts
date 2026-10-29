@@ -1407,15 +1407,31 @@ export class UserBrowserBackend implements BrowserBackend {
       });
     }
     if (request.loadState) {
-      const job = await bridge.act('navigate', { url: record.url, browser: record.clientId });
-      if (!job.ok) return this.failureResult(req.action, job);
-      return actionOk(req.action, {
-        backend: this.kind,
-        targetId: record.targetId,
-        kind: 'wait',
-        loadState: request.loadState,
-        url: job.url ?? record.url,
-      });
+      // Older extensions cannot wait inside the page: poll the tab's own load state. (Navigating to
+      // the recorded address here would reload a page that was just submitted.)
+      const deadline = started + timeoutMs;
+      for (;;) {
+        const listed = await bridge.act('tabs', { browser: record.clientId, limit: 100 });
+        const current =
+          listed.ok && Array.isArray(listed.tabs)
+            ? (listed.tabs as Array<{ id?: unknown; url?: unknown; status?: unknown }>).find(
+                (t) => t.id === record.tabId,
+              )
+            : undefined;
+        if (current?.status === 'complete') {
+          if (typeof current.url === 'string') record.url = current.url;
+          return actionOk(req.action, {
+            backend: this.kind,
+            targetId: record.targetId,
+            kind: 'wait',
+            loadState: request.loadState,
+            url: record.url,
+          });
+        }
+        if ((this.opts.now ?? Date.now)() >= deadline)
+          return actionFailed(req.action, `等待 ${timeoutMs}ms 后页面仍未加载完成`);
+        await sleep(250);
+      }
     }
     if (request.url) {
       const deadline = started + timeoutMs;
