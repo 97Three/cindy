@@ -93,6 +93,44 @@ afterEach(() => {
 // have no direct-share member. Minimum: an authorized same-account controller
 // binding a guest-isolated task. Verify the real proxy grant, including revocation.
 describe('guest proxy binding for direct shares and same-account group relays', () => {
+  // Regression companion to RemoteModelAccessDialog: one visible GPT row grants
+  // both exact IDs. Existing binder tests only covered Claude with unprefixed IDs.
+  // Unit: switching to Pi must retain its bridge ID and still enforce revocation.
+  it('keeps the exact GPT route for Codex, Pi and Claude Code after a grouped grant', async () => {
+    const rootId = 'gpt-6.1-sol';
+    const bridgeId = 'chatgpt/gpt-6.1-sol';
+    const grants = new Set([rootId, bridgeId]);
+    const provider: ProviderView = {
+      ...view('openai', [bridgeId]),
+      auth: { method: 'oauth' },
+      agents: ['codex', 'pi', 'claude-code'],
+      models: {
+        codex: [{ id: rootId, name: 'GPT-6.1-Sol', contextWindow: 200_000, efforts: [], defaultEffort: null }],
+        pi: [{ id: bridgeId, name: 'GPT-6.1-Sol', contextWindow: 200_000, efforts: [], defaultEffort: null }],
+        'claude-code': [{ id: bridgeId, name: 'GPT-6.1-Sol', contextWindow: 200_000, efforts: [], defaultEffort: null }],
+      },
+    };
+    const binder = createGuestProviderRouteBinder({
+      readProviders: async () => [provider],
+      guestAccess: () => ({ providerId: 'openai', memberId: 'alice' }),
+      ownerAllowed: () => true, providerAllowed: () => true,
+      modelAccess: {
+        allows: (_providerId, model) => grants.has(model),
+        read: () => ({ models: [...grants], providerModels: [...grants] }),
+      },
+    });
+    for (const kind of ['codex', 'pi', 'claude-code'] as const) {
+      const id = kind === 'codex' ? rootId : bridgeId;
+      const binding = await binder({ kind, hostSessionId: `gpt-${kind}`, providerId: 'openai',
+        controller: providerShareGuestPeer('share', 'alice', 'phone'), isCurrent: () => true });
+      expect(binding?.modelIds).toEqual([id]);
+      expect(await binding?.allowsModel?.(id)).toBe(true);
+      grants.delete(id);
+      expect(await binding?.allowsModel?.(id)).toBe(false);
+      grants.add(id);
+      binding?.release();
+    }
+  });
   it('enforces a changed member budget on the next request and exempts same-account callers', async () => {
     let blocked = true;
     const checks: Array<string | undefined> = [];
