@@ -82,3 +82,22 @@ it('retains a failed read followed by a successful retry within one stage', asyn
   expect(summarizeTeammateWork(activities)).toMatchObject({ toolCount: 2, failedCount: 1 });
   expect(projectWorkActivities(segment.items, false).activities).toHaveLength(1);
 });
+
+// PR review: Pi text has no assistantPhase. Exercise actual reader/projection,
+// including a legacy unsealed final, so grouping cannot erase stage notes.
+it('preserves unlabelled Pi stage text while excluding sealed and legacy final answers', async () => {
+  const { readBotGroupProcessMessages, projectBotGroupProcess } = await import('../botGroupProcess.js');
+  const source = row(ref.clientId, 'user', 'Request');
+  const note = row('note', 'assistant', 'Checking feedback');
+  const tool = row('tool', 'tool_use', { toolName: 'Read', input: { path: '/tmp/feedback' } });
+  const active = [source, note, tool, row('next', 'assistant', 'Found the cause')];
+  const texts = (messages: BotGroupProcessMessage[], running: boolean) => projectBotGroupProcess(messages, running)
+    .segments.flatMap(segment => segment.kind === 'content' ? [segment.item.text] : []);
+  expect(texts(await readBotGroupProcessMessages(ref, async () => active, () => false), true))
+    .toEqual(['Checking feedback', 'Found the cause']);
+  for (const agentMeta of [undefined, { turnCompleted: true }, { assistantPhase: 'final_answer' }]) {
+    const completed = [...active, row('final', 'assistant', 'Final answer', agentMeta)];
+    expect(texts(await readBotGroupProcessMessages(ref, async () => completed, () => false), false))
+      .toEqual(['Checking feedback', 'Found the cause']);
+  }
+});

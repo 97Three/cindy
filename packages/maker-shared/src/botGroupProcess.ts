@@ -62,7 +62,8 @@ export async function readBotGroupProcessMessages(
       if (row.role === 'user' && meta?.isSyntheticTrigger !== true) return messages;
       if (!meta?.botPrivateReply && !meta?.failedSamplingAttempt) {
         // Preserve timing but never copy reasoning/final-answer text into process prose.
-        messages.push(row.role === 'thinking' || row.role === 'assistant' && meta?.assistantPhase !== 'commentary'
+        messages.push(row.role === 'thinking' || row.role === 'assistant'
+          && (meta?.assistantPhase === 'final_answer' || meta?.turnCompleted === true && meta?.assistantPhase !== 'commentary')
           ? { ...row, content: '' } : row);
       }
       if (meta?.turnCompleted === true && !meta.failedSamplingAttempt) return messages;
@@ -75,11 +76,9 @@ export async function readBotGroupProcessMessages(
 export async function readBotGroupProcessNotes(
   ref: BotGroupProcessRef, read: (clientId: string) => Promise<readonly BotGroupProcessMessage[]>, cancelled: () => boolean,
 ): Promise<BotGroupProcessNote[]> {
-  return (await readBotGroupProcessMessages(ref, read, cancelled)).flatMap(row => {
-    const text = botGroupProcessText(row.content).trim();
-    return row.role === 'assistant' && row.agentMeta?.assistantPhase === 'commentary' && text && !/^(?:NO_REPLY|SILENT)$/i.test(text)
-      ? [{ id: row.clientId, text }] : [];
-  });
+  const messages = await readBotGroupProcessMessages(ref, read, cancelled);
+  return projectBotGroupProcess(messages, false).segments.flatMap(segment =>
+    segment.kind === 'content' ? [{ id: segment.key, text: segment.item.text ?? '' }] : []);
 }
 
 export type BotGroupProcessChild = ProjectableWorkChild & { text?: string };
@@ -87,7 +86,10 @@ export function projectBotGroupProcess(messages: readonly BotGroupProcessMessage
   const visible = messages.filter(row => !row.agentMeta?.botPrivateReply && !row.agentMeta?.failedSamplingAttempt);
   const pairing = buildMessageToolResultPairing(visible);
   const items: BotGroupProcessChild[] = [];
-  for (const row of visible) {
+  // Pi and legacy providers do not label commentary. Subsequent work proves that
+  // their earlier text is a stage note; an unsealed active tail remains visible.
+  const lastWork = visible.findLastIndex(row => ['assistant', 'thinking', 'tool_use', 'tool_result'].includes(row.role));
+  for (const [index, row] of visible.entries()) {
     const key = row.clientId;
     if (row.role === 'thinking') items.push({ kind: 'thinking', key, message: { clientId: key, content: '' } });
     else if (row.role === 'tool_use') {
@@ -97,7 +99,8 @@ export function projectBotGroupProcess(messages: readonly BotGroupProcessMessage
       items.push({ kind: 'tools', key, toolCalls: [message],
         resultMap: result === undefined ? new Map() : new Map([[key, result]]),
         settledIds: pairing.hasResultFor(row, tool) ? new Set([key]) : new Set() });
-    } else if (row.role === 'assistant' && row.agentMeta?.assistantPhase === 'commentary') {
+    } else if (row.role === 'assistant' && (row.agentMeta?.assistantPhase === 'commentary'
+      || !row.agentMeta?.assistantPhase && row.agentMeta?.turnCompleted !== true && (running || index < lastWork))) {
       const text = botGroupProcessText(row.content).trim();
       if (text && !/^(?:NO_REPLY|SILENT)$/i.test(text)) items.push({ kind: 'text', key, text });
     }
