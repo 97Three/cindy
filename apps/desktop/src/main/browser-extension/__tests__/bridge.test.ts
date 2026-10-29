@@ -527,7 +527,8 @@ describe('bridge · 作业生命周期', () => {
 
   // Review 2026-10-30 (Codex P2): every read result is bounded, not only extract records.
   it('requests / links / text 等读取结果也有数量与大小上限', async () => {
-    const { bridge, ready } = await fixture();
+    // The result body is about 31 MB; a loaded CI runner needs far longer than the default 200 ms.
+    const { bridge, ready } = await fixture({ jobTimeout: 20000 });
     const c = await ready();
     const pending = bridge.act('requests', { url: 'https://example.test', tabId: 1 });
     await sleep(5);
