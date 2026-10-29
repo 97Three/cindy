@@ -48,6 +48,25 @@ describe('invitation validity', () => {
     expect(mocks.createInvite.mock.calls[0][0]).toEqual(mocks.createInvite.mock.calls[1][0]);
   });
 
+  // Automatic generation must remain dismissible; earlier unit cases only settled requests before closing.
+  it('allows closing during automatic generation and ignores its late result', async () => {
+    let finish!: (value: unknown) => void;
+    mocks.createInvite.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const onClose = vi.fn();
+    const view = render(<ChatInviteDialog groupId="room" onClose={onClose} />);
+    expect(mocks.createInvite).toHaveBeenCalledOnce();
+    const close = screen.getByRole('button', { name: 'bots.close' }) as HTMLButtonElement;
+    expect(close.disabled).toBe(false);
+    fireEvent.click(close);
+    expect(onClose).toHaveBeenCalledOnce();
+    view.unmount();
+    await act(async () => finish({ ok: true, link, expiresAt: null, reusable: true }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(mocks.createInvite).toHaveBeenCalledOnce();
+    expect(mocks.copy).not.toHaveBeenCalled();
+    expect(mocks.success).not.toHaveBeenCalled();
+  });
+
   it('copies the same reusable link repeatedly without generating more or showing extra validity text', async () => {
     await create();
     expect(screen.queryByText(k('reusableLink'))).toBeNull();
@@ -198,12 +217,18 @@ describe('invitation validity', () => {
     await create();
     expect(screen.queryByText(k('reusableLink'))).toBeNull();
   });
-  it('retains link and shows a failed clipboard action without a success toast', async () => {
-    mocks.copy.mockRejectedValue(new Error('unavailable'));
+  it.each([false, true])('retains the link and clears successful copy feedback on clipboard failure (previousSuccess=%s)', async previousSuccess => {
     await create();
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: k('copyLink') })));
+    if (previousSuccess) {
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: k('copyLink') })));
+      expect(screen.getByRole('button', { name: k('copied') })).toBeTruthy();
+    }
+    mocks.copy.mockRejectedValueOnce(new Error('unavailable'));
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: k(previousSuccess ? 'copied' : 'copyLink') })));
     expect(screen.getByRole('alert').textContent).toBe(k('copyFailed'));
     expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe(link);
+    expect(screen.getByRole('button', { name: k('copyLink') })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: k('copied') })).toBeNull();
     expect(mocks.success).not.toHaveBeenCalled();
   });
 });

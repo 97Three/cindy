@@ -75,6 +75,7 @@ export function ChatInviteDialog({ groupId, initialLink = '', malformedLink = fa
     const reading = action === 'main' && !groupId && !preview;
     try {
       if (action === 'copy') {
+        setCopied(false);
         if (expired || (typeof expiry === 'string' && Date.parse(expiry) <= Date.now()) || revoked || !link) return;
         await navigator.clipboard.writeText(link);
         if (current()) setCopied(true);
