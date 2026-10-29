@@ -14,6 +14,13 @@ export default {
     partial: { about: 'Incomplete capture is explicitly disclosed' },
     'upload-failed': { about: 'Submission failure preserves the description and permits retry' },
     narrow: { about: 'Completed report at narrow width', viewport: { width: 320, height: 640 } },
+    reopened: {
+      about: 'Menu reentry offers recording first; previous report requires an explicit action',
+      viewport: { width: 320, height: 640 },
+    },
+    'reopened-submitted': {
+      about: 'Submitted previous report keeps its ID without becoming the default view',
+    },
   },
   async ready(page) {
     await page.getByRole('button').first().waitFor();
@@ -30,6 +37,39 @@ export default {
     assert.ok(
       await page.getByText(await ui.t('performanceTrace.localScope'), { exact: true }).isVisible(),
     );
+    if (ui.case.startsWith('reopened')) {
+      assert.ok(
+        await page
+          .getByRole('button', { name: await ui.t('performanceTrace.start'), exact: true })
+          .isEnabled(),
+      );
+      assert.equal(
+        await page
+          .getByRole('button', { name: await ui.t('performanceTrace.submit'), exact: true })
+          .count(),
+        0,
+      );
+      await page
+        .getByRole('button', { name: await ui.t('performanceTrace.previous'), exact: true })
+        .click();
+      await page
+        .getByRole('alertdialog', {
+          name: await ui.t('performanceTrace.previousResult'),
+          exact: true,
+        })
+        .waitFor();
+      if (ui.case === 'reopened-submitted') {
+        await page
+          .getByText(await ui.t('performanceTrace.uploaded', { id: 'ABCD-EFGH' }), { exact: true })
+          .waitFor();
+      } else {
+        assert.ok(
+          await page
+            .getByRole('button', { name: await ui.t('performanceTrace.submit'), exact: true })
+            .isEnabled(),
+        );
+      }
+    }
     if (ui.case === 'default') {
       await page
         .getByRole('button', { name: await ui.t('performanceTrace.start'), exact: true })

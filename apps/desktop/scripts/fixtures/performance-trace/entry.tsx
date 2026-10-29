@@ -20,13 +20,18 @@ if (ctx.case !== 'default')
     phase: ctx.case === 'recording' ? 'recording' : 'ready',
     startedAt: Date.now() - 12_000,
     reportId: 'ABCD-EFGH',
-    uploaded: false,
+    uploaded: ctx.case === 'reopened-submitted',
     partial: ctx.case === 'partial',
     durationMs: 12_000,
   };
 function Entry() {
   useEffect(() => {
-    if (ctx.case !== 'recording') openPerformanceTrace();
+    if (ctx.case === 'recording') return;
+    if (ctx.case === 'default' || ctx.case.startsWith('reopened')) openPerformanceTrace();
+    else {
+      // A completed capture pushes ready; merely reading a previous result does not.
+      for (const listener of listeners) listener(state);
+    }
   }, []);
   return <PerformanceTrace />;
 }

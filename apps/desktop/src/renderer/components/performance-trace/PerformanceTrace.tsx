@@ -28,8 +28,9 @@ const INITIAL: PerformanceTraceState = {
 export function PerformanceTrace({
   statusContainer,
 }: { statusContainer?: HTMLElement | null } = {}) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [state, setState] = useState(INITIAL);
+  const [view, setView] = useState<'start' | 'result' | 'previous'>('start');
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
@@ -46,8 +47,12 @@ export function PerformanceTrace({
     const unsubscribe = api.onState((next) => {
       pushed = true;
       setState(next);
-      if (next.phase === 'ready') setOpen(true);
+      if (next.phase === 'ready') {
+        setView((current) => (current === 'previous' ? current : 'result'));
+        setOpen(true);
+      }
       if (next.phase === 'idle') {
+        setView('start');
         setNote('');
         setError('');
         setOpen(false);
@@ -60,6 +65,8 @@ export function PerformanceTrace({
       })
       .catch(() => {});
     const show = () => {
+      if (busyRef.current) return;
+      setView('start');
       setError('');
       setOpen(true);
     };
@@ -104,9 +111,13 @@ export function PerformanceTrace({
       );
       setState(next);
       if (command === 'start') {
+        setView('start');
         setNote('');
         setOpen(false);
-      } else if (next.phase === 'ready') setOpen(true);
+      } else if (command === 'stop' || command === 'upload') {
+        setView((current) => (current === 'previous' ? current : 'result'));
+        setOpen(true);
+      }
     } catch (cause) {
       const code = extractIpcError(cause)?.code;
       setError(
@@ -126,7 +137,19 @@ export function PerformanceTrace({
   };
   const recording = state.phase === 'recording';
   const pending = busy || ['starting', 'saving', 'uploading'].includes(state.phase);
-  const ready = state.phase === 'ready';
+  const ready = view !== 'start' && ['ready', 'uploading'].includes(state.phase);
+  const previousSummary =
+    state.startedAt === null
+      ? ''
+      : t('performanceTrace.previousSummary', {
+          time: new Date(state.startedAt).toLocaleString(i18n.resolvedLanguage, {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+          seconds: Math.round(state.durationMs / 1000),
+        });
   const status = (recording || state.phase === 'saving') && (
     <div
       data-testid="performance-trace-status"
@@ -168,7 +191,13 @@ export function PerformanceTrace({
         onOpenChange={(next) => {
           if (!pending && !busyRef.current) setOpen(next);
         }}
-        title={t(ready ? 'performanceTrace.result' : 'performanceTrace.title')}
+        title={t(
+          ready
+            ? view === 'previous'
+              ? 'performanceTrace.previousResult'
+              : 'performanceTrace.result'
+            : 'performanceTrace.title',
+        )}
         description={ready ? undefined : t('performanceTrace.description')}
         content={
           <div className="space-y-4 text-13 leading-relaxed text-foreground">
@@ -192,8 +221,23 @@ export function PerformanceTrace({
                 )}
               </div>
             )}
+            {!ready && state.phase === 'ready' && (
+              <div className="space-y-2 border-t border-border pt-3 text-muted-foreground">
+                <p>{previousSummary}</p>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  tone="quiet"
+                  disabled={pending}
+                  onClick={() => setView('previous')}
+                >
+                  {t('performanceTrace.previous')}
+                </Button>
+              </div>
+            )}
             {ready && (
               <>
+                {view === 'previous' && <p className="text-muted-foreground">{previousSummary}</p>}
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
                   <div className="flex items-center gap-2">
                     <CheckCircle2
