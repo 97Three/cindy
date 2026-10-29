@@ -3598,7 +3598,7 @@
           "modelsAutoNote": "ログイン後に利用可能なモデルを自動取得"
         },
         "advanced": {
-          "label": "詳細設定（モデル / リクエストヘッダー）"
+          "label": "接続の詳細設定"
         },
         "runtimeFill": {
           "action": "他の runtime に入力",

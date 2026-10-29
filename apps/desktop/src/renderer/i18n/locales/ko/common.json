@@ -3598,7 +3598,7 @@
           "modelsAutoNote": "로그인 후 사용 가능한 모델을 자동으로 가져옵니다"
         },
         "advanced": {
-          "label": "고급 설정 (모델 / 요청 헤더)"
+          "label": "고급 연결 설정"
         },
         "runtimeFill": {
           "action": "다른 runtime 채우기",
