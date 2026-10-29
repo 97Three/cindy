@@ -14,6 +14,6 @@ export function TeammateProcessStatus({ sessionId, children }: { sessionId?: str
   const remote = useRemoteSessionActivity(sessionId ?? '', deviceId);
   const live = deviceId ? remote : local;
   if (!deviceId && local?.gracefulStopState && local.gracefulStopState !== 'none') return <>{t('bots.groupChat.progress.stopping')}</>;
-  if (live?.phase === 'needs-interaction') return <>{t('agentIsland.awaitingQuestion')}</>;
+  if (live?.phase === 'needs-interaction') return <>{t('agentIsland.native.awaitingQuestion')}</>;
   return <>{children}</>;
 }
