@@ -1,8 +1,11 @@
+import { McpAppPermissionPrompt } from './McpAppPermissionPrompt';
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { isSharedTaskPeer } from '@cindy/device-link';
 import {
   McpAppController,
+  MCP_APP_MAX_HEIGHT,
+  McpAppHeightGuard,
   mcpAppFailureKey,
   type AppRpc,
   type AppInvoker,
@@ -10,6 +13,7 @@ import {
 import { getStickySessionDeviceId } from '@/features/device-link/stickySessionOrigin';
 import { remoteProjectsStore } from '@/features/device-link/remoteProjectsStore';
 import { Button } from '@/components/ui/button';
+import { createLogger } from '@/lib/logger';
 import { Spinner } from '@/components/ui/spinner';
 
 function hostContext(locale: string, element: HTMLElement): Record<string, unknown> {
@@ -25,7 +29,7 @@ function hostContext(locale: string, element: HTMLElement): Record<string, unkno
       touch: navigator.maxTouchPoints > 0,
       hover: matchMedia('(hover: hover)').matches,
     },
-    containerDimensions: { width: Math.round(element.clientWidth), maxHeight: 1_200 },
+    containerDimensions: { width: Math.round(element.clientWidth), maxHeight: MCP_APP_MAX_HEIGHT },
     styles: {
       variables: {
         '--color-background-primary': variable('--surface'),
@@ -51,6 +55,7 @@ interface McpAppCardProps {
   clientId: string;
   title: string;
   fallbackText?: string;
+  plugin?: unknown;
 }
 
 export function McpAppCard(props: McpAppCardProps) {
@@ -79,14 +84,15 @@ export function McpAppCard(props: McpAppCardProps) {
 }
 
 /** Untrusted HTML always sits across an origin boundary, without Cindy's preload. */
-function InteractiveMcpAppCard({ sessionId, clientId, title, fallbackText, deviceId }: McpAppCardProps & { deviceId?: string }) {
+function InteractiveMcpAppCard({ sessionId, clientId, title, fallbackText, deviceId, plugin }: McpAppCardProps & { deviceId?: string }) {
   const { t, i18n } = useTranslation();
+  const pluginTrust = plugin && typeof plugin === 'object' && 'trust' in plugin ? String(plugin.trust) : undefined;
   const appTitle = title || t('mcpApps.appName');
   const card = useRef<HTMLDialogElement>(null);
   const root = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<McpAppController | undefined>(undefined);
   const [attempt, setAttempt] = useState(0);
-  const [error, setError] = useState<ReturnType<typeof mcpAppFailureKey>>();
+  const [error, setError] = useState<ReturnType<typeof mcpAppFailureKey> | 'mcpApps.pluginRevoked' | 'mcpApps.pluginCspRejected' | 'mcpApps.filesOnExecutionComputer'>();
   const [loading, setLoading] = useState(true);
   const [height, setHeight] = useState(320);
   const [mode, setMode] = useState('inline');
@@ -105,7 +111,7 @@ function InteractiveMcpAppCard({ sessionId, clientId, title, fallbackText, devic
     const observer = new IntersectionObserver(([entry]) => {
       intersecting = entry.isIntersecting;
       update();
-    });
+    }, { rootMargin: '80px 0px' });
     observer.observe(element);
     document.addEventListener('visibilitychange', update);
     return () => {
@@ -118,6 +124,8 @@ function InteractiveMcpAppCard({ sessionId, clientId, title, fallbackText, devic
     const element = root.current;
     if (!element || !visible) return;
     let disposed = false;
+    const heightGuard = new McpAppHeightGuard(() => createLogger('mcp-apps').warn('App height feedback loop bounded'));
+    heightGuard.resize(element.clientWidth);
     let frame: HTMLIFrameElement | undefined;
     let localViewId: string | undefined;
     const invoke: AppInvoker = (id, input) =>
@@ -126,7 +134,7 @@ function InteractiveMcpAppCard({ sessionId, clientId, title, fallbackText, devic
     const fail = (error: unknown) => {
       if (!disposed) {
         setLoading(false);
-        setError(mcpAppFailureKey(error));
+        setError(/MCP_APP_FILES_LOCAL_ONLY/.test(String(error)) ? 'mcpApps.filesOnExecutionComputer' : /MCP_PLUGIN_CSP_DOMAIN_NOT_DECLARED/.test(String(error)) ? 'mcpApps.pluginCspRejected' : plugin && /MCP_PLUGIN_UNAVAILABLE|MCP_APP_SERVER_CHANGED|MCP_APP_VIEW_UNAVAILABLE/.test(String(error)) ? 'mcpApps.pluginRevoked' : mcpAppFailureKey(error));
         setMode('inline');
         dispose();
       }
@@ -142,7 +150,7 @@ function InteractiveMcpAppCard({ sessionId, clientId, title, fallbackText, devic
         if (message.method === 'ui/notifications/size-changed') {
           const value = message.params?.height;
           if (typeof value === 'number' && Number.isFinite(value))
-            setHeight(Math.max(80, Math.min(1_200, Math.ceil(value))));
+            setHeight(heightGuard.accept(value));
         }
         if (message.method === 'ui/notifications/host-context-changed') {
           const mode = message.params?.displayMode;
@@ -183,8 +191,14 @@ function InteractiveMcpAppCard({ sessionId, clientId, title, fallbackText, devic
       .catch((error) => {
         fail(error);
       });
+    let lastContext = JSON.stringify(hostContext(localeRef.current, element));
     const update = () => {
-      void controller.context(hostContext(localeRef.current, element)).catch(() => {});
+      const context = hostContext(localeRef.current, element);
+      const serialized = JSON.stringify(context);
+      if (serialized === lastContext) return;
+      lastContext = serialized;
+      heightGuard.resize(element.clientWidth);
+      void controller.context(context).catch(() => {});
     };
     const themeObserver = new MutationObserver(update);
     themeObserver.observe(document.documentElement, {
@@ -249,6 +263,7 @@ function InteractiveMcpAppCard({ sessionId, clientId, title, fallbackText, devic
     return () => {
       dialog.close();
       dialog.setAttribute('open', '');
+      if (root.current) void controllerRef.current?.context(hostContext(localeRef.current, root.current)).catch(() => {});
       if (previousFocus?.isConnected) previousFocus.focus();
     };
   }, [mode]);
@@ -270,7 +285,8 @@ function InteractiveMcpAppCard({ sessionId, clientId, title, fallbackText, devic
       }}
     >
       <div className="flex min-h-9 items-center justify-between gap-3 px-3 text-13 text-[var(--text-secondary)]">
-        <span>{title ? t('mcpApps.cardTitle', { title }) : appTitle}</span>
+        <span className="min-w-0 break-words">{title ? t('mcpApps.cardTitle', { title }) : appTitle}</span>
+        {pluginTrust && <span className="shrink-0 text-12 font-medium">{t(`mcpApps.pluginTrust.${['cindy-official', 'reviewed', 'verified-publisher'].includes(pluginTrust) ? pluginTrust : 'unverified'}`)}</span>}
         {loading && visible && <Spinner size={16} />}
         {mode === 'fullscreen' && (
           <Button
@@ -284,12 +300,13 @@ function InteractiveMcpAppCard({ sessionId, clientId, title, fallbackText, devic
             {t('mcpApps.exitFullscreen')}
           </Button>
         )}
-        {error && (
+        {error && error !== 'mcpApps.filesOnExecutionComputer' && (
           <Button variant="secondary" size="sm" onClick={() => setAttempt((value) => value + 1)}>
             {t('mcpApps.retry')}
           </Button>
         )}
       </div>
+      <McpAppPermissionPrompt sessionId={sessionId} clientId={clientId} />
       {error && (
         <p role="alert" className="px-3 pb-3 text-13 text-[var(--text-secondary)]">
           {t(error)}

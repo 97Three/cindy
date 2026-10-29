@@ -1190,6 +1190,10 @@ export interface AgentDeps {
   /** Synchronous local policy registration; no RPC or IO on a send. Returns owner-scoped cleanup. */
   registerCodexTextOnlyPolicy?: (threadId: string, disabled: () => boolean) => () => void;
   registerCodexMcpThreadContext?: (args: CodexMcpThreadContextArgs) => void;
+  /** Snapshot App tools before user interrupt; invoke only after upstream ACK. Local, nonblocking. */
+  prepareCodexMcpToolCancellation?: (
+    args: Pick<CodexMcpThreadContextArgs, 'sessionId' | 'threadId'> & { sessionInstanceId: string },
+  ) => () => void;
   unregisterCodexMcpThreadContext?: (
     threadId: string,
     expectedSessionInstanceId?: string,

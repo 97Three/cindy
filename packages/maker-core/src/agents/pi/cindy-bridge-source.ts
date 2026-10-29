@@ -2878,8 +2878,8 @@ class McpHttpClient {
     return h;
   }
 
-  private async post<T>(body: unknown, consume: (response: Response) => Promise<T>, signal?: AbortSignal): Promise<T> {
-    const requestTimeoutMs = this.nextRequestTimeoutMs();
+  private async post<T>(body: unknown, consume: (response: Response) => Promise<T>, signal?: AbortSignal, notificationTimeoutMs?: number): Promise<T> {
+    const requestTimeoutMs = notificationTimeoutMs ?? this.nextRequestTimeoutMs();
     const controller = new AbortController();
     const cancel = () => controller.abort();
     signal?.addEventListener('abort', cancel, { once: true });
@@ -2902,6 +2902,14 @@ class McpHttpClient {
       // body 也会按 requestTimeoutMs 中止，不会无限阻塞后续 server 注册。
       return await consume(res);
     } catch (error) {
+      const request = body as { id?: number; method?: string };
+      if (controller.signal.aborted && request.id !== undefined && request.method !== 'initialize') {
+        // Aborting fetch only ends our wait. Cancel the exact MCP request on a
+        // separate bounded POST; never reuse the already-aborted caller signal.
+        void this.post({ jsonrpc: '2.0', method: 'notifications/cancelled',
+          params: { requestId: request.id, reason: signal?.aborted ? 'Request cancelled' : 'Request timed out' } },
+          async (res) => { await res.body?.cancel(); }, undefined, 1000).catch(() => {});
+      }
       if (signal?.aborted) throw new McpBridgeError('request cancelled');
       if (controller.signal.aborted) throw new McpBridgeError('request timed out');
       if (error instanceof McpBridgeError) throw error;
