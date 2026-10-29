@@ -743,9 +743,10 @@ The expanded teammate section previews five chats (local teammates, remote teamm
 
 ### Desktop and Mobile task creator filters (2026-10-27)
 
-The sidebar's existing Filter submenu adds Teammates. Any source (不限来源) is the default and includes personal tasks and all teammates' tasks;
+The sidebar's existing Filter submenu adds Teammates. All (全部) is the default and includes personal tasks and all teammates' tasks;
 choosing one teammate selects only its created tasks, then further choices add or remove teammates.
-Removing the last choice restores Any source. Reset Filters also clears this dimension, preserving task status,
+Hide all (都不显示) excludes teammate-created tasks and teammate routine/IM tasks while retaining personal tasks.
+Selecting a teammate from Hide all switches to that teammate; removing the last choice restores All. Reset Filters also clears this dimension, preserving task status,
 grouping and sorting. Pinned entries retain their existing exemption from content filters.
 Use the existing menu rows, avatar component and check marks; keep the menu open for multiple choices.
 Show a remote computer name only for device-scoped identities, to distinguish same-name teammates.

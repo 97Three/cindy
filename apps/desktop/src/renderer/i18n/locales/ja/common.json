@@ -13713,7 +13713,8 @@
         "custom": "マウスでプロジェクト行をドラッグして並び替え。中のセッションは上の並び替えに従う"
       },
       "filterCreatorsHeading": "チームメイト",
-      "filterCreatorsAny": "作成元を問わない",
+      "filterCreatorsAny": "すべて",
+      "filterCreatorsNone": "すべて非表示",
       "filterSelectedCreators": "{{count}} 人を選択",
       "filterProjectsHeading": "プロジェクト",
       "filterAllProjects": "すべてのプロジェクト",

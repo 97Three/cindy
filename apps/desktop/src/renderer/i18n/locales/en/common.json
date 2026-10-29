@@ -13768,7 +13768,8 @@
         "custom": "Drag project rows with the mouse to reorder. Sessions inside still follow the sort above."
       },
       "filterCreatorsHeading": "Teammates",
-      "filterCreatorsAny": "Any source",
+      "filterCreatorsAny": "All",
+      "filterCreatorsNone": "Hide all",
       "filterSelectedCreators": "{{count}} selected",
       "filterProjectsHeading": "Projects",
       "filterAllProjects": "All projects",
