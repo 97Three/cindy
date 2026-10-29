@@ -128,7 +128,7 @@ const RELAY_SLOW_PUSH_MS = 2_000;
 /** 删除受邀者时没通知到的组内电脑(离线等)，多久后再试一次。 */
 const FORGET_RETRY_MS = 10 * 60_000;
 /** 那台上的任务以这些原因结束是正常收尾，不算失败。 */
-const NORMAL_RELAY_CLOSE_REASONS = new Set(['closed', 'detached', 'ended', 'superseded']);
+const NORMAL_RELAY_CLOSE_REASONS = new Set(['closed', 'detached', 'ended', 'superseded', 'controller-disconnected']);
 const UPLOAD_IDLE_MS = 2 * 60_000;
 const MAX_STAGED_BYTES_PER_CONTROLLER = REMOTE_AGENT_MAX_PAYLOAD_BYTES * 2;
 const MAX_DECOMPRESSED_BYTES = 128 * 1024 * 1024;
@@ -2342,6 +2342,24 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     deps.log?.info('remote agent run finished', { runId: run.id, reason, ...(run.idleReclaimed ? { idleReclaimed: true } : {}) });
   }
 
+  // abortAll and dispose can overlap. Dispose must wait for the first stop to
+  // publish its boundary before removing the run from a pending poll.
+  const hostStops = new WeakMap<Run, Promise<void>>();
+  function finishForHostStop(run: Run, teardown: RemoteAgentTeardownReason): Promise<void> {
+    const pending = hostStops.get(run);
+    if (pending) return pending;
+    // Do not relabel an intentional disconnect already closing in parallel.
+    if (teardown === 'app-quit' && !run.closing && !busyForReclaim(run)) run.idleReclaimed = true;
+    // Old controllers silently close idle runs and keep their existing error path
+    // for busy runs; new controllers can reconnect either to the native session.
+    const reason = teardown === 'app-quit'
+      ? run.idleReclaimed ? 'ended' : 'provider-restarting'
+      : 'controller-disconnected';
+    const finishing = finishRun(run, reason, teardown);
+    hostStops.set(run, finishing);
+    return finishing;
+  }
+
   function disposeRun(run: Run): Promise<void> {
     // open ACKs before native startup, which may need poll/reply. Stop first
     // (finishRun rejects reverse requests), then drain startup's last writes.
@@ -2546,8 +2564,17 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     for (let index = 0; index < wanted.length; index += 1) {
       const { runId, cursor } = wanted[(start + index) % wanted.length];
       const run = runs.get(key(controller, runId));
+      if (run && !delegatedRunAllowed(run)) {
+        // A sibling task may keep this guest peer authorized after this task's
+        // grant expires. Do not disguise that denial as a missing/restarted run,
+        // and never read the now-unauthorized task's buffered content.
+        void finishRun(run, 'access-revoked', 'navigation');
+        const data = Buffer.from(JSON.stringify({ t: 'closed', reason: 'access-revoked' }) + '\n');
+        out.runs.push({ runId, cursor: cursor + data.length, data: data.toString('base64'), done: true });
+        continue;
+      }
       // 不存在或游标超出已写范围(对端状态与本机不一致)：控制端按任务丢失处理。
-      if (!run || !delegatedRunAllowed(run) || !run.log.isValidCursor(cursor)) {
+      if (!run || !run.log.isValidCursor(cursor)) {
         out.runs.push({ runId, cursor, missing: true });
         continue;
       }
@@ -3445,7 +3472,7 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     },
     /** 远程控制关闭 / 退出时结束全部任务。 */
     async abortAll(reason: RemoteAgentTeardownReason = 'navigation'): Promise<void> {
-      await Promise.all([...runs.values()].map((run) => finishRun(run, 'aborted', reason)));
+      await Promise.all([...runs.values()].map((run) => finishForHostStop(run, reason)));
     },
     /** Old execution hosts cannot retain a newly introduced member restriction. */
     async revalidateModelAccess(): Promise<void> {
@@ -3513,7 +3540,9 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
       if (forgetRetryTimer) clearTimeout(forgetRetryTimer);
       forgetRetryTimer = null;
       // 退出前尽力收尾：影子工作目录含同步过去的项目与个人说明，不能留到下次启动。
-      for (const run of runs.values()) void finishRun(run, 'aborted', 'app-quit').then(() => disposeRun(run));
+      for (const run of runs.values()) {
+        void finishForHostStop(run, 'app-quit').then(() => disposeRun(run));
+      }
     },
   };
 }
