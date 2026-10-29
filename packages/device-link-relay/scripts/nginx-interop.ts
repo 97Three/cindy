@@ -24,21 +24,26 @@ function command(file: string, args: string[]) {
   });
 }
 
-async function retry<T>(check: () => Promise<T>, accepted: (value: T) => boolean): Promise<T> {
+async function retry<T>(check: () => Promise<T>, accepted: (value: T) => boolean, label = ''): Promise<T> {
   const deadline = Date.now() + 10_000;
+  let last = '';
   while (Date.now() < deadline) {
     try {
       const value = await check();
       if (accepted(value)) return value;
-    } catch {
+      last = String(value).slice(0, 120);
+    } catch (error) {
+      last = String(error);
       /* Nginx graceful reload */
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error('Nginx interop condition timed out');
+  throw new Error(`Nginx interop condition timed out (${label}): ${last}`);
 }
 
 async function inside() {
+  assert.equal(process.env.CINDY_NGINX_INTEROP_CONTAINER, '1');
+  assert.equal(fs.readFileSync('/proc/1/cmdline', 'utf8').replace(/\0/g, ' ').trim(), 'sleep infinity');
   const dataDir = '/var/lib/cindy-relay';
   const main = '/etc/nginx/nginx.conf';
   const site = '/etc/nginx/conf.d/website.conf';
@@ -86,16 +91,23 @@ async function inside() {
   }\n`;
   fs.writeFileSync(main, initialMain);
   fs.writeFileSync(site, initialSite);
-  const nginx = spawn('nginx', ['-c', main, '-g', 'daemon off;'], {
+  const startNginx = () => spawn('nginx', ['-c', main, '-g', 'daemon off;'], {
     stdio: 'ignore',
   });
+  let nginx = startNginx();
+  const restartFixture = async () => {
+    // 仅重建本容器内独立用例的初始监听布局；被测生产部署始终只发送 HUP。
+    await new Promise<void>((resolve) => { nginx.once('exit', () => resolve()); nginx.kill('SIGQUIT'); });
+    nginx = startNginx();
+  };
   await retry(
     () => fetch('http://127.0.0.1').then((r) => r.text()),
     (value) => value === 'website-home',
   );
   const cli = (action: string, flags: string[] = []): Record<string, any> =>
     JSON.parse(command(process.execPath, ['/tmp/relay.mjs', 'nginx', '--action', action, ...flags]).trim());
-  const prepare = (existing = false) => cli('prepare', ['--address', '127.0.0.1', ...(existing ? ['--existing-certificate'] : [])]);
+  const prepare = (existing = false, address = '127.0.0.1') =>
+    cli('prepare', ['--address', address, ...(existing ? ['--existing-certificate'] : [])]);
   const owner = createDeviceCredential();
   const ownerKey = createRelaySigningKey(nodeRelayAuthCrypto);
   const relayId = randomUUID();
@@ -123,13 +135,18 @@ async function inside() {
       mode: 0o600,
     });
   };
+  let servername: string | undefined;
   const get = (pathname: string, method = 'GET', body?: Buffer, headers: Record<string, string> = {}) =>
     new Promise<{ status: number; body: Buffer }>((resolve, reject) => {
-      const req = https.request(`https://127.0.0.1${pathname}`, { method, ca: material.cert, agent: false, headers }, (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (chunk) => chunks.push(chunk));
-        res.on('end', () => resolve({ status: res.statusCode!, body: Buffer.concat(chunks) }));
-      });
+      const req = https.request(
+        `https://127.0.0.1${pathname}`,
+        { method, ca: material.cert, agent: false, servername, headers: { ...headers, ...(servername ? { Host: servername } : {}) } },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk) => chunks.push(chunk));
+          res.on('end', () => resolve({ status: res.statusCode!, body: Buffer.concat(chunks) }));
+        },
+      );
       req.on('error', reject);
       req.end(body);
     });
@@ -138,7 +155,7 @@ async function inside() {
   try {
     fs.writeFileSync(site, initialSite.slice(initialSite.indexOf('server { listen 443')));
     command('nginx', ['-t']);
-    process.kill(nginx.pid!, 'SIGHUP');
+    await restartFixture();
     const httpsOnly = prepare();
     challenge = await startChallengeServer({
       host: '127.0.0.1',
@@ -148,13 +165,14 @@ async function inside() {
     await retry(
       () => fetch('http://127.0.0.1/.well-known/acme-challenge/https-only').then((r) => r.text()),
       (value) => value === 'https-only-proof',
+      'HTTPS-only HTTP-01',
     );
     cli('rollback');
     await challenge.close();
     challenge = undefined;
     fs.writeFileSync(site, initialSite);
     command('nginx', ['-t']);
-    process.kill(nginx.pid!, 'SIGHUP');
+    await restartFixture();
     const plan = prepare();
     challenge = await startChallengeServer({
       host: '127.0.0.1',
@@ -164,10 +182,19 @@ async function inside() {
     await retry(
       () => fetch('http://127.0.0.1/.well-known/acme-challenge/cindy-token').then((r) => r.text()),
       (value) => value === 'cindy-proof',
+      'HTTP-01',
     );
     await retry(
       () => fetch('http://127.0.0.1/.well-known/acme-challenge/other-client').then((r) => r.text()),
       (value) => value === 'other-client-proof',
+      'other ACME live',
+    );
+    await challenge.close();
+    challenge = undefined;
+    await retry(
+      () => fetch('http://127.0.0.1/.well-known/acme-challenge/other-client').then((r) => r.text()),
+      (value) => value === 'other-client-proof',
+      'other ACME offline',
     );
     saveMaterial();
     relay = await startRelayServer({
@@ -181,6 +208,7 @@ async function inside() {
     await retry(
       () => get('/api/device-link/relay/info'),
       (value) => value.status === 200,
+      'initial relay HTTPS',
     );
     assert.equal(JSON.parse((await get('/api/device-link/relay/info')).body.toString()).relayId, relayId);
     assert.equal((await get('/')).body.toString(), 'website-home');
@@ -257,7 +285,6 @@ async function inside() {
     assert.equal(fs.readFileSync(site, 'utf8'), initialSite);
     await relay.close();
     relay = undefined;
-    await challenge.close();
     challenge = undefined;
     // 已有可信 HTTPS 时：保留原证书管理，中转自动改为回环 HTTP。
     fs.writeFileSync('/tmp/website-tls/cert.pem', material.cert);
@@ -285,7 +312,7 @@ async function inside() {
     const httpOnlySite = initialSite.slice(0, initialSite.indexOf('server { listen 443'));
     fs.writeFileSync(site, httpOnlySite);
     command('nginx', ['-t']);
-    process.kill(nginx.pid!, 'SIGHUP');
+    await restartFixture();
     const httpOnly = prepare();
     relay = await startRelayServer({ dataDir, host: '127.0.0.1', port: httpOnly.port, tls: material, publicUrl: 'https://127.0.0.1' });
     cli('activate');
@@ -298,7 +325,77 @@ async function inside() {
     cli('remove');
     assert.equal(fs.readFileSync(site, 'utf8'), httpOnlySite);
     console.log('[nginx-interop] HTTP-only and HTTPS-only installations passed');
+    await relay.close();
+    relay = undefined;
+    fs.appendFileSync('/etc/hosts', '\n127.0.0.1 relay.example.test\n');
+    fs.writeFileSync('/tmp/website-tls/cert.pem', websiteMaterial.cert);
+    fs.writeFileSync('/tmp/website-tls/key.pem', websiteMaterial.key);
+    const unrelated = `server { listen 127.0.0.2:443 ssl; server_name first.example.test;
+      ssl_certificate /tmp/website-tls/cert.pem; ssl_certificate_key /tmp/website-tls/key.pem; return 200 "other-first"; }
+    server { listen 127.0.0.2:443 ssl default_server; server_name _;
+      ssl_certificate /tmp/website-tls/cert.pem; ssl_certificate_key /tmp/website-tls/key.pem; return 200 "other-default"; }\n`;
+    const specificSite =
+      initialSite
+        .replace('listen 80 default_server;', 'listen 127.0.0.1:80;')
+        .replace('listen 443 ssl default_server;', 'listen 127.0.0.1:443 ssl;') + unrelated;
+    for (const address of ['127.0.0.1', 'relay.example.test']) {
+      fs.writeFileSync(site, specificSite);
+      command('nginx', ['-t']);
+      await restartFixture();
+      material = certificate(
+        address === '127.0.0.1' ? 'specific-ip' : 'domain',
+        address === '127.0.0.1' ? 'IP:127.0.0.1' : 'DNS:relay.example.test',
+      );
+      saveMaterial();
+      const specific = prepare(false, address);
+      relay = await startRelayServer({ dataDir, host: '127.0.0.1', port: specific.port, tls: material, publicUrl: `https://${address}` });
+      servername = address === '127.0.0.1' ? undefined : address;
+      cli('activate');
+      cli('commit');
+      await retry(
+        () => get('/api/device-link/relay/info'),
+        (value) => value.status === 200,
+      );
+      assert.equal((await get('/')).body.toString(), 'website-home');
+      assert.ok(fs.readFileSync(site, 'utf8').includes(unrelated));
+      for (const [hostname, expected] of [
+        ['127.0.0.1', 'website-home'],
+        ['127.0.0.2', 'other-default'],
+      ]) {
+        await retry(
+          () =>
+            new Promise<string>((resolve, reject) => {
+              const req = https.get(
+                {
+                  hostname,
+                  servername: 'website.example.test',
+                  headers: { Host: 'website.example.test' },
+                  ca: websiteMaterial.cert,
+                  agent: false,
+                },
+                (res) => {
+                  let body = '';
+                  res.on('data', (chunk) => {
+                    body += chunk;
+                  });
+                  res.on('end', () => resolve(body));
+                },
+              );
+              req.on('error', reject);
+            }),
+          (value) => value === expected,
+        );
+      }
+      cli('remove');
+      assert.equal(fs.readFileSync(site, 'utf8'), specificSite);
+      await relay.close();
+      relay = undefined;
+    }
+    console.log('[nginx-interop] specific IP sockets, domain implicit TLS default and unrelated IP website preservation passed');
     console.log('[nginx-interop] renewal, interrupted deployment rollback, existing HTTPS reuse and exact uninstall restoration passed');
+  } catch (error) {
+    console.error('[nginx-interop] fixture configuration:', fs.readFileSync(site, 'utf8'), fs.existsSync('/etc/cindy-relay/nginx/http.conf') ? fs.readFileSync('/etc/cindy-relay/nginx/http.conf', 'utf8') : 'not prepared');
+    throw error;
   } finally {
     await relay?.close();
     await challenge?.close();
@@ -327,7 +424,7 @@ async function docker() {
       },
     });
     fs.copyFileSync(path.join(packageRoot, 'dist', 'relay.mjs'), path.join(temp, 'relay.mjs'));
-    command('docker', ['run', '-d', '--name', container, '--label', 'cindy-test=nginx-interop', 'node:22-slim', 'sleep', 'infinity']);
+    command('docker', ['run', '-d', '--name', container, '--label', 'cindy-test=nginx-interop', '--env', 'CINDY_NGINX_INTEROP_CONTAINER=1', 'node:22-slim', 'sleep', 'infinity']);
     started = true;
     console.log('[nginx-interop] isolated container started; loading tools from official images');
     command('docker', [

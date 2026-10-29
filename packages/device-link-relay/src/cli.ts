@@ -23,6 +23,8 @@ import { readTlsFiles, startRelayServer } from './server';
 import { initializeRelay } from './store';
 import { RELAY_VERSION } from './version';
 import { manageNginx } from './nginx';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 
 const BOOLEAN_FLAGS = new Set(['trust-proxy', 'ipv6', 'existing-certificate']);
 /** 首次申请证书失败后的重试间隔(Let's Encrypt 对同一名字每小时只允许几次失败验证)。 */
@@ -124,8 +126,14 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'nginx') {
-    const result = manageNginx(required(flags, 'action'), {
-      address: flags.get('address'),
+    const action = required(flags, 'action');
+    const address = flags.get('address');
+    const resolvedAddresses = action === 'prepare' && address
+      ? isIP(address) ? [address] : (await lookup(identifierFor(address).value, { all: true })).map((entry) => entry.address)
+      : undefined;
+    const result = manageNginx(action, {
+      address,
+      resolvedAddresses,
       ipv6: flags.has('ipv6'),
       existingCertificate: flags.has('existing-certificate'),
     });

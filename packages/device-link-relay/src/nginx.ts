@@ -156,7 +156,51 @@ function listens(node: Directive, port: number, files: Map<string, string>, main
   );
 }
 
-function selected(servers: Directive[], port: number, address: string, files: Map<string, string>, main: string): Directive[] {
+interface ListenGroup {
+  endpoint: string;
+  entries: Array<{ server: Directive; listen: Directive }>;
+  defaultServer?: Directive;
+}
+
+function endpoint(listen: Directive, port: number): string | null {
+  if (listen.name !== 'listen' || listen.args.includes('quic')) return null;
+  const value = listen.args[0];
+  if (value === String(port) || value === `*:${port}`) return `0.0.0.0:${port}`;
+  if (value?.endsWith(`:${port}`) && (value.startsWith('[') || isIP(value.slice(0, value.lastIndexOf(':'))))) return value;
+  return null;
+}
+
+function destinations(servers: Directive[], port: number, addresses: string[], files: Map<string, string>, main: string): ListenGroup[] {
+  const groups = new Map<string, ListenGroup>();
+  for (const server of servers)
+    for (const listen of children(server.children ?? [], files, main)) {
+      const socket = endpoint(listen, port);
+      if (!socket) continue;
+      const group = groups.get(socket) ?? { endpoint: socket, entries: [] };
+      group.entries.push({ server, listen });
+      if (!group.defaultServer || listen.args.some((a) => a === 'default_server' || a === 'default')) group.defaultServer = server;
+      groups.set(socket, group);
+    }
+  const targets = new Map<string, ListenGroup>();
+  for (const address of addresses) {
+    const v6 = isIP(address) === 6;
+    const specific = v6 ? `[${address}]:${port}` : `${address}:${port}`;
+    const wildcard = v6 ? `[::]:${port}` : `0.0.0.0:${port}`;
+    // 具体地址优先于通配监听；其他 IP 的站点和默认归属不能参与本次修改。
+    const group = groups.get(specific) ?? groups.get(wildcard) ?? { endpoint: specific, entries: [] };
+    targets.set(group.endpoint, group);
+  }
+  return [...targets.values()];
+}
+
+function selected(
+  servers: Directive[],
+  port: number,
+  address: string,
+  files: Map<string, string>,
+  main: string,
+  fallback?: Directive,
+): Directive[] {
   const candidates = servers.filter((s) => listens(s, port, files, main));
   const names = (s: Directive) =>
     children(s.children ?? [], files, main)
@@ -179,6 +223,7 @@ function selected(servers: Directive[], port: number, address: string, files: Ma
     return wildcard.filter((s) => score(s) === longest);
   }
   if (candidates.some((s) => names(s).some((n) => n.startsWith('~')))) throw new Error('Nginx regex server names require an exact address');
+  if (fallback) return [fallback];
   const defaults = candidates.filter((s) =>
     children(s.children ?? [], files, main).some(
       (d) => d.name === 'listen' && d.args.some((a) => a === 'default_server' || a === 'default'),
@@ -222,14 +267,21 @@ export function planNginx(options: {
   /** 现有 HTTPS 已由宿主验证信任、地址和有效期时，直接沿用其证书管理。 */
   existingCertificate: boolean;
   certificateNames: (files: string[]) => string[];
+  resolvedAddresses?: string[];
 }): NginxPlan {
-  const { main, files, address, port, challengePort, ipv6 } = options;
+  const { main, files, address, port, challengePort } = options;
   if (!/^[a-zA-Z0-9.:-]+$/.test(address)) throw new Error('Invalid relay address');
   const http = parse(main, files.get(main) ?? '').find((d) => d.name === 'http' && d.children);
   if (!http) throw new Error('Nginx HTTP configuration not found');
   const servers = children(http.children!, files, main).filter((d) => d.name === 'server' && d.children);
-  const httpServers = selected(servers, 80, address, files, main);
-  const httpsServers = selected(servers, 443, address, files, main);
+  const addresses = options.resolvedAddresses ?? (isIP(address) ? [address] : ['0.0.0.0']);
+  if (!addresses.length || addresses.some((ip) => !isIP(ip))) throw new Error('Relay address did not resolve to an IP');
+  const httpSockets = destinations(servers, 80, addresses, files, main);
+  const httpsSockets = destinations(servers, 443, addresses, files, main);
+  const selectSocket = (group: ListenGroup, port: number, name = address) =>
+    selected([...new Set(group.entries.map((e) => e.server))], port, name, files, main, group.defaultServer);
+  const httpServers = [...new Set(httpSockets.flatMap((g) => selectSocket(g, 80)))];
+  const httpsServers = [...new Set(httpsSockets.flatMap((g) => selectSocket(g, 443)))];
   const existingCertificate = options.existingCertificate && httpsServers.length > 0;
   const patches: NginxPatch[] = [];
   const activatePatches: NginxPatch[] = [];
@@ -289,7 +341,7 @@ export function planNginx(options: {
     proxy_pass http://127.0.0.1:${challengePort};
     proxy_set_header Host $http_host;
     proxy_intercept_errors on;
-    error_page 404 = @cindy_relay_existing_acme;
+    error_page 404 502 503 504 = @cindy_relay_existing_acme;
 }`;
     for (const server of httpServers) {
       patchServer(server, (body) => {
@@ -313,9 +365,39 @@ export function planNginx(options: {
         return `${body}\n${marked(`${challenge}\nlocation @cindy_relay_existing_acme { ${fallback} }`)}\n`;
       });
     }
-    if (!httpServers.length) {
-      httpServer = `server {\nlisten 80;\n${ipv6 ? 'listen [::]:80;\n' : ''}server_name ${address};\n${challenge}\nlocation @cindy_relay_existing_acme { return 404; }\n}\n`;
-    }
+    httpServer =
+      httpSockets
+        .filter((g) => !g.entries.length)
+        .map(
+          (g) =>
+            `server {\nlisten ${g.endpoint};\nserver_name ${address};\n${challenge}\nlocation @cindy_relay_existing_acme { return 404; }\n}\n`,
+        )
+        .join('') || null;
+
+    const cloneBody = (source: Directive | undefined, relay: boolean): string => {
+      if (!source) return '';
+      let body = files.get(source.file)!.slice(source.open, source.end - 1);
+      if (source.children?.some((d) => d.name === 'include'))
+        body = children(source.children, files, main)
+          .map((d) => files.get(d.file)!.slice(d.start, d.end))
+          .join('\n');
+      for (const d of [...parse('clone', body)].reverse()) {
+        if (
+          ['listen', 'server_name', ...(relay ? ['ssl_certificate', 'ssl_certificate_key', 'ssl_reject_handshake'] : [])].includes(d.name)
+        ) {
+          body = body.slice(0, d.start) + body.slice(d.end);
+        } else if (relay && d.name === 'return') {
+          body = body.slice(0, d.start) + `if ($uri !~ "^${API}") { ${body.slice(d.start, d.end)} }` + body.slice(d.end);
+        } else if (relay && d.name === 'location' && d.args.some((a) => a.startsWith(API)))
+          throw new Error('The default site already serves the relay API path');
+      }
+      return body;
+    };
+    const certificateNames = (server: Directive) => {
+      let certificates = children(server.children ?? [], files, main).filter((d) => d.name === 'ssl_certificate');
+      if (!certificates.length) certificates = children(http.children!, files, main).filter((d) => d.name === 'ssl_certificate');
+      return options.certificateNames(certificates.map((d) => path.posix.resolve(path.posix.dirname(main), d.args[0])));
+    };
 
     // 使用独立虚拟站点承载新证书，不能替换多域名网站原有的证书。
     const exactTls = httpsServers.filter((s) =>
@@ -325,69 +407,55 @@ export function planNginx(options: {
     );
     // 直接访问 IP 的 TLS 客户端常常不发 SNI。IP 证书必须用于默认握手，域名站点仍由 SNI 选择。
     // 原默认站点若只写 server_name _，从证书补出域名，保留已有 SNI 访问。
-    const defaults = new Map<string, Directive>();
-    for (const server of servers.filter((s) => listens(s, 443, files, main))) {
-      for (const d of children(server.children ?? [], files, main)) {
-        if (d.name !== 'listen' || !(d.args[0] === '443' || d.args[0]?.endsWith(':443')) || d.args.includes('quic')) continue;
-        const socket = d.args[0] === '443' || d.args[0] === '*:443' ? '0.0.0.0:443' : d.args[0];
-        if (!defaults.has(socket) || d.args.some((a) => a === 'default_server' || a === 'default')) defaults.set(socket, server);
-      }
-    }
-    const displaced = isIP(address) ? new Set(defaults.values()) : new Set<Directive>();
-    for (const server of new Set([...exactTls, ...displaced])) {
-      const directives = children(server.children ?? [], files, main);
-      let certNames: string[] = [];
-      if (displaced.has(server)) {
-        let certificates = directives.filter((d) => d.name === 'ssl_certificate');
-        if (!certificates.length) certificates = children(http.children!, files, main).filter((d) => d.name === 'ssl_certificate');
-        certNames = options
-          .certificateNames(certificates.map((d) => path.posix.resolve(path.posix.dirname(main), d.args[0])))
-          .filter((name) => selected(servers, 443, name, files, main).includes(server));
-      }
+    const defaults = new Map(httpsSockets.filter((g) => g.defaultServer).map((g) => [g.endpoint, g.defaultServer!]));
+    for (const server of new Set([...exactTls, ...defaults.values()])) {
       patchServer(
         server,
         (body) => {
-          const names = parse('body', body).filter((d) => d.name === 'server_name');
-          if (names.some((d) => d.args.some((name) => name.startsWith('~'))))
-            throw new Error('Nginx regex server names cannot be rewritten automatically');
-          const retained = [...new Set([...names.flatMap((d) => d.args), ...certNames])].filter(
-            (n) => n.toLowerCase() !== address.toLowerCase(),
-          );
-          for (const d of [...names].reverse()) body = body.slice(0, d.start) + body.slice(d.end);
-          for (const d of [...parse('body', body)].reverse()) {
-            if (!displaced.has(server) || d.name !== 'listen' || !(d.args[0] === '443' || d.args[0]?.endsWith(':443'))) continue;
-            body = body.slice(0, d.start) + body.slice(d.start, d.end).replace(/\bdefault_server\b|\bdefault\b/g, '') + body.slice(d.end);
+          if (exactTls.includes(server)) {
+            const names = parse('body', body).filter((d) => d.name === 'server_name');
+            if (names.some((d) => d.args.some((name) => name.startsWith('~'))))
+              throw new Error('Nginx regex server names cannot be rewritten automatically');
+            const retained = names.flatMap((d) => d.args).filter((n) => n.toLowerCase() !== address.toLowerCase());
+            for (const d of [...names].reverse()) body = body.slice(0, d.start) + body.slice(d.end);
+            body += `\nserver_name ${retained.length ? retained.join(' ') : '_'};\n`;
           }
-          return `${body}\nserver_name ${retained.length ? retained.join(' ') : '_'};\n`;
+          for (const d of [...parse('body', body)].reverse()) {
+            const socket = endpoint(d, 443);
+            if (!socket || defaults.get(socket) !== server) continue;
+            let value = body.slice(d.start, d.end).replace(/\bdefault_server\b|\bdefault\b/g, '');
+            if (!isIP(address)) value = value.slice(0, -1) + ' default_server;';
+            body = body.slice(0, d.start) + value + body.slice(d.end);
+          }
+          return body;
         },
         true,
       );
     }
-    {
+    for (const group of httpsSockets) {
       // 从地址原来会落到的默认站点继承正文，避免把原来通过 IP 打开的网站换成空页。
-      const source = httpsServers[0] ?? httpServers[0];
-      let body = source ? files.get(source.file)!.slice(source.open, source.end - 1) : '';
-      if (source) {
-        const direct = source.children ?? [];
-        if (direct.some((d) => d.name === 'include')) {
-          // 展开直接 include，避免其中的证书/监听指令与新站点冲突；嵌套位置的 include 保持不动。
-          body = children(direct, files, main)
-            .map((d) => files.get(d.file)!.slice(d.start, d.end))
-            .join('\n');
-        }
-        const parsed = parse('clone', body);
-        for (const d of [...parsed].reverse()) {
-          if (['listen', 'server_name', 'ssl_certificate', 'ssl_certificate_key', 'ssl_reject_handshake'].includes(d.name)) {
-            body = body.slice(0, d.start) + body.slice(d.end);
-          } else if (d.name === 'return') {
-            body = body.slice(0, d.start) + `if ($uri !~ "^${API}") { ${body.slice(d.start, d.end)} }` + body.slice(d.end);
-          } else if (d.name === 'location' && d.args.some((a) => a.startsWith(API)))
-            throw new Error('The default site already serves the relay API path');
-        }
-      }
+      const source = selectSocket(group, 443)[0] ?? httpServers[0];
+      const body = cloneBody(source, true);
       const defaultFlag = isIP(address) ? ' default_server' : '';
-      const listen = `listen 443 ssl${defaultFlag};\n${ipv6 ? `listen [::]:443 ssl${defaultFlag};\n` : ''}`;
-      tlsServer = `server {\n${listen}server_name ${address};\nssl_certificate __CINDY_CERT__/fullchain.pem;\nssl_certificate_key __CINDY_CERT__/key.pem;\n${body}\n${location(port, true)}\n}\n`;
+      const protocol = ['http2', 'proxy_protocol'].filter((flag) => group.entries.some((e) => e.listen.args.includes(flag))).join(' ');
+      const listen = `listen ${group.endpoint} ssl${defaultFlag}${protocol ? ` ${protocol}` : ''};\n`;
+      if (isIP(address) && group.defaultServer) {
+        const original = group.defaultServer;
+        const declared = children(original.children ?? [], files, main)
+          .filter((d) => d.name === 'server_name')
+          .flatMap((d) => d.args);
+        const names = certificateNames(original).filter(
+          (name) => name !== address && !declared.includes(name) && selectSocket(group, 443, name).includes(original),
+        );
+        // 只在本次目标 socket 上补出原默认网站的 SNI 名字，不改它在其他 IP 上的名字。
+        if (names.length)
+          tlsServer =
+            (tlsServer ?? '') +
+            `server {\n${listen.replace(' default_server', '')}server_name ${names.join(' ')};\n${cloneBody(original, false)}\n}\n`;
+      }
+      tlsServer =
+        (tlsServer ?? '') +
+        `server {\n${listen}server_name ${address};\nssl_certificate __CINDY_CERT__/fullchain.pem;\nssl_certificate_key __CINDY_CERT__/key.pem;\n${body}\n${location(port, true)}\n}\n`;
     }
   }
   return { patches, activatePatches, httpServer, tlsServer, existingCertificate };
@@ -408,7 +476,19 @@ interface Saved extends NginxPlan {
 interface Snapshot {
   files: Array<{ file: string; text: string | null; mode: number }>;
   previous: Saved | null;
-  expected?: Record<string, string | null>;
+  expected: Record<string, string>;
+  accepted: Record<string, string[]>;
+}
+
+let transaction: { backup: Snapshot; persistent: boolean } | null = null;
+
+function fingerprint(text: string | null): string {
+  return text === null ? 'absent' : createHash('sha256').update(text).digest('hex');
+}
+
+function beginTransaction(backup: Snapshot, persistent: boolean): void {
+  transaction = { backup, persistent };
+  if (persistent) atomicWrite(PENDING, JSON.stringify(backup));
 }
 
 function read(file: string): string | null {
@@ -421,7 +501,9 @@ function read(file: string): string | null {
   }
 }
 
-function write(file: string, text: string | null, mode = 0o600): void {
+function atomicWrite(file: string, text: string | null, mode = 0o600): void {
+  if ((file === PENDING || file === STATE) && text !== null && Buffer.byteLength(text) > 4 * 1024 * 1024)
+    throw new Error('Nginx deployment metadata is too large');
   if (text === null) {
     fs.rmSync(file, { force: true });
     return;
@@ -440,6 +522,20 @@ function write(file: string, text: string | null, mode = 0o600): void {
   } finally {
     fs.rmSync(temporary, { force: true });
   }
+}
+
+function write(file: string, text: string | null, mode = 0o600): void {
+  const backup = transaction?.backup;
+  if (backup?.files.some((f) => f.file === file)) {
+    const current = fingerprint(read(file));
+    if (!backup.accepted[file]?.includes(current)) throw new Error('Nginx configuration changed during deployment; backup retained');
+    const after = fingerprint(text);
+    backup.accepted[file] = [...new Set([...backup.accepted[file], after])];
+    backup.expected[file] = after;
+    // 恢复凭证必须先于配置落盘；进程在任意一次 rename 前后退出均可识别自己的写入。
+    if (transaction?.persistent) atomicWrite(PENDING, JSON.stringify(backup));
+  }
+  atomicWrite(file, text, mode);
 }
 
 function run(binary: string, args: string[]): string {
@@ -489,41 +585,38 @@ function reload(nginx: NginxInstance): void {
 }
 
 function snapshot(files: string[], previous: Saved | null): Snapshot {
-  return {
+  const backup = {
     previous: structuredClone(previous),
     files: [...new Set(files)].map((file) => ({
       file,
       text: read(file),
       mode: fs.existsSync(file) ? fs.statSync(file).mode & 0o777 : 0o600,
     })),
+    expected: {} as Record<string, string>,
+    accepted: {} as Record<string, string[]>,
   };
+  for (const f of backup.files) {
+    const before = fingerprint(f.text);
+    backup.expected[f.file] = before;
+    backup.accepted[f.file] = [before];
+  }
+  return backup;
 }
 
 function restore(saved: Snapshot): void {
   // 申请证书可能持续数分钟。若期间管理员改过站点，保留备份并停止，不能覆盖这些新修改。
   for (const f of saved.files) {
-    const expected = saved.expected?.[f.file];
-    const current = read(f.file);
-    if (expected !== undefined && current !== expected && current !== f.text)
-      throw new Error('Nginx configuration changed during deployment; backup retained');
+    const accepted = transaction?.backup.accepted[f.file] ?? saved.accepted[f.file];
+    if (!accepted?.includes(fingerprint(read(f.file)))) throw new Error('Nginx configuration changed during deployment; backup retained');
   }
   for (const f of saved.files) write(f.file, f.text, f.mode);
   write(STATE, saved.previous ? JSON.stringify(saved.previous) : null);
 }
 
-function recordPending(): void {
-  const backup = JSON.parse(read(PENDING) ?? 'null') as Snapshot | null;
-  if (!backup) return;
-  backup.expected = Object.fromEntries(
-    backup.files.filter((f) => f.file !== '/etc/systemd/system/cindy-relay.service').map((f) => [f.file, read(f.file)]),
-  );
-  write(PENDING, JSON.stringify(backup));
-}
-
 function assertPendingUnchanged(): void {
   const backup = JSON.parse(read(PENDING) ?? 'null') as Snapshot | null;
   for (const [file, expected] of Object.entries(backup?.expected ?? {})) {
-    if (read(file) !== expected) throw new Error('Nginx configuration changed during deployment; backup retained');
+    if (fingerprint(read(file)) !== expected) throw new Error('Nginx configuration changed during deployment; backup retained');
   }
 }
 
@@ -555,6 +648,7 @@ export function manageNginx(
     address?: string;
     ipv6?: boolean;
     existingCertificate?: boolean;
+    resolvedAddresses?: string[];
   } = {},
 ): {
   existingCertificate?: boolean;
@@ -584,20 +678,21 @@ export function manageNginx(
   try {
     return manageLocked(action, options);
   } finally {
+    transaction = null;
     fs.rmSync(lock, { force: true });
   }
 }
 
 function manageLocked(
   action: string,
-  options: { address?: string; ipv6?: boolean; existingCertificate?: boolean },
+  options: { address?: string; ipv6?: boolean; existingCertificate?: boolean; resolvedAddresses?: string[] },
 ): {
   existingCertificate?: boolean;
   port?: number;
   challengePort?: number;
 } {
   // SSH 中断留下的事务在下一次部署自动恢复，不要求用户手动清理配置。
-  if (action === 'prepare' && read(PENDING)) manageLocked('rollback', {});
+  if ((action === 'prepare' || action === 'remove') && read(PENDING)) manageLocked('rollback', {});
   if (action === 'renew' && read(PENDING)) return {};
   const saved = JSON.parse(read(STATE) ?? 'null') as Saved | null;
   if (action === 'prepare') {
@@ -642,6 +737,7 @@ function manageLocked(
       challengePort,
       ipv6: !!options.ipv6,
       existingCertificate,
+      resolvedAddresses: options.resolvedAddresses,
       certificateNames: (certificates) =>
         certificates.flatMap((file) => {
           if (file.includes('$')) throw new Error('Dynamic Nginx certificate paths cannot be preserved automatically');
@@ -660,7 +756,7 @@ function manageLocked(
       '/etc/systemd/system/cindy-relay.service',
     ];
     const backup = snapshot(snapshotFiles, saved);
-    write(PENDING, JSON.stringify(backup));
+    beginTransaction(backup, true);
     try {
       if (saved) replacePatches(saved.patches, true);
       replacePatches(plan.patches, false);
@@ -674,7 +770,6 @@ function manageLocked(
       write(HTTP, httpConfig(state), 0o644);
       reload(nginx);
       write(STATE, JSON.stringify(state));
-      recordPending();
       return {
         existingCertificate: plan.existingCertificate,
         port,
@@ -690,6 +785,7 @@ function manageLocked(
   if (action === 'rollback') {
     const pending = JSON.parse(read(PENDING) ?? 'null') as Snapshot | null;
     if (pending) {
+      beginTransaction(pending, true);
       restore(pending);
       reload(pending.previous?.nginx ?? saved?.nginx ?? discover());
       write(PENDING, null);
@@ -697,12 +793,24 @@ function manageLocked(
     return {};
   }
   if (!saved) return {};
+  if (action === 'configure-service') {
+    const pending = JSON.parse(read(PENDING) ?? 'null') as Snapshot | null;
+    if (!pending) throw new Error('Nginx deployment transaction not found');
+    assertPendingUnchanged();
+    beginTransaction(pending, true);
+    const unit = read('/etc/systemd/system/cindy-relay.service.new');
+    if (!unit) throw new Error('Relay service unit not staged');
+    write('/etc/systemd/system/cindy-relay.service', unit, 0o644);
+    return {};
+  }
   if (action === 'commit') {
+    assertPendingUnchanged();
     write(PENDING, null);
     return {};
   }
   if (action === 'remove') {
     const backup = snapshot([...saved.patches.map((p) => p.file), HTTP], saved);
+    beginTransaction(backup, true);
     try {
       replacePatches(saved.patches, true);
       write(HTTP, '');
@@ -731,6 +839,8 @@ function manageLocked(
   const certDir = `${ROOT}/tls/${hash}`;
   if (saved.certDir === certDir) return {};
   const backup = snapshot([...saved.patches.map((p) => p.file), ...saved.activatePatches.map((p) => p.file), HTTP], saved);
+  const pending = action === 'activate' ? (JSON.parse(read(PENDING) ?? 'null') as Snapshot | null) : null;
+  beginTransaction(pending ?? backup, !!pending);
   try {
     write(`${certDir}/fullchain.pem`, material.cert);
     write(`${certDir}/key.pem`, material.key);
@@ -746,7 +856,6 @@ function manageLocked(
     reload(saved.nginx);
     saved.certDir = certDir;
     write(STATE, JSON.stringify(saved));
-    recordPending();
   } catch (error) {
     restore(backup);
     reload(saved.nginx);

@@ -5,7 +5,7 @@
  * - 现有覆盖缺口：Desktop SSH fake 只覆盖调度，未执行远端配置事务。
  * - 最小输入：带默认网站的 80/443 配置、同一个块监听两端口、校验失败及中途断开。
  * - tier：unit。文件系统/进程为内存适配，独立 CLI 的真实 Nginx 验证另在 Docker 执行。
- * - 实测耗时：单独运行本文件 0.41 秒（8 例，2026-10-29）。
+ * - 实测耗时：单独运行本文件 0.49 秒（16 例，2026-10-29）。
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -15,11 +15,15 @@ const h = vi.hoisted(() => ({
   failTest: 0,
   signals: [] as number[],
   masterPid: '123',
+  crashAt: '',
+  crashBefore: false,
+  crashed: false,
 }));
 const missing = () => Object.assign(new Error('not found'), { code: 'ENOENT' });
 vi.mock('node:fs', () => ({
   default: {
     statSync: (file: string) => {
+      if (h.crashed) throw new Error('simulated process termination');
       if (!h.files.has(file)) throw missing();
       return {
         size: Buffer.byteLength(h.files.get(file)!),
@@ -35,15 +39,25 @@ vi.mock('node:fs', () => ({
     },
     realpathSync: (file: string) => file,
     writeFileSync: (file: string, value: string) => {
+      if (h.crashed) throw new Error('simulated process termination');
       h.files.set(file, value);
     },
     renameSync: (from: string, to: string) => {
+      if (h.crashed || (to === h.crashAt && h.crashBefore)) {
+        h.crashed = true;
+        throw new Error('simulated process termination');
+      }
       h.files.set(to, h.files.get(from)!);
       h.files.delete(from);
+      if (to === h.crashAt) {
+        h.crashed = true;
+        throw new Error('simulated process termination');
+      }
     },
     chownSync: () => {},
     mkdirSync: () => {},
     rmSync: (file: string, options?: { recursive?: boolean }) => {
+      if (h.crashed) throw new Error('simulated process termination');
       for (const key of h.files.keys()) if (key === file || (options?.recursive && key.startsWith(`${file}/`))) h.files.delete(key);
     },
     readdirSync: () => [h.masterPid],
@@ -120,6 +134,9 @@ beforeEach(() => {
   h.masterPid = '123';
   h.failTest = 0;
   h.signals = [];
+  h.crashAt = '';
+  h.crashed = false;
+  h.crashBefore = false;
   const real = process;
   vi.stubGlobal('process', {
     ...real,
@@ -176,7 +193,7 @@ it('keeps HTTP validation working when one server block listens on both 80 and 4
   material('key-one');
   manageNginx('activate');
   expect(h.files.get(site)).toContain('ssl_certificate /site/cert.pem;');
-  expect(h.files.get(site)).toContain('server_name website.example.test www.example.test;');
+  expect(h.files.get(`${root}/http.conf`)).toContain('server_name website.example.test www.example.test;');
   expect(h.files.get(`${root}/http.conf`)).toContain('proxy_pass https://127.0.0.1:47821;');
   manageNginx('commit');
   material('key-two');
@@ -201,7 +218,7 @@ it('opens HTTP validation before requesting a certificate when Nginx only serves
   h.files.set(site, httpsOnly);
   prepare();
   const beforeCertificate = h.files.get(`${root}/http.conf`)!;
-  expect(beforeCertificate).toContain('listen 80;');
+  expect(beforeCertificate).toContain('listen 203.0.113.10:80;');
   expect(beforeCertificate).toContain('proxy_pass http://127.0.0.1:47822;');
   expect(beforeCertificate).not.toContain('listen 443');
   material('key-one');
@@ -269,4 +286,94 @@ it('restores a separate HTTPS file after activation fails and preserves other ce
   manageNginx('commit');
   manageNginx('remove');
   expect(h.files.get(tlsFile)).toBe(originalTls);
+});
+
+// PR #7776：新增域名不能改变隐式默认网站，具体 IP 监听不能影响另一地址的站点。
+it('keeps the implicit TLS default when adding a domain relay', () => {
+  const implicit = originalSite.replace('443 ssl default_server', '443 ssl').replace('server_name website.example.test;', 'server_name _;');
+  h.files.set(site, implicit);
+  manageNginx('prepare', { address: 'relay.example.test', resolvedAddresses: ['203.0.113.10'] });
+  material('key-one');
+  manageNginx('activate');
+  expect(h.files.get(site)).toContain('listen 443 ssl default_server;');
+  expect(h.files.get(site)).toContain('ssl_certificate /website/cert.pem;');
+  expect(h.files.get(`${root}/http.conf`)).toContain('listen 0.0.0.0:443 ssl;');
+  manageNginx('commit');
+  manageNginx('remove');
+  expect(h.files.get(site)).toBe(implicit);
+});
+
+it('uses the matching specific socket and leaves other IP defaults and HTTP sites intact', () => {
+  const unrelated =
+    'server { listen 203.0.113.11:80; server_name _; return 200 other-http; }\nserver { listen 203.0.113.11:443 ssl; server_name a.example.test; }\nserver { listen 203.0.113.11:443 ssl default_server; server_name _; }';
+  const targeted =
+    'server { listen 203.0.113.10:443 ssl default_server; server_name website.example.test; ssl_certificate /website/cert.pem; ssl_certificate_key /website/key.pem; }';
+  h.files.set(site, targeted + '\n' + unrelated);
+  prepare();
+  expect(h.files.get(site)).toContain(unrelated);
+  material('key-one');
+  manageNginx('activate');
+  expect(h.files.get(site)).toContain(unrelated);
+  expect(h.files.get(`${root}/http.conf`)).toContain('listen 203.0.113.10:443 ssl default_server;');
+  expect(h.files.get(`${root}/http.conf`)).toContain('listen 203.0.113.10:80;');
+  manageNginx('commit');
+  manageNginx('remove');
+  expect(h.files.get(site)).toBe(targeted + '\n' + unrelated);
+});
+
+it.each([
+  ['prepare', true],
+  ['prepare', false],
+  ['activate', false],
+  ['remove', false],
+] as const)(
+  'recovers termination during %s (before rename: %s) without mistaking its own writes for administrator edits',
+  (phase, before) => {
+    if (phase !== 'prepare') {
+      prepare();
+      material('key-one');
+    }
+    if (phase === 'remove') {
+      manageNginx('activate');
+      manageNginx('commit');
+    }
+    h.crashAt = phase === 'prepare' ? site : `${root}/http.conf`;
+    h.crashBefore = before;
+    expect(() => (phase === 'prepare' ? prepare() : manageNginx(phase))).toThrow('simulated process termination');
+    h.crashed = false;
+    h.crashAt = '';
+    prepare();
+    material('key-one');
+    manageNginx('activate');
+    manageNginx('commit');
+    manageNginx('remove');
+    expect(h.files.get(site)).toBe(originalSite);
+    expect(h.files.get(main)).toBe(originalMain);
+  },
+);
+
+it('retains administrator changes made after a process terminates during prepare', () => {
+  h.crashAt = site;
+  expect(() => prepare()).toThrow('simulated process termination');
+  h.crashed = false;
+  h.crashAt = '';
+  const edited = h.files.get(site)! + '\n# administrator change after interruption\n';
+  h.files.set(site, edited);
+  expect(() => prepare()).toThrow('configuration changed');
+  expect(h.files.get(site)).toBe(edited);
+  expect(h.files.has(`${root}/pending.json`)).toBe(true);
+});
+
+it('journals the staged service unit and restores the previous unit when deployment rolls back', () => {
+  const unit = '/etc/systemd/system/cindy-relay.service';
+  h.files.set(unit, '[Service]\nExecStart=previous-relay\n');
+  prepare();
+  h.files.set(`${unit}.new`, '[Service]\nExecStart=new-relay\n');
+  manageNginx('configure-service');
+  expect(h.files.get(unit)).toContain('ExecStart=new-relay');
+  material('key-one');
+  manageNginx('activate');
+  manageNginx('rollback');
+  expect(h.files.get(unit)).toBe('[Service]\nExecStart=previous-relay\n');
+  expect(h.files.get(site)).toBe(originalSite);
 });

@@ -252,7 +252,7 @@ else
   if [ -n "$ACME_DIRECTORY" ]; then EXTRA="$EXTRA --acme-directory $ACME_DIRECTORY"; fi
 fi
 if [ "$MODE" = direct ]; then CAPS=CAP_NET_BIND_SERVICE; fi
-cat > /etc/systemd/system/cindy-relay.service <<UNIT
+cat > /etc/systemd/system/cindy-relay.service.new <<UNIT
 [Unit]
 Description=Cindy self-hosted relay
 After=network-online.target
@@ -277,6 +277,12 @@ LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
 UNIT
+if [ "$MODE" = direct ]; then
+  mv -f /etc/systemd/system/cindy-relay.service.new /etc/systemd/system/cindy-relay.service
+else
+  "$NODE" ${INSTALL_DIR}/relay.mjs nginx --action configure-service >/dev/null
+  rm -f /etc/systemd/system/cindy-relay.service.new
+fi
 systemctl daemon-reload
 systemctl enable cindy-relay >/dev/null 2>&1
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
@@ -297,6 +303,7 @@ BUNDLE=${INSTALL_DIR}/relay.mjs
 if [ -f ${INSTALL_DIR}/relay.mjs.new ]; then BUNDLE=${INSTALL_DIR}/relay.mjs.new; fi
 if [ "$ACTION" != commit ]; then "$NODE" "$BUNDLE" nginx --action "$ACTION" "$@"; fi
 if [ "$ACTION" = rollback ]; then
+  rm -f /etc/systemd/system/cindy-relay.service.new
   systemctl daemon-reload
   if [ -f /etc/systemd/system/cindy-relay.service ]; then systemctl restart cindy-relay
   else systemctl stop cindy-relay >/dev/null 2>&1 || true; fi
@@ -349,7 +356,7 @@ if [ -f /etc/cindy-relay/nginx/state.json ]; then
   rm -f /etc/systemd/system/cindy-relay-nginx.timer /etc/systemd/system/cindy-relay-nginx.service
 fi
 systemctl disable --now cindy-relay >/dev/null 2>&1 || true
-rm -f /etc/systemd/system/cindy-relay.service
+rm -f /etc/systemd/system/cindy-relay.service /etc/systemd/system/cindy-relay.service.new
 systemctl daemon-reload >/dev/null 2>&1 || true
 rm -rf ${INSTALL_DIR}
 if [ "$1" = 1 ]; then
