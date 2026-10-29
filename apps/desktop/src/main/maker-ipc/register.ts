@@ -11404,7 +11404,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     withCloseSuppressed: withRehydrateCloseSuppressed,
     pendingSwitches: agentSwitchPending,
-    selectSameAgentModel: async (sessionId, intent, applyNow, assertSelectionCurrent, beforeMutation) => {
+    selectSameAgentModel: async (sessionId, intent, applyNow, assertSelectionCurrent, beforeMutation, pendingSelectionAccess) => {
       const result = await applySessionRuntimeSelection(sessionId, intent.model, intent.providerId, {
         effort: (intent.effort ?? null) as SessionRuntimeProfile['effort'],
         fastMode: intent.fastMode ?? false,
@@ -11414,7 +11414,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         ...(intent.confirmedContextWindow ? { confirmedContextWindow: intent.confirmedContextWindow } : {}),
       }, { source: 'user', sessionLockHeld: true, applyingUserSelectionOnSend: applyNow,
         runtimeSource: intent.runtimeSource, configStaged: intent.configStaged === true,
-        assertSelectionCurrent, beforeMutation });
+        assertSelectionCurrent, beforeMutation, pendingSelectionAccess });
       if (result.contextWindowConfirmationRequired !== undefined) {
         throwIpcError('PRECONDITION_FAILED', 'Model context window changed or was unknown; select the model again to confirm');
       }
@@ -16606,6 +16606,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
 
   type InternalRuntimeSelectionOptions = {
     source: 'user' | SessionRuntimeMutationSource;
+    /** Host-owned pending choice triggered by a guest send; never supplied by IPC. */
+    pendingSelectionAccess?: ReturnType<typeof createSharedTaskSettingGuard>;
     runtimeSource?: 'agent';
     /** 系统配置对齐(IM 渠道默认跟随 / 伙伴模型对齐)登记: 落地时不打「脱离跟随」标记。 */
     configStaged?: boolean;
@@ -22731,7 +22733,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (internalOptions.source !== 'user') return { deferred: false, superseded: true };
       throwIpcError('PRECONDITION_FAILED', 'the agent is still working; change the model after this turn');
     }
-    assertSharedTaskCurrent.admit();
     // 换到上下文更小的模型：与本机任务同一套保护——占用超过目标窗口的安全线时先把对话交接
     // 成摘要、关掉当前会话，下一次发送按新模型重新开始。Orca 发送前重读目标窗口，
     // 只有本机确认的具体窗口仍匹配时才允许重建，冷恢复也经过同一保护。
@@ -22763,7 +22764,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (orcaSelectionOnSend) {
         if (supersededByOwnerBoundary()) return { deferred: false, superseded: true };
         assertRuntimeOwnerCurrent();
-        assertSharedTaskCurrent.admit();
       }
       rebuiltForWindow = prepared === 'rebuilt';
       // Cold Pi verification can attach a runtime; use that handle for setModel.
@@ -22775,6 +22775,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       const rebuild = await live.requiresModelSwitchRebuild?.(model, { providerId: targetProviderId }) ?? false;
       if (internalOptions.beforeMutation) await internalOptions.beforeMutation();
       assertRuntimeOwnerCurrent();
+      // Remote preflight may outlive guest membership. Admit only once the first
+      // mutation starts; a window rebuild admits earlier via assertCanCommit.
+      assertSharedTaskCurrent.admit();
       if (rebuild) {
         await withRehydrateCloseSuppressed(sessionId, () => maker.closeSession(sessionId, 'runtime-refresh'));
       } else {
@@ -22785,6 +22788,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         if (atomicSelection) await live.setFastMode?.(targetFastMode);
       }
     }
+    // A cold runtime can reach persistence without setModel or a window rebuild.
+    assertRuntimeOwnerCurrent();
+    assertSharedTaskCurrent.admit();
     setSessionProvider(sessionId, targetProviderId);
     if (atomicSelection) {
       setSessionEffort(sessionId, targetEffort);
@@ -22906,7 +22912,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     let atomicSelection = selection as
       { effort: SessionRuntimeProfile['effort']; fastMode: boolean | 'ultrafast'; thinking?: boolean } | undefined;
     const runtimeOwnerEpoch = captureSessionRuntimeControlOwnerEpoch();
-    const assertSharedTaskCurrent = captureSharedTaskSettingGuard(sessionId);
+    const assertSharedTaskCurrent = internalOptions.pendingSelectionAccess ?? captureSharedTaskSettingGuard(sessionId);
     const assertRuntimeOwnerCurrent = (): void => {
       assertSharedTaskCurrent();
       internalOptions.assertSelectionCurrent?.();
