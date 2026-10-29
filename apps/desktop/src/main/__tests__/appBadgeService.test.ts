@@ -182,7 +182,7 @@ describe('appBadgeService', () => {
     expect(dockSetBadge).toHaveBeenLastCalledWith('');
   });
 
-  it('drops off-catalog attention once the projection arrives so the badge stays reader-clearable', async () => {
+  it('counts the projection once it arrives while keeping off-catalog attention in the event ledger', async () => {
     const service = await freshService();
     const event = { sender: mainWebContents };
     // 首份投影前 renderer 还没挂载：逐任务通知独自撑角标，且重复打点不重复计数。
@@ -191,14 +191,17 @@ describe('appBadgeService', () => {
     expect(service.getAttentionCount()).toBe(1);
     service.markSessionNeedsAttention('late-review-run');
     expect(service.getAttentionCount()).toBe(2);
-    // 目录就绪后它就是界面的权威清单：目录外的 id 既不可见也不可清除，必须丢弃，
+    // 目录就绪后它是角标的权威清单：目录外的 id 既不可见也不可清除，不再抬角标，
     // 否则角标会永久停在界面读不掉的数字上（“有未读但点不掉”）。
     await publish(event, 3, ['a', 'b', 'c']);
     expect(service.getAttentionCount()).toBe(3);
-    expect(service.hasSessionAttention('early-task')).toBe(false);
-    expect(service.hasSessionAttention('late-review-run')).toBe(false);
+    // 但事件账本不能跟着收缩：灵动岛靠 hasSessionAttention() 水合未读，
+    // 目录外会话（/review、追问 fork）的恢复路径要靠它。
+    expect(service.hasSessionAttention('early-task')).toBe(true);
+    expect(service.hasSessionAttention('late-review-run')).toBe(true);
     await publish(event, 2, ['a', 'b', 'c']);
     expect(service.getAttentionCount()).toBe(2);
+    expect(service.hasSessionAttention('late-review-run')).toBe(true);
     service.clearSessionAttention('bot-task');
     expect(service.getAttentionCount()).toBe(2);
     // 目录内的 id 始终由投影接管：重复打点、迟到打点都不叠加计数。

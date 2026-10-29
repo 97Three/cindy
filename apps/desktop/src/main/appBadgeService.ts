@@ -21,7 +21,8 @@ const MAX_RETAINED_SESSION_IDS = 100_000;
 const attentionSessionIds = new Set<string>();
 // 侧栏就绪后目录内任务按当前状态计数；目录外的 id 既不在界面上出现，也没有
 // 「读到 / 删除」这类清除入口，计入只会让角标停在用户点不掉的数字上，因此只在
-// 首份投影前用事件集合兜底，避免 renderer 尚未挂载时漏掉后台提醒。
+// 首份投影前用事件集合兜底，避免 renderer 尚未挂载时漏掉后台提醒。事件集合本身
+// 不随投影收缩：灵动岛靠 hasSessionAttention() 水合未读，目录外的 id 也要留着。
 let projectedAttentionCount: number | null = null;
 const projectedSessionIds = new Set<string>();
 
@@ -91,11 +92,6 @@ export function initAppBadgeService(deps: AppBadgeServiceDeps): void {
     projectedAttentionCount = count;
     // 曾进入普通目录的任务始终归投影管理，删除/断连后不能被旧通知重新计入。
     for (const sessionId of uniqueSessionIds) projectedSessionIds.add(sessionId);
-    // 目录已是权威清单：留在目录外的 attention 永远不会出现在界面上，也没有任何
-    // 清除入口（读不到、删不掉），只会把角标撑出界面上读不掉的数字。直接丢弃。
-    for (const sessionId of attentionSessionIds) {
-      if (!projectedSessionIds.has(sessionId)) attentionSessionIds.delete(sessionId);
-    }
     if (getAttentionCount() !== previousCount) applyBadge();
   });
   ipcMain.handle(
