@@ -110,6 +110,12 @@ Earlier unreleased artwork (including Blue Gaze, Amber Light and the 2026-10-16 
 trimmed on 2026-10-17) is not shipped and needs no compatibility.
 The new artwork uses the existing continuous cover fit, theme-derived visibility
 and blur controls. None remains the default and restores the theme canvas.
+While a window's opaque in-app wallpaper canvas is active, disable its covered
+native macOS Vibrancy / Windows backdrop material. Restore the theme's native
+material when that canvas is removed. Use actual per-window canvas state rather
+than the saved selection; pending replacements may retain the previous canvas.
+The visibility veil (including 0%) remains opaque to the desktop. Wallpaper blur
+and in-app overlay blur keep their existing behavior.
 The picker remains an inline compact grid (user choice, 2026-10-15): use
 container-width-driven columns with a 6rem minimum, 8px grid gaps, 16:9 previews,
 and a 4px gap before each readable name. At the standard 1280px window width this
