@@ -9,6 +9,7 @@ import { resetBrowserProxyDnsVerdictCache } from '@cindy/browser-control-runtime
 import {
   BrowserProxyAuthCoordinator,
   closeAdoptedManagedBrowser,
+  commandLineHasArgumentValue,
   commandLineHasExactArgument,
 } from '../proxy-auth.js';
 
@@ -183,6 +184,53 @@ describe('commandLineHasExactArgument', () => {
     ]) {
       expect(commandLineHasExactArgument(line, `--user-data-dir=${dir}`), line).toBe(true);
     }
+  });
+});
+
+describe('commandLineHasArgumentValue', () => {
+  const dir = 'C:\\Users\\me\\AppData\\Roaming\\Cindy\\browser-runtime\\browser\\Cindy\\user-data';
+
+  it('matches a Windows value that the shell quoted', () => {
+    // Windows quotes an argument whose value contains spaces, so the very same
+    // option appears as --user-data-dir="..." there. Token matching answered
+    // "not ours" for every Windows profile path, which disabled the identity
+    // proof behind each process kill.
+    expect(commandLineHasArgumentValue(
+      `"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe" --remote-debugging-port=18800 --user-data-dir="${dir}" --no-startup-window`,
+      '--user-data-dir',
+      dir,
+    )).toBe(true);
+    expect(commandLineHasArgumentValue(
+      `--remote-debugging-port=18800 --user-data-dir="${dir}"`,
+      '--remote-debugging-port',
+      '18800',
+    )).toBe(true);
+  });
+
+  it('matches an unquoted POSIX value', () => {
+    expect(commandLineHasArgumentValue(
+      'chrome --user-data-dir=/Users/me/Cindy/user-data --remote-debugging-port=18800',
+      '--user-data-dir',
+      '/Users/me/Cindy/user-data',
+    )).toBe(true);
+  });
+
+  it('rejects a value that is merely a prefix of the expected one', () => {
+    // The result feeds a process kill, so a different profile must not match.
+    expect(commandLineHasArgumentValue(
+      `chrome --user-data-dir="${dir}-backup"`,
+      '--user-data-dir',
+      dir,
+    )).toBe(false);
+    expect(commandLineHasArgumentValue(
+      'chrome --remote-debugging-port=188000',
+      '--remote-debugging-port',
+      '18800',
+    )).toBe(false);
+  });
+
+  it('rejects a missing option', () => {
+    expect(commandLineHasArgumentValue('chrome --headless', '--user-data-dir', dir)).toBe(false);
   });
 });
 

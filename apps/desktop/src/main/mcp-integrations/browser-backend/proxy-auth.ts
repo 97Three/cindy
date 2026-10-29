@@ -174,6 +174,41 @@ export function commandLineHasExactArgument(commandLine: string, argument: strin
 }
 
 /**
+ * Whether the command line carries `--key=value` for exactly this value.
+ *
+ * Windows quotes an argument whose value contains spaces, so the same option
+ * appears as `--user-data-dir="C:\Users\me\AppData\...\user-data"` there and
+ * as `--user-data-dir=/Users/me/...` on POSIX. Exact-token matching alone
+ * therefore answers "not ours" on Windows for every profile path under
+ * `C:\Users\<name>`, which silently disables the profile+port identity proof
+ * that guards each process kill — the browser then survives every stop and
+ * keeps the CDP port.
+ *
+ * The value must match completely: a value that merely starts with the
+ * expected one (`...Cindy-backup`) is a different profile and must not match.
+ */
+export function commandLineHasArgumentValue(
+  commandLine: string,
+  key: string,
+  value: string,
+): boolean {
+  const marker = `${key}=`;
+  let offset = commandLine.indexOf(marker);
+  while (offset >= 0) {
+    const before = offset === 0 ? '' : commandLine[offset - 1];
+    const rest = commandLine.slice(offset + marker.length);
+    // The value may arrive quoted (Windows) or bare (POSIX, where a path can
+    // contain spaces). Both must be followed by a delimiter so a longer value
+    // is not mistaken for the expected one.
+    const quoted = rest.startsWith(`"${value}"`) || rest.startsWith(`'${value}'`);
+    const bare = rest.startsWith(value) && (!rest[value.length] || /[\s"']/.test(rest[value.length]));
+    if ((!before || /[\s"']/.test(before)) && (quoted || bare)) return true;
+    offset = commandLine.indexOf(marker, offset + 1);
+  }
+  return false;
+}
+
+/**
  * Windows command-line identity for a PID.
  *
  * The vendored `readManagedProcessCommandLine` only implements Linux (/proc)
@@ -221,8 +256,11 @@ async function isManagedChromeProcess(params: {
   // Same two proofs the POSIX path requires: our profile AND our debug port.
   // Exact-argument matching, not substring: `--user-data-dir=<dir>` is a prefix
   // of `--user-data-dir=<dir>-backup`, and this result feeds `taskkill /T /F`.
-  return commandLineHasExactArgument(commandLine, `--user-data-dir=${params.userDataDir}`)
-    && commandLineHasExactArgument(commandLine, `--remote-debugging-port=${params.cdpPort}`);
+  // Value matching (not token matching) because Windows quotes values that
+  // contain spaces, which would otherwise fail the proof on every Windows
+  // profile path and leave the browser unkillable.
+  return commandLineHasArgumentValue(commandLine, '--user-data-dir', params.userDataDir)
+    && commandLineHasArgumentValue(commandLine, '--remote-debugging-port', String(params.cdpPort));
 }
 
 /**
@@ -302,6 +340,47 @@ export async function isManagedBrowserGone(cdpHttpUrl: string): Promise<boolean>
   return await confirmCdpGone(cdpHttpUrl);
 }
 
+/**
+ * Terminate the managed browser that owns the CDP port, at the OS level.
+ *
+ * The in-memory runtime can only signal a process it launched itself. On
+ * Windows the spawned `msedge.exe` is a short-lived launcher: it hands the
+ * command line to the real browser and exits, leaving the runtime with a PID
+ * that no longer exists while the browser keeps serving CDP. Signal-based
+ * stops then hit nothing, the port stays occupied, and the next launch fails
+ * with "the pre-existing managed browser could not be stopped".
+ *
+ * Every candidate is re-identified by profile AND debug port before it is
+ * signalled, so this can never touch a browser the user started themselves.
+ * The port is re-checked afterwards, because issuing the kill is not the same
+ * as the process being gone: taskkill can fail on permissions or lose a race.
+ *
+ * Returns true when the CDP port is free afterwards.
+ */
+export async function terminateManagedChromePortOwner(params: {
+  cdpHttpUrl: string;
+  cdpPort: number;
+  userDataDir: string;
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void };
+}): Promise<boolean> {
+  const reclaimLogger = {
+    info: (message: string, meta?: Record<string, unknown>) => params.logger?.warn(message, meta),
+    warn: (message: string, meta?: Record<string, unknown>) => params.logger?.warn(message, meta),
+  };
+  for (const owner of await findPortOwnerPids(params.cdpPort)) {
+    if (!(await isManagedChromeProcess({
+      pid: owner,
+      cdpPort: params.cdpPort,
+      userDataDir: params.userDataDir,
+    }))) {
+      params.logger?.warn('skipping CDP port owner: not the managed browser', { pid: owner });
+      continue;
+    }
+    await killPortOwner(owner, reclaimLogger);
+  }
+  return !(await isCdpPortListening(params.cdpHttpUrl));
+}
+
 export async function closeAdoptedManagedBrowser(
   cdpHttpUrl: string,
   expectedUserDataDir: string,
@@ -346,8 +425,8 @@ export async function closeAdoptedManagedBrowser(
         if (message.id === 1) {
           const commandLine = (message.result as { commandLine?: unknown } | undefined)?.commandLine;
           const owned = typeof commandLine === 'string'
-            && commandLineHasExactArgument(commandLine, `--remote-debugging-port=${expectedCdpPort}`)
-            && commandLineHasExactArgument(commandLine, `--user-data-dir=${expectedUserDataDir}`);
+            && commandLineHasArgumentValue(commandLine, '--remote-debugging-port', expectedCdpPort)
+            && commandLineHasArgumentValue(commandLine, '--user-data-dir', expectedUserDataDir);
           if (!owned) {
             finish(false);
             return;
@@ -843,28 +922,19 @@ export class BrowserProxyAuthCoordinator {
       //
       // killPortOwner refuses protected/self PIDs and uses `taskkill /T`, which
       // matters because Chrome's renderer children would otherwise be orphaned.
-      const reclaimLogger = {
-        info: (message: string, meta?: Record<string, unknown>) => this.logger.warn(message, meta),
-        warn: (message: string, meta?: Record<string, unknown>) => this.logger.warn(message, meta),
-      };
-      for (const owner of await findPortOwnerPids(cdpPort)) {
-        if (!(await isManagedChromeProcess({
-          pid: owner,
-          cdpPort,
-          userDataDir: managedUserDataDir,
-        }))) {
-          this.logger.warn('skipping CDP port owner: not the managed browser', { pid: owner });
-          continue;
-        }
-        await killPortOwner(owner, reclaimLogger);
-      }
+      const gone = await terminateManagedChromePortOwner({
+        cdpHttpUrl: this.cdpHttpUrl ?? 'http://127.0.0.1:18800',
+        cdpPort,
+        userDataDir: managedUserDataDir,
+        logger: this.logger,
+      });
       // Issuing the kill is not exit. taskkill can fail on permissions, lose a
       // race, or return an error, and killPortOwner reports that as false —
       // which the loop above deliberately does not act on per-PID, since a
       // partial failure still leaves the port to check. Verify centrally
       // instead: if the port is still held, nothing was actually torn down and
       // the caller must keep treating this route as untrusted.
-      if (await isCdpPortListening(this.cdpHttpUrl ?? 'http://127.0.0.1:18800')) {
+      if (!gone) {
         this.logger.warn(
           'managed browser survived proxy-guard teardown; route stays blocked until a verified stop',
         );
