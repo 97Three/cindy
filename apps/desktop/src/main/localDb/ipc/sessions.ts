@@ -1037,6 +1037,7 @@ export interface SessionRowSnapshot {
   title: string | null;
   userSendAt: number | null;
   workingDir: string | null;
+  projectDir?: string | null;
   workspaceKind: string | null;
   providerId: string | null;
   /** Hook exact-takeover must reject SSH-owned sessions. */
@@ -1067,6 +1068,7 @@ async function selectSessionRowSnapshot(id: string): Promise<SessionRowSnapshot 
       title: sessions.title,
       userSendAt: sessions.userSendAt,
       workingDir: sessions.workingDir,
+      projectDir: sessions.projectDir,
       workspaceKind: sessions.workspaceKind,
       // heartbeat 任务 providerId 留空时,沿用绑定会话在聊天里选的来源(与 model
       // 留空沿用 meta.model 对称)。零新增查询,复用 runner 已并行取的这行快照。
@@ -2598,6 +2600,7 @@ export async function updateSessionInDb(
       status: updated.status,
       title: updated.title,
       workingDir: updated.workingDir,
+      projectDir: updated.projectDir,
       workspaceKind: updated.workspaceKind,
     });
     scheduleWorktreeRecycleForStatusChange(sid, p.status, { ownerScope, mediaDb: db });

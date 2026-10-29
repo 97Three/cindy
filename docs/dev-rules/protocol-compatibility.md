@@ -269,6 +269,10 @@ Session 列表与搜索摘要新增可选 `projectDir`，数据库 migration 013
 忽略新字段，执行目录与项目不同时仍显示旧分组，需升级查看端获得一致归属。
 没有修改 device-link allowlist、账号边界或任务路径权限。
 
+灵动岛沿用同一归属：本机元数据读取和移动更新保留 `projectDir`，远程任务经现有
+Renderer → Main 输入附带可选 `projectDir`，旧输入缺字段时回落到执行目录。
+该字段只影响项目名称；伙伴群名和无项目任务的显示规则保持原样，不新增 channel 或能力。
+
 本机 Agent 工具的新建模式要求 `project_path`；`list_projects` / `create_project`
 保留 `working_dir` 并新增 `project_path` 回执。旧调用缺参数明确失败，不静默新建。
 `send_to_session` 的既有任务投递不要求项目，跨电脑投递合同不变。
