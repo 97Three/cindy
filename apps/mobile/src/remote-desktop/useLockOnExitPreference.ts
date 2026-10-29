@@ -32,7 +32,8 @@ export function useRemoteDesktopPreference(
           });
       })
       .catch(() => {
-        if (active) setState({ key, enabled: false, loaded: true });
+        // An unreadable override is not an opt-out: follow the current default.
+        if (active) setState({ key, enabled: defaultValue, loaded: true });
       });
     return () => {
       active = false;
