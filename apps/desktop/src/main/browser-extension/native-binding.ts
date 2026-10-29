@@ -14,6 +14,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import net from 'node:net';
 
 export interface NativeBindingOptions {
   /** 注册名(身份卡 browserExtension.nativeHost.name)。 */
@@ -110,6 +111,20 @@ export function createNativeBinding(options: NativeBindingOptions): NativeBindin
     );
   }
 
+  /** Whether something answers on the loopback port a connection file names. */
+  function portListening(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const socket = net.connect({ host: '127.0.0.1', port });
+      const done = (value: boolean) => {
+        socket.destroy();
+        resolve(value);
+      };
+      socket.setTimeout(500, () => done(false));
+      socket.once('connect', () => done(true));
+      socket.once('error', () => done(false));
+    });
+  }
+
   /**
    * Withdraw the browser registrations once no Cindy still serves a connection. The registration
    * is shared by every Cindy on this account (release and dev builds, both editions), and each
@@ -117,8 +132,22 @@ export function createNativeBinding(options: NativeBindingOptions): NativeBindin
    * cut that one off until it restarts.
    */
   async function unregisterIfUnused(): Promise<void> {
-    const live = await fs.readdir(path.join(root, 'connections')).catch(() => null);
-    if (live === null || live.some((name) => name.endsWith('.json'))) return;
+    const dir = path.join(root, 'connections');
+    const names = await fs.readdir(dir).catch(() => null);
+    if (names === null) return;
+    // A crashed Cindy leaves its file behind. A file whose port nothing listens on is stale: clear
+    // it so it cannot keep the registration alive forever. An unreadable name counts as live.
+    let anyLive = false;
+    for (const name of names) {
+      if (!name.endsWith('.json')) continue;
+      const port = Number(name.slice(0, -'.json'.length));
+      if (Number.isInteger(port) && port > 0 && !(await portListening(port))) {
+        await fs.rm(path.join(dir, name), { force: true }).catch(() => undefined);
+      } else {
+        anyLive = true;
+      }
+    }
+    if (anyLive) return;
     const binaryName = 'cindy-browser-native' + (platform === 'win32' ? '.exe' : '');
     const ours = path.join(root, binaryName);
     if (platform === 'win32') {

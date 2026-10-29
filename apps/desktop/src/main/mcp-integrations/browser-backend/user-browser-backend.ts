@@ -891,6 +891,7 @@ export class UserBrowserBackend implements BrowserBackend {
       !request.selector &&
       !request.loadState &&
       !request.url &&
+      !request.text &&
       !request.textGone &&
       !request.fn
     ) {

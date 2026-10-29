@@ -17,11 +17,15 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import net from 'node:net';
+
 import { createNativeBinding } from '../native-binding';
 
 const EXT = 'a'.repeat(32);
 const dirs: string[] = [];
+const servers: net.Server[] = [];
 afterEach(async () => {
+  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
   await Promise.all(dirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
@@ -64,8 +68,11 @@ describe('native-binding', () => {
       path: path.join(root, 'cindy-browser-native'),
     });
     expect(JSON.stringify(manifest)).not.toContain(n.token);
-    expect((await fs.stat(path.join(root, 'connections', '18819.json'))).mode & 0o777).toBe(0o600);
-    expect((await fs.stat(root)).mode & 0o777).toBe(0o700);
+    // Windows reports its own permission bits (0o666); owner-only modes are a POSIX property.
+    if (process.platform !== 'win32') {
+      expect((await fs.stat(path.join(root, 'connections', '18819.json'))).mode & 0o777).toBe(0o600);
+      expect((await fs.stat(root)).mode & 0o777).toBe(0o700);
+    }
     expect(await fs.readFile(path.join(root, 'cindy-browser-native'), 'utf8')).toBe(
       'fixture executable',
     );
@@ -84,13 +91,18 @@ describe('native-binding', () => {
       platform: 'darwin' as const,
       arch: 'arm64',
     };
+    // The instance that kept the port is running, so something listens on it.
+    const server = net.createServer();
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    servers.push(server);
+    const port = (server.address() as net.AddressInfo).port;
     const a = createNativeBinding(opts);
     const b = createNativeBinding(opts);
-    await a.install(18819, [EXT]);
-    await b.install(18819, [EXT]);
+    await a.install(port, [EXT]);
+    await b.install(port, [EXT]);
     await a.close();
     expect(
-      JSON.parse(await fs.readFile(path.join(root, 'connections', '18819.json'), 'utf8')).token,
+      JSON.parse(await fs.readFile(path.join(root, 'connections', `${port}.json`), 'utf8')).token,
     ).toBe(b.token);
     await b.close();
   });
@@ -108,14 +120,50 @@ describe('native-binding', () => {
       arch: 'arm64',
     };
     const registration = path.join(profile, 'NativeMessagingHosts', 'com.example.browser.json');
+    // A running Cindy listens on the port its connection file names.
+    const listen = async () => {
+      const server = net.createServer();
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      servers.push(server);
+      return (server.address() as net.AddressInfo).port;
+    };
+    const releasePort = await listen();
+    const devPort = await listen();
     const release = createNativeBinding(opts);
     const dev = createNativeBinding(opts);
-    await release.install(18810, [EXT]);
-    await dev.install(18811, [EXT]);
+    await release.install(releasePort, [EXT]);
+    await dev.install(devPort, [EXT]);
     await dev.close();
     await expect(fs.access(registration)).resolves.toBeUndefined();
     await release.close();
     await expect(fs.access(registration)).rejects.toThrow();
+  });
+
+  // Review 2026-10-29 (Greptile P2): a crashed Cindy leaves its connection file, which then kept the
+  // registration alive for good once another port was in use.
+  it('ignores and clears the connection file a crashed Cindy left behind', async () => {
+    const { binaryDir, profile, root } = await fixture();
+    const opts = {
+      hostName: 'com.example.browser',
+      binaryDir,
+      root,
+      profiles: [profile],
+      platform: 'darwin' as const,
+      arch: 'arm64',
+    };
+    const registration = path.join(profile, 'NativeMessagingHosts', 'com.example.browser.json');
+    const server = net.createServer();
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    servers.push(server);
+    const port = (server.address() as net.AddressInfo).port;
+    // Nothing listens on this port any more.
+    const deadPort = port === 65535 ? port - 1 : port + 1;
+    const live = createNativeBinding(opts);
+    await live.install(port, [EXT]);
+    await fs.writeFile(path.join(root, 'connections', `${deadPort}.json`), JSON.stringify({ token: 'x'.repeat(64) }));
+    await live.close();
+    await expect(fs.access(registration)).rejects.toThrow();
+    await expect(fs.access(path.join(root, 'connections', `${deadPort}.json`))).rejects.toThrow();
   });
 
   it('Windows registration uses only current-user fixed registry keys and argv', async () => {

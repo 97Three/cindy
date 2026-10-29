@@ -758,6 +758,20 @@ describe('UserBrowserBackend · 读取与动作', () => {
 
   // Review 2026-10-29: an installed but unpaired extension waited 8 s and was then told to install
   // the extension; it must be reported at once with its real reason.
+  // Review 2026-10-29 (Greptile P1): {kind:'wait', timeMs, text} was treated as a pure sleep and
+  // returned success without ever checking that the text appeared.
+  it('带文字条件的等待交给页面检查,不当作纯睡眠', async () => {
+    const fake = fakeControl({ version: '0.4.46' });
+    fake.responses.set('open', (payload) => ({ ok: true, tabId: 42, window: 500, url: payload.url, title: 'T' }));
+    fake.responses.set('wait', () => ({ ok: true, execution: 'executed' }));
+    const b = backend(fake.control);
+    await call(b, { action: 'open', url: 'https://example.test/new', label: 'n' });
+    const started = Date.now();
+    await call(b, { action: 'act', targetId: 'n', request: { kind: 'wait', timeMs: 20000, text: '上传完成' } });
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(fake.jobs.at(-1)).toMatchObject(['wait', { text: '上传完成', tabId: 42 }]);
+  });
+
   // Review 2026-10-29: with many tabs the list is cut at its limit, and the handle of a tab the
   // agent had just opened vanished because it was not in the truncated list.
   it('标签页列表被截断时不丢掉没列出来的已记住标签', async () => {

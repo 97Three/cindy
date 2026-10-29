@@ -14336,6 +14336,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       archive: async (taskId, assertAllowed) => {
         await patchSessionMetaInDb(taskId, { status: 'archived' }, { beforeWrite: assertAllowed });
       },
+      // Synchronous, so the archive can look again under the session write lock.
+      isBusy: taskId => Boolean(readExecution(taskId))
+        || inputCoordinator.getQueueControlSnapshot(taskId).pendingQueue.length > 0,
       revealPluginTasks: async pluginId => {
         // 不受详情页列表的展示上限约束：分批恢复全部，避免卸载撤销归属后仍有任务隐藏。
         await revealAllPluginHiddenTasks(snapshot.client, pluginId, taskId =>

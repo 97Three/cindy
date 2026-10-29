@@ -230,8 +230,11 @@ pnpm --filter @cindy/browser-control-runtime test    # 契约 + SSRF guard
 
 - 第三个 `BackendKind` `user-browser`:`apps/desktop/src/main/mcp-integrations/browser-backend/user-browser-backend.ts` 把 `BrowserControlRequest` 翻译成随包浏览器扩展的页面作业,经 `cindy-brain/browserExtensionSlot.ts` 持有的桥接(`main/browser-extension/bridge.ts`,从 Cindy Chrome 插件的接线进程原样迁入,线协议 `cindy-browser-extension/3` 不变,已装扩展无需更新)投递到用户正在使用的 Chrome / Edge。
 - 设置 →「自动操作」三选一:专用浏览器(默认)/ 侧边栏 / 我的浏览器;选哪一个是**默认**目标,Agent 的 `setBackend` 仍是同一个全局持久选择。没有声明 `browserExtension.pageControl` 的插件时该目标 `status.ready === false`,健康面板报 `extension-disconnected`,不提供恢复按钮。
-- 能力边界由扩展决定(隔离世界固定函数,无 debugger):只支持 tabs / open / navigate / snapshot / extract / act(click / type / fill / press / hover / select / wait);`deps.backendCapabilities()` 让 MCP 层在派发前拒绝 screenshot / evaluate / requests / upload / dialog / console / pdf / focus / close / 坐标与拖拽,以及需要 guard / evaluate / 适配器 / 网络读取的配方,错误文案要求模型告知用户而不是自行切换。extract 与登录墙检测走 PR #7432 的声明式 `domRead`,不需要任意脚本。
-- 寻址:扩展当前按精确 URL 寻址,后端维护 targetId ↔ {连接, tabId, url};作业前用 `tabs` 核对,URL 变化报 `PAGE_CHANGED` 并刷新记录,不猜新页。扩展侧加 tabId / documentId 寻址后这里只需改 `locate`。
+- 能力边界由扩展版本决定(`USER_BROWSER_PARITY_VERSION`,当前 0.4.43):
+  - 0.4.43 起与专用浏览器对齐:截图(含整页、元素、后台标签页)、evaluate、requests、上传、对话框、console、PDF、focus、关闭、坐标与拖拽、站点配方的协议会话都可用;调试接口(`chrome.debugger`)是可选权限,只在需要的动作里临时接上、用完断开,第一次用到时由扩展弹出授权页。
+  - 更旧的扩展只有基础能力(tabs / open / navigate / snapshot / extract / act),由 `deps.backendCapabilities()`(`userBrowserCapabilities`)让 MCP 层在派发前拒绝其余动作,错误文案要求模型告知用户而不是自行切换。没有任何连接时按完整能力报,具体断开由后端按作业报告。
+  - extract 与登录墙检测走 PR #7432 的声明式 `domRead`,不需要任意脚本。
+- 寻址:新版扩展(≥ 0.4.43)按 tabId 寻址,后端维护 targetId ↔ {连接, 浏览器启动标识, tabId, url};targetId 带启动标识,浏览器重启后旧句柄不再解析。旧版扩展仍按精确 URL 寻址:作业前用 `tabs` 核对,URL 变化报 `PAGE_CHANGED` 并刷新记录,不猜新页。
 - 站点策略归插件:读与交互默认开放,本机与私网和公网网站一样可访问、也可写进名单屏蔽(2026-10-28);宿主没有缓存时在收到插件策略前拒绝作业;宿主缓存在 `ownerScopedUserDataPath('browser-extension')`,每个作业经桥接强制。`cindy_browser` 的免审批前提在该目标下由这套策略补上。
 - 回归:`browser-extension/__tests__/bridge.test.ts`(协议)、`cindy-brain/__tests__/browserExtensionSlot.test.ts`(槽)、`browser-backend/__tests__/user-browser-backend.test.ts`(翻译)、`lizi-mcps` 的 capability gating 用例;真实 Chrome 验收用 Google Play 发包案例与插件翻译。
 

@@ -4084,6 +4084,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         importId?: unknown;
         pluginId?: unknown;
         snapshotId?: unknown;
+        ghostId?: unknown;
         invitation?: unknown;
         token?: unknown;
         server?: unknown;
@@ -4116,6 +4117,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
         callback({ type: 'plugin', pluginId: p.pluginId });
       } else if (p.type === 'local-plugin-share' && isLocalPluginSnapshotId(p.snapshotId)) {
         callback({ type: 'local-plugin-share', snapshotId: p.snapshotId });
+      } else if (p.type === 'installed-plugin' && (p.ghostId === undefined || (typeof p.ghostId === 'string' && /^[a-z0-9][a-z0-9-]{0,31}$/.test(p.ghostId)))) {
+        // A plugin's own id (same rule as isValidGhostId in shared/ghost), not a market resource id.
+        // The bare list link carries none. Main validated it already; a malformed id drops the payload.
+        callback({ type: 'installed-plugin', ...(typeof p.ghostId === 'string' ? { ghostId: p.ghostId } : {}) });
       } else if (p.type === 'chat-message' && typeof p.groupId === 'string' && typeof p.messageId === 'string'
         && [p.groupId, p.messageId, ...(p.threadRootId === undefined ? [] : [p.threadRootId])].every(value => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value))) {
         callback({ type: 'chat-message', groupId: p.groupId, messageId: p.messageId,

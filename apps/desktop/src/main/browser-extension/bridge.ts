@@ -419,6 +419,14 @@ export class BrowserExtensionBridge {
         l && typeof l.url === 'string' ? { ...l, url: redactBrowserUrl(l.url) } : l,
       );
     }
+    if (Array.isArray(out.requests)) {
+      // Network results carry page URLs too (OAuth codes, reset tokens, embedded credentials).
+      out.requests = out.requests.map((r: { url?: unknown }) =>
+        r && typeof r === 'object' && typeof r.url === 'string'
+          ? { ...r, url: r.url.length > 8192 ? null : redactBrowserUrl(r.url) }
+          : r,
+      );
+    }
     let remaining = maxChars;
     const boundRecord = (entry: unknown): unknown => {
       if (!entry || typeof entry !== 'object') return entry;

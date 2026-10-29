@@ -3198,6 +3198,9 @@ const GHOST_MANIFEST_KNOWN_TOP_LEVEL_FIELDS = new Set([
   'pick',
   'workspace',
   'iosSimulator',
+  // Interpreted by Host: ghostBrowserExtensionWithinCap checks it against the reviewed manifest
+  // (narrowing is allowed), so it must not also fall under the exact-match rule for unknown fields.
+  'browserExtension',
 ]);
 
 const V3_BOOLEAN_CAPABILITY_FIELDS = [

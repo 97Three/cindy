@@ -104,6 +104,12 @@ interface Entry {
   saved: SavedBrowserExtensionState;
   /** Serialises cache writes so an older write cannot land after a newer one. */
   writes: Promise<void>;
+  /**
+   * Cache directory of the account this entry was created for. Fixed at creation: an account
+   * switch changes policyDir() while a setPolicy may still be waiting, and its permissions and
+   * pairings must never be written into the new account's cache.
+   */
+  cacheDir: string;
 }
 
 interface SavedBrowserExtensionState {
@@ -159,6 +165,7 @@ export class GhostBrowserExtensionSlot {
   private start(instanceId: string, ghost: InstalledGhost, ownerScopeKey: string): void {
     const needs = ghost.manifest.browserExtension!;
     let lastPolicyRequest = Number.NEGATIVE_INFINITY;
+    const cacheDir = this.deps.policyDir();
     if (needs.nativeHost && !mayInstallNativeHost(ghost))
       this.deps.log?.warn('browser extension native host ignored: only the official plugin may install one', {
         instanceId,
@@ -198,12 +205,13 @@ export class GhostBrowserExtensionSlot {
       policyRevision: 0,
       saved: { policy: null, trustedClients: [] },
       writes: Promise.resolve(),
+      cacheDir,
     };
     const previous = this.stopping.get(instanceId);
     entry.ready = (async () => {
       // The old bridge must release its port and native registration before this one claims them.
       await previous?.catch(() => undefined);
-      const saved = await this.readSaved(instanceId);
+      const saved = await this.readSaved(cacheDir, instanceId);
       let restored = false;
       if (saved) {
         entry.saved = saved;
@@ -429,14 +437,14 @@ export class GhostBrowserExtensionSlot {
 
   // ── 策略持久化 ──────────────────────────────────────────────────────────
 
-  private policyFile(instanceId: string): string {
-    return path.join(this.deps.policyDir(), encodeURIComponent(instanceId) + '.json');
+  private policyFile(cacheDir: string, instanceId: string): string {
+    return path.join(cacheDir, encodeURIComponent(instanceId) + '.json');
   }
 
   /** Saved permissions and pairings; null when missing or unreadable (treated as unknown). */
-  private async readSaved(instanceId: string): Promise<SavedBrowserExtensionState | null> {
+  private async readSaved(cacheDir: string, instanceId: string): Promise<SavedBrowserExtensionState | null> {
     try {
-      const raw = JSON.parse(await fs.readFile(this.policyFile(instanceId), 'utf8')) as {
+      const raw = JSON.parse(await fs.readFile(this.policyFile(cacheDir, instanceId), 'utf8')) as {
         version?: unknown;
         policy?: unknown;
         trustedClients?: unknown;
@@ -462,12 +470,16 @@ export class GhostBrowserExtensionSlot {
   private persist(entry: Entry, change: Partial<SavedBrowserExtensionState>): Promise<void> {
     entry.saved = { ...entry.saved, ...change };
     const snapshot = entry.saved;
-    entry.writes = entry.writes.then(() => this.writeSaved(entry.instanceId, snapshot));
+    entry.writes = entry.writes.then(() => this.writeSaved(entry.cacheDir, entry.instanceId, snapshot));
     return entry.writes;
   }
 
-  private async writeSaved(instanceId: string, saved: SavedBrowserExtensionState): Promise<void> {
-    const file = this.policyFile(instanceId);
+  private async writeSaved(
+    cacheDir: string,
+    instanceId: string,
+    saved: SavedBrowserExtensionState,
+  ): Promise<void> {
+    const file = this.policyFile(cacheDir, instanceId);
     const tmp = `${file}.${crypto.randomUUID()}.tmp`;
     try {
       await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });

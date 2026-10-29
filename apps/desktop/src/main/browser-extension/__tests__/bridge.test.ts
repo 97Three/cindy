@@ -639,6 +639,34 @@ describe('bridge · 作业生命周期', () => {
     expect(redirected.text).toBeUndefined();
   });
 
+  // Review 2026-10-29 (Codex P1): network-result entries were forwarded to the model with their URLs
+  // untouched, including OAuth codes and embedded credentials.
+  it('网络请求结果里的地址也由宿主脱敏', async () => {
+    const { bridge, ready } = await fixture();
+    const c = await ready();
+    const p = bridge.act('requests', { url: 'https://example.test', tabId: 1 });
+    await sleep(5);
+    const { job } = await c.request('/poll');
+    await c.request('/ack', { id: job.id });
+    await c.request('/result', {
+      id: job.id,
+      result: {
+        ok: true,
+        requests: [
+          { url: 'https://example.test/cb?code=11111111-1111-4111-8111-111111111111', status: 200 },
+          { url: 'https://user:secret@example.test/path', status: 200 },
+          { url: 'https://example.test/' + 'a'.repeat(9000), status: 200 },
+        ],
+      },
+    });
+    const result = await p;
+    const requests = result.requests as Array<{ url: string | null; status: number }>;
+    expect(requests[0].url).not.toContain('11111111');
+    expect(requests[1].url).not.toContain('secret');
+    expect(requests[2].url).toBeNull();
+    expect(requests.map((r) => r.status)).toEqual([200, 200, 200]);
+  });
+
   it('提取结果的最终预算覆盖脱敏后的增长;__proto__ 字段按自有属性保留', async () => {
     const { bridge, ready } = await fixture({ jobTimeout: 3000 });
     const c = await ready();

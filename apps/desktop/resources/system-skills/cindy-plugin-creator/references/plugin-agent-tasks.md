@@ -271,7 +271,7 @@ text 与 context 合计不超过 64000；tasks.send 的 text 上限仍为 32768�
 
 原有 `cindy.tasks` 的归属限制不变。先调用 `capabilities()` 获取实际支持操作。当前仅支持本插件创建的本机普通任务：
 `models`、`create`、`get`、`setModel`、`list`、`send`、`getRun`、`listRuns`、`readMessages`、`cancel`、`setHidden`、`archive`。
-`archive({taskId})` 归档自有的空闲任务（执行中或有排队输入时 `TASK_BUSY`），用户可随时恢复；没有删除接口。按视频、按文档等开新任务的插件，切换时归档上一条，避免后台任务堆积。
+`archive({taskId})` 归档自有的空闲任务（忙时 `TASK_BUSY`），用户可恢复，没有删除接口；按视频等开新任务的插件，切换时归档上一条。
 可对自有任务调用 `startTeam({taskId})` 启用 Orca 主任务，并用 `getTeam({taskId})` 读取实际协同状态。协调主任务需经用户授权 Auto，Worker 自动沿用 Auto。
 这些任务及其 Worker 不提供 `cindy_helper` 的账号级历史或跨任务控制能力，`cindy_memory.session_search` 也拒绝历史检索；协调使用独立 Orca 工具，结果由插件通过 `readMessages/getTeam` 读取。旧 errand/workspace 不因来源标记受到限制；明确卸载撤销归属后，调用方已无正在执行的输入或已接受新真人输入时，保留的用户任务恢复普通 helper 与历史检索能力；仍执行旧插件输入时继续受限，自动回报和插件输入重试不构成真人接管。这不恢复插件控制权，也不保证停止已接受执行，不构成通用执行沙箱。
 在首次派发前调用 `setTeamPlan({taskId,plan:{concurrency,task,items}})`，每项包含

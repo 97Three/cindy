@@ -19,6 +19,7 @@ import {
   ghostSettingsUiWithinCap,
   ghostSubscribeAuthorizationWithinCap,
   ghostToolParametersWithinCap,
+  ghostBrowserExtensionWithinCap,
   ghostUnknownV3FieldsWithinCap,
   ghostNetworkHostMatches,
   ghostPanelKind,
@@ -5020,6 +5021,18 @@ describe('ghost · browserExtension 槽(2026-10-27 浏览器扩展经宿主桥�
     ]) {
       expect(withNeeds(bad).ok, JSON.stringify(bad)).toBe(false);
     }
+  });
+
+  // Review 2026-10-29 (Greptile P2): browserExtension was missing from the known top-level fields, so
+  // the full install check demanded the real package match the market manifest exactly and refused a
+  // package that only narrows what was reviewed, although the cap check accepts it.
+  it('完整安装检查接受只收窄浏览器扩展声明的真实包,仍拒绝扩权', () => {
+    const reviewed = withNeeds(good);
+    const narrowed = withNeeds({ protocol: good.protocol, extensionIds: [chromeId] });
+    const expanded = withNeeds({ ...good, extensionIds: [chromeId, edgeId, 'c'.repeat(32)] });
+    if (!reviewed.ok || !narrowed.ok || !expanded.ok) throw new Error('fixture');
+    expect(ghostUnknownV3FieldsWithinCap(reviewed.manifest, narrowed.manifest)).toBe(true);
+    expect(ghostBrowserExtensionWithinCap(reviewed.manifest, expanded.manifest)).toBe(false);
   });
 
   it('pageControlReplaces 列出被「我的浏览器」取代的插件工具与手册,须与 pageControl 同时声明', () => {

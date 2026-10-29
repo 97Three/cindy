@@ -175,6 +175,8 @@ export interface PluginTaskServiceDeps {
   revealPluginTasks?(pluginId: string): Promise<void>;
   /** Host archive writer (same path as the sidebar); `assertAllowed` runs right before the write. */
   archive?(taskId: string, assertAllowed: () => void): Promise<void>;
+  /** Live execution or queued input right now; read synchronously so it can run under the write lock. */
+  isBusy?(taskId: string): boolean;
   setModel?(taskId: string, route: PluginTaskRoute, assertCurrent: () => Promise<void>): Promise<{ status: string }>;
   readSession(taskId: string): Promise<PluginTaskView | null>;
   readLiveSession(taskId: string): Pick<Session, 'instanceId' | 'stablePlanModeState'> | undefined;
@@ -522,6 +524,9 @@ export function createPluginTaskService(deps: PluginTaskServiceDeps) {
       await deps.archive(request.taskId, () => {
         deps.assertCurrent();
         deps.assertAuthorized(pluginId);
+        // The idle check above ran before this write waited for the session lock; input sent in
+        // between must still stop the archive.
+        if (deps.isBusy?.(request.taskId)) throw new PluginTaskError('TASK_BUSY', 'The task is still working');
       });
       return ownTask(pluginId, request.taskId);
     }),

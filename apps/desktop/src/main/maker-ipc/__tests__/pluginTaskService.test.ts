@@ -1465,6 +1465,21 @@ it('archives only its own idle task through the host writer and treats archived 
   await expect(bare.service.archive('p', { taskId: plain.taskId })).rejects.toMatchObject({ code: 'HOST_NOT_READY' });
 });
 
+// Review 2026-10-29 (Greptile P1): the idle check ran before the archive waited for the session
+// write lock, so input sent in between was archived out from under the user. tier: unit.
+it('does not archive a task that became busy while the archive waited for the session lock', async () => {
+  const f = fixture(), task = await f.create();
+  let busy = false;
+  f.deps.isBusy = () => busy;
+  f.deps.archive = vi.fn(async (taskId: string, assertAllowed: () => void) => {
+    busy = true; // the user sends input while the write waits for the lock
+    assertAllowed();
+    f.tasks.set(taskId, { ...f.tasks.get(taskId)!, status: 'archived' });
+  });
+  await expect(f.service.archive('p', { taskId: task.taskId })).rejects.toMatchObject({ code: 'TASK_BUSY' });
+  expect(f.tasks.get(task.taskId)!.status).toBe('active');
+});
+
 it.each([
   ['provider', 'reset'], ['provider', 'partial'],
   ['mutation', 'reset'], ['mutation', 'partial'],

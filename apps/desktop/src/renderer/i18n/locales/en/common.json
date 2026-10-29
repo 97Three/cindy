@@ -5257,7 +5257,7 @@
         "title": "Use my browser logins",
         "description": "The agent will open sites with your signed-in Chrome, Edge, or Brave accounts.",
         "toggleAria": "Use my browser logins",
-        "unavailableEmbedded": "Only applies to the standalone browser. Turning it off deletes the copied login files.",
+        "unavailableEmbedded": "Only applies to the standalone browser. Switching it off deletes the copied login files.",
         "confirmTitle": "Let the agent use your browser logins?",
         "confirmDescription": "The agent will be able to open sites with your signed-in accounts, including email, cloud drives, and work consoles. You can turn it off anytime; the copy will be deleted.",
         "confirmDescriptionMac": "The agent will be able to open sites with your signed-in accounts, including email, cloud drives, and work consoles. Reading Chrome’s login files also needs Full Disk Access. You can turn this off anytime; the copy will be deleted.",
@@ -5287,7 +5287,7 @@
             "statusFailed": "the controller status check failed",
             "recoveryFailed": "the control connection could not be rebuilt",
             "extensionDisconnected": "no browser extension is connected (install and enable the Cindy Chrome plugin and its extension)",
-            "pluginMissing": "the Cindy Chrome plugin is not installed or turned on"
+            "pluginMissing": "the Cindy Chrome plugin is not installed or enabled"
           },
           "reconnect": "Reconnect Browser",
           "recover": "Recover Browser",
@@ -5311,12 +5311,12 @@
         },
         "userBrowserSetup": {
           "installPluginTitle": "Install the Cindy Chrome plugin",
-          "enablePluginTitle": "Turn on the Cindy Chrome plugin",
+          "enablePluginTitle": "Enable the Cindy Chrome plugin",
           "installExtensionTitle": "Add the Cindy extension to your browser",
           "pluginBody": "My browser reaches your Chrome or Edge through the Cindy Chrome plugin and its browser extension. Install the plugin in Cindy first, then follow its prompt to add the extension.",
-          "extensionBody": "Add browser extension opens the Cindy extension’s store page in your browser; choose Add and this turns to connected on its own. Already added? Turn it on in the browser’s extension settings.",
+          "extensionBody": "Add browser extension opens the Cindy extension’s store page in your browser; choose Add and this changes to connected on its own. Already added? Enable it in the browser’s extension settings.",
           "installPlugin": "Install plugin",
-          "enablePlugin": "Turn on",
+          "enablePlugin": "Enable",
           "installExtension": "Add browser extension",
           "updatePluginTitle": "Update the Cindy Chrome plugin",
           "updatePluginBody": "The installed Cindy Chrome plugin is too old for My browser. Update it to the latest version, then follow its prompt to add the extension.",
