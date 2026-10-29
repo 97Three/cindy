@@ -195,7 +195,11 @@ describe('browserExtensionSlot · 桥接随花名册启停', () => {
     });
     expect(bridges[0].started).toBe(true);
     expect(natives[0].install).toHaveBeenCalledWith(18810, [CHROME_ID]);
-    expect(slot.getPageControl()).toMatchObject({ ghostId: 'my-browser', instanceId: '_root__my-browser', pluginName: 'Ext Ghost' });
+    expect(slot.getPageControl()).toMatchObject({
+      ghostId: 'my-browser',
+      instanceId: '_root__my-browser',
+      pluginName: 'Ext Ghost',
+    });
     // 幂等:同一份花名册不重建。
     slot.reconcile(ghosts);
     await settle();
@@ -233,7 +237,9 @@ describe('browserExtensionSlot · 桥接随花名册启停', () => {
     slot.reconcile([extGhost()]);
     await vi.waitFor(() => expect(natives[0]).toBeDefined());
     wrapNative(natives[0], 0);
-    await vi.waitFor(() => expect(order).toContain('install0'), { timeout: 2000 }).catch(() => undefined);
+    await vi
+      .waitFor(() => expect(order).toContain('install0'), { timeout: 2000 })
+      .catch(() => undefined);
     order.length = 0;
     slot.reconcile([extGhost({ version: '1.1.0' })]);
     await vi.waitFor(() => expect(natives[1]).toBeDefined());
@@ -324,7 +330,10 @@ describe('browserExtensionSlot · 管子上行', () => {
     ).toMatchObject({ ok: true, text: 'hello' });
     expect(bridges[0].calls.at(-1)).toEqual(['act', ['text', { url: 'https://example.test' }]]);
     // Site lists were removed (2026-10-30): a plugin that still pushes one gets an acknowledgement.
-    const policy = { read: { block: ['blocked.test'] }, interact: { allow: ['example.test'], block: [] } };
+    const policy = {
+      read: { block: ['blocked.test'] },
+      interact: { allow: ['example.test'], block: [] },
+    };
     expect(await slot.handleRequest(id, { kind: 'setPolicy', policy })).toMatchObject({
       ok: true,
       policy: { read: { block: [] } },
@@ -366,7 +375,11 @@ describe('browserExtensionSlot · 管子上行', () => {
     again.slot.reconcile(again.ghosts);
     await vi.waitFor(() => expect(again.bridges[0]?.started).toBe(true));
     expect(again.bridges[0].calls).toEqual([['setTrustedClients', [[]]]]);
-    expect(again.sent.some(([, payload]) => (payload as { name?: string }).name === 'browser-extension-policy-request')).toBe(false);
+    expect(
+      again.sent.some(
+        ([, payload]) => (payload as { name?: string }).name === 'browser-extension-policy-request',
+      ),
+    ).toBe(false);
   });
 
   // Review 2026-10-30 (Codex P2): a native install that failed for a passing reason is retried on status.
@@ -381,7 +394,9 @@ describe('browserExtensionSlot · 管子上行', () => {
         install: vi.fn(async () => {
           installs++;
           if (installs >= 2) state = 'ready';
-          return state === 'ready' ? { ok: true as const } : { ok: false as const, error: 'NATIVE_BINDING_UNAVAILABLE' as const, reason: 'EBUSY' };
+          return state === 'ready'
+            ? { ok: true as const }
+            : { ok: false as const, error: 'NATIVE_BINDING_UNAVAILABLE' as const, reason: 'EBUSY' };
         }),
         close: vi.fn(async () => undefined),
         status: () => state,
@@ -397,6 +412,44 @@ describe('browserExtensionSlot · 管子上行', () => {
     expect(installs).toBe(2);
   });
 
+  // Review 2026-10-30 (Codex P1): stopping waits for a native install retry, so it cannot write after the close.
+  it('原生安装重试进行中停用插件时,等重试结束后才撤销注册', async () => {
+    const order: string[] = [];
+    let finishRetry: () => void = () => undefined;
+    let installs = 0;
+    const { slot, settle, ghosts } = await makeSlot({
+      createNativeBinding: () => ({
+        token: 'f'.repeat(64),
+        install: vi.fn(async () => {
+          installs++;
+          if (installs === 1)
+            return {
+              ok: false as const,
+              error: 'NATIVE_BINDING_UNAVAILABLE' as const,
+              reason: 'EBUSY',
+            };
+          await new Promise<void>((resolve) => (finishRetry = resolve));
+          order.push('install-done');
+          return { ok: true as const };
+        }),
+        close: vi.fn(async () => {
+          order.push('close');
+        }),
+        status: () => 'unavailable' as const,
+      }),
+    });
+    slot.reconcile(ghosts);
+    await settle();
+    const pending = slot.handleRequest('_root__my-browser', { kind: 'status' });
+    await vi.waitFor(() => expect(installs).toBe(2));
+    slot.reconcile([]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(order).toEqual([]);
+    finishRetry();
+    await pending.catch(() => undefined);
+    await vi.waitFor(() => expect(order).toEqual(['install-done', 'close']));
+  });
+
   // Review 2026-10-30 (Codex P1): a request that waited for startup must not act after the plugin went away.
   it('等待启动期间插件被停用时,旧请求不再执行', async () => {
     let finishStart: () => void = () => undefined;
@@ -405,7 +458,10 @@ describe('browserExtensionSlot · 管子上行', () => {
     await vi.waitFor(() => expect(bridges).toHaveLength(1));
     bridges[0].start = () => new Promise<void>((resolve) => (finishStart = resolve));
     await settle();
-    const pending = slot.handleRequest('_root__my-browser', { kind: 'setTrustedClients', clients: [] });
+    const pending = slot.handleRequest('_root__my-browser', {
+      kind: 'setTrustedClients',
+      clients: [],
+    });
     slot.reconcile([]);
     finishStart();
     expect(await pending).toMatchObject({ ok: false, errorCode: 'HOST_NOT_READY' });
@@ -430,16 +486,27 @@ describe('browserExtensionSlot · 管子上行', () => {
     await vi.waitFor(() => expect(bridges.at(-1)?.started).toBe(true));
     expect(bridges.length).toBeGreaterThan(1);
     expect(natives.length).toBeGreaterThan(0);
-    expect(await slot.handleRequest('_root__my-browser', { kind: 'status' })).toMatchObject({ ok: true });
+    expect(await slot.handleRequest('_root__my-browser', { kind: 'status' })).toMatchObject({
+      ok: true,
+    });
   });
 
   // Review 2026-10-30 (Codex P1): a package that only claims the official id cannot pair browsers.
   it('只自称官方 id 的未核验包不能保存配对', async () => {
-    const clients = [{ id: 'c1', origin: 'chrome-extension://' + CHROME_ID, extensionId: CHROME_ID, publicKey: 'k' }];
+    const clients = [
+      {
+        id: 'c1',
+        origin: 'chrome-extension://' + CHROME_ID,
+        extensionId: CHROME_ID,
+        publicKey: 'k',
+      },
+    ];
     const { slot, bridges, settle, ghosts } = await makeSlot({ isVerifiedOfficial: () => false });
     slot.reconcile(ghosts);
     await settle();
-    expect(await slot.handleRequest('_root__my-browser', { kind: 'setTrustedClients', clients })).toMatchObject({
+    expect(
+      await slot.handleRequest('_root__my-browser', { kind: 'setTrustedClients', clients }),
+    ).toMatchObject({
       ok: false,
       errorCode: 'PERMISSION_DENIED',
     });
@@ -449,17 +516,35 @@ describe('browserExtensionSlot · 管子上行', () => {
     const b = await makeSlot({ isVerifiedOfficial: () => false }, other);
     b.slot.reconcile(other);
     await b.settle();
-    expect(await b.slot.handleRequest('_root__other-browser', { kind: 'setTrustedClients', clients: [] })).toEqual({ ok: true });
+    expect(
+      await b.slot.handleRequest('_root__other-browser', {
+        kind: 'setTrustedClients',
+        clients: [],
+      }),
+    ).toEqual({ ok: true });
   });
 
   // Review 2026-10-30 (Codex P1): raw DevTools commands from a plugin that is not the verified official one.
   it('非官方插件不能经管子发原始 DevTools 命令', async () => {
-    const payload = { kind: 'act', action: 'cdp', payload: { url: 'https://example.test', tabId: 1, op: 'command', method: 'DOM.setFileInputFiles', params: { files: ['/etc/hosts'] } } };
+    const payload = {
+      kind: 'act',
+      action: 'cdp',
+      payload: {
+        url: 'https://example.test',
+        tabId: 1,
+        op: 'command',
+        method: 'DOM.setFileInputFiles',
+        params: { files: ['/etc/hosts'] },
+      },
+    };
     const other = [extGhost({ id: 'other-browser', nativeHost: false })];
     const a = await makeSlot({}, other);
     a.slot.reconcile(other);
     await a.settle();
-    expect(await a.slot.handleRequest('_root__other-browser', payload)).toMatchObject({ ok: false, errorCode: 'INVALID_REQUEST' });
+    expect(await a.slot.handleRequest('_root__other-browser', payload)).toMatchObject({
+      ok: false,
+      errorCode: 'INVALID_REQUEST',
+    });
     expect(a.bridges[0].calls.some(([name]) => name === 'act')).toBe(false);
     const official = await makeSlot();
     official.slot.reconcile(official.ghosts);
@@ -485,7 +570,14 @@ describe('browserExtensionSlot · 管子上行', () => {
   // Review 2026-10-30 (Codex P1): a manifest that merely claims the official id must not get the native
   // host, My browser or saved pairings.
   it('未核验来源的包不装 native host、不接管「我的浏览器」、不继承配对', async () => {
-    const clients = [{ id: 'c1', origin: 'chrome-extension://' + CHROME_ID, extensionId: CHROME_ID, publicKey: 'k' }];
+    const clients = [
+      {
+        id: 'c1',
+        origin: 'chrome-extension://' + CHROME_ID,
+        extensionId: CHROME_ID,
+        publicKey: 'k',
+      },
+    ];
     const { slot, bridges, natives, dir } = await makeSlot({ isVerifiedOfficial: () => false });
     await fs.writeFile(
       path.join(dir, encodeURIComponent('_root__my-browser') + '.json'),
@@ -500,27 +592,50 @@ describe('browserExtensionSlot · 管子上行', () => {
 
   // A pairing cache written before sources were recorded is stamped when first read.
   it('没有来源记录的旧配对缓存读到后立即补上来源', async () => {
-    const clients = [{ id: 'c1', origin: 'chrome-extension://' + CHROME_ID, extensionId: CHROME_ID, publicKey: 'k' }];
+    const clients = [
+      {
+        id: 'c1',
+        origin: 'chrome-extension://' + CHROME_ID,
+        extensionId: CHROME_ID,
+        publicKey: 'k',
+      },
+    ];
     const { slot, bridges, dir } = await makeSlot();
     const file = path.join(dir, encodeURIComponent('_root__my-browser') + '.json');
     await fs.writeFile(file, JSON.stringify({ version: 1, trustedClients: clients }));
     slot.reconcile([extGhost()]);
     await vi.waitFor(() => expect(bridges[0]?.started).toBe(true));
-    await vi.waitFor(async () => expect(JSON.parse(await fs.readFile(file, 'utf8')).source).toBe('[null,null]'));
+    await vi.waitFor(async () =>
+      expect(JSON.parse(await fs.readFile(file, 'utf8')).source).toBe('[null,null]'),
+    );
   });
 
   // Review 2026-10-29 (Codex P1): a package from another source reused the old package's pairings.
   it('换成其它来源的包时不沿用旧配对', async () => {
     const { slot, bridges, sent, dir } = await makeSlot();
-    const clients = [{ id: 'c1', origin: 'chrome-extension://' + CHROME_ID, extensionId: CHROME_ID, publicKey: 'k' }];
+    const clients = [
+      {
+        id: 'c1',
+        origin: 'chrome-extension://' + CHROME_ID,
+        extensionId: CHROME_ID,
+        publicKey: 'k',
+      },
+    ];
     await fs.writeFile(
       path.join(dir, encodeURIComponent('_root__my-browser') + '.json'),
-      JSON.stringify({ version: 1, source: JSON.stringify([{ kind: 'local', source: 'manual' }, null]), trustedClients: clients }),
+      JSON.stringify({
+        version: 1,
+        source: JSON.stringify([{ kind: 'local', source: 'manual' }, null]),
+        trustedClients: clients,
+      }),
     );
     slot.reconcile([extGhost()]);
     await vi.waitFor(() => expect(bridges[0]?.started).toBe(true));
     expect(bridges[0].calls.some(([name]) => name === 'setTrustedClients')).toBe(false);
-    expect(sent).toContainEqual(['_root__my-browser', { type: 'event', name: 'browser-extension-policy-request' }]);
+    expect(sent).toContainEqual([
+      '_root__my-browser',
+      { type: 'event', name: 'browser-extension-policy-request' },
+    ]);
   });
 
   // Review 2026-10-29 (Codex P2): disabling the plugin while its bridge was still starting left queued
@@ -544,11 +659,28 @@ describe('browserExtensionSlot · 管子上行', () => {
     const { slot, bridges, sent, dir } = await makeSlot();
     slot.reconcile([extGhost()]);
     await vi.waitFor(() => expect(bridges[0]?.started).toBe(true));
-    expect(sent).toContainEqual(['_root__my-browser', { type: 'event', name: 'browser-extension-policy-request' }]);
-    const clients = [{ id: 'c1', origin: 'chrome-extension://' + CHROME_ID, extensionId: CHROME_ID, publicKey: 'k' }];
-    expect(await slot.handleRequest('_root__my-browser', { kind: 'setTrustedClients', clients })).toEqual({ ok: true });
+    expect(sent).toContainEqual([
+      '_root__my-browser',
+      { type: 'event', name: 'browser-extension-policy-request' },
+    ]);
+    const clients = [
+      {
+        id: 'c1',
+        origin: 'chrome-extension://' + CHROME_ID,
+        extensionId: CHROME_ID,
+        publicKey: 'k',
+      },
+    ];
     expect(
-      JSON.parse(await fs.readFile(path.join(dir, encodeURIComponent('_root__my-browser') + '.json'), 'utf8')),
+      await slot.handleRequest('_root__my-browser', { kind: 'setTrustedClients', clients }),
+    ).toEqual({ ok: true });
+    expect(
+      JSON.parse(
+        await fs.readFile(
+          path.join(dir, encodeURIComponent('_root__my-browser') + '.json'),
+          'utf8',
+        ),
+      ),
     ).toEqual({ version: 1, source: '[null,null]', trustedClients: clients });
   });
 });
@@ -568,7 +700,10 @@ describe('browserExtensionSlot · 转交扩展请求', () => {
       }),
       wake,
     });
-    const relays = () => sent.filter(([, payload]) => (payload as { name?: string }).name === 'browser-extension-relay');
+    const relays = () =>
+      sent.filter(
+        ([, payload]) => (payload as { name?: string }).name === 'browser-extension-relay',
+      );
     slot.reconcile(ghosts);
     await settle();
     const notice = {

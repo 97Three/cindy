@@ -38,9 +38,7 @@ import {
   type NativeBinding,
   type NativeBindingOptions,
 } from '../browser-extension/native-binding.js';
-import {
-  defaultBrowserExtensionPolicy,
-} from '../browser-extension/policy.js';
+import { defaultBrowserExtensionPolicy } from '../browser-extension/policy.js';
 import {
   ghostInstallApprovalToken,
   type GhostPipeBrowserExtensionResult,
@@ -83,7 +81,9 @@ function isOfficialInstance(ghost: InstalledGhost, verified: boolean): boolean {
 }
 
 export function mayProvidePageControl(ghost: InstalledGhost, verified = true): boolean {
-  return ghost.manifest.browserExtension?.pageControl === true && isOfficialInstance(ghost, verified);
+  return (
+    ghost.manifest.browserExtension?.pageControl === true && isOfficialInstance(ghost, verified)
+  );
 }
 
 export interface BrowserExtensionSlotDeps {
@@ -123,6 +123,8 @@ interface Entry {
   saved: SavedBrowserExtensionState;
   /** Earliest time the native binding may be retried after a failed or pending install. */
   nativeRetryAt?: number;
+  /** A native install retry still running; stopping waits for it before withdrawing the registration. */
+  nativeRetry?: Promise<unknown>;
   /** The startup sequence failed (for example every compatible port was busy); the next request rebuilds it. */
   startFailed?: true;
   /** Where the installed package came from; pairings never carry over to a package from elsewhere. */
@@ -198,16 +200,20 @@ export class GhostBrowserExtensionSlot {
     const cacheDir = this.deps.policyDir();
     const verified = this.deps.isVerifiedOfficial(ghost);
     if (needs.nativeHost && !mayInstallNativeHost(ghost, verified))
-      this.deps.log?.warn('browser extension native host ignored: only the verified official plugin may install one', {
-        instanceId,
-        hostName: needs.nativeHost.name,
-      });
-    const native = needs.nativeHost && mayInstallNativeHost(ghost, verified)
-      ? (this.deps.createNativeBinding ?? createNativeBinding)({
+      this.deps.log?.warn(
+        'browser extension native host ignored: only the verified official plugin may install one',
+        {
+          instanceId,
           hostName: needs.nativeHost.name,
-          binaryDir: path.join(ghost.dir, needs.nativeHost.binary),
-        })
-      : null;
+        },
+      );
+    const native =
+      needs.nativeHost && mayInstallNativeHost(ghost, verified)
+        ? (this.deps.createNativeBinding ?? createNativeBinding)({
+            hostName: needs.nativeHost.name,
+            binaryDir: path.join(ghost.dir, needs.nativeHost.binary),
+          })
+        : null;
     const bridge = (this.deps.createBridge ?? ((options) => new BrowserExtensionBridge(options)))({
       ghostId: ghost.manifest.id,
       installedVersion: ghost.manifest.version,
@@ -283,7 +289,8 @@ export class GhostBrowserExtensionSlot {
     if (this.disposed || this.entries.get(instanceId) !== failed) return;
     const ownerScopeKey = this.deps.ownerScopeKey();
     void this.stop(instanceId).then(() => {
-      if (!this.disposed && !this.entries.has(instanceId)) this.start(instanceId, ghost, ownerScopeKey);
+      if (!this.disposed && !this.entries.has(instanceId))
+        this.start(instanceId, ghost, ownerScopeKey);
     });
   }
 
@@ -297,6 +304,7 @@ export class GhostBrowserExtensionSlot {
       // registration can take seconds) is still finishing. Closing again after it is harmless.
       await entry.bridge.close();
       await entry.ready;
+      await entry.nativeRetry?.catch(() => undefined);
       await entry.bridge.close();
       await entry.native?.close();
       this.deps.log?.info('browser extension bridge stopped', { instanceId });
@@ -401,10 +409,16 @@ export class GhostBrowserExtensionSlot {
             const now = (this.deps.now ?? Date.now)();
             if (now >= (entry.nativeRetryAt ?? 0)) {
               entry.nativeRetryAt = now + 30_000;
-              await entry.native.install(
+              const retry = entry.native.install(
                 entry.bridge.listeningPort,
                 entry.ghost.manifest.browserExtension!.extensionIds,
               );
+              entry.nativeRetry = retry;
+              try {
+                await retry;
+              } finally {
+                if (entry.nativeRetry === retry) entry.nativeRetry = undefined;
+              }
             }
           }
           const status = await entry.bridge.status();
@@ -427,8 +441,14 @@ export class GhostBrowserExtensionSlot {
             return fail('INVALID_REQUEST', 'upload by path is not available to plugins');
           // Raw DevTools commands can make Chrome open any host path (DOM.setFileInputFiles) or read
           // any page state, so only the verified official plugin may send them through the pipe.
-          if (req.action === 'cdp' && !isOfficialInstance(entry.ghost, this.deps.isVerifiedOfficial(entry.ghost)))
-            return fail('INVALID_REQUEST', 'raw DevTools commands are not available to this plugin');
+          if (
+            req.action === 'cdp' &&
+            !isOfficialInstance(entry.ghost, this.deps.isVerifiedOfficial(entry.ghost))
+          )
+            return fail(
+              'INVALID_REQUEST',
+              'raw DevTools commands are not available to this plugin',
+            );
           return (await entry.bridge.act(
             req.action,
             req.payload ?? {},
@@ -448,7 +468,9 @@ export class GhostBrowserExtensionSlot {
           } catch (err) {
             return fail('INVALID_REQUEST', errorText(err));
           }
-          await this.persist(entry, { trustedClients: Array.isArray(req.clients) ? req.clients : [] });
+          await this.persist(entry, {
+            trustedClients: Array.isArray(req.clients) ? req.clients : [],
+          });
           return applied;
         }
         case 'relayActive':
@@ -518,9 +540,12 @@ export class GhostBrowserExtensionSlot {
       };
       if (raw?.version !== 1) return null;
       if (raw.source !== undefined && raw.source !== source) {
-        this.deps.log?.warn('browser extension pairings ignored: the package came from another source', {
-          instanceId,
-        });
+        this.deps.log?.warn(
+          'browser extension pairings ignored: the package came from another source',
+          {
+            instanceId,
+          },
+        );
         return null;
       }
       return {
@@ -574,7 +599,8 @@ export class GhostBrowserExtensionSlot {
     const payload = { type: 'event', name: 'browser-extension-policy-request' };
     try {
       if (this.deps.sendToGhost(instanceId, payload)) return;
-      if (this.deps.wake && (await this.deps.wake(instanceId))) this.deps.sendToGhost(instanceId, payload);
+      if (this.deps.wake && (await this.deps.wake(instanceId)))
+        this.deps.sendToGhost(instanceId, payload);
     } catch (err) {
       this.deps.log?.warn('browser extension pairing request failed', {
         instanceId,
