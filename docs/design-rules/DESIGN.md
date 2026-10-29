@@ -743,9 +743,10 @@ The expanded teammate section previews five chats (local teammates, remote teamm
 
 ### Desktop and Mobile task creator filters (2026-10-27)
 
-The sidebar's existing Filter submenu adds Teammates. Any source (不限来源) is the default and includes personal tasks and all teammates' tasks;
+The sidebar's existing Filter submenu adds Teammates. All (全部) is the default and includes personal tasks and all teammates' tasks;
 choosing one teammate selects only its created tasks, then further choices add or remove teammates.
-Removing the last choice restores Any source. Reset Filters also clears this dimension, preserving task status,
+Hide all (都不显示) excludes teammate-created tasks and teammate routine/IM tasks while retaining personal tasks.
+Selecting a teammate from Hide all switches to that teammate; removing the last choice restores All. Reset Filters also clears this dimension, preserving task status,
 grouping and sorting. Pinned entries retain their existing exemption from content filters.
 Use the existing menu rows, avatar component and check marks; keep the menu open for multiple choices.
 Show a remote computer name only for device-scoped identities, to distinguish same-name teammates.
@@ -1252,9 +1253,11 @@ Applies to submit-on-Enter fields: the chat composer, goal input, ask input, etc
 > Expanded 2026-07. Cindy's motion character extends the paper-like restraint of §1 / §7: **ordinary UI fades, nudges, and resizes smoothly; overshoot is limited to the explicitly registered Done, Usage History chart and mobile new-task morph responses below**. Functional state transitions are allowed; decorative motion is forbidden. This section pins "functional" into executable tiers and prototypes so components stop inventing their own durations and curves.
 
 **Desktop companion composer action (owner-approved prototype, 2026-10-22).** An idle
-one-to-one companion composer shows dictation and a call action. A sendable draft
-(including attachments or a visible prompt recommendation) replaces the call with Send
-in the same 30px circular target. Crossfade the icon layers and scale 55% ↔ 100% on
+one-to-one companion composer shows dictation and a call action. A visible prompt
+recommendation keeps the call action available (owner correction, 2026-10-29); its
+Tab/click acceptance and Enter send remain available. An accepted or typed draft,
+attachments or browser comments replace the call with Send in the same 30px circular
+target. Crossfade the icon layers and scale 55% ↔ 100% on
 `--motion-enter` (250ms) / `--motion-ease-move`; keep the shell, hit target and dictation
 position fixed, with no bounce. CSS transitions retarget from their current values.
 Respect reduced motion, retain keyboard focus, and reject a press whose action changes
