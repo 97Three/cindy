@@ -234,6 +234,12 @@ Desktop「设置 → 模型供应商」的左栏(2026-10-08 用户裁决)：
   [useDeviceProviderSubscriptionCard.test.ts](../../apps/desktop/src/renderer/components/settings/__tests__/useDeviceProviderSubscriptionCard.test.ts)。
   实现见 [OwnRemoteProviders.tsx](../../apps/desktop/src/renderer/components/settings/OwnRemoteProviders.tsx)，
   回归见 [OwnRemoteProviders.test.tsx](../../apps/desktop/src/renderer/components/settings/__tests__/OwnRemoteProviders.test.tsx)。
+- **我分享的供应商**（2026-10-29 用户裁决）单独一组，接在普通供应商之后、「分享给我的供应商」之前；
+  本机和自己其他电脑上已建立分享关系的供应商（含供应商组）都归这里，不与普通供应商组混排。
+  只生成链接或仍在等待同意不算已分享；暂停分享仍保留，删除最后一位分享成员后回到普通列表。
+  每项只显示一次，原有选中、详情与「远程与分享」管理入口不变；本机供应商可在各自分区内排序。
+  读取暂时失败时保留上次分类，换账号不沿用；没有已分享的供应商时整组不显示。
+  实现见 `ProvidersSection.tsx` 与 `useOwnedProviderShares.ts`。
 - **分享给我的供应商**单独一组「分享给我的供应商」，没有分享时整组不显示：每条用分享者头像标明来自谁，
   带状态点；点开在右栏看来源、状态、对方开放的模型(只读，开关由分享者决定)，并可「退出」。来源只写
   「来自 Magi 的分享」，不写分享者的电脑名；分享者建了供应商组时补「供应商组 · N 台电脑」。

@@ -317,6 +317,9 @@
     "closeAllDescription": "所有訪客將無法繼續存取，任務記錄保留。"
   },
   "providerShare": {
+    "owned": {
+      "title": "我分享的供應商"
+    },
     "memberBudget": {
       "recommended": "推薦模型",
       "none": "不指定",

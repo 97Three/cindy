@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -10,6 +10,8 @@ import {
   useOwnRemoteProviders,
   type OwnRemoteProvider,
 } from '../OwnRemoteProviders';
+import { useOwnedProviderShares } from '@/features/provider-share/useOwnedProviderShares';
+import { setDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 
 vi.mock('react-i18next', () => ({
   initReactI18next: { type: '3rdParty', init: () => undefined },
@@ -80,6 +82,81 @@ beforeEach(() => {
 });
 
 afterEach(() => cleanup());
+
+// Test value: settings used to mix shared-out providers with ordinary groups. Exercise the real
+// classification hook through owned/manage-share responses; existing row tests have no sharing state.
+// Minimal input: the same provider on two computers, one paused member, and one pending-only share.
+// Tier: unit; in-memory host responses, including a late response across an account change.
+describe('useOwnedProviderShares', () => {
+  let originalApi: Window['electronAPI'];
+  let changed: () => void;
+  const owned = (providerId: string, members: unknown[] = [{ memberId: 'member', status: 'paused' }]) => ({
+    ready: true, shares: [{ providerId, members }],
+  });
+  const local = vi.fn();
+  const remote = vi.fn();
+
+  beforeEach(() => {
+    originalApi = window.electronAPI;
+    setDataOwnerGeneration('owner-1', 1);
+    local.mockReset().mockResolvedValue(owned('anthropic'));
+    remote.mockReset().mockResolvedValue(owned('openai'));
+    window.electronAPI = {
+      ...originalApi,
+      providerShare: { command: local, onOwnedChanged: (listener: () => void) => {
+        changed = listener;
+        return () => undefined;
+      } },
+      providerGroup: { command: remote },
+    } as unknown as Window['electronAPI'];
+  });
+
+  afterEach(() => {
+    cleanup();
+    window.electronAPI = originalApi;
+    setDataOwnerGeneration(null, 0);
+  });
+
+  it('separates computer identities, keeps paused shares and excludes links or pending requests alone', async () => {
+    local.mockResolvedValue({ ready: true, shares: [
+      ...owned('anthropic').shares,
+      { providerId: 'link-only', members: [], requests: [] },
+      { providerId: 'pending-only', members: [], requests: [{ requestId: 'request' }] },
+    ] });
+    const { result } = renderHook(() => useOwnedProviderShares(['mini-a', 'mini-a']));
+    await waitFor(() => expect(result.current.size).toBe(2));
+    expect([...result.current.get(null)!]).toEqual(['anthropic']);
+    expect([...result.current.get('mini-a')!]).toEqual(['openai']);
+    expect(remote).toHaveBeenCalledExactlyOnceWith({
+      action: 'remote-manage', deviceId: 'mini-a',
+      request: { action: 'manage-share', command: { action: 'owned', range: 'month' } },
+    });
+
+    local.mockResolvedValue(owned('anthropic', []));
+    await act(async () => changed());
+    expect([...result.current.get(null)!]).toEqual([]);
+    expect([...result.current.get('mini-a')!]).toEqual(['openai']);
+  });
+
+  it('retains a known classification on read failure and rejects an old account’s late response', async () => {
+    const { result, rerender } = renderHook(() => useOwnedProviderShares([]));
+    await waitFor(() => expect(result.current.get(null)?.has('anthropic')).toBe(true));
+    local.mockRejectedValueOnce(new Error('offline'));
+    await act(async () => changed());
+    expect(result.current.get(null)?.has('anthropic')).toBe(true);
+
+    let finish!: (value: unknown) => void;
+    local.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    act(() => changed());
+    local.mockResolvedValue({ ready: true, shares: [] });
+    setDataOwnerGeneration('owner-2', 2);
+    rerender();
+    expect(result.current.size).toBe(0);
+    await act(async () => finish(owned('anthropic')));
+    await waitFor(() => expect(result.current.has(null)).toBe(true));
+    expect([...result.current.get(null)!]).toEqual([]);
+  });
+});
 
 describe('useOwnRemoteProviders', () => {
   it.each([

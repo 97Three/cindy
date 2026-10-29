@@ -317,6 +317,9 @@
     "closeAllDescription": "所有访客将无法继续访问，任务记录保留。"
   },
   "providerShare": {
+    "owned": {
+      "title": "我分享的供应商"
+    },
     "memberBudget": {
       "recommended": "推荐模型",
       "none": "不指定",
