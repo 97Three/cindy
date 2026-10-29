@@ -45,6 +45,7 @@ import {
   RELAY_DEPLOY_STEPS,
   RELAY_UNINSTALL_STEPS,
   type SelfHostedRelayCommand,
+  type SelfHostedRelayCommandResult,
   type SelfHostedRelayDeployJobView,
   type SelfHostedRelayDeploymentStatus,
   type SelfHostedRelayErrorCode,
@@ -58,6 +59,7 @@ const STATE_POLL_MS = 3_000;
 export function useSelfHostedRelayState(enabled: boolean) {
   const [state, setState] = useState<SelfHostedRelayState | null>(null);
   const [error, setError] = useState<SelfHostedRelayErrorCode | null>(null);
+  const [errorDetail, setErrorDetail] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -84,25 +86,39 @@ export function useSelfHostedRelayState(enabled: boolean) {
     };
   }, [enabled]);
 
-  const run = useCallback(async (command: SelfHostedRelayCommand): Promise<boolean> => {
+  const request = useCallback(async (command: SelfHostedRelayCommand): Promise<SelfHostedRelayCommandResult | null> => {
     const api = window.electronAPI?.selfHostedRelay;
-    if (!api) return false;
+    if (!api) return null;
     setBusy(true);
     setError(null);
+    setErrorDetail(undefined);
     try {
       const result = await api.command(command);
       setState(result.state);
-      if (result.error) setError(result.error);
-      return !result.error;
+      if (result.error) {
+        setError(result.error);
+        return null;
+      }
+      return result;
     } catch {
       setError('FAILED');
-      return false;
+      return null;
     } finally {
       setBusy(false);
     }
   }, []);
 
-  return { state, error, busy, run, clearError: () => setError(null) };
+  const run = useCallback(async (command: SelfHostedRelayCommand) => Boolean(await request(command)), [request]);
+  const checkServer = useCallback(async (sshHostId: string) => {
+    const result = await request({ type: 'check-server', sshHostId });
+    if (!result) return null;
+    if (result.check?.ok) return result.check;
+    setError(result.check?.error ?? 'FAILED');
+    setErrorDetail(result.check?.detail);
+    return null;
+  }, [request]);
+
+  return { state, error, errorDetail, busy, run, checkServer, clearError: () => { setError(null); setErrorDetail(undefined); } };
 }
 
 export type SelfHostedRelayController = ReturnType<typeof useSelfHostedRelayState>;
@@ -167,10 +183,10 @@ function FormDialog({
 }
 
 /** 窗口里命令失败的原因;用户取消不算失败。 */
-function CommandError({ error, port }: { error: SelfHostedRelayErrorCode | null; port: number }) {
+function CommandError({ error, port, detail = '' }: { error: SelfHostedRelayErrorCode | null; port: number; detail?: string }) {
   const { t } = useTranslation();
   if (!error || error === 'CANCELLED') return null;
-  return <ErrorText>{t(`settings.remoteControl.relay.errors.${error}`, { port, detail: '' })}</ErrorText>;
+  return <ErrorText>{t(`settings.remoteControl.relay.errors.${error}`, { port, detail })}</ErrorText>;
 }
 
 /** 这台电脑当中转的设置。还没在用时,开启就是切换到它:`notice` 写清楚原线路会怎样。 */
@@ -523,7 +539,7 @@ function useConfirm() {
   );
 }
 
-/** 运行中的任务每秒刷新用时;结束后不再显示。 */
+/** 运行中每秒刷新用时;结束后停止计时并保留最终用时。 */
 function useElapsed(job: SelfHostedRelayDeployJobView | null): number | null {
   const running = job?.status === 'running';
   const [now, setNow] = useState(Date.now);
@@ -533,8 +549,9 @@ function useElapsed(job: SelfHostedRelayDeployJobView | null): number | null {
     const timer = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(timer);
   }, [running, job?.startedAt]);
-  if (!running || job?.startedAt === undefined) return null;
-  return Math.max(0, Math.floor((now - job.startedAt) / 1_000));
+  if (job?.startedAt === undefined) return null;
+  const end = running ? now : job.finishedAt;
+  return end === undefined ? null : Math.max(0, Math.floor((end - job.startedAt) / 1_000));
 }
 
 type LineTone = 'progress' | 'done' | 'ok' | 'warning' | 'failed' | 'pending';
@@ -1060,6 +1077,21 @@ function DeployDialog({
     close();
     void controller.run({ type: 'dismiss-deploy-job' });
   };
+  const retry = async () => {
+    if (!target) return;
+    const retryTarget = { sshHostId: target.sshHostId, address: target.address, name: target.name };
+    const check = await controller.checkServer(retryTarget.sshHostId);
+    if (!check) return;
+    const replaceExisting = check.existing === 'other';
+    if (replaceExisting) {
+      // 服务器可能仍保留替换前的身份;重新确认清除,自己的未完成部署则保留身份继续。
+      close();
+      const approved = await confirm(t(`${DEPLOY}.replaceTitle`), t(`${DEPLOY}.replaceDescription`), t(`${DEPLOY}.submitReplace`));
+      onOpenChange(true);
+      if (!approved) return;
+    }
+    await controller.run({ type: 'deploy', ...retryTarget, replaceExisting });
+  };
   const description =
     view === 'form'
       ? t(`${DEPLOY}.hint`)
@@ -1081,6 +1113,11 @@ function DeployDialog({
             <Dialog.Title className="text-16 font-semibold text-[var(--confirm-title)]">{t(`${DEPLOY}.title`)}</Dialog.Title>
             <DialogSteps current={view === 'form' ? 0 : view === 'progress' ? 1 : 2} />
           </div>
+          {controller.error ? (
+            <div className="px-4 pb-3">
+              <CommandError error={controller.error} port={state.host.port} detail={controller.errorDetail} />
+            </div>
+          ) : null}
           {view === 'form' ? (
             <>
               <Dialog.Description className="px-4 pb-4 text-12 leading-[1.5] text-[var(--text-tertiary)]">
@@ -1150,16 +1187,7 @@ function DeployDialog({
                     variant="cta"
                     size="sm"
                     disabled={controller.busy || !target || !state.bundledRelayVersion}
-                    onClick={() =>
-                      target &&
-                      void controller.run({
-                        type: 'deploy',
-                        sshHostId: target.sshHostId,
-                        address: target.address,
-                        name: target.name,
-                        replaceExisting: false,
-                      })
-                    }
+                    onClick={() => void retry()}
                   >
                     {t(`${DEPLOY}.retry`)}
                   </Button>
@@ -1727,8 +1755,8 @@ export function RelayServicePanel({ controller }: { controller: SelfHostedRelayC
         </p>
       </div>
       {/* 窗口里的命令失败写在窗口里,这里只显示列表上的操作(切换、移除等)出的错。 */}
-      {form === 'none' && error && error !== 'CANCELLED' ? (
-        <ErrorText>{t(`${k}.errors.${error}`, { port: state.host.port, detail: '' })}</ErrorText>
+      {!deployOpen && form === 'none' && error && error !== 'CANCELLED' ? (
+        <CommandError error={error} port={state.host.port} detail={controller.errorDetail} />
       ) : null}
       <FormDialog
         open={form === 'host'}

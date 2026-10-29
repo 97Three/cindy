@@ -1,5 +1,5 @@
 import { RelayServicePanel, useSelfHostedRelayState } from '../../../src/renderer/components/settings/RelayServicePanel';
-import type { SelfHostedRelayState } from '../../../src/shared/selfHostedRelay';
+import type { SelfHostedRelayCommand, SelfHostedRelayState } from '../../../src/shared/selfHostedRelay';
 import { forbid, mountPage, subscription } from '../../ui-page/harness';
 
 const deployment = {
@@ -11,6 +11,8 @@ const deployment = {
 function initialState(name: string): SelfHostedRelayState {
   const server = name === 'server';
   const host = name === 'host';
+  const recovering = name.startsWith('retry-') || name === 'join-error';
+  const finishedAt = Date.now();
   return {
     available: true,
     mode: server || host ? 'self-hosted' : 'official',
@@ -24,8 +26,13 @@ function initialState(name: string): SelfHostedRelayState {
       enabled: host, running: host, error: null, port: 47820, listenAll: host, externalUrl: null,
       suggestedUrls: ['http://192.168.1.20:47820'],
     },
-    deployment: { ...deployment, active: server },
-    deployJob: null,
+    deployment: { ...deployment, active: server, ...(recovering ? { relayVersion: '' } : {}) },
+    deployJob: recovering ? {
+      action: 'deploy', status: 'failed', step: 'runtime', error: 'DOWNLOAD_FAILED',
+      startedAt: finishedAt - 15_000, finishedAt, serverChanged: true,
+      target: { sshHostId: deployment.sshHostId, address: deployment.address, name: deployment.name, baseUrl: deployment.baseUrl },
+      logs: [{ at: finishedAt - 15_000, step: 'check' }, { at: finishedAt - 14_000, step: 'runtime' }],
+    } : null,
     bundledRelayVersion: '0.3.1',
     joinLink: null,
     pendingRequests: [],
@@ -40,15 +47,32 @@ function Page() {
 
 void mountPage({
   host: ctx => {
-    const state = initialState(ctx.case);
+    let state = initialState(ctx.case);
+    const recovering = ctx.case.startsWith('retry-') || ctx.case === 'join-error';
     return {
       selfHostedRelay: {
-        command: async (command: { type: string }) => {
+        command: async (command: SelfHostedRelayCommand) => {
           if (command.type === 'state') return { state };
           if (command.type === 'deployment-status') {
             const certificateExpiresAt = new Date(Date.now() + 5.5 * 86_400_000).toISOString();
             return { state, deploymentStatus: { online: true, devices: 3, onlineDevices: 2, certificateExpiresAt } };
           }
+          if (recovering && command.type === 'check-server') {
+            return ctx.case === 'retry-check-error'
+              ? { state, check: { sshHostId: command.sshHostId, ok: false, error: 'PORT_BUSY_CONTAINER', detail: 'demo-nginx' } }
+              : { state, check: { sshHostId: command.sshHostId, ok: true, system: 'Linux x86_64', plan: 'direct', existing: ctx.case === 'retry-replace' ? 'other' : 'mine' } };
+          }
+          if (recovering && command.type === 'deploy') {
+            if (command.replaceExisting !== (ctx.case === 'retry-replace')) return forbid('unexpected relay replacement')();
+            state = {
+              ...state, mode: 'self-hosted',
+              relay: { name: deployment.name, baseUrl: deployment.baseUrl, role: 'owner', origin: 'server' },
+              deployment: { ...deployment, active: true },
+              deployJob: { ...state.deployJob!, step: 'finish', status: 'done' },
+            };
+            return { state };
+          }
+          if (recovering && command.type === 'create-join-link') return { state, ...(ctx.case === 'join-error' ? { error: 'FAILED' } : {}) };
           return forbid(`selfHostedRelay.command:${command.type}`)();
         },
         onChanged: subscription('relayChanged'),
