@@ -87,6 +87,7 @@ import {
   type RichValue,
 } from "@cindy/maker-shared/rich-answer";
 import { useSessionQuickSend } from './SessionQuickSendContext';
+import type { ChatFilePathContextValue } from './chatFilePathContext';
 
 /** Answer colors are Cindy theme colors; the model only names a role. */
 const richPalette = (colors: ThemeColors): RichPalette => ({
@@ -125,8 +126,13 @@ const memory = new RichInteractionMemory({
 /** Click-time copy: an export never changes the conversation's local controls. */
 export function snapshotRichAnswerValues(
   source: string,
-  stateKey: string,
+  scope: {
+    userId: string | undefined;
+    origin: Pick<ChatFilePathContextValue, 'deviceId' | 'sessionId'> | null;
+    messageKey: string;
+  },
 ): Readonly<Record<number, RichValues>> {
+  const stateKey = `${scope.userId ?? 'signed-out'}:${scope.origin?.deviceId ?? ''}:${scope.origin?.sessionId ?? ''}:${scope.messageKey}`;
   return Object.fromEntries(
     splitRichAnswer(source)
       .filter((part) => part.kind === "rich")

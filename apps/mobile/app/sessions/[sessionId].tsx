@@ -6326,8 +6326,16 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
     textTertiary: colors.textTertiary,
     dark: mode === 'dark',
   }), [colors, mode, userBubbleColors]);
-  const snapshotShareRichValues = useCallback((message: ConversationShareMessage) => snapshotRichAnswerValues(message.body,
-    `${auth.user?.id ?? 'signed-out'}:${deviceId}:${sessionId}:${message.richStateKey ?? message.clientId}`), [auth.user?.id, deviceId, sessionId]);
+  // File context and rich-answer memory must agree even when no workdir/device exists.
+  const chatFilePathOrigin = useMemo(() => {
+    const workdir = currentSession?.workingDir?.trim();
+    return deviceId && workdir ? { deviceId, sessionId, workdir } : null;
+  }, [currentSession?.workingDir, deviceId, sessionId]);
+  const snapshotShareRichValues = useCallback((message: ConversationShareMessage) => snapshotRichAnswerValues(message.body, {
+    userId: auth.user?.id,
+    origin: chatFilePathOrigin,
+    messageKey: message.richStateKey ?? message.clientId,
+  }), [auth.user?.id, chatFilePathOrigin]);
   const shareImages = useConversationShareImages(selectedShareMessages, resolveRemoteMedia, {
     snapshotRichValues: snapshotShareRichValues,
     workdir: currentSession?.workingDir ?? undefined,
@@ -9142,8 +9150,8 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
   // connectionEpoch 在 deps 里确保同 deviceId 断线重连时 memo 重建、linkReady 作废,
   // 避免复用旧 transport epoch 上已 resolve 的握手 promise。
   const chatFilePathContextValue = useMemo<ChatFilePathContextValue | null>(() => {
-    const workdir = currentSession?.workingDir?.trim();
-    if (!deviceId || !workdir) return null;
+    if (!chatFilePathOrigin) return null;
+    const { deviceId, sessionId, workdir } = chatFilePathOrigin;
     let linkReady: Promise<void> | null = null;
     const ensureLink = () => {
       if (!linkReady) {
@@ -9188,15 +9196,13 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
       },
     };
   }, [
+    chatFilePathOrigin,
     connectionEpoch,
     currentSession?.remoteHostId,
-    currentSession?.workingDir,
-    deviceId,
     maker,
     mode,
     openChatPathTarget,
     openLink,
-    sessionId,
     t,
   ]);
 
