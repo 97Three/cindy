@@ -1029,9 +1029,7 @@ describe('ProvidersSection — 允许被远程调用与供应商组', () => {
       providerShare: {
         command: vi.fn(async (cmd: { action: string }) => {
           if (cmd.action === 'received') return [];
-          if (cmd.action === 'owned') return { ready: true, shares: sharedIds.map(providerId => ({
-            providerId, members: [{ memberId: providerId, status: 'active' }],
-          })) };
+          if (cmd.action === 'shared-provider-ids') return { ready: true, providerIds: sharedIds };
           throw new Error(`unexpected ${cmd.action}`);
         }),
         onReceivedChanged: () => () => undefined,

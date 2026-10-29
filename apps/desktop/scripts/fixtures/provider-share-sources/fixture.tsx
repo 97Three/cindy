@@ -42,16 +42,12 @@ mountPage({
     },
     deviceLink: { getState: async () => ({ remoteControlEnabled: true }) },
     providerShare: {
-      command: async () => ({ ready: true, shares: ctx.case === 'no-outgoing-shares' ? [] : [
-        { providerId: 'openai', members: [{ memberId: 'local-member', status: 'active' }] },
-      ] }),
+      command: async () => ({ ready: true, providerIds: ctx.case === 'no-outgoing-shares' ? [] : ['openai'] }),
       onOwnedChanged: subscription('ownedChanged'),
     },
     providerGroup: {
       command: async (command: { action: string }) => command.action === 'list' ? {}
-        : { ready: true, shares: ctx.case === 'no-outgoing-shares' ? [] : [
-          { providerId: 'anthropic', members: [{ memberId: 'remote-member', status: 'paused' }] },
-        ] },
+        : { ready: true, providerIds: ctx.case === 'no-outgoing-shares' ? [] : ['anthropic'] },
       onChanged: subscription('groupChanged'),
     },
   }),
