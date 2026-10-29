@@ -1253,9 +1253,11 @@ Applies to submit-on-Enter fields: the chat composer, goal input, ask input, etc
 > Expanded 2026-07. Cindy's motion character extends the paper-like restraint of §1 / §7: **ordinary UI fades, nudges, and resizes smoothly; overshoot is limited to the explicitly registered Done, Usage History chart and mobile new-task morph responses below**. Functional state transitions are allowed; decorative motion is forbidden. This section pins "functional" into executable tiers and prototypes so components stop inventing their own durations and curves.
 
 **Desktop companion composer action (owner-approved prototype, 2026-10-22).** An idle
-one-to-one companion composer shows dictation and a call action. A sendable draft
-(including attachments or a visible prompt recommendation) replaces the call with Send
-in the same 30px circular target. Crossfade the icon layers and scale 55% ↔ 100% on
+one-to-one companion composer shows dictation and a call action. A visible prompt
+recommendation keeps the call action available (owner correction, 2026-10-29); its
+Tab/click acceptance and Enter send remain available. An accepted or typed draft,
+attachments or browser comments replace the call with Send in the same 30px circular
+target. Crossfade the icon layers and scale 55% ↔ 100% on
 `--motion-enter` (250ms) / `--motion-ease-move`; keep the shell, hit target and dictation
 position fixed, with no bounce. CSS transitions retarget from their current values.
 Respect reduced motion, retain keyboard focus, and reject a press whose action changes

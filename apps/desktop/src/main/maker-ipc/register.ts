@@ -610,7 +610,7 @@ import {
   activeCindyBuiltInAgentSkills,
   builtInSkillDescriptors,
 } from '../maker-host/built-in-skills.js';
-import { isCindySkillEnabled } from '../skillhub/activationPreferences.js';
+import { isCindySkillEnabled, readDisabledSkillPaths, skillActivationKey } from '../skillhub/activationPreferences.js';
 import {
   parseDirectLearnInvocation,
   canGrantUnqualifiedClaudeLearnInvocation,
@@ -8166,13 +8166,17 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           await desktopClaudeAuthAdapter.ensureSharedGlobalSkills();
         }
         const result = await maker.listAgentSkills(kind, skillParams);
+        // Verify integrity once per request, then reuse that synchronous snapshot
+        // when resolving activation aliases instead of rehashing every Skill.
+        const descriptors = builtInSkillDescriptors(app.getPath('userData'), app.getPath('appData'));
+        const disabled = new Set(readDisabledSkillPaths(descriptors));
         return {
           success: true,
           ...result,
           skills: activeCindyBuiltInAgentSkills(
             result.skills,
-            builtInSkillDescriptors(app.getPath('userData'), app.getPath('appData')),
-            isCindySkillEnabled,
+            descriptors,
+            (source) => !disabled.has(skillActivationKey(source)),
           ),
         };
       } catch (err) {
