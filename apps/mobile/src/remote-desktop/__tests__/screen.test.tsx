@@ -75,6 +75,7 @@ vi.mock("../useLockOnExitPreference", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../useLockOnExitPreference")>();
   return {
+    useIdleTimeoutPreference: actual.useIdleTimeoutPreference,
     useRemoteDesktopPreference: () => [false, vi.fn(), true],
     useLockOnExitPreference: (deviceId: string) =>
       fixture.lockPreferenceFromStorage
@@ -118,6 +119,7 @@ const fixture = vi.hoisted(() => ({
   lockOnExit: false,
   lockPreferenceFromStorage: false,
   lockSupported: true,
+  idleSupported: false,
   alert: vi.fn(),
   resetUnlockAttempt: vi.fn(),
   maybeUnlock: vi.fn(async (_beforeAuthentication?: () => Promise<void>) => {}),
@@ -458,6 +460,7 @@ beforeEach(async () => {
   fixture.lockOnExit = false;
   fixture.lockPreferenceFromStorage = false;
   fixture.lockSupported = true;
+  fixture.idleSupported = false;
   fixture.views = {};
   fixture.keyboardListeners = {};
   fixture.webViewProps = null;
@@ -481,6 +484,7 @@ beforeEach(async () => {
         return {
           version: 1,
           lockOnExit: fixture.lockSupported,
+          idleLock: fixture.idleSupported,
           trickleIce: fixture.trickleIce,
           automaticReconnect: true,
           connectionTakeover: true,
@@ -3478,6 +3482,53 @@ describe("remote desktop controls", () => {
     mounted = false;
     expect(requests().filter((r) => r.lockScreen)).toHaveLength(1);
   });
+  // Unit: the real screen loads per-computer policy before connecting and never
+  // automatically reopens a protected connection after leaving the foreground.
+  it("sends the default idle policy, saves changes, and locks on background without reopening", async () => {
+    fixture.idleSupported = true;
+    fixture.nativeMenus = true;
+    await connect();
+    expect(requests().find((r) => r.op === "start")).toMatchObject({ idleTimeoutMinutes: 5 });
+    act(() => button("operations").click());
+    act(() => button("security").click());
+    await act(async () => (host.querySelector('[data-testid="native-menu.1"]') as HTMLButtonElement).click());
+    expect(storage.items.get("cindy.mobile.remote-desktop.idle-timeout.v1.computer")).toBe("1");
+    expect(requests().filter((r) => r.op === "heartbeat").at(-1)).toMatchObject({ idleTimeoutMinutes: 1 });
+    await act(async () => fixture.appState?.("inactive"));
+    expect(requests().some((r) => r.lockScreen)).toBe(false);
+    await act(async () => fixture.appState?.("background"));
+    expect(requests().filter((r) => r.op === "stop")).toEqual([{ op: "stop", lease: "lease", lockScreen: true }]);
+    await act(async () => fixture.appState?.("active"));
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(requests().filter((r) => r.op === "start")).toHaveLength(1);
+    expect(host.textContent).toContain("remoteDesktop.backgroundDisconnected");
+  });
+  it("keeps the host idle clock alive during a transient protected reconnect", async () => {
+    fixture.idleSupported = true;
+    await connect();
+    const original = fixture.invoke.getMockImplementation()!;
+    let first = true;
+    fixture.invoke.mockImplementation((...args) => {
+      if (args[2][0].op === "heartbeat" && first) {
+        first = false;
+        return Promise.reject(new Error("DESKTOP_LEASE_EXPIRED"));
+      }
+      return original(...args);
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(requests().filter((r) => r.op === "stop")).toHaveLength(0);
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(requests().filter((r) => r.op === "start").at(-1)).toMatchObject({ resume: true, idleTimeoutMinutes: 5 });
+  });
+  it("reads an explicit never override before starting a protected-capable host", async () => {
+    act(() => root.unmount());
+    storage.items.set("cindy.mobile.remote-desktop.idle-timeout.v1.computer", "0");
+    fixture.idleSupported = true;
+    root = createRoot(host);
+    await act(async () => root.render(<RemoteDesktopScreen />));
+    await connect();
+    expect(requests().find((r) => r.op === "start")).toMatchObject({ idleTimeoutMinutes: 0 });
+  });
   it("does not lock for Face ID inactivity or background recovery", async () => {
     fixture.lockOnExit = true;
     await act(async () => root.render(<RemoteDesktopScreen />));
@@ -6002,6 +6053,7 @@ describe("remote desktop controls", () => {
   });
   it.each([
     "DESKTOP_STOPPED",
+    "DESKTOP_IDLE_TIMEOUT",
     "DESKTOP_DISABLED",
     "DESKTOP_ACCESSIBILITY_PERMISSION",
   ])("does not retry a terminal host decision: %s", async (error) => {

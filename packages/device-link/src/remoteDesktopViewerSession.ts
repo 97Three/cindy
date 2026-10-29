@@ -279,7 +279,10 @@ export class RemoteDesktopViewerSession {
     }
   }
 
-  stop(lockScreen = false): Promise<unknown> {
+  /** A protected transient retry leaves the bounded host lease running, so its
+   * idle deadline survives. The next start must resume; absent recovery, the
+   * host's heartbeat expiry locks it. Explicit exits always send stop. */
+  stop(lockScreen = false, preserveLease = false): Promise<unknown> {
     this.generation++;
     const lease = this.active;
     this.active = null;
@@ -287,7 +290,7 @@ export class RemoteDesktopViewerSession {
     this.controlGeneration++;
     this.releaseUnconfirmed = false;
     return this.serialize(() =>
-      lease
+      lease && (!preserveLease || lockScreen)
         ? this.request({
             op: "stop",
             lease: lease.lease,
@@ -395,6 +398,7 @@ export function findRememberedMode(
 
 /** Only transient connection errors may restart a viewer. Explicit stop wins. */
 export function remoteDesktopFailureKey(code: string): string | null {
+  if (/DESKTOP_IDLE_TIMEOUT/.test(code)) return "idleDisconnected";
   if (/DESKTOP_CONNECTION_TIMEOUT/.test(code)) return "connectionTimeout";
   if (/ACCESS_REVOKED/.test(code)) return "accessRevoked";
   if (/REMOTE_DISABLED/.test(code)) return "remoteDisabled";
