@@ -7351,7 +7351,7 @@
         "previewDetail": "只能打开下方列出的网站；每次打开都会提示是哪个插件打开的。",
         "browserExtension": "可让它自带的浏览器扩展连接到 Cindy",
         "browserExtensionDetail": "只有下方列出的扩展能连接；连接经本机回环地址，由 Cindy 把扩展发起的请求转交给这个插件。",
-        "browserExtensionPageControlDetail": "只有下方列出的扩展能连接。该扩展还实现页面控制：选择「我的浏览器」后，Agent 可经它读取和操作你正在使用的浏览器页面，受插件的站点权限约束。",
+        "browserExtensionPageControlDetail": "只有下方列出的扩展能连接。该扩展还实现页面控制：选择「我的浏览器」后，Agent 可经它读取和操作你正在使用的浏览器页面。",
         "nodeChildSpawn": "Node 程序可请宿主再启动包内申报过的子进程",
         "nodeChildSpawnDetail": "只能启动它自己包里申报过的 JS 文件(与主程序同样的本机权限)，不能执行任意命令；插件停用或退出时子进程一并关闭。",
         "skill": "为 AI 助手添加技能「{{name}}」",

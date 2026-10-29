@@ -2,12 +2,12 @@
  * bridge.test — 浏览器扩展桥接的线协议回归(从插件时期的协议测试迁入宿主)。
  *
  * 测试价值
- * - 生产入口与可观察结果:BrowserExtensionBridge 的真实 HTTP 监听 + act/setPolicy/relay*
+ * - 生产入口与可观察结果:BrowserExtensionBridge 的真实 HTTP 监听 + act/setTrustedClients/relay*
  *   方法;扩展看到的 /health、/poll、/ack、/authorize、/result、/learning/* 状态码与载荷。
- * - Bug/规则依据:插件 my-browser 0.4.x 的桥接合同(一次送达、unknown 不重投、撤销等待
- *   派发、结果脱敏、官方身份须 native 绑定);桥接迁入宿主后这些合同必须逐条保持。
+ * - Bug/规则依据:插件 my-browser 0.4.x 的桥接合同(一次送达、unknown 不重投、结果脱敏、
+ *   官方身份须 native 绑定);桥接迁入宿主后这些合同必须逐条保持。站点名单 2026-10-30 取消。
  * - 现有覆盖缺口:宿主此前没有这条链路。
- * - 最小失败输入:见各用例(重复 ack、撤销后的 /authorize、带凭证的 tabs URL 等)。
+ * - 最小失败输入:见各用例(重复 ack、旧插件推送的名单、带凭证的 tabs URL 等)。
  * - tier:unit(真实回环 socket,端口 0,无外部进程);实测耗时约 1 秒。
  */
 
@@ -18,10 +18,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { BrowserExtensionBridge, type BrowserExtensionRelayNotice } from '../bridge';
 import {
-  checkBrowserExtensionPolicy,
-  defaultBrowserExtensionPolicy,
+  checkBrowserExtensionTarget,
   normalizeBrowserExtensionHost,
-  normalizeBrowserExtensionPolicy,
   redactBrowserUrl,
   validateBrowserExtensionJob,
 } from '../policy';
@@ -172,65 +170,22 @@ async function fixture(
   return { bridge, url, client, ready, relays, nativeToken };
 }
 
-describe('policy · 站点策略与 URL 脱敏(与扩展侧同判据)', () => {
-  it('默认策略开放读写(含本机与私网);带凭证地址与非网页协议拒绝;主机名规范化', () => {
-    const p = defaultBrowserExtensionPolicy();
-    expect(checkBrowserExtensionPolicy(p, 'text', 'https://example.test').ok).toBe(true);
-    expect(checkBrowserExtensionPolicy(p, 'click', 'https://example.test').ok).toBe(true);
-    expect(normalizeBrowserExtensionPolicy(p)).toEqual(p);
-    p.read.block = ['blocked.test'];
-    for (const url of [
-      'https://blocked.test',
-      'https://child.blocked.test',
-      'file:///etc/passwd',
-      'https://a:b@example.test',
-    ]) {
-      expect(checkBrowserExtensionPolicy(p, 'text', url).ok, url).toBe(false);
-    }
-    // Local and private pages are the user's own: reachable like in the dedicated browser.
-    for (const url of ['http://127.0.0.2', 'http://[::1]', 'http://10.2.3.4', 'http://localhost.']) {
-      expect(checkBrowserExtensionPolicy(p, 'text', url).ok, url).toBe(true);
-    }
-    expect(checkBrowserExtensionPolicy(p, 'text', 'https://[2606:4700:4700::1111]/').ok).toBe(true);
-    p.interact.allow = ['example.test', 'blocked.test'];
-    expect(checkBrowserExtensionPolicy(p, 'click', 'https://sub.example.test').ok).toBe(true);
-    expect(checkBrowserExtensionPolicy(p, 'click', 'https://example.test.evil.test').ok).toBe(
-      false,
-    );
-    expect(checkBrowserExtensionPolicy(p, 'click', 'https://blocked.test')).toMatchObject({
-      error: 'READ_BLOCKED',
-    });
+describe('policy · 地址校验与 URL 脱敏', () => {
+  it('任何网页地址都放行(含本机与私网);带凭证地址与非网页协议拒绝;主机名规范化', () => {
+    for (const url of ['https://example.test', 'http://127.0.0.2', 'http://[::1]', 'http://10.2.3.4', 'http://jira'])
+      for (const action of ['text', 'click'])
+        expect(checkBrowserExtensionTarget(action, url).ok, `${action} ${url}`).toBe(true);
+    for (const url of ['file:///etc/passwd', 'https://a:b@example.test', 'chrome://settings'])
+      expect(checkBrowserExtensionTarget('text', url).ok, url).toBe(false);
+    expect(checkBrowserExtensionTarget('nope', 'https://example.test')).toMatchObject({ error: 'INVALID_ACTION' });
+    // The tabs host filter still takes a plain domain.
     expect(normalizeBrowserExtensionHost(' WWW.Example.test ')).toBe('www.example.test');
-    expect(normalizeBrowserExtensionHost('*.example.test')).toBe('example.test');
-    expect(normalizeBrowserExtensionHost('=example.test')).toBe('=example.test');
-    for (const bad of [
-
-      'https://example.test',
-      'example.test/path',
-      'example.test:443',
-      'example.test@evil.test',
-      '*',
-    ]) {
+    for (const bad of ['https://example.test', 'example.test/path', 'example.test:443', '*'])
       expect(() => normalizeBrowserExtensionHost(bad)).toThrow();
-    }
-    // Local, private and single-label intranet hosts can be listed, so they can be blocked alone.
-    for (const host of ['127.0.0.1', '192.168.1.2', '[::1]', 'localhost', 'jira', 'nas.local'])
-      expect(() => normalizeBrowserExtensionHost(host)).not.toThrow();
+    // Site recipes may send any DevTools method; there is no per-recipe allowlist (2026-10-30).
     expect(() =>
-      normalizeBrowserExtensionPolicy({ read: { block: 'example.test' }, interact: { allow: [] } }),
-    ).toThrow();
-  });
-
-  // Review 2026-10-29: the protocol session took any DevTools method, so a recipe job could read
-  // every cookie in the profile. Mirrors the extension's list; it also keeps cookies on-site.
-  it('配方的协议命令只接受配方会发的方法;读 Cookie 必须指明站点地址', () => {
-    const cdp = (method: string, params?: unknown) =>
-      validateBrowserExtensionJob('cdp', { url: 'https://example.test', tabId: 1, op: 'command', method, params });
-    expect(() => cdp('Network.getAllCookies')).toThrow(/not available/);
-    expect(() => cdp('Runtime.evaluate', { expression: '1' })).toThrow(/not available/);
-    expect(() => cdp('Network.getCookies')).toThrow(/params.urls/);
-    expect(() => cdp('Network.getCookies', { urls: ['https://example.test/'] })).not.toThrow();
-    expect(() => cdp('Storage.getCookies', {})).not.toThrow();
+      validateBrowserExtensionJob('cdp', { url: 'https://example.test', tabId: 1, op: 'command', method: 'Storage.getCookies' }),
+    ).not.toThrow();
   });
 
   it('提取属性是封闭集合;载荷校验保留空文本与空选项', () => {
@@ -323,25 +278,6 @@ describe('bridge · 连接与身份', () => {
       execution: 'not_executed',
     });
     expect(bridge.listeningPort).toBe(0);
-  });
-
-  // Review 2026-10-29: without the user's saved permissions the permissive default must not stand
-  // in for a blocklist the plugin still holds.
-  it('等待策略的桥接在收到策略前拒绝页面作业', async () => {
-    let asked = 0;
-    const { bridge, client } = await fixture({ awaitPolicy: true, onPolicyMissing: () => asked++ });
-    await client({ native: true });
-    expect(await bridge.act('text', { url: 'https://example.test' })).toMatchObject({
-      ok: false,
-      error: 'POLICY_NOT_READY',
-      execution: 'not_executed',
-    });
-    // Each refusal tells the host, which asks the plugin again (throttled there).
-    expect(asked).toBeGreaterThan(0);
-    await bridge.setPolicy(defaultBrowserExtensionPolicy());
-    expect(await bridge.act('text', { url: 'https://example.test' })).not.toMatchObject({
-      error: 'POLICY_NOT_READY',
-    });
   });
 
   it('回环 HTTP 拒绝网页、预检、改绑 Host、旧会话与任意端点', async () => {
@@ -509,134 +445,38 @@ describe('bridge · 作业生命周期', () => {
     expect((await c.request('/ack', { id: delivered.id })).status).toBe(409);
   });
 
-  it('送达后撤销权限:ack 被拒、不留排队作业;重新授权也不能复活', async () => {
+  // 2026-10-30: site lists are gone. A plugin of the site-list era still pushes one; it is acknowledged
+  // and blocks nothing, while tab URLs keep their credential redaction.
+  it('旧插件推送的站点名单不再生效;标签页地址仍做凭证脱敏', async () => {
     const { bridge, ready } = await fixture();
     const c = await ready();
-    const p = defaultBrowserExtensionPolicy();
-    p.interact.allow = ['example.test'];
-    await bridge.setPolicy(p);
-    const promise = bridge.act('click', { url: 'https://example.test', selector: 'button' });
+    expect(
+      bridge.setPolicy({ read: { block: ['example.test'] }, interact: { allow: [], block: [] } }),
+    ).toMatchObject({ ok: true, policy: { read: { block: [] }, interact: { allow: ['*'] } } });
+    const p = bridge.act('tabs', {});
     await sleep(5);
     const { job } = await c.request('/poll');
-    await bridge.setPolicy({ read: { block: [] }, interact: { allow: [], block: [] } });
-    expect((await promise).execution).toBe('not_executed');
-    expect((await c.request('/ack', { id: job.id })).status).toBe(409);
-    for (const blocked of ['example.test', 'redirect.test']) {
-      await bridge.setPolicy(defaultBrowserExtensionPolicy());
-      const pending = bridge.act('click', { url: 'https://example.test', selector: 'button' });
-      await sleep(5);
-      const delivered = (await c.request('/poll')).job;
-      await c.request('/ack', { id: delivered.id });
-      expect(
-        (await c.request('/authorize', { id: delivered.id, url: 'https://redirect.test' })).ok,
-      ).toBe(true);
-      await bridge.setPolicy({ ...defaultBrowserExtensionPolicy(), read: { block: [blocked] } });
-      const result = await pending;
-      expect(result).toMatchObject({ error: 'READ_BLOCKED', execution: 'unknown' });
-      await bridge.setPolicy(defaultBrowserExtensionPolicy());
-      expect(
-        (await c.request('/authorize', { id: delivered.id, url: 'https://redirect.test' })).status,
-      ).toBe(409);
-      expect((await c.request('/result', { id: delivered.id, result: { ok: true } })).status).toBe(
-        409,
-      );
-    }
-  });
-
-  it('撤销等待最终文档派发结束并丢弃其结果;丢失的派发不能报告为撤销成功', async () => {
-    const { bridge, ready } = await fixture({ jobTimeout: 2000 });
-    const c = await ready();
-    const pending = bridge.act('click', { url: 'https://example.test', selector: 'button' });
+    expect((await c.request('/ack', { id: job.id })).policy).toMatchObject({ read: { block: [] } });
+    await c.request('/result', {
+      id: job.id,
+      result: {
+        tabs: [
+          { id: 1, url: 'https://example.test?code=11111111-1111-4111-8111-111111111111', title: 'mail' },
+          { id: 2, url: 'chrome://settings', title: 'settings' },
+        ],
+      },
+    });
+    const tabs = (await p).tabs as Array<Record<string, unknown>>;
+    expect(tabs[0].title).toBe('mail');
+    expect(tabs[0].url).not.toContain('11111111');
+    expect(tabs[1]).toEqual({ id: 2, redacted: true });
+    const clicked = bridge.act('click', { url: 'https://example.test', selector: 'button' });
     await sleep(5);
-    const { job } = await c.request('/poll');
-    await c.request('/ack', { id: job.id });
-    expect(
-      (await c.request('/authorize', { id: job.id, url: 'https://example.test', dispatch: true }))
-        .ok,
-    ).toBe(true);
-    let saved = false;
-    const save = bridge
-      .setPolicy({ ...defaultBrowserExtensionPolicy(), read: { block: ['example.test'] } })
-      .then((r) => {
-        saved = true;
-        return r;
-      });
-    await sleep(25);
-    expect(saved).toBe(false);
-    expect(
-      (await c.request('/authorize', { id: job.id, url: 'https://example.test', dispatch: true }))
-        .status,
-    ).toBe(403);
-    expect(await bridge.act('text', { url: 'https://example.test' })).toMatchObject({
-      error: 'READ_BLOCKED',
-    });
-    await c.request('/result', { id: job.id, result: { ok: true, text: 'must not escape' } });
-    expect((await save).ok).toBe(true);
-    const result = await pending;
-    expect(result).toMatchObject({ error: 'READ_BLOCKED', execution: 'unknown' });
-    expect(result.text).toBeUndefined();
-
-    const { bridge: lost, ready: readyLost } = await fixture({ jobTimeout: 100 });
-    const l = await readyLost();
-    const lostPending = lost.act('click', { url: 'https://example.test', selector: 'button' });
-    await sleep(5);
-    const lostJob = (await l.request('/poll')).job;
-    await l.request('/ack', { id: lostJob.id });
-    await l.request('/authorize', { id: lostJob.id, url: 'https://example.test', dispatch: true });
-    const policy = { ...defaultBrowserExtensionPolicy(), read: { block: ['example.test'] } };
-    expect(await lost.setPolicy(policy)).toMatchObject({
-      ok: false,
-      error: 'REVOCATION_UNCONFIRMED',
-      execution: 'unknown',
-      applied: true,
-    });
-    expect(await lost.setPolicy(policy)).toMatchObject({ error: 'REVOCATION_UNCONFIRMED' });
-    expect(
-      (await l.request('/result', { id: lostJob.id, result: { ok: false, execution: 'unknown' } }))
-        .status,
-    ).toBe(409);
-    expect(await lost.setPolicy(policy)).toMatchObject({ error: 'REVOCATION_UNCONFIRMED' });
-    expect((await l.request('/result', { id: lostJob.id, result: { ok: true } })).status).toBe(409);
-    expect((await lost.setPolicy(policy)).ok).toBe(true);
-    expect((await lostPending).execution).toBe('unknown');
-  });
-
-  it('被阻止站点的标签与跳转到被阻止站点的内容由宿主脱敏,不依赖扩展过滤', async () => {
-    const { bridge, ready } = await fixture();
-    const c = await ready();
-    await bridge.setPolicy({
-      ...defaultBrowserExtensionPolicy(),
-      read: { block: ['blocked.test'] },
-    });
-    async function roundtrip(action: string, result: unknown) {
-      const p = bridge.act(action, action === 'tabs' ? {} : { url: 'https://example.test' });
-      await sleep(5);
-      const { job } = await c.request('/poll');
-      await c.request('/ack', { id: job.id });
-      await c.request('/result', { id: job.id, result });
-      return p;
-    }
-    const r = await roundtrip('tabs', {
-      tabs: [
-        { id: 1, url: 'https://blocked.test', title: 'private' },
-        {
-          id: 2,
-          url: 'https://example.test?code=11111111-1111-4111-8111-111111111111',
-          title: 'public',
-        },
-      ],
-    });
-    const tabs = r.tabs as Array<Record<string, unknown>>;
-    expect(tabs[0]).toEqual({ id: 1, redacted: true });
-    expect(tabs[1].title).toBe('public');
-    expect(tabs[1].url).not.toContain('11111111');
-    const redirected = await roundtrip('text', {
-      ok: true,
-      url: 'https://blocked.test',
-      text: 'private',
-    });
-    expect(redirected).toMatchObject({ error: 'REDIRECT_BLOCKED' });
-    expect(redirected.text).toBeUndefined();
+    const delivered = (await c.request('/poll')).job;
+    expect((await c.request('/ack', { id: delivered.id })).ok).toBe(true);
+    expect((await c.request('/authorize', { id: delivered.id, url: 'https://example.test' })).ok).toBe(true);
+    await c.request('/result', { id: delivered.id, result: { ok: true, execution: 'executed' } });
+    expect((await clicked).ok).toBe(true);
   });
 
   // Review 2026-10-29 (Codex P1): network-result entries were forwarded to the model with their URLs
@@ -772,9 +612,6 @@ describe('bridge · 转交请求(翻译/字幕)', () => {
       done: true,
       result: { translations: ['你好'] },
     });
-    await bridge.setPolicy({ read: { block: ['example.test'] }, interact: { allow: [] } });
-    expect(bridge.relayActive(job.id).active).toBe(false);
-    expect((await c.signed('/learning/result', { id: job.id })).status).toBe(403);
     const config = { id: crypto.randomUUID(), request: { op: 'config' } };
     await c.signed('/learning/start', config);
     await c.signed('/learning/cancel', { id: config.id });

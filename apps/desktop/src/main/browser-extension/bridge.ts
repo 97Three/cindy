@@ -1,6 +1,6 @@
 /**
  * 浏览器扩展桥接(宿主侧):在 127.0.0.1 的一段固定端口上承接随包浏览器扩展的
- * 长轮询连接,负责配对、身份绑定、作业分发、站点策略守门、结果脱敏,以及把
+ * 长轮询连接,负责配对、身份绑定、作业分发、结果脱敏,以及把
  * 扩展发起的转交请求(翻译、字幕等)交给声明 browserExtension 的插件处理。
  *
  * 线协议 `cindy-browser-extension/3`(协议号 3,签名线合同 0.4.13)原样沿用插件
@@ -17,7 +17,8 @@
  * - 只有扩展 origin 能连:自定义头 + 无 CORS,网页、预检、改绑 Host 一律 403;
  * - 官方扩展 id 首次出现必须经 native host 绑定公钥,HTTP 调用方不能自称官方;
  * - 作业一次送达绝不重投;已确认未完成的作业只能是 unknown,不能按成功或未执行报告;
- * - 策略撤销对在途作业生效:未授权直接作废,已进入 DOM 派发的等待派发结束再丢弃结果;
+ * - 不设站点名单(2026-10-30 决定):安全交给任务的权限档位与自动审核;旧扩展与旧插件仍收发
+ *   的 policy 字段只作兼容,恒为「全部允许」;
  * - 每个 URL 交给模型前都经 redactBrowserUrl;读取结果标 untrusted_content。
  */
 
@@ -25,11 +26,10 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 
 import {
-  checkBrowserExtensionPolicy,
+  checkBrowserExtensionTarget,
   defaultBrowserExtensionPolicy,
   isBrowserExtensionInteractAction,
   isBrowserExtensionReadAction,
-  normalizeBrowserExtensionPolicy,
   redactBrowserUrl,
   validateBrowserExtensionJob,
   type BrowserExtensionAction,
@@ -133,14 +133,6 @@ export interface BrowserExtensionBridgeOptions {
   nativeToken?: string;
   /** 扩展发起的转交请求到达时回调(宿主转交给插件)。 */
   onRelay?: (notice: BrowserExtensionRelayNotice) => void;
-  /**
-   * Refuse every page job until the first setPolicy: the host has no saved copy of the user's
-   * site permissions yet (first run after the bridge moved into the host, or an unreadable cache),
-   * so the permissive default must not stand in for a blocklist the plugin still holds.
-   */
-  awaitPolicy?: boolean;
-  /** Called whenever a job is refused for lack of a policy, so the host can ask the plugin again. */
-  onPolicyMissing?: () => void;
   ports?: readonly number[];
   pollTimeout?: number;
   connectWait?: number;
@@ -179,10 +171,6 @@ interface Job {
   resolve: (result: BrowserExtensionJobResult) => void;
   created: number;
   timer?: ReturnType<typeof setTimeout>;
-  authorizedUrl?: string;
-  dispatchSettled?: Promise<boolean>;
-  settleDispatch?: (finished: boolean) => void;
-  revoked?: { error: string; message: string };
 }
 
 interface RelayItem {
@@ -213,17 +201,13 @@ const isHttp = (value: unknown): value is string =>
 const FIELD_VALUE_MAX = 4000;
 
 export class BrowserExtensionBridge {
-  private policy: BrowserExtensionPolicy = defaultBrowserExtensionPolicy();
+  /** Wire compatibility only: extensions and plugins of the site-list era still read it. */
+  private readonly policy: BrowserExtensionPolicy = defaultBrowserExtensionPolicy();
   private pins: BrowserExtensionTrustedClient[] = [];
   private readonly nativeBindings = new Map<string, string>();
   private server: http.Server | null = null;
   private starting: Promise<void> | null = null;
   private port = 0;
-  private readonly unconfirmedDispatches = new Map<
-    string,
-    { clientId: string; action: BrowserExtensionAction; url?: string; authorizedUrl?: string }
-  >();
-  private unconfirmedOverflow = false;
   private readonly jobs = new Map<string, Job>();
   private readonly clients = new Map<string, Client>();
   private readonly waiting = new Map<string, () => void>();
@@ -232,26 +216,15 @@ export class BrowserExtensionBridge {
   private readonly knownIds: Set<string>;
   private readonly now: () => number;
 
-  private policyKnown: boolean;
   private closed = false;
 
   constructor(private readonly options: BrowserExtensionBridgeOptions) {
     this.knownIds = new Set(options.extensionIds);
     this.now = options.now ?? Date.now;
-    this.policyKnown = options.awaitPolicy !== true;
   }
 
-  private gate(action: unknown, url: unknown): ReturnType<typeof checkBrowserExtensionPolicy> {
-    if (!this.policyKnown) {
-      this.options.onPolicyMissing?.();
-      return {
-        ok: false,
-        error: 'POLICY_NOT_READY',
-        message: 'Cindy is still loading your site permissions from the plugin. Try again shortly.',
-        execution: 'not_executed',
-      };
-    }
-    return checkBrowserExtensionPolicy(this.policy, action, url);
+  private gate(action: unknown, url: unknown): ReturnType<typeof checkBrowserExtensionTarget> {
+    return checkBrowserExtensionTarget(action, url);
   }
 
   get listeningPort(): number {
@@ -462,24 +435,10 @@ export class BrowserExtensionBridge {
 
   // ── 作业生命周期 ────────────────────────────────────────────────────────
 
-  private finish(job: Job, result: Record<string, unknown>, browserFinished = false): void {
+  private finish(job: Job, result: Record<string, unknown>): void {
     if (!this.jobs.has(job.id)) return;
     clearTimeout(job.timer);
     this.jobs.delete(job.id);
-    if (job.dispatchSettled && !browserFinished) {
-      // 历史不是可运行的工作:只保留有界的授权元数据,不保留载荷文本与结果承诺。
-      if (this.unconfirmedDispatches.size >= 128) {
-        this.unconfirmedDispatches.delete(this.unconfirmedDispatches.keys().next().value as string);
-        this.unconfirmedOverflow = true; // 忘记身份不是完成的证据。
-      }
-      this.unconfirmedDispatches.set(job.id, {
-        clientId: job.clientId,
-        action: job.action,
-        url: job.payload.url,
-        authorizedUrl: job.authorizedUrl,
-      });
-    }
-    job.settleDispatch?.(browserFinished);
     const safe = this.redactResult(result, job.payload.maxChars || 6000);
     const timing = (safe.timing && typeof safe.timing === 'object' ? safe.timing : {}) as Record<
       string,
@@ -933,18 +892,6 @@ export class BrowserExtensionBridge {
     const b = (await this.readBody(req, req.url === '/result' ? 32_000_000 : 512000)).value;
     const jobId = String(b.id);
     const job = this.jobs.get(jobId);
-    // 迟到的完成只消除不确定性,绝不复活或返回过期结果。
-    if (req.url === '/result' && this.unconfirmedDispatches.get(jobId)?.clientId === clientId) {
-      const result = b.result as { execution?: unknown } | undefined;
-      if (
-        result &&
-        typeof result === 'object' &&
-        !Array.isArray(result) &&
-        result.execution !== 'unknown'
-      )
-        this.unconfirmedDispatches.delete(jobId);
-      return this.send(res, failure('JOB_EXPIRED', 'The operation result expired.'), 409);
-    }
     if (
       !job ||
       job.clientId !== clientId ||
@@ -952,8 +899,6 @@ export class BrowserExtensionBridge {
     ) {
       return this.send(res, failure('JOB_EXPIRED', 'Do not execute this job.'), 409);
     }
-    if (job.revoked && req.url !== '/result')
-      return this.send(res, this.jobFailure(job, job.revoked.error, job.revoked.message), 403);
     if (req.url === '/ack' || req.url === '/authorize') {
       const gate = this.gate(
         job.action,
@@ -964,21 +909,12 @@ export class BrowserExtensionBridge {
         this.finish(job, result);
         return this.send(res, result, 403);
       }
+      // /authorize only re-validates the address the extension is about to touch (older extensions
+      // call it before every page action); there is no site list to revoke against.
       if (req.url === '/ack') job.state = 'acknowledged';
-      else {
-        job.authorizedUrl = typeof b.url === 'string' ? b.url : undefined;
-        // 文档已准备执行:撤销必须等待这次派发结束;单独作废结果并不能阻止 DOM。
-        if (b.dispatch === true && !job.dispatchSettled) {
-          job.dispatchSettled = new Promise((resolve) => {
-            job.settleDispatch = resolve;
-          });
-        }
-      }
       return this.send(res, { ok: true, policy: this.policy });
     }
-    let result: Record<string, unknown> = job.revoked
-      ? this.jobFailure(job, job.revoked.error, job.revoked.message)
-      : (b.result as Record<string, unknown>);
+    let result = b.result as Record<string, unknown>;
     if (!result || typeof result !== 'object' || Array.isArray(result)) {
       result = this.jobFailure(
         job,
@@ -1034,12 +970,7 @@ export class BrowserExtensionBridge {
     ) {
       result = { ...result, execution: this.jobFailure(job, '', '').execution };
     }
-    const browserFinished =
-      !!b.result &&
-      typeof b.result === 'object' &&
-      !Array.isArray(b.result) &&
-      (b.result as { execution?: unknown }).execution !== 'unknown';
-    this.finish(job, result, browserFinished);
+    this.finish(job, result);
     return this.send(res, { ok: true });
   }
 
@@ -1109,48 +1040,11 @@ export class BrowserExtensionBridge {
     );
   }
 
-  /** 插件推送(或宿主恢复)站点策略;在途作业按新策略撤销,DOM 派发中的等其结束。 */
-  async setPolicy(
-    input: unknown,
-  ): Promise<
-    { ok: true; policy: BrowserExtensionPolicy } | (BrowserExtensionFailure & { applied?: true })
-  > {
-    this.policy = normalizeBrowserExtensionPolicy(input);
-    this.policyKnown = true;
-    const dispatches: Array<Promise<boolean>> = [];
-    for (const job of [...this.jobs.values()]) {
-      // 撤销同时作用于原请求与其重定向目标:只按后者判会让被阻止的请求悄悄活着。
-      const original = this.gate(job.action, job.payload.url);
-      const gate =
-        original.ok && job.authorizedUrl
-          ? this.gate(job.action, job.authorizedUrl)
-          : original;
-      if (!gate.ok) {
-        if (job.dispatchSettled) {
-          job.revoked = gate;
-          dispatches.push(job.dispatchSettled);
-        } else {
-          this.finish(job, this.jobFailure(job, gate.error, gate.message));
-        }
-      }
-    }
-    const completed = await Promise.all(dispatches);
-    const uncertain = [...this.unconfirmedDispatches.values()].some(
-      (job) =>
-        !this.gate(job.action, job.url).ok ||
-        (job.authorizedUrl &&
-          !this.gate(job.action, job.authorizedUrl).ok),
-    );
-    if (completed.some((finished) => !finished) || uncertain || this.unconfirmedOverflow) {
-      return {
-        ...failure(
-          'REVOCATION_UNCONFIRMED',
-          'Permissions are applied, but an earlier browser action did not confirm completion. Check the page before continuing.',
-          'unknown',
-        ),
-        applied: true,
-      };
-    }
+  /**
+   * Plugins of the site-list era still push their lists; they are acknowledged and ignored (site lists
+   * were removed on 2026-10-30, safety is the task's permission mode and review).
+   */
+  setPolicy(_input?: unknown): { ok: true; policy: BrowserExtensionPolicy } {
     return { ok: true, policy: this.policy };
   }
 

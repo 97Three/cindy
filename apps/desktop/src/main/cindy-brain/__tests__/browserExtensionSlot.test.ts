@@ -100,9 +100,8 @@ class FakeBridge {
     this.calls.push(['act', [action, payload]]);
     return { ok: true, text: 'hello' };
   }
-  async setPolicy(policy: unknown) {
-    this.calls.push(['setPolicy', [policy]]);
-    this.policy = policy as typeof this.policy;
+  setPolicy() {
+    this.calls.push(['setPolicy', []]);
     return { ok: true as const, policy: this.policy };
   }
   setTrustedClients(clients: unknown) {
@@ -300,7 +299,7 @@ describe('browserExtensionSlot · 管子上行', () => {
     });
   });
 
-  it('status / act / setPolicy / setTrustedClients / relay* 原样转给桥接;策略落盘并在重启后恢复', async () => {
+  it('status / act / setTrustedClients / relay* 原样转给桥接;旧插件的 setPolicy 应答不落盘;配对重启后恢复', async () => {
     const { slot, bridges, dir, ghosts, settle } = await makeSlot();
     slot.reconcile(ghosts);
     await settle();
@@ -323,23 +322,18 @@ describe('browserExtensionSlot · 管子上行', () => {
       }),
     ).toMatchObject({ ok: true, text: 'hello' });
     expect(bridges[0].calls.at(-1)).toEqual(['act', ['text', { url: 'https://example.test' }]]);
-    expect(
-      await slot.handleRequest(id, { kind: 'setPolicy', policy: { read: { block: 'bad' } } }),
-    ).toMatchObject({ ok: false, errorCode: 'INVALID_REQUEST' });
-    const policy = {
-      read: { block: ['blocked.test'] },
-      interact: { allow: ['example.test'], block: [] },
-    };
+    // Site lists were removed (2026-10-30): a plugin that still pushes one gets an acknowledgement.
+    const policy = { read: { block: ['blocked.test'] }, interact: { allow: ['example.test'], block: [] } };
     expect(await slot.handleRequest(id, { kind: 'setPolicy', policy })).toMatchObject({
       ok: true,
-      policy,
+      policy: { read: { block: [] } },
     });
-    expect(
-      JSON.parse(await fs.readFile(path.join(dir, encodeURIComponent(id) + '.json'), 'utf8')),
-    ).toEqual({ version: 1, policy, trustedClients: [] });
     expect(await slot.handleRequest(id, { kind: 'setTrustedClients', clients: [] })).toEqual({
       ok: true,
     });
+    expect(
+      JSON.parse(await fs.readFile(path.join(dir, encodeURIComponent(id) + '.json'), 'utf8')),
+    ).toEqual({ version: 1, trustedClients: [] });
     expect(await slot.handleRequest(id, { kind: 'relayActive', id: 'r1' })).toEqual({
       ok: true,
       active: true,
@@ -362,49 +356,22 @@ describe('browserExtensionSlot · 管子上行', () => {
       ok: false,
       errorCode: 'INVALID_REQUEST',
     });
-    // 重启(新槽、同目录):先恢复配对与上次策略再 start,不再向插件索要策略。
+    // 重启(新槽、同目录):先恢复配对再 start,不再向插件索要;旧版本存下的名单被忽略。
+    await fs.writeFile(
+      path.join(dir, encodeURIComponent(id) + '.json'),
+      JSON.stringify({ version: 1, policy, trustedClients: [] }),
+    );
     const again = await makeSlot({ policyDir: () => dir });
     again.slot.reconcile(again.ghosts);
     await vi.waitFor(() => expect(again.bridges[0]?.started).toBe(true));
-    expect(again.bridges[0].calls.slice(0, 2)).toEqual([
-      ['setTrustedClients', [[]]],
-      ['setPolicy', [policy]],
-    ]);
+    expect(again.bridges[0].calls).toEqual([['setTrustedClients', [[]]]]);
     expect(again.sent.some(([, payload]) => (payload as { name?: string }).name === 'browser-extension-policy-request')).toBe(false);
   });
 
-  // Review 2026-10-29: with no cached policy the host bridge must not fall back to "allow every
-  // site" while the plugin still holds the user's blocklist; it waits and asks the plugin.
-  // Review 2026-10-29 (Greptile P1): a setPolicy that was still waiting when the account switched
-  // saved the old account's permissions and pairings into the new account's cache.
-  it('切换账号时在途的策略写入仍落在原账号的缓存目录', async () => {
-    const other = await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-browser-extension-slot-b-'));
-    dirs.push(other);
-    const { slot, bridges, dir, deps } = await makeSlot();
-    slot.reconcile([extGhost()]);
-    await vi.waitFor(() => expect(bridges[0]?.started).toBe(true));
-    let release: () => void = () => undefined;
-    const gate = new Promise<void>((resolve) => (release = resolve));
-    const realSetPolicy = bridges[0].setPolicy.bind(bridges[0]);
-    bridges[0].setPolicy = async (policy: unknown) => {
-      await gate;
-      return realSetPolicy(policy);
-    };
-    const policy = { read: { block: ['blocked.test'] }, interact: { allow: ['example.test'], block: [] } };
-    const pending = slot.handleRequest('_root__my-browser', { kind: 'setPolicy', policy });
-    // The account switches while the job is still settling.
-    (deps as { policyDir: () => string }).policyDir = () => other;
-    release();
-    expect(await pending).toMatchObject({ ok: true });
-    await expect(fs.readFile(path.join(dir, encodeURIComponent('_root__my-browser') + '.json'), 'utf8')).resolves.toContain('blocked.test');
-    expect(await fs.readdir(other)).toEqual([]);
-  });
-
-  it('没有缓存策略时让桥接等待策略并向插件索要;配对随策略一起落盘', async () => {
+  it('没有配对缓存时向插件索要一次;配对单独落盘', async () => {
     const { slot, bridges, sent, dir } = await makeSlot();
     slot.reconcile([extGhost()]);
     await vi.waitFor(() => expect(bridges[0]?.started).toBe(true));
-    expect(bridges[0].options.awaitPolicy).toBe(true);
     expect(sent).toContainEqual(['_root__my-browser', { type: 'event', name: 'browser-extension-policy-request' }]);
     const clients = [{ id: 'c1', origin: 'chrome-extension://' + CHROME_ID, extensionId: CHROME_ID, publicKey: 'k' }];
     expect(await slot.handleRequest('_root__my-browser', { kind: 'setTrustedClients', clients })).toEqual({ ok: true });

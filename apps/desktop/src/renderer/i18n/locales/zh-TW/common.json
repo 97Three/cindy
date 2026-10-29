@@ -7351,7 +7351,7 @@
         "previewDetail": "只能開啟下方列出的網站；每次開啟都會提示是哪個插件開啟的。",
         "browserExtension": "可讓它自帶的瀏覽器擴充功能連線到 Cindy",
         "browserExtensionDetail": "只有下方列出的擴充功能能連線；連線經本機回環位址，由 Cindy 把擴充功能發起的請求轉交給這個插件。",
-        "browserExtensionPageControlDetail": "只有下方列出的擴充功能能連線。該擴充功能還實作頁面控制：選擇「我的瀏覽器」後，Agent 可經它讀取和操作你正在使用的瀏覽器頁面，受插件的站點權限約束。",
+        "browserExtensionPageControlDetail": "只有下方列出的擴充功能能連線。該擴充功能還實作頁面控制：選擇「我的瀏覽器」後，Agent 可經它讀取和操作你正在使用的瀏覽器頁面。",
         "nodeChildSpawn": "Node 程式可請宿主再啟動包內申報過的子處理程序",
         "nodeChildSpawnDetail": "只能啟動它自己包裡申報過的 JS 檔案(與主程式同樣的本機權限)，不能執行任意命令；插件停用或退出時子處理程序一併關閉。",
         "skill": "為 AI 助手新增技能「{{name}}」",

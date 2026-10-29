@@ -7140,9 +7140,9 @@ export type GhostPipePreviewResult =
  * 上行:browserExtension 槽——插件经宿主桥接与自己的浏览器扩展通讯。
  * - status:连接与安装状态(不读页面);
  * - act:向扩展投递一个页面作业(action + payload 的形状由线协议定义,
- *   宿主按站点策略守门后分发,结果脱敏后返回);
- * - setPolicy / setTrustedClients:插件把自己保存的站点策略与配对身份
- *   推给宿主(策略由插件拥有,宿主缓存并在每个作业上强制);
+ *   宿主校验地址后分发,结果脱敏后返回);
+ * - setTrustedClients:插件把自己保存的配对身份推给宿主(宿主缓存);
+ *   setPolicy 仅为兼容旧插件保留,站点名单已于 2026-10-30 取消,应答但不生效;
  * - relayActive / relayProgress / relayResult:插件处理完宿主转交的扩展
  *   请求(翻译、字幕等)后回传进度与结果。
  */

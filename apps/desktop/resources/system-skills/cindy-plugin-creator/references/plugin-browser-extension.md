@@ -1,7 +1,7 @@
 ## 4.23 随包浏览器扩展(browserExtension 能力)
 
 插件随包携带一个 Chrome / Edge 扩展(翻译、字幕、页面读取之类"住在用户浏览器里"的功能)时,
-由 **Cindy 承接扩展的连接**:配对、身份绑定、作业分发、站点策略守门、结果脱敏都在宿主,插件
+由 **Cindy 承接扩展的连接**:配对、身份绑定、作业分发、结果脱敏都在宿主,插件
 不再自带接线进程。在身份卡声明:
 
 ```json
@@ -25,7 +25,7 @@
 运行期两条管子:
 
 ```js
-// 插件 → 宿主:向扩展投递作业、推送站点策略与配对身份、回传转交结果
+// 插件 → 宿主:向扩展投递作业、推送配对身份、回传转交结果
 let status;
 try {
   status = await cindy.send({ type: 'browser-extension-request', kind: 'status' });
@@ -36,10 +36,9 @@ try {
 }
 // 新宿主也会返回 errorCode(HOST_NOT_READY、PERMISSION_DENIED 等):这表示宿主有这个槽,
 // 只是暂时不可用。不要据此回落,也不要缓存结果,下次再探测。
-await cindy.send({ type: 'browser-extension-request', kind: 'setPolicy', policy });
 await cindy.send({ type: 'browser-extension-request', kind: 'setTrustedClients', clients: paired });
-// 宿主还没有你的站点策略时,会拒绝页面作业并发来事件
-// { type: 'event', name: 'browser-extension-policy-request' }:收到后立即推送策略与配对身份。
+// 宿主没有保存过你的配对身份时,启动后会发来事件
+// { type: 'event', name: 'browser-extension-policy-request' }:收到后立即推送配对身份。
 const result = await cindy.send({
   type: 'browser-extension-request',
   kind: 'act',
@@ -70,10 +69,9 @@ cindy.onHostMessage(async (msg) => {
 
 规则与红线:
 
-- **站点策略归你**:读取与交互默认开放,本机、私网与单段内网主机名和公网网站一样可访问,也可以
-  写进名单单独屏蔽。你保存并在启动与每次变更时 `setPolicy` 推给宿主;宿主缓存到用户私有目录
-  并在每个作业上强制,没有缓存时在收到你的策略前拒绝页面作业,新授权必须经 `cindy.confirm`
-  真实确认。
+- **不设站点名单**:「我的浏览器」与 Cindy 专用浏览器一样,读取与交互不按网站限制,本机、私网与
+  单段内网主机名和公网网站一样可访问;安全交给任务的权限档位与自动审核(2026-10-30 决定)。
+  旧插件推送的 `setPolicy` 照常应答但不生效。
 - **`nativeHost` 只给官方 Cindy Chrome**:Native Messaging 程序在插件沙箱外运行,且同一账号的
   所有 Cindy 共用一份注册,宿主只为官方 Cindy Chrome(`my-browser`,名称
   `com.makecindy.browser`,并声明了 Node 程序)安装它。其它插件声明了也只开桥接,扩展需要手动

@@ -7383,7 +7383,7 @@
         "previewDetail": "Only the sites listed below can be opened; every page it opens is attributed to this plugin.",
         "browserExtension": "Lets its bundled browser extension connect to Cindy",
         "browserExtensionDetail": "Only the extensions listed below can connect, over the local loopback address; Cindy hands requests the extension makes to this plugin.",
-        "browserExtensionPageControlDetail": "Only the extensions listed below can connect. The extension also implements page control: with “My browser” selected, the agent can read and operate pages in the browser you are using, within the plugin's site permissions.",
+        "browserExtensionPageControlDetail": "Only the extensions listed below can connect. The extension also implements page control: with “My browser” selected, the agent can read and operate pages in the browser you are using.",
         "nodeChildSpawn": "Its Node program can ask the host to start declared sub-processes from its package",
         "nodeChildSpawnDetail": "Only JS files declared inside its own package can be started (same local permissions as the main program); arbitrary commands cannot be executed. Sub-processes are closed together when the plugin is disabled or exits.",
         "skill": "Adds the skill \"{{name}}\" to your AI assistants",

@@ -94,7 +94,7 @@
     - 点击、坐标与拖拽是合成事件(非可信输入),个别要求可信输入的站点会忽略;页面 CSP 禁止脚本时 `evaluate` 报 `EVAL_BLOCKED_BY_PAGE`,改用 snapshot / extract。
     - 控制台从第一次 `console` 调用开始捕获;`requests` 来自页面资源计时(无方法与请求头);`responseBody` 以页面身份重新请求该地址;`dialog` 预先应答页面下一个 alert / confirm / prompt,已经弹出的原生弹窗需要用户自己处理。
     - 不支持:`saveResource` 与语义 `query`。`status.data.updateNote` 出现时说明扩展是旧版,只有基础读取与交互,请用户更新 Cindy 扩展。遇到不支持的操作先告诉用户,由用户决定是否改用专用浏览器,**不要自行 setBackend 切换**。
-  - 站点策略归 Cindy Chrome 插件:读取默认开放,交互按站点授权(作业报 `INTERACT_NOT_ALLOWED` 时用该插件的 `browser_policy` 工具请求授权,需用户确认)。`profile` 是浏览器连接 id(一个浏览器用户配置一条),多条连接时必须指定,不要猜账号。
+  - `profile` 是浏览器连接 id(一个浏览器用户配置一条),多条连接时必须指定,不要猜账号。
   - 页面跳转后旧 ref 失效(报 `STALE_REF`),先 `snapshot` 再继续;旧版扩展按 URL 寻址,跳转会报 `PAGE_CHANGED`,`navigate` 也可能落在另一个标签页并返回新的 targetId。`status.data.connected === false` 时请用户在自己的浏览器里安装并启用 Cindy 扩展,不要反复重试。
 
 `setBackend` 与设置页修改同一个**全局、持久**选择,会影响其他正在使用浏览器的任务,旧模式的操作可能中断。仅按用户明确的模式要求切换,无需重复确认;不要因页面报错自行换模式。切换后重新 `tabs` / `snapshot`,不沿用旧模式的 targetId、ref 或登录态。宿主不支持切换或返回失败时如实说明,不能声称切换成功。

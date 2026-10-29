@@ -1,12 +1,10 @@
 /**
- * 浏览器扩展站点策略(宿主侧实现)。
+ * 浏览器扩展作业的地址与载荷校验(宿主侧实现)。
  *
- * 与扩展内的 policy 实现是同一套语义:扩展在页面侧再查一遍,宿主在分发作业前
- * 查一遍,两侧都必须对同一 URL 给出同样的结论。改动任何判据时两侧一起改。
+ * 不设站点名单(2026-10-30 决定):AI 本身权限已经很高,安全交给任务的权限档位与自动审核,
+ * 与 Cindy 专用浏览器一致。线上的 policy 字段只为兼容旧扩展与旧插件保留,恒为「全部允许」。
  *
- * - READ 动作默认开放公网,INTERACT 动作按 interact.allow / block 守门;
- * - 只接受无内嵌凭证的 http(s) URL;本机与私网地址同样允许(2026-10-28 决定:用户自己的
- *   浏览器本来就能访问这些地址,能力与专用浏览器对齐,不另设防线);
+ * - 只接受无内嵌凭证的 http(s) URL;本机与私网地址同样允许(2026-10-28 决定);
  * - 交给模型之前的每个 URL 都过 redactUrl:OAuth code、重置令牌、implicit-flow
  *   fragment 与 Basic Auth userinfo 不离开本机。
  */
@@ -61,6 +59,7 @@ export type BrowserExtensionReadAction = (typeof BROWSER_EXTENSION_READ_ACTIONS)
 export type BrowserExtensionInteractAction = (typeof BROWSER_EXTENSION_INTERACT_ACTIONS)[number];
 export type BrowserExtensionAction = BrowserExtensionReadAction | BrowserExtensionInteractAction;
 
+/** Wire shape kept for extensions and plugins of the site-list era; always the permissive default now. */
 export interface BrowserExtensionPolicy {
   read: { block: string[] };
   interact: { allow: string[]; block: string[] };
@@ -93,43 +92,13 @@ export function defaultBrowserExtensionPolicy(): BrowserExtensionPolicy {
   return { read: { block: [] }, interact: { allow: ['*'], block: [] } };
 }
 
-/** DevTools methods the extension accepts for site recipes; mirrors CDP_METHODS in policy.js. */
-export const BROWSER_EXTENSION_CDP_METHODS: ReadonlySet<string> = new Set([
-  'Accessibility.enable',
-  'Accessibility.getFullAXTree',
-  'DOM.enable',
-  'DOM.focus',
-  'DOM.getDocument',
-  'DOM.querySelector',
-  'DOM.querySelectorAll',
-  'DOM.describeNode',
-  'DOM.resolveNode',
-  'DOM.getContentQuads',
-  'DOM.getBoxModel',
-  'DOM.scrollIntoViewIfNeeded',
-  'Input.dispatchKeyEvent',
-  'Input.dispatchMouseEvent',
-  'Input.insertText',
-  'Network.enable',
-  'Network.getResponseBody',
-  'Network.getCookies',
-  'Storage.getCookies',
-  'Page.captureScreenshot',
-  'Page.getLayoutMetrics',
-  'Page.getFrameTree',
-  'Page.handleJavaScriptDialog',
-  'Runtime.callFunctionOn',
-  'Runtime.releaseObject',
-]);
-
 export function normalizeBrowserExtensionHost(value: unknown): string {
   if (typeof value !== 'string') throw new Error('Enter a domain, for example example.test.');
   const text = value.trim().toLowerCase();
   const exact = text.startsWith('=');
   const raw = exact ? text.slice(1) : text.replace(/^\*\./, '');
   if (/^\[[0-9a-f:.]+\]$/.test(raw)) {
-    // Local and private addresses are allowed like any site (2026-10-28), so they can be listed too.
-    const host = new URL('https://' + raw).hostname;
+      const host = new URL('https://' + raw).hostname;
     return (exact ? '=' : '') + host;
   }
   if (!raw || /[\s/@:?#\\]/.test(raw))
@@ -148,97 +117,18 @@ export function normalizeBrowserExtensionHost(value: unknown): string {
   return (exact ? '=' : '') + host;
 }
 
-function publicLiteral(ip: string): boolean {
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
-    const [a, b] = ip.split('.').map(Number);
-    return (
-      a !== 0 &&
-      a !== 10 &&
-      a !== 127 &&
-      a < 224 &&
-      !(a === 169 && b === 254) &&
-      !(a === 172 && b >= 16 && b <= 31) &&
-      !(a === 192 && b === 168) &&
-      !(a === 100 && b >= 64 && b <= 127)
-    );
-  }
-  try {
-    const host = new URL('http://[' + ip + ']/').hostname.slice(1, -1);
-    const [first, second] = host.split(':').map((x) => parseInt(x || '0', 16));
-    return (
-      first >= 0x2000 &&
-      first <= 0x3fff &&
-      first !== 0x2002 &&
-      first !== 0x3fff &&
-      !(first === 0x2001 && (second < 0x200 || second === 0xdb8))
-    );
-  } catch {
-    return false;
-  }
-}
-
-export function isLocalBrowserHost(host: string): boolean {
-  if (
-    host === 'localhost' ||
-    host.endsWith('.localhost') ||
-    host.endsWith('.local') ||
-    host.endsWith('.internal')
-  ) {
-    return true;
-  }
-  const ip =
-    host.startsWith('[') && host.endsWith(']')
-      ? host.slice(1, -1)
-      : host.includes(':')
-        ? host
-        : /^\d+\.\d+\.\d+\.\d+$/.test(host)
-          ? host
-          : null;
-  if (ip) return !publicLiteral(ip);
-  return !host.includes('.');
-}
-
-export function browserExtensionHostMatches(host: string, pattern: string): boolean {
-  return (
-    pattern === '*' ||
-    (pattern.startsWith('=')
-      ? host === pattern.slice(1)
-      : host === pattern || host.endsWith('.' + pattern))
-  );
-}
-
-export function normalizeBrowserExtensionPolicy(input: unknown): BrowserExtensionPolicy {
-  const p = input as {
-    read?: { block?: unknown };
-    interact?: { allow?: unknown; block?: unknown };
-  } | null;
-  if (!p || !p.read || !p.interact)
-    throw new Error('Invalid policy. Reload settings before saving.');
-  const list = (items: unknown, wildcard = false): string[] => {
-    if (!Array.isArray(items) || items.length > 200)
-      throw new Error('Each policy list must contain at most 200 domains.');
-    return [
-      ...new Set(
-        items.map((h) => (wildcard && h === '*' ? '*' : normalizeBrowserExtensionHost(h))),
-      ),
-    ];
-  };
-  return {
-    read: { block: list(p.read.block) },
-    interact: { allow: list(p.interact.allow, true), block: list(p.interact.block ?? []) },
-  };
-}
-
-export function checkBrowserExtensionPolicy(
-  policy: BrowserExtensionPolicy,
+/**
+ * The address checks every job still gets: a supported action and a plain HTTP(S) URL without embedded
+ * credentials. There are no site lists (removed 2026-10-30): safety is the task's permission mode and review.
+ */
+export function checkBrowserExtensionTarget(
   action: unknown,
   url: unknown,
 ): BrowserExtensionPolicyVerdict {
-  const deny = (error: string, message: string, host?: string): BrowserExtensionPolicyDenial => ({
+  const deny = (error: string, message: string): BrowserExtensionPolicyDenial => ({
     ok: false,
     error,
     message,
-    ...(host !== undefined ? { host } : {}),
     execution: 'not_executed',
   });
   if (!isBrowserExtensionReadAction(action) && !isBrowserExtensionInteractAction(action)) {
@@ -254,26 +144,7 @@ export function checkBrowserExtensionPolicy(
   if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password) {
     return deny('URL_NOT_ALLOWED', 'Only HTTP/HTTPS URLs without embedded credentials are supported.');
   }
-  const host = u.hostname.toLowerCase().replace(/\.$/, '');
-  if (policy.read.block.some((p) => browserExtensionHostMatches(host, p))) {
-    return deny(
-      'READ_BLOCKED',
-      'This site is on the read block list. Review the site policy in plugin settings.',
-      host,
-    );
-  }
-  if (
-    isBrowserExtensionInteractAction(action) &&
-    (!policy.interact.allow.some((p) => browserExtensionHostMatches(host, p)) ||
-      policy.interact.block.some((p) => browserExtensionHostMatches(host, p)))
-  ) {
-    return deny(
-      'INTERACT_NOT_ALLOWED',
-      'Ask the user to allow this exact site before clicking, typing or searching.',
-      host,
-    );
-  }
-  return { ok: true, host };
+  return { ok: true, host: u.hostname.toLowerCase().replace(/\.$/, '') };
 }
 
 export interface BrowserExtensionJobPayload {
@@ -361,20 +232,6 @@ function validateParityPayload(action: string, payload: BrowserExtensionJobPaylo
       throw new Error('cdp op must be begin, end, events or command.');
     if (payload.op === 'command' && (typeof payload.method !== 'string' || !/^[A-Za-z]+\.[A-Za-z]+$/.test(payload.method)))
       throw new Error('cdp command needs a protocol method such as Network.getCookies.');
-    // Mirrors the extension: only what site recipes send, and cookie reads name the site's URLs
-    // (the extension additionally keeps them to the attached tab's site).
-    if (payload.op === 'command' && !BROWSER_EXTENSION_CDP_METHODS.has(payload.method as string))
-      throw new Error('cdp command ' + String(payload.method) + ' is not available to site recipes.');
-    if (payload.op === 'command' && payload.method === 'Network.getCookies') {
-      const urls = (payload.params as { urls?: unknown } | undefined)?.urls;
-      if (
-        !Array.isArray(urls) ||
-        !urls.length ||
-        urls.length > 50 ||
-        urls.some((u) => typeof u !== 'string' || u.length > 8192 || !/^https?:\/\//i.test(u))
-      )
-        throw new Error('Network.getCookies needs params.urls: 1–50 HTTP(S) URLs of the site being operated on.');
-    }
     if (
       payload.params != null &&
       (typeof payload.params !== 'object' || Array.isArray(payload.params) || JSON.stringify(payload.params).length > 1_000_000)

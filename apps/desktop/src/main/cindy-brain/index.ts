@@ -9071,7 +9071,7 @@ export function registerGhostIpc(): void {
       return getGhostPreviewSlot().handleRequest(id, payload);
     }
     // browser-extension-request = 浏览器扩展槽(browserExtension):插件向自己的扩展
-    // 投递作业、推送站点策略/配对身份、回传转交结果;资格审与桥接在 browserExtensionSlot。
+    // 投递作业、推送配对身份、回传转交结果;资格审与桥接在 browserExtensionSlot。
     if (type === 'browser-extension-request') {
       return getGhostBrowserExtensionSlot().handleRequest(id, payload);
     }

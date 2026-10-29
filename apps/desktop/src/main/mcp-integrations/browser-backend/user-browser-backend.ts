@@ -11,7 +11,7 @@
  *   按需使用:用户在扩展里授权一次后,扩展只在这些动作期间临时接上调试(Chrome 会显示
  *   提示条),做完即断开;未授权时明确告诉模型请用户开启,绝不悄悄换目标。旧版扩展只有
  *   基础读取与交互,同样明确拒绝并提示更新;
- * - 每个作业都经桥接按插件保存的站点策略守门,结果脱敏后才回到这里。
+ * - 每个作业都经桥接校验地址,结果脱敏后才回到这里;不设站点名单(2026-10-30 决定)。
  *
  * 寻址:这里维护 targetId ↔ {连接, tabId, url} 的映射。新版扩展按 tabId 寻址;
  * 旧版扩展按精确 URL 寻址,页面在两次调用之间跳转时报 PAGE_CHANGED,不猜新页。
@@ -548,7 +548,7 @@ export class UserBrowserBackend implements BrowserBackend {
           ok: false,
           result: actionFailed(
             action,
-            `标签页 ${record.targetId} 当前页面不允许读取(站点策略或本机地址)`,
+            `标签页 ${record.targetId} 当前页面无法读取(不是网页或文档不可访问)`,
             'BROWSER_RUNTIME_INVALID_REQUEST',
           ),
         };
