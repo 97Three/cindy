@@ -329,6 +329,16 @@ describe('same-account share management during account transitions', () => {
     expect(remember).toHaveBeenCalledExactlyOnceWith('https://cindy.app/s#test-link', expect.any(String));
   });
 
+  // PR #7744: exercise the production share-management entry, not only the scrubber.
+  // provider-sharing.md §6 forbids sending org identity to the sharing service.
+  it('uploads only the generic Cindy AI brand when creating an enterprise share link', async () => {
+    listProviders.mockResolvedValue([{ id: 'xd', name: 'Cindy AI · Example Studio', connected: true, agents: ['codex'] }]);
+    await executeProviderShareManagementCommand({ action: 'create-link', providerId: 'xd' });
+    expect(api.createLink).toHaveBeenCalledExactlyOnceWith({
+      providerId: 'xd', providerLabel: 'Cindy AI', deviceName: 'Cindy', identityCard: { card: 'test-identity-card' },
+    });
+  });
+
   it('rejects an old server before exposing or registering a remote link', async () => {
     api.createLink.mockResolvedValueOnce({ invitation: 'test-invitation' });
     await expect(executeProviderShareManagementCommand(createLink)).rejects.toThrow(/UNSUPPORTED_CAPABILITY/);
