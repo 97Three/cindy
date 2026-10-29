@@ -170,6 +170,7 @@
   "autoUnlockUnavailable": "自動ロック解除を利用できません。接続してパソコンを手動でロック解除できます。",
   "idleLock": "操作がない場合に切断してロック",
   "idleNever": "しない",
+  "idleMinutes_one": "{{count}} 分",
   "idleMinutes_other": "{{count}} 分",
   "idleDisconnected": "操作がなかったため切断しました。再接続してください。",
   "backgroundDisconnected": "Cindy がバックグラウンドに移ったため、リモートデスクトップを切断しました。再接続してください。",

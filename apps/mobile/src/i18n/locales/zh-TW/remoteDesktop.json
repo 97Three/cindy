@@ -170,6 +170,7 @@
   "autoUnlockUnavailable": "暫時無法自動解鎖。你仍可連線，並手動解鎖電腦。",
   "idleLock": "閒置後中斷並鎖定螢幕",
   "idleNever": "永不",
+  "idleMinutes_one": "{{count}} 分鐘",
   "idleMinutes_other": "{{count}} 分鐘",
   "idleDisconnected": "已因長時間無操作中斷，請重新連線。",
   "backgroundDisconnected": "Cindy 進入背景，遠端桌面已中斷，請重新連線。",
