@@ -5035,6 +5035,16 @@ describe('ghost · browserExtension 槽(2026-10-27 浏览器扩展经宿主桥�
     expect(ghostBrowserExtensionWithinCap(reviewed.manifest, expanded.manifest)).toBe(false);
   });
 
+  // Review 2026-10-30 (Codex P1): an undeclared nested member must not slip through the cap unreviewed.
+  it('浏览器扩展声明里未识别的嵌套成员须与已审清单一致', () => {
+    const reviewed = withNeeds(good);
+    const withUnknown = withNeeds({ ...good, futureCapability: { enabled: true } });
+    const sameUnknown = withNeeds({ ...good, futureCapability: { enabled: true } });
+    if (!reviewed.ok || !withUnknown.ok || !sameUnknown.ok) throw new Error('fixture');
+    expect(ghostBrowserExtensionWithinCap(reviewed.manifest, withUnknown.manifest)).toBe(false);
+    expect(ghostBrowserExtensionWithinCap(withUnknown.manifest, sameUnknown.manifest)).toBe(true);
+  });
+
   it('pageControlReplaces 列出被「我的浏览器」取代的插件工具与手册,须与 pageControl 同时声明', () => {
     const replaces = { tools: ['browser_read', 'browser_act'], manual: ['browser'] };
     const ok = withNeeds({ ...good, pageControlReplaces: replaces });

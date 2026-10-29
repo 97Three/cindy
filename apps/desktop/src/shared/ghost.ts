@@ -2851,6 +2851,19 @@ export function ghostBrowserExtensionWithinCap(
   if (actualNeeds.nativeHost !== undefined && cap.nativeHost?.name !== actualNeeds.nativeHost.name) {
     return false;
   }
+  // Members this Host does not interpret ride along on the declaration. A later Host that starts to read
+  // one must not find it already approved: every such member has to be in the reviewed declaration too.
+  const known = new Set(['protocol', 'extensionIds', 'nativeHost', 'pageControl', 'pageControlReplaces']);
+  for (const [key, value] of Object.entries(actualNeeds)) {
+    if (known.has(key)) continue;
+    if (
+      !Object.prototype.hasOwnProperty.call(cap, key) ||
+      canonicalGhostExtensionValue(value) !==
+        canonicalGhostExtensionValue((cap as unknown as Record<string, unknown>)[key])
+    ) {
+      return false;
+    }
+  }
   return true;
 }
 
