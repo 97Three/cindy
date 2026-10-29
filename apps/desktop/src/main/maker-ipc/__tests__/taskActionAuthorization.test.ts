@@ -314,11 +314,14 @@ function desktopFixture(kind: 'private' | 'group' | 'automatic' = 'group') {
     capturePermissionRequest,
     getScheduleDefinition: async id => structuredClone(schedules.get(id) ?? null),
     getSessionWorkDir: async id => workDirs.get(id),
-    captureRoutine: async (_botId, id) => {
+    captureRoutine: async (_botId, id, forExecution) => {
       const row = routines.get(id);
       if (!row) return undefined;
       const captured = { ...row };
-      return { ...captured, prompt: captured.prompt ?? '', details: { routine: { id, ...captured } }, assertCurrent() {
+      return { ...captured, prompt: captured.prompt ?? '', details: { routine: { id, ...captured },
+        ...(forExecution && captured.preRunCommand ? { execution: {
+          targetSessionId: `routine-${id}`, workingDir: workDirs.get(`routine-${id}`),
+        } } : {}) }, assertCurrent() {
         if (routines.get(id)?.revision !== captured.revision)
           throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
       } };
@@ -1224,6 +1227,7 @@ describe('teammate turn principal', () => {
       const h = desktopFixture('automatic');
       live(h);
       h.routines.set('command', { enabled: true, revision: 3, prompt: 'Reviewed instructions', preRunCommand: 'node check.mjs' });
+      h.workDirs.set('routine-command', '/reviewed');
       const request = { ...helper('routine_run_now', { botId: 'bot', id: 'command' }), server };
       const execute = vi.fn(async () => taskActionRoutineRevision('bot', 'command'));
       h.confirm.mockResolvedValue(false);
@@ -1232,10 +1236,18 @@ describe('teammate turn principal', () => {
       expect(h.confirm).toHaveBeenCalledWith('companion', request.tool, request.args,
         expect.objectContaining({ risk: 'command', details: { routine: expect.objectContaining({
           id: 'command', preRunCommand: 'node check.mjs', revision: 3,
-        }) } }));
+        }), execution: { targetSessionId: 'routine-command', workingDir: '/reviewed' } } }));
+      // r4412911528: rule revision is unchanged but the reused lane moves.
+      h.confirm.mockImplementation(async () => { h.workDirs.set('routine-command', '/replacement'); return true; });
+      expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, execute))).toContain('AUTHORIZATION_EXPIRED');
+      expect(execute).not.toHaveBeenCalled();
       h.confirm.mockResolvedValue(true);
       expect(await withToolCallAuthority(h.authorize, request, execute)).toBe(3);
       expect(execute).toHaveBeenCalledTimes(1);
+      expect(h.confirm).toHaveBeenLastCalledWith('companion', request.tool, request.args,
+        expect.objectContaining({ details: expect.objectContaining({ execution: {
+          targetSessionId: 'routine-command', workingDir: '/replacement',
+        } }) }));
     },
   );
 

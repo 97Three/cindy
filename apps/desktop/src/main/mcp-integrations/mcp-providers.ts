@@ -11,14 +11,15 @@ import { resolveHelperSurface } from './helperSurface.js';
 import { createProject } from './createProject.js';
 import { createMoveSession } from './moveSession.js';
 import { listProjects, renameProject, removeProject } from './projectManagement.js';
-import { activeOwnerScopeKey, getActiveAppSession, isAppSessionBoundaryPending } from '../appSessionState.js';
+import { activeOwnerScopeKey, getActiveAppSession, isAppSessionBoundaryPending, ownerScopedUserDataPath } from '../appSessionState.js';
+import { botProfileDir } from '../maker-ipc/botProfileFolder.js';
 import type { createBotCapabilityService } from '../maker-ipc/botCapabilityService.js';
 import { getRoutineEngine, routineTools } from '../routines/service.js';
 import { taskActionRoutineRevision } from '../maker-ipc/taskActionAuthorization.js';
 import { join as pathJoin } from 'node:path';
 import { homedir } from 'node:os';
 import { app } from 'electron';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 
 import {
   createLiziMcpProviders,
@@ -83,6 +84,7 @@ import {
 } from '../localDb/chatHistoryReader.js';
 import {
   isDbClientNotReadyError,
+  getDbClient,
   tryGetDbClient,
 } from '../localDb/client/current.js';
 import { searchChatHistoryHybrid } from '../localDb/chatHistorySearch.js';
@@ -345,15 +347,29 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         return { ...definition, hookInstallation: { workingDir: installWorkingDir ?? workingDir,
           fallbackDir: pathJoin(app.getPath('userData'), 'schedule-hooks') } };
       },
-      captureRoutine: async (botId, id) => {
+      captureRoutine: async (botId, id, forExecution) => {
         const engine = await getRoutineEngine();
         const routine = (await routineTools.list(botId)).find(row => row.id === id);
         if (!routine) return undefined;
+        let execution: { targetSessionId: string | null; workingDir: string } | undefined;
+        if (forExecution && routine.preRunHook?.command?.trim()) {
+          // Match ensureBotOwnedLaneSession's read-only lookup. Fresh runs always
+          // create a lane in Home; persistent runs retain their existing meta cwd.
+          const [lane] = routine.sessionMode === 'fresh' ? [] : await getDbClient().drizzle
+            .select({ sessionId: botSessionLinks.sessionId }).from(botSessionLinks)
+            .innerJoin(sessions, eq(sessions.id, botSessionLinks.sessionId))
+            .where(and(eq(botSessionLinks.botId, botId), eq(botSessionLinks.role, 'routine'),
+              eq(botSessionLinks.routeKey, `routine:${id}`), isNull(botSessionLinks.archivedAt),
+              eq(sessions.source, 'bot'), eq(sessions.status, 'active'))).limit(1);
+          execution = { targetSessionId: lane?.sessionId ?? null, workingDir: lane
+            ? await resolveHookSessionWorkDir(lane.sessionId) ?? homedir()
+            : pathJoin(botProfileDir(ownerScopedUserDataPath(), botId), 'workspace') };
+        }
         return {
           enabled: routine.enabled, revision: routine.revision, prompt: routine.prompt,
           builtin: !!routine.builtin, preRunCommand: routine.preRunHook?.command,
           details: { routine: { id, name: routine.name, prompt: routine.prompt, enabled: routine.enabled,
-            revision: routine.revision, preRunHook: routine.preRunHook } },
+            revision: routine.revision, preRunHook: routine.preRunHook }, ...(execution ? { execution } : {}) },
           assertCurrent() {
             if (engine.list(botId).find(row => row.id === id)?.revision !== routine.revision)
               throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');

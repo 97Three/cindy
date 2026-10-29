@@ -114,7 +114,7 @@ export function createDesktopTaskActionAuthorizer(deps: {
   getSession(sessionId: string): TaskActionSession | undefined;
   confirm(sessionId: string, tool: string, args: unknown, context?: TaskActionConfirmation): Promise<boolean>;
   capturePermissionRequest(sessionId: string, taskId: string): Promise<TaskActionTarget | null>;
-  captureRoutine(botId: string, id: string): Promise<TaskActionRoutineSnapshot | undefined>;
+  captureRoutine(botId: string, id: string, forExecution?: boolean): Promise<TaskActionRoutineSnapshot | undefined>;
   getSessionWorkDir(sessionId: string): Promise<string | undefined>;
   getScheduleDefinition(id: string, hookInstallation?: { workingDir?: string }): Promise<TaskActionScheduleDefinition | null>;
 }): ToolCallAuthorizer {
@@ -226,7 +226,9 @@ export function createDesktopTaskActionAuthorizer(deps: {
         const routineId = typeof args.id === 'string' && args.id ? args.id : undefined;
         const routine = principal === 'autonomous' && runtimePermissionApplies &&
           (call.tool === 'routine_save' && (args.enabled === true || args.preRunHook != null) || call.tool === 'routine_run_now') && routineBotId && routineId
-          ? await deps.captureRoutine(routineBotId, routineId) : undefined;
+          ? await deps.captureRoutine(routineBotId, routineId, call.tool === 'routine_run_now') : undefined;
+        const routineExecution = call.tool === 'routine_run_now' && routine?.preRunCommand?.trim();
+        const routineSignature = JSON.stringify(routine?.details);
         // Read saved commands for execution/partial updates; the card must show
         // what a bare schedule ID will run, and a changed definition expires it.
         const helperInstallation = principal === 'autonomous' && runtimePermissionApplies &&
@@ -374,6 +376,9 @@ export function createDesktopTaskActionAuthorizer(deps: {
             if ((helperInstallation || helperCreation) && await deps.getSessionWorkDir(sessionId) !== helperWorkDir)
               throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
             if (scheduleId && JSON.stringify(await deps.getScheduleDefinition(scheduleId, hookInstallation)) !== scheduleSignature)
+              throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
+            if (routineExecution && routineBotId && routineId &&
+              JSON.stringify((await deps.captureRoutine(routineBotId, routineId, true))?.details) !== routineSignature)
               throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
             assertCurrentSync();
           },
