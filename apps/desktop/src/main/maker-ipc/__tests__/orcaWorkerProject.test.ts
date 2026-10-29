@@ -582,19 +582,34 @@ describe('Worker worktree source resolution', () => {
   });
   // Defaults parity: previous source tests did not read repository preferences.
   // Real resolver, injected read/probe; invalid remembered refs must fall back, explicit refs must fail.
-  it.each(['valid', 'missing', 'read-failed', 'same', 'explicit'])(
+  // PR #7933 P2 (unit): a different subdirectory/checkout of the same repo must keep its HEAD.
+  // Previously only identical directories bypassed the repository preference.
+  it.each(['valid', 'missing', 'read-failed', 'same', 'same-subdir', 'same-worktree', 'same-main', 'explicit'])(
     'resolves remembered source: %s', async scenario => {
       const read = vi.fn(() => {
         if (scenario === 'read-failed') throw new Error('store unavailable');
         return { baseRepo: '/repo', sourceBranch: 'release', revision: 1 };
       });
-      if (scenario === 'missing') vi.mocked(gitExec).mockRejectedValueOnce(new Error('not found'));
-      else if (scenario === 'valid' || scenario === 'explicit') vi.mocked(gitExec).mockResolvedValueOnce({stdout: 'abc', stderr: ''});
-      const result = await resolveWorkerWorktreeSourceSelection('/repo', scenario === 'explicit' ? 'picked' : undefined,
-        async () => target, scenario === 'same' ? '/repo' : '/lead', read);
-      expect(result.sourceBranch).toBe(scenario === 'valid' ? 'release' : scenario === 'explicit' ? 'picked' : 'main');
-      if (scenario === 'missing' || scenario === 'read-failed') expect(result.fallbackReason).toContain('current checkout');
-      if (scenario === 'same' || scenario === 'explicit') expect(read).not.toHaveBeenCalled();
+      const sameRepo = scenario.startsWith('same');
+      const directory = scenario === 'same-subdir' ? '/repo/apps/api'
+        : scenario === 'same-worktree' ? '/repo/.cindy-worktrees/other' : '/repo';
+      const leadDirectory = scenario === 'same' ? directory
+        : scenario === 'same-subdir' ? '/repo/apps/web'
+        : scenario === 'same-worktree' ? '/repo'
+        : scenario === 'same-main' ? '/repo/.cindy-worktrees/lead' : '/lead';
+      const probe = async (dir: string) => ({ ...target, directory: dir,
+        baseRepo: dir === '/lead' ? '/lead' : dir === leadDirectory ? '/repo/' : '/repo' });
+      await vi.mocked(gitExec).withImplementation(async () => {
+        if (scenario === 'missing') throw new Error('not found');
+        return {stdout: 'abc', stderr: ''};
+      }, async () => {
+        const result = await resolveWorkerWorktreeSourceSelection(directory, scenario === 'explicit' ? 'picked' : undefined,
+          probe, leadDirectory, read);
+        expect(result.sourceBranch).toBe(scenario === 'valid' ? 'release' : scenario === 'explicit' ? 'picked' : 'main');
+        if (scenario === 'missing' || scenario === 'read-failed') expect(result.fallbackReason).toContain('current checkout');
+        if (sameRepo || scenario === 'explicit') expect(read).not.toHaveBeenCalled();
+        else expect(read).toHaveBeenCalledWith('/repo');
+      });
     },
   );
   it('projects only metadata registered under the Worker session, not a directory spelling', () => {

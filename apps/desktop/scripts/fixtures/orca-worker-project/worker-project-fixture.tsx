@@ -214,7 +214,7 @@ void mountPage({
       },
     }),
     getNewMakerWorktreeBranchPreference: async (baseRepo: string) =>
-      baseRepo === '/projects/design-system'
+      ['/projects/design-system', '/projects/cindy'].includes(baseRepo)
         ? { baseRepo, sourceBranch: 'release/v2', revision: 1 }
         : null,
     worktreeListBranches: async () => ({

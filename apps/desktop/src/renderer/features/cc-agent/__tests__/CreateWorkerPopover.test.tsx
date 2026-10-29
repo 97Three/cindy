@@ -2386,9 +2386,12 @@ describe('local Worker project selection', () => {
   });
   // Review P1: explicit same-repository choices were silently replaced by inheritance.
   // Unit/jsdom: exercise the actual native-picker callback and submitted form fields.
+  // PR #7933 P2: a saved release branch must not replace HEAD within the same repo.
   it.each(['/repo/apps/api', '/repo/.cindy-worktrees/other', '/repo'])(
     'submits the explicitly browsed same-repository directory %s', async (directory) => {
-      const inherited = {...project, directory: '/repo/apps/web'};
+      const inherited = {...project, directory: '/repo/apps/web', baseRepo: '/repo/'};
+      window.electronAPI.getNewMakerWorktreeBranchPreference = vi.fn().mockResolvedValue({baseRepo: '/repo', sourceBranch: 'release', revision: 1});
+      window.electronAPI.worktreeListBranches = vi.fn().mockResolvedValue({branches: ['selected-branch', 'release']});
       const opening = {...context, recordedDirectory: inherited.directory, inherited, selected: inherited};
       projectContext.mockImplementation(async (_id, dir) => dir
         ? {...project, directory: dir, branch: 'selected-branch'} : opening);
@@ -2401,6 +2404,10 @@ describe('local Worker project selection', () => {
       await waitFor(() => expect((screen.getByRole('button', {name: 'Create'}) as HTMLButtonElement).disabled).toBe(false));
       fireEvent.click(screen.getByRole('button', {name: 'Create'}));
       expect(onCreate).toHaveBeenCalledWith({workingDir: directory, projectPath: '/repo'});
+      expect(window.electronAPI.getNewMakerWorktreeBranchPreference).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByText('orca.workerProject.newWorktree'));
+      fireEvent.click(screen.getByRole('button', {name: 'Create'}));
+      expect(onCreate).toHaveBeenLastCalledWith({workingDir: directory, projectPath: '/repo', worktree: {sourceBranch: 'selected-branch'}});
     },
   );
   // Unit/jsdom: production form selection now reads a repository's main-task branch memory.

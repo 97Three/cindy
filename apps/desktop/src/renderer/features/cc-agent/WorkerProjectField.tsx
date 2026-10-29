@@ -8,6 +8,7 @@ import {
 import { BranchWorktreeChip } from '@/components/new-chat/WorktreeChipsRow';
 import { getDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 import { Button } from '@/components/ui/button';
+import { workingDirEquals } from '../../../shared/workingDir';
 import type {
   WorkerProjectContext,
   WorkerWorktreeRequest,
@@ -72,7 +73,10 @@ export function useWorkerProjectSelection(
         let preferredBranch: string | undefined;
         if (
           context.selected.directory !== context.inherited.directory &&
-          context.selected.baseRepo
+          context.selected.baseRepo &&
+          !workingDirEquals(context.selected.baseRepo, context.inherited.baseRepo, {
+            windows: window.electronAPI.platform === 'win32',
+          })
         ) {
           try {
             const baseRepo = context.selected.baseRepo;

@@ -282,7 +282,18 @@ export async function resolveWorkerWorktreeSourceSelection(
       projectPathIdentity(directory, fs.realpath),
       leadDirectory ? projectPathIdentity(leadDirectory, fs.realpath) : Promise.resolve(null),
     ]);
-    if (target !== lead) {
+    let sameRepository = target === lead;
+    if (!sameRepository && leadDirectory) {
+      const leadProject = await probe(leadDirectory);
+      if (leadProject.baseRepo) {
+        const [targetRepo, leadRepo] = await Promise.all([
+          projectPathIdentity(info.baseRepo, fs.realpath),
+          projectPathIdentity(leadProject.baseRepo, fs.realpath),
+        ]);
+        sameRepository = targetRepo === leadRepo;
+      }
+    }
+    if (!sameRepository) {
       try {
         sourceBranch = readPreference(info.baseRepo)?.sourceBranch;
       } catch {

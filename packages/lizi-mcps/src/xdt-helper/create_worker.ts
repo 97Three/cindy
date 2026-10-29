@@ -177,7 +177,7 @@ export const createWorkerSpecSchema = z.object({
     source_branch: z.string().min(1).max(1024)
       .refine((value) => value.trim().length > 0 && !value.startsWith('-') && !Array.from(value).some((character) => character.charCodeAt(0) < 32))
       .optional()
-      .describe('可选，源分支或提交；省略时：Lead 自己的目录使用当前分支或提交；其他目录优先使用该仓库的新任务源分支记忆，没有记忆再使用当前分支或提交。'),
+      .describe('可选，源分支或提交；省略时：与 Lead 同一仓库时使用目标目录当前分支或提交；其他仓库优先使用该仓库的新任务源分支记忆，没有记忆再使用当前分支或提交。'),
   }).strict().optional()
     .describe('可选，为 Worker 新建自有 Git worktree，传 {} 使用默认源分支。仅支持本机有提交的 Git 项目；不支持 SSH 或 execution_device_id。working_dir 指定源项目，返回 working_dir 才是 Worker 实际目录。此选项按会话权限审批。归档 Worker 时按普通任务规则回收该 worktree，未提交改动先快照。'),
   execution_device_id: z.string().trim().min(1).max(128).optional()
@@ -213,7 +213,7 @@ const DESCRIPTION = [
   '- fast: 可选 boolean 或 "ultrafast"（仅支持该档位的 Codex 模型）, 是否给 worker 开启 Fast 模式 (更快输出)。用户明确说「fast / 快速 / 开/关 fast」时显式传。对 codex 与 pi worker 生效 (且需所选模型声明 supportsFastMode; 否则自动降级为关); claude-code worker 忽略此参数 (其 fast mode 在 agent 层为 no-op)。不传优先用适用的手工组合，否则按原策略用 New Maker 面板默认或 Lead 的 fastMode。',
   '- label: worker 短标识, 1-32 chars, 只能含字母、数字、-、_, 同 workflow 内唯一, 用于 switch_focus 定位',
   '- working_dir: 可选，Worker 所在主机上已存在的绝对目录。省略时继承 Lead 任务记录的工作目录（启动时的目录），不会跟随之后 cd 进入的 worktree。希望共用你当前的 worktree（含 git worktree add 自建的）时，请显式传其绝对路径；需要独立的新 worktree 时用 new_worktree。显式 working_dir / new_worktree 按会话权限审批。指定 execution_device_id 时目录属于那台电脑，省略由那台分配；校验失败不回退。',
-  '- new_worktree: 可选对象，为 Worker 新建自有 worktree；source_branch 可省略，Lead 自己的目录默认当前分支或提交，其他目录优先使用该仓库的新任务源分支记忆，再回退当前分支或提交。仅本机有提交的 Git 项目可用；SSH / execution_device_id 不支持，对话 Lead 需显式指定其他项目。返回 working_dir 为实际启动目录，worktree 包含自有检出目录和新分支；worktree_source 返回实际源分支与记忆失效/读取失败时的回退原因。归档按普通任务规则回收，未提交改动先快照。',
+  '- new_worktree: 可选对象，为 Worker 新建自有 worktree；source_branch 可省略，与 Lead 同一仓库时默认目标目录当前分支或提交，其他仓库优先使用该仓库的新任务源分支记忆，再回退当前分支或提交。仅本机有提交的 Git 项目可用；SSH / execution_device_id 不支持，对话 Lead 需显式指定其他项目。返回 working_dir 为实际启动目录，worktree 包含自有检出目录和新分支；worktree_source 返回实际源分支与记忆失效/读取失败时的回退原因。归档按普通任务规则回收，未提交改动先快照。',
   '- execution_device_id: 可选，运行设备(同账号另一台电脑)的 device_id，只能取 get_workspace_info 的 execution_devices 里 supported=true 的值；指定后 Worker 的任务、目录、命令与文件都在那台电脑，结果仍自动回报给你。用户没有要求放到别的电脑时不要传。',
   '- agent_device_id: 可选，Agent 使用哪台电脑的远程供应商；"local" 为 Worker 工作电脑。指定 execution_device_id 时先用同参数的 list_available_models 查 model / provider_id / locations；省略位置优先使用适用的手工组合，否则按原策略跟 Lead（运行设备使用工作电脑默认）。',
   "- initial_task: 可选, 创建后立即派给 worker 的第一条消息；dispatch_outcome.wakeKind=queued 表示首条任务已成功入队(此时回传 queued_message_id, 被消费前可用 get_worker_queue_status / update_queued_message / cancel_queued_message / merge_queued_messages 管理)；dispatch_outcome.kind='session-dispatch' 且 dispatched=false，或 kind='host-send' 且 accepted=false，表示 worker 已创建但首条任务未送达 / 派发失败",
