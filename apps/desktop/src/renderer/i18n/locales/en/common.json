@@ -317,6 +317,9 @@
     "closeAllDescription": "Guests will lose access. Task history is kept."
   },
   "providerShare": {
+    "owned": {
+      "title": "Providers I Share"
+    },
     "memberBudget": {
       "recommended": "Recommended model",
       "none": "No recommendation",
@@ -11550,6 +11553,40 @@
     },
     "modelSelector": {
       "displayPricing": {
+        "components": {
+          "text": "Text",
+          "image": "Image",
+          "audio": "Audio",
+          "video": "Video"
+        },
+        "roles": {
+          "text": {
+            "input": "Text input",
+            "output": "Text output",
+            "cacheRead": "Text cache read",
+            "cacheWrite": "Text cache write"
+          },
+          "image": {
+            "input": "Image input",
+            "output": "Image output",
+            "cacheRead": "Image cache read",
+            "cacheWrite": "Image cache write"
+          },
+          "audio": {
+            "input": "Audio input",
+            "output": "Audio output",
+            "cacheRead": "Audio cache read",
+            "cacheWrite": "Audio cache write"
+          },
+          "video": {
+            "input": "Video input",
+            "output": "Video output",
+            "cacheRead": "Video cache read",
+            "cacheWrite": "Video cache write"
+          }
+        },
+        "durationInput": "Duration input",
+        "durationOutput": "Duration output",
         "million": "1M",
         "free": "Free",
         "estimated": "About {{price}}",

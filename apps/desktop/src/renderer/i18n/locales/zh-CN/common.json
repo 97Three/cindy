@@ -317,6 +317,9 @@
     "closeAllDescription": "所有访客将无法继续访问，任务记录保留。"
   },
   "providerShare": {
+    "owned": {
+      "title": "我分享的供应商"
+    },
     "memberBudget": {
       "recommended": "推荐模型",
       "none": "不指定",
@@ -11515,6 +11518,40 @@
     },
     "modelSelector": {
       "displayPricing": {
+        "components": {
+          "text": "文字",
+          "image": "图片",
+          "audio": "音频",
+          "video": "视频"
+        },
+        "roles": {
+          "text": {
+            "input": "文字输入",
+            "output": "文字输出",
+            "cacheRead": "文字缓存读取",
+            "cacheWrite": "文字缓存写入"
+          },
+          "image": {
+            "input": "图片输入",
+            "output": "图片输出",
+            "cacheRead": "图片缓存读取",
+            "cacheWrite": "图片缓存写入"
+          },
+          "audio": {
+            "input": "音频输入",
+            "output": "音频输出",
+            "cacheRead": "音频缓存读取",
+            "cacheWrite": "音频缓存写入"
+          },
+          "video": {
+            "input": "视频输入",
+            "output": "视频输出",
+            "cacheRead": "视频缓存读取",
+            "cacheWrite": "视频缓存写入"
+          }
+        },
+        "durationInput": "时长输入",
+        "durationOutput": "时长输出",
         "million": "百万",
         "free": "免费",
         "estimated": "约 {{price}}",
