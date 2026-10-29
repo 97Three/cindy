@@ -110,6 +110,25 @@ describe('LibraryVault', () => {
   });
 
   describe('open / status / meta', () => {
+    // B4: missing Content-Length must stream into the real vault, with no partial publication.
+    // tier: unit; minimum failure is two chunks and a cancellation between them.
+    it('imports unknown-length Host streams atomically and aborts stale/oversize streams', async () => {
+      const vault = makeVault({ limits: { streamMaxTotalBytes: 5 } });
+      await vault.open();
+      const progress: number[] = [];
+      async function* source() { yield Buffer.from('ab'); yield Buffer.from('c'); }
+      expect(await vault.importStream({ path: 'input.txt', source: source(), assertCurrent: () => {}, onProgress: n => progress.push(n) }))
+        .toMatchObject({ ok: true, bytes: 3 });
+      expect(progress).toEqual([2, 3]);
+      expect(await fs.promises.readFile(path.join(libraryRoot, 'input.txt'), 'utf8')).toBe('abc');
+      async function* oversized() { yield Buffer.from('abcdef'); }
+      expect(await vault.importStream({ path: 'large.txt', source: oversized(), assertCurrent: () => {} })).toMatchObject({ ok: false, errorCode: 'TOO_LARGE' });
+      let current = true;
+      async function* revoked() { yield Buffer.from('a'); current = false; yield Buffer.from('b'); }
+      await expect(vault.importStream({ path: 'stale.txt', source: revoked(), assertCurrent: () => { if (!current) throw new Error('revoked'); } })).rejects.toThrow('revoked');
+      await expect(fs.promises.stat(path.join(libraryRoot, 'stale.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await fs.promises.readdir(path.join(libraryRoot, '.cindy-library', 'tmp'))).toEqual([]);
+    });
     it('does not open a default library whose persisted owner differs from the plugin', async () => {
       const previous = makeVault({ ghostId: 'other-plugin' });
       expect(await previous.open()).toMatchObject({ ok: true, state: 'ready' });

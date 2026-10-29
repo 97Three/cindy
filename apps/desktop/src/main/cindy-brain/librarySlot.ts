@@ -586,6 +586,35 @@ export class GhostLibrarySlot {
     }
   }
 
+  /** Host file selection / network download share the normal Library session and epoch. */
+  async importStream(ghostId: string, input: {
+    path: string;
+    source: AsyncIterable<Uint8Array>;
+    totalBytes?: number;
+    assertCurrent(): void;
+    onProgress?(bytes: number, total?: number): void;
+  }) {
+    if (!this.checkEligibility(ghostId)) {
+      return { ok: false as const, errorCode: 'PERMISSION_DENIED', message: '插件未声明或未获准使用 Library' };
+    }
+    const target = this.captureRequestTarget(ghostId);
+    const preparing = this.deps.prepareRequest?.(ghostId);
+    if (preparing) await preparing;
+    input.assertCurrent();
+    this.assertRequestCurrent(ghostId, target);
+    const session = await this.getOrCreateSession(ghostId, target.ownerScopeKey);
+    const assertCurrent = () => {
+      input.assertCurrent();
+      this.assertRequestCurrent(ghostId, target, session);
+    };
+    assertCurrent();
+    const result = await session.vault.importStream({ ...input, assertCurrent });
+    assertCurrent();
+    if (!result.ok) return result;
+    return { ...result, ref: `library:${result.path}`,
+      libraryGeneration: session.generation, libraryIdentity: session.identity };
+  }
+
   /** Stale custom resolution after the user parent vanished or was replaced must not open/mkdir. */
   private async confirmLiveCustomRoot(
     resolution: LibraryLocationResolution,

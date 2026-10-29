@@ -1103,7 +1103,49 @@ export class LibraryVault {
     });
   }
 
-  async writeCommit(req: { streamId: unknown }): Promise<LibraryResult<{ path: string; bytes: number; sha256: string }>> {
+  /** Host-only streaming import. The public writeBegin contract still requires an exact length. */
+  async importStream(req: {
+    path: string;
+    source: AsyncIterable<Uint8Array>;
+    totalBytes?: number;
+    assertCurrent(): void;
+    onProgress?(bytes: number, total?: number): void;
+  }): Promise<LibraryResult<{ path: string; bytes: number; sha256: string }>> {
+    req.assertCurrent();
+    const opened = await this.writeBegin({ path: req.path, totalBytes: req.totalBytes ?? 0 });
+    if (!opened.ok) return opened;
+    try {
+      req.assertCurrent();
+      const stream = this.streams.get(opened.streamId);
+      if (!stream) return fail('STREAM_INVALID', '文件导入已取消');
+      for await (const incoming of req.source) {
+        req.assertCurrent();
+        for (let offset = 0; offset < incoming.byteLength; offset += this.limits.writeMaxBytes) {
+          const bytes = incoming.subarray(offset, offset + this.limits.writeMaxBytes);
+          if (stream.written + bytes.byteLength > this.limits.streamMaxTotalBytes) {
+            return fail('TOO_LARGE', `文件超出 ${this.limits.streamMaxTotalBytes} 字节上限`);
+          }
+          const disk = await this.checkDiskReserve(bytes.byteLength);
+          req.assertCurrent();
+          if (disk) return disk;
+          if (req.totalBytes === undefined) stream.totalBytes = stream.written + bytes.byteLength;
+          const written = await this.writeChunk({
+            streamId: stream.streamId, seq: stream.nextSeq,
+            content: Buffer.from(bytes).toString('base64'), encoding: 'base64',
+          });
+          req.assertCurrent();
+          if (!written.ok) return written;
+          req.onProgress?.(stream.written, req.totalBytes);
+        }
+      }
+      req.assertCurrent();
+      return await this.writeCommit({ streamId: stream.streamId, assertCurrent: req.assertCurrent });
+    } finally {
+      await this.writeAbort({ streamId: opened.streamId });
+    }
+  }
+
+  async writeCommit(req: { streamId: unknown; assertCurrent?: () => void }): Promise<LibraryResult<{ path: string; bytes: number; sha256: string }>> {
     if (!this.opened) return fail('LIBRARY_UNAVAILABLE', 'Library 未打开(先调用 open)');
     return this.runSerialized(async () => {
       const gate = this.requireWritable();
@@ -1139,7 +1181,9 @@ export class LibraryVault {
       const prior = await this.lstatTarget(resolved.target);
       const existedBytes = prior && prior.isFile() ? prior.size : 0;
       try {
+        req.assertCurrent?.();
         await fs.promises.mkdir(path.dirname(resolved.target), { recursive: true });
+        req.assertCurrent?.();
         await fs.promises.rename(stream.tmpAbs, resolved.target);
       } catch (err) {
         await this.abortStreamUnlocked(stream.streamId).catch(() => {});

@@ -208,6 +208,15 @@ describe('GhostLibrarySlot', () => {
     ghosts.set(GHOST_ID, makeGhost(true));
   });
 
+  // B2/B4 Host streaming must use the same owner/session epoch as public Library writes.
+  // Existing writeChunk cases do not call this entry. Minimum: owner changes between two chunks. Tier: unit.
+  it('does not publish a Host import after its owner changes', async () => {
+    async function* changed() { yield Buffer.from('a'); scopeKey = 'local:owner-b:1'; yield Buffer.from('b'); }
+    await expect(slot.importStream(GHOST_ID, { path: 'input.txt', source: changed(), assertCurrent() {} })).rejects.toThrow('Library 请求目标已变化');
+    await expect(fs.promises.stat(path.join(defaultRootBase, GHOST_ID, 'input.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await fs.promises.readdir(path.join(defaultRootBase, GHOST_ID, '.cindy-library', 'tmp'))).toEqual([]);
+  });
+
   it('capabilities: 资格审后、会话创建前返回 v1 清单,首请求零副作用', async () => {
     const sessionCount = () => (slot as unknown as { sessions: Map<string, unknown> }).sessions.size;
     const vaultOpen = vi.spyOn(LibraryVault.prototype, 'open');
