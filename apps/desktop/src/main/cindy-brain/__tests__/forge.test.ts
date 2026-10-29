@@ -2506,3 +2506,18 @@ describe('packGhostDir · manual 渐进披露手册', () => {
     }
   });
 });
+
+// Production packer must include the approved static resource and enforce the
+// authoring floor; old generic pack cases have no ui declaration. Tier: unit.
+it('packs the shared page, defaults its version floor, and rejects missing HTML or a low floor', async () => {
+  const base = { ...GOOD_MANIFEST, schemaVersion: 3, slots: undefined,
+    ui: { pages: { planner: { html: 'ui/planner.html' } }, tools: { do_thing: { page: 'planner' } } } };
+  const dir = await makeSrcDir({ 'ghost.json': JSON.stringify(base), 'main.js': '/* fixture */', 'ui/planner.html': '<html>Planner</html>' });
+  const result = await packGhostDir(dir);
+  expect(result).toMatchObject({ ok: true, manifest: { ui: base.ui, minCindyVersion: '9999.0.0' } });
+  await fs.promises.writeFile(path.join(dir, 'ghost.json'), JSON.stringify({ ...base, minCindyVersion: '0.1.0' }));
+  await expect(packGhostDir(dir)).resolves.toMatchObject({ ok: false, errorCode: 'MANIFEST_INVALID' });
+  await fs.promises.writeFile(path.join(dir, 'ghost.json'), JSON.stringify(base));
+  await fs.promises.unlink(path.join(dir, 'ui/planner.html'));
+  await expect(packGhostDir(dir)).resolves.toMatchObject({ ok: false });
+});

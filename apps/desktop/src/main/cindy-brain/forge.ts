@@ -1,3 +1,4 @@
+import { PLUGIN_UI_MIN_CINDY_VERSION, compareCindyVersions, pluginHasToolUi } from '@cindy/plugin-protocol';
 /**
  * forge.ts — 意识锻造(agent 帮用户做意识的主机真身,2026-07-11 Lizi 定案)。
  *
@@ -913,6 +914,12 @@ async function buildGhostPackage(
     if (reservedNamespace) {
       return { ok: false, errorCode: 'MANIFEST_INVALID', message: `清单不合格:${reservedNamespace}` };
     }
+    if (manifestRaw && typeof manifestRaw === 'object' && !Array.isArray(manifestRaw) &&
+        'ui' in manifestRaw &&
+        !('minCindyVersion' in manifestRaw)) {
+      manifestRaw = { ...manifestRaw, minCindyVersion: PLUGIN_UI_MIN_CINDY_VERSION };
+      manifestBytes = Buffer.from(`${JSON.stringify(manifestRaw)}\n`, 'utf8');
+    }
     const v = validateGhostManifest(manifestRaw);
     if (!v.ok) {
       return { ok: false, errorCode: 'MANIFEST_INVALID', message: `清单不合格:${v.reason}` };
@@ -929,6 +936,9 @@ async function buildGhostPackage(
       };
     }
     const manifest = v.manifest;
+    if (pluginHasToolUi(manifest) && (!manifest.minCindyVersion ||
+        (compareCindyVersions(manifest.minCindyVersion, PLUGIN_UI_MIN_CINDY_VERSION) ?? -1) < 0))
+      return { ok: false, errorCode: 'MANIFEST_INVALID', message: `交互页面要求 minCindyVersion >= ${PLUGIN_UI_MIN_CINDY_VERSION}` };
 
     // 2) locale 资源必须真实、可解析且提供的条目合法(缺译回退原文,不拒)。
     // 与装入侧使用同一 validator，避免 Forge 能打包、安装却被拒的契约漂移。
@@ -942,7 +952,7 @@ async function buildGhostPackage(
     }
 
     // 3) 清单声明的入口文件必须真实在场(打包期拦,别等装入后沙箱 404)。
-    const mustExist: string[] = [];
+    const mustExist: string[] = Object.values(manifest.ui?.pages ?? {}).map(page => page.html);
     if (manifest.entry) mustExist.push(manifest.entry);
     if (manifest.node?.entry) {
       mustExist.push(manifest.node.entry, ...(manifest.node.entries ?? []));

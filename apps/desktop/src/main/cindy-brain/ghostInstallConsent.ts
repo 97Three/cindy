@@ -23,9 +23,12 @@ import {
 import { throwIpcError } from '../utils/ipcValidate.js';
 
 /** 向用户展示确认并等待回答；true = 用户确认安装。 */
-export type GhostInstallConsentPrompt = (
+export type GhostInstallConsentPrompt = ((
   request: Omit<GhostInstallConsentRequest, 'requestId'>,
-) => Promise<boolean>;
+) => Promise<boolean>) & {
+  /** Main-owned negotiation: legacy remote controllers cannot approve page capabilities. */
+  uiCapabilityApproval?: boolean;
+};
 
 export type GhostInstallConsentPolicy =
   | {
@@ -34,6 +37,7 @@ export type GhostInstallConsentPolicy =
       initiator: GhostInstallConsentInitiator;
       origin: GhostInstallConsentOrigin;
       originLabel?: string;
+      trust?: GhostInstallConsentRequest['trust'];
       target?: GhostInstallConsentRequest['target'];
       force?: boolean;
     }
@@ -44,7 +48,7 @@ export type GhostInstallConsentPolicy =
 
 /** 求得的确认结论；随安装请求一路交到安装锁内复核。 */
 export type GhostInstallConsentDecision =
-  | { mode: 'confirmed'; key: string; forced?: true }
+  | { mode: 'confirmed'; key: string; forced?: true; uiCapabilityUnsupported?: true }
   /** 求确认时判定无需确认；落位前必须仍然无需确认。 */
   | { mode: 'unprompted' }
   | { mode: 'exempt'; reason: 'server-default-install' };
@@ -122,6 +126,7 @@ export async function obtainGhostInstallConsent(
     confirmed = await policy.prompt({
       initiator: policy.initiator,
       origin: policy.origin,
+      ...(policy.trust ? { trust: policy.trust } : {}),
       ...(policy.originLabel ? { originLabel: policy.originLabel } : {}),
       ...(policy.target ? { target: policy.target } : {}),
       facts,
@@ -137,6 +142,7 @@ export async function obtainGhostInstallConsent(
   }
   return {
     mode: 'confirmed',
+    ...(policy.prompt.uiCapabilityApproval === false ? { uiCapabilityUnsupported: true as const } : {}),
     ...(forced ? { forced: true as const } : {}),
     key: ghostInstallConsentKey(
       facts,
@@ -177,4 +183,12 @@ export function assertGhostInstallConsent(
   }
   if (decision.mode === 'unprompted') throw new GhostInstallConsentRequiredError(facts);
   throwIpcError('PRECONDITION_FAILED', '插件内容在确认后发生了变化，请重新安装');
+}
+
+/** Only Main-confirmed interactive-page permission facts grant the new component. */
+export function confirmedUiCapability(decision: GhostInstallConsentDecision, installed: InstalledGhost | null | undefined, next: GhostManifest): boolean | undefined {
+  if (decision.mode !== 'confirmed') return undefined;
+  const facts = evaluateGhostInstallConsent(installed, next);
+  const shown = facts?.kind === 'install' ? facts.permissions : facts?.added;
+  return shown?.some(item => item.key === 'ui:pages') ? decision.uiCapabilityUnsupported !== true : undefined;
 }

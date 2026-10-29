@@ -1,3 +1,4 @@
+import { pluginHasToolUi } from '@cindy/plugin-protocol';
 import { findFeatureRetirement } from '../../shared/featureRetirements.js';
 import { FeatureRetirementStore } from './featureRetirementStore.js';
 import fs from 'node:fs';
@@ -2991,6 +2992,7 @@ export class GhostManager {
           ...(retirement ? { retirement } : {}),
           approval: { state: 'approved', revision: receipt.revision },
           ...(receipt.taskCapabilityApproved === true ? { taskCapabilityApproved: true as const } : {}),
+          ...(receipt.uiCapabilityApproved === true ? { uiCapabilityApproved: true as const } : {}),
           ...(receipt.targetCapabilityApproved === true ? { targetCapabilityApproved: true as const } : {}),
           trust: receipt.trust,
           ...(!retired && receipt.manifest.skill?.items.length
@@ -3204,6 +3206,21 @@ export class GhostManager {
           throw error;
         }
       }
+      return isCurrent();
+    });
+  }
+
+  /** Explicit interactive-page confirmation, bound to the same owner and installed revision. */
+  async approveUiCapability(id: string, revision: string, isCurrent: () => boolean): Promise<boolean> {
+    return this.runExclusiveMutation(async () => {
+      const relId = this.approvalRelIdFor(id);
+      if (!relId) return false;
+      const approval = this.readApproval(relId);
+      if (!isCurrent() || approval.state !== 'approved' || approval.receipt.revision !== revision ||
+        !pluginHasToolUi(approval.receipt.manifest) || !findInstalledGhostByInstanceId(this.list(), id)?.enabled) return false;
+      await this.receiptStore.write({ ...approval.receipt, uiCapabilityApproved: true }, {
+        relId, assertCurrent: () => { if (!isCurrent()) throw new Error('Page capability approval expired'); },
+      });
       return isCurrent();
     });
   }
@@ -3877,6 +3894,7 @@ export class GhostManager {
     opts?: {
       taskCapabilityApproved?: true;
       targetCapabilityApproved?: true;
+      uiCapabilityApproved?: boolean;
       initiallyEnabled?: boolean;
       expectedPackageSha256?: string;
       trustOverride?: GhostHostTrustOverride;
@@ -3902,6 +3920,7 @@ export class GhostManager {
     opts?: {
       taskCapabilityApproved?: true;
       targetCapabilityApproved?: true;
+      uiCapabilityApproved?: boolean;
       initiallyEnabled?: boolean;
       expectedPackageSha256?: string;
       trustOverride?: GhostHostTrustOverride;
@@ -4073,6 +4092,7 @@ export class GhostManager {
           manifest: approvedManifest,
           localeResources,
           enabled: initiallyEnabled,
+          ...(opts?.uiCapabilityApproved === true && pluginHasToolUi(approvedManifest) ? { uiCapabilityApproved: true as const } : {}),
           ...(opts?.taskCapabilityApproved === true && approvedManifest.agent?.tasks === true ? {taskCapabilityApproved:true as const} : {}),
           ...(opts?.targetCapabilityApproved === true && approvedManifest.agent?.tasks === true && approvedManifest.agent.targets === true ? {targetCapabilityApproved:true as const} : {}),
           trust,
@@ -4198,6 +4218,7 @@ export class GhostManager {
     opts: {
       taskCapabilityApproved?: true;
       targetCapabilityApproved?: true;
+      uiCapabilityApproved?: boolean;
       expectedInstalledApproval: string;
       expectedPackageSha256?: string;
       trustOverride?: GhostHostTrustOverride;
@@ -4220,6 +4241,7 @@ export class GhostManager {
     opts: {
       taskCapabilityApproved?: true;
       targetCapabilityApproved?: true;
+      uiCapabilityApproved?: boolean;
       expectedInstalledApproval: string;
       expectedPackageSha256?: string;
       trustOverride?: GhostHostTrustOverride;
@@ -4492,6 +4514,7 @@ export class GhostManager {
         manifest: approvedManifest,
         localeResources,
         enabled,
+        ...((opts.uiCapabilityApproved === true || (opts.uiCapabilityApproved !== false && archiveId === undefined && approvalResult.state === 'approved' && approvalResult.receipt.uiCapabilityApproved === true)) && pluginHasToolUi(approvedManifest) ? { uiCapabilityApproved: true as const } : {}),
         ...((opts.taskCapabilityApproved === true || (archiveId === undefined && approvalResult.state === 'approved' && approvalResult.receipt.taskCapabilityApproved === true)) &&
           approvedManifest.agent?.tasks === true ? { taskCapabilityApproved: true as const } : {}),
         ...((opts.targetCapabilityApproved === true || (archiveId === undefined && approvalResult.state === 'approved' && approvalResult.receipt.targetCapabilityApproved === true)) &&
@@ -4903,6 +4926,7 @@ export class GhostManager {
         trust,
         skillContentSha256,
         packageSha256,
+        ...(current.state === 'approved' && current.receipt.uiCapabilityApproved === true && pluginHasToolUi(approvedManifest) ? { uiCapabilityApproved: true as const } : {}),
         ...(current.state === 'approved' && current.receipt.taskCapabilityApproved === true &&
           approvedManifest.agent?.tasks === true ? { taskCapabilityApproved: true as const } : {}),
         ...(current.state === 'approved' && current.receipt.targetCapabilityApproved === true &&

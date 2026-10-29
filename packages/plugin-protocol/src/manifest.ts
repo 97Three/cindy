@@ -1,3 +1,4 @@
+import { parseGhostUi, type GhostUiNeeds } from './toolUi.js';
 import { parseGhostSecretCheck, type GhostSecretCheckDecl } from './secretCheck.js';
 import { parseGhostRoutineEvents, type GhostRoutineEvents } from './routineEvents.js';
 
@@ -884,6 +885,8 @@ export const GHOST_SETUP_KV_KEY_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 
 /** 已校验的 ghost.json 协议文档；Desktop 会再投影成无 slots 的运行时模型。 */
 export interface GhostManifest {
+  /** Optional MCP Apps resources and links to existing tools. */
+  ui?: GhostUiNeeds;
   /** Host-owned mail editor; providers supply mailbox adapters only. */
   mail?: true;
   /** Provider-owned read capability; Cindy owns mail presentation. */
@@ -1192,6 +1195,7 @@ function isGhostManifestReservedRecordKey(value: string): boolean {
 }
 
 const GHOST_MANIFEST_KNOWN_TOP_LEVEL_FIELDS = new Set([
+  'ui',
   'routineEvents',
   'schemaVersion',
   'id',
@@ -3851,10 +3855,15 @@ export function validateGhostManifest(value: unknown): ManifestValidation {
     }
   }
 
+  if (raw.ui !== undefined && raw.schemaVersion !== 3) return { ok: false, reason: 'ui requires schemaVersion 3' };
+  const parsedUi = raw.ui === undefined ? undefined : parseGhostUi(raw.ui, tools ?? [], network?.hosts ?? [], isSafeGhostRelativePath);
+  if (parsedUi === null) return { ok: false, reason: 'ui 页面或工具声明无效，页面域名必须在 network.hosts 内' };
+  const ui = parsedUi;
   return {
     ok: true,
     manifest: {
       ...prepared.unknownV3Fields,
+      ...(ui !== undefined ? { ui } : {}),
       schemaVersion: prepared.schemaVersion,
       id: raw.id,
       name: raw.name,

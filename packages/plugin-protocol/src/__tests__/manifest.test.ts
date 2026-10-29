@@ -1976,3 +1976,36 @@ describe('package release notes', () => {
     expect(validateGhostManifest({ ...base, releaseNotes: { version: '1' } }).ok).toBe(false);
   });
 });
+
+// ui is a preserved v3 capability, not a change to existing tool declarations.
+// The old top-level extension tests cover preservation; these cases protect the new
+// page/reference/path/domain authority at the production validator. Tier: unit.
+describe('interactive page declarations', () => {
+  const base = { ...validManifest, schemaVersion: 3, slots: undefined, minCindyVersion: '0.1.0',
+    network: { hosts: ['api.example.com'] },
+    ui: { pages: { planner: { html: 'ui/planner.html', csp: { connectDomains: ['https://api.example.com'] } } },
+      tools: { help: { page: 'planner', visibility: ['model', 'app'] } } } };
+  it('preserves top-level pages while leaving the original tool declaration unchanged', () => {
+    const original = validateGhostManifest({ ...base, ui: undefined });
+    const result = validateGhostManifest(base);
+    expect(result.ok).toBe(true);
+    if (!result.ok || !original.ok) throw new Error('invalid fixture');
+    expect(result.manifest.ui).toEqual(base.ui);
+    expect(result.manifest.tools).toEqual(original.manifest.tools);
+    expect(validateGhostManifest({ ...base, ui: { pages: {}, tools: { help: { visibility: ['app'] } } } }).ok).toBe(true);
+  });
+  it.each([
+    { pages: { planner: { html: '../outside.html' } }, tools: base.ui.tools },
+    { pages: base.ui.pages, tools: { missing: { page: 'planner' } } },
+    { pages: base.ui.pages, tools: { help: { page: 'unknown' } } },
+    { pages: { planner: { html: 'ui/planner.html', csp: { resourceDomains: ['https://outside.example'] } } }, tools: base.ui.tools },
+    { pages: base.ui.pages, tools: { help: { visibility: ['admin'] } } },
+    { pages: { planner: { html: 'ui/planner.html', csp: { connectDomains: null } } }, tools: base.ui.tools },
+    { pages: { planner: { html: 'ui/planner.html', csp: { connectDomains: ['https://api.example.com; unsafe-inline'] } } }, tools: base.ui.tools },
+  ])('rejects invalid page authority: %j', ui => {
+    expect(validateGhostManifest({ ...base, ui }).ok).toBe(false);
+  });
+  it('does not silently add page capabilities to schema v2', () => {
+    expect(validateGhostManifest({ ...base, schemaVersion: 2 }).ok).toBe(false);
+  });
+});
