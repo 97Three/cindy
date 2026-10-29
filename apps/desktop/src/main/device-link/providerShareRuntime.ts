@@ -395,6 +395,7 @@ export function parseProviderShareCommand(raw: unknown): ProviderShareCommand {
       return { action: 'insights', shareId: text(value.shareId, 'shareId', 128), includeUsage: value.includeUsage };
     case 'get-run-limits':
     case 'reset-run-limits':
+    case 'shared-provider-ids':
       return { action: value.action };
     case 'set-run-limits':
       if (!isRemoteAgentLimitsPatch(value.limits)) throwIpcError('INVALID_PARAMS', 'Invalid remote task limits');
@@ -864,6 +865,13 @@ async function execute(command: ProviderShareCommand, assertCurrent: () => void 
       }
       return { ...readRemoteAgentLimitsState(), usage: remoteAgentLimitUsage() };
     }
+    case 'shared-provider-ids':
+      return {
+        ready: running,
+        providerIds: running
+          ? [...new Set(getProviderShareHostSnapshot().filter(share => share.members.length > 0).map(share => share.providerId))]
+          : [],
+      };
     case 'owned':
       if (running) markProviderShareHostActive(60_000);
       return ownerState(command.range);

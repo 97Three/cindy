@@ -317,6 +317,9 @@
     "closeAllDescription": "모든 게스트의 접근이 차단됩니다. 작업 기록은 유지됩니다."
   },
   "providerShare": {
+    "owned": {
+      "title": "내가 공유한 제공자"
+    },
     "memberBudget": {
       "recommended": "추천 모델",
       "none": "추천하지 않음",

@@ -317,6 +317,9 @@
     "closeAllDescription": "すべてのゲストがアクセスできなくなります。タスクの履歴は保持されます。"
   },
   "providerShare": {
+    "owned": {
+      "title": "自分が共有したプロバイダー"
+    },
     "memberBudget": {
       "recommended": "おすすめモデル",
       "none": "指定しない",
