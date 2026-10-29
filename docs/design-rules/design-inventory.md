@@ -273,6 +273,6 @@ Mobile 已由 DS-7 纳入同一台账（2026-09-10 静态入口发现），保�
 
 伙伴语音操作条：`CompanionVoiceToolbar.tsx` 复用原通话控制器，输入框保留草稿并锁定，操作条与详情预留布局空间；窄窗换行，Light/Dark 语义 token，退出及后台任务边界见 `docs/product-rules/companion-voice-mode.md`。
 
-伙伴输入框双按钮（2026-10-22，用户确认原型）：`ChatInput` / `SendButton` 在空输入时显示听写与语音对话，有可发送内容后同槽位切换为发送；30px 固定命中区，250ms 图标缩放与淡切，Light/Dark 语义 token，减弱动效即时切换。保留停止、排队、待发内容编辑和听写发送。规范见 `DESIGN.md §14.4`，验证入口 `ui:check --page companion-composer`；截图证据随 #6768 发布，不等同真实 ASR/TTS 验收。
+伙伴输入框双按钮（2026-10-22，用户确认原型）：`ChatInput` / `SendButton` 在空输入时显示听写与语音对话；推荐输入出现时仍保留语音入口，采纳推荐为正文或输入正文、添加附件／浏览器评论后同槽位切换为发送（2026-10-29 用户裁决）；30px 固定命中区，250ms 图标缩放与淡切，Light/Dark 语义 token，减弱动效即时切换。保留停止、排队、待发内容编辑和听写发送。规范见 `DESIGN.md §14.4`，验证入口 `ui:check --page companion-composer`；截图证据随 #6768 发布，不等同真实 ASR/TTS 验收。
 
 语音型号管理（2026-10-23，#6768 评审修复）：`desktop.settings` 的 TTS 行复用显示开关与未显示分区，支持重新选回首次未勾选的目录型号；Main 的可用性投影复用伙伴朗读目录资格。北京 Token Plan 独立推荐 Qwen-Audio，两个添加入口同源。沿用 `DESIGN.md §4` 标准控件、`§5` 点击目标与 `§10` 双主题语义 token；双主题单页证据随 PR 提供，不等同真实套餐合成验收。
