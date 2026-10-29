@@ -11,11 +11,13 @@ import process from 'node:process';
 import { setTimeout, clearTimeout } from 'node:timers';
 import { build } from 'esbuild';
 import { startMockAppServer, createMockAppServer } from './mcp-apps-mock.mjs';
+import { pluginUiFixture } from './plugin-ui-fixture.mjs';
 import { createRawAppServer } from './mcp-apps-raw-fixture.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'cindy-mcp-app-sandbox-'));
 const independent = process.argv.includes('--raw');
+const pluginView = process.argv.includes('--plugin');
 const remoteView = process.argv.includes('--remote');
 const measureMetrics = process.argv.includes('--metrics');
 const assets = http.createServer((req, res) => {
@@ -44,6 +46,8 @@ const endpoint = await startMockAppServer({
     : createMockAppServer,
 });
 try {
+  if (pluginView) await writeFile(path.join(temporary, 'fixture.txt'), 'host-only-file');
+  if (pluginView) await writeFile(path.join(temporary, 'plugin.json'), JSON.stringify(await pluginUiFixture(independent, independent ? allowed : undefined, true)));
   await writeFile(
     path.join(temporary, 'preload.cjs'),
     "require('electron').contextBridge.exposeInMainWorld('testHost', {invoke: input => require('electron').ipcRenderer.invoke('test:mcp-app', input)});",
@@ -108,6 +112,13 @@ try {
       resolveDir: scriptDir,
       contents: `
     import assert from 'node:assert/strict';
+    import { readFileSync } from 'node:fs';
+    import { open as openFile } from 'node:fs/promises';
+    import { saveAppDownload } from '../src/main/mcp-apps/downloadFile.ts';
+    import { buildRangedFileResponse } from '../src/main/cindy-media/rangeResponse.ts';
+    import { runInNewContext } from 'node:vm';
+    import { GhostPipeDispatcher } from '../src/main/cindy-brain/pipeDispatcher.ts';
+    import { createPluginAppTransport } from '../src/main/mcp-apps/pluginServer.ts';
     import http from 'node:http';
     import { app, BrowserWindow, protocol, ipcMain, net } from 'electron';
     import { McpAppsHost, appServerRevision } from '../src/main/mcp-apps/host.ts';
@@ -120,7 +131,7 @@ try {
     import { appCsp } from '../src/main/mcp-apps/protocol.ts';
     import { handleMcpAppOperation, handleMcpAppFrameOperation } from '../src/main/mcp-apps/operations.ts';
     import { RemoteMcpAppViews } from '../src/main/mcp-apps/remoteViews.ts';
-    import { mcpAppSchemePrivilege, registerMcpAppProtocol, supplyMcpAppDocument, removeMcpAppDocument } from '../src/main/mcp-apps/sandboxProtocol.ts';
+    import { mcpAppSchemePrivilege, registerMcpAppProtocol, supplyMcpAppDocument, removeMcpAppDocument, setMcpAppFileReader } from '../src/main/mcp-apps/sandboxProtocol.ts';
     app.setPath('userData',process.env.CINDY_MCP_APP_TEST_DIR+'/profile');
     protocol.registerSchemesAsPrivileged([mcpAppSchemePrivilege]);
     globalThis.mcpTestOwner={};
@@ -132,14 +143,35 @@ try {
       const denied='http://127.0.0.1:'+forbidden.address().port+'/exfil';
       const independent=process.env.CINDY_MCP_APP_TEST_RAW==='1';
       const allowed=process.env.CINDY_MCP_APP_TEST_ALLOWED;
-      const config={id:'example',url:process.env.CINDY_MCP_APP_TEST_URL,transport:'http'};
+      let config={id:'example',url:process.env.CINDY_MCP_APP_TEST_URL,transport:'http'};
+      const pluginMode=process.env.CINDY_MCP_APP_TEST_PLUGIN==='1';let executePlugin;
+      if(pluginMode){
+        const fixture=JSON.parse(readFileSync(process.env.CINDY_MCP_APP_TEST_DIR+'/plugin.json','utf8'));
+        const ghost={manifest:fixture.manifest,dir:process.env.CINDY_MCP_APP_TEST_DIR,enabled:true,approval:{state:'approved',revision:'fixture'}};
+        let handler;
+        const dispatcher=new GhostPipeDispatcher({getGhost:()=>ghost,runtimeStateOf:()=>'running',spawn:async()=>({ok:true}),
+          sendToGhost:(_id,payload)=>{handler(payload);return true;}});
+        runInNewContext(fixture.main,{setTimeout,cindy:{onHostMessage:fn=>{handler=fn;},send:payload=>payload.type==='tool-progress'?dispatcher.handleToolProgress(ghost.manifest.id,payload):dispatcher.handleToolResult(ghost.manifest.id,payload)}});
+        executePlugin=async(name,args,onProgress)=>{const reply=await dispatcher.callGhostTool({ghostId:ghost.manifest.id,tool:name,args,onProgress});assert.equal(reply.ok,true);return reply.result;};
+        config={id:'example',url:'',transport:'in-process',plugin:{instance:ghost.manifest.id,revision:'fixture',packageSha256:'fixture',title:ghost.manifest.name,trust:'unverified',domains:independent?[allowed]:[],assertCurrent(){},
+          createTransport:()=>createPluginAppTransport({instance:ghost.manifest.id,revision:'fixture',tools:ghost.manifest.tools,ui:ghost.manifest.ui,hosts:ghost.manifest.network?.hosts,assertCurrent(){},readHtml:()=>fixture.html,
+            call:(grant,args)=>executePlugin(grant.tool,args,grant.onProgress)})}};
+      }
       connection=new AppConnection(config);const client=await connection.getClient();
       const tool=(await connection.tools()).find(tool=>tool.name===(independent?'open_metrics':'draft_form'));
       const args=independent?{threshold:75}:{title:'AI draft',body:'Review before creating'};
-      const result=await client.callTool({name:tool.name,arguments:args});
+      const result=pluginMode?await executePlugin(tool.name,args):await client.callTool({name:tool.name,arguments:args});
       let record={version:1,serverId:'example',serverRevision:appServerRevision(config),resourceUri:tool._meta.ui.resourceUri,tool,arguments:args,result};
-      let turns=0;
-      host=new McpAppsHost({owner:()=>globalThis.mcpTestOwner,config:()=>config,readCard:async()=>record,writeCard:async(_s,_c,value)=>{record=value;},authorizeTool:async()=>{},sendMessage:async()=>{turns++;},disposeDocument:removeMcpAppDocument});
+      let turns=0, receivedImages=[];
+      host=new McpAppsHost({downloadFile:pluginMode?input=>saveAppDownload({...input,showSaveDialog:async name=>process.env.CINDY_MCP_APP_TEST_DIR+'/saved-'+name}):undefined,pluginFiles:pluginMode?{
+        describe:async(_instance,uri)=>uri==='library:fixture.txt'?{mimeType:'text/plain',size:14}:uri==='cindy-media://blobs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png'?{mimeType:'image/png',size:8}:null,
+        read:async(_instance,uri,request)=>{
+          if(uri!=='library:fixture.txt')return new Response(null,{status:404});
+          const file=await openFile(process.env.CINDY_MCP_APP_TEST_DIR+'/fixture.txt','r');
+          return buildRangedFileResponse({file,totalSize:14,mimeType:'text/plain',rangeHeader:request.headers.get('range'),cacheControl:'no-store',signal:request.signal});
+        }
+      }:undefined,owner:()=>globalThis.mcpTestOwner,config:()=>config,readCard:async()=>record,writeCard:async(_s,_c,value)=>{record=value;},authorizeTool:async()=>{},sendMessage:async(_s,_r,_c,_guard,files)=>{turns++;receivedImages=files??[];},disposeDocument:removeMcpAppDocument});
+      setMcpAppFileReader((id,token,request)=>host.readPluginFile(id,token,request));
       if(process.env.CINDY_MCP_APP_TEST_METRICS==='1'){
         setMcpAppsHost(host);registerAppServer(config.id,()=>config);
         const initialRecord=record;
@@ -206,6 +238,41 @@ try {
         await wait(()=>window.webContents.executeJavaScript("window.testState.size?.height===420&&document.querySelector('iframe').style.height==='420px'"));
       }else assert.deepEqual(await inner().executeJavaScript("[document.querySelector('#title').value,document.querySelector('#body').value]"),['AI draft','Review before creating']);
       assert.deepEqual(await inner().executeJavaScript("[typeof window.testHost,typeof window.require,typeof window.process]"),['undefined','undefined','undefined']);
+      if(pluginMode){
+        stage='plugin progress and file grants';
+        const probe=await inner().executeJavaScript("new Promise(resolve=>{let progress;const listener=e=>{if(e.data.method==='notifications/progress'&&e.data.params.progressToken==='file-probe')progress=e.data.params;if(e.data.id==='file-probe-call'){removeEventListener('message',listener);resolve({progress,result:e.data.result});}};addEventListener('message',listener);parent.postMessage({jsonrpc:'2.0',id:'file-probe-call',method:'tools/call',params:{name:'file_probe',_meta:{progressToken:'file-probe'}}},'*');})");
+        assert.deepEqual(probe.progress,{progress:1,total:2,message:'Reading',progressToken:'file-probe'});
+        const fileUrl=probe.result.content[0]._meta['cindy/file'].url;
+        assert.ok(fileUrl.startsWith('cindy-mcp-app://'));
+        assert.deepEqual(await inner().executeJavaScript('fetch('+JSON.stringify(fileUrl)+',{headers:{Range:"bytes=0-3"}}).then(async r=>[r.status,await r.text()])'),[206,'host']);
+        assert.equal(await window.webContents.executeJavaScript('fetch('+JSON.stringify(fileUrl)+').then(r=>r.ok).catch(()=>false)'),false);
+        const forged=fileUrl.slice(0,fileUrl.lastIndexOf('/')+1)+'forged';
+        assert.equal(await inner().executeJavaScript('fetch('+JSON.stringify(forged)+').then(r=>r.status)'),404);
+        const viewRequest=async(id,method,params)=>inner().executeJavaScript('new Promise(resolve=>{const handler=e=>{if(e.data.id==='+JSON.stringify(id)+'){removeEventListener("message",handler);resolve(e.data);}};addEventListener("message",handler);parent.postMessage('+JSON.stringify({jsonrpc:'2.0',id,method,params})+',"*");})');
+        assert.ok((await viewRequest('download','ui/download-file',{contents:[{type:'resource_link',name:'fixture.txt',uri:'library:fixture.txt'}]})).result);
+        assert.equal(readFileSync(process.env.CINDY_MCP_APP_TEST_DIR+'/saved-fixture.txt','utf8'),'host-only-file');
+        assert.ok((await viewRequest('bad-download','ui/download-file',{contents:[{type:'resource_link',name:'secret',uri:'library:other.txt'}]})).error);
+        const imageUri=probe.result.content[1].uri;
+        assert.ok((await viewRequest('image-message','ui/message',{role:'user',content:[{type:'resource_link',name:'picked.png',uri:imageUri}]})).result);
+        assert.equal(receivedImages[0].url,imageUri);assert.equal(receivedImages[0].category,'image');
+        assert.ok((await viewRequest('bad-image','ui/message',{role:'user',content:[{type:'resource_link',name:'other.png',uri:imageUri.replace('aaaa','bbbb')}]})).error);
+        turns=0;
+        await inner().executeJavaScript('(()=>{const input=document.createElement("input");input.type="file";input.id="file-input-probe";document.body.append(input);window.fileDropped=false;input.addEventListener("drop",event=>{event.preventDefault();window.fileDropped=event.dataTransfer.files.length===1;});})()');
+        window.webContents.debugger.attach('1.3');
+        try {
+          const targets=await window.webContents.debugger.sendCommand('Target.getTargets');
+          const frameTarget=targets.targetInfos.find(target=>target.url===inner().url);
+          const frameSession=frameTarget?(await window.webContents.debugger.sendCommand('Target.attachToTarget',{targetId:frameTarget.targetId,flatten:true})).sessionId:undefined;
+          const tree=await window.webContents.debugger.sendCommand('DOM.getDocument',{depth:-1,pierce:true},frameSession);
+          const find=node=>node.attributes?.includes('file-input-probe')?node:[...(node.children??[]),...(node.shadowRoots??[]),...(node.contentDocument?[node.contentDocument]:[])].map(find).find(Boolean);
+          const input=find(tree.root);assert.ok(input,'sandbox file input must be inspectable');
+          await window.webContents.debugger.sendCommand('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[process.env.CINDY_MCP_APP_TEST_DIR+'/fixture.txt']},frameSession);
+          assert.equal(await inner().executeJavaScript('document.querySelector("#file-input-probe").files[0].name'),'fixture.txt');
+          assert.equal(await inner().executeJavaScript('(()=>{const input=document.querySelector("#file-input-probe");const data=new DataTransfer();data.items.add(input.files[0]);input.dispatchEvent(new DragEvent("drop",{dataTransfer:data,bubbles:true}));return window.fileDropped;})()'),true);
+        } finally { window.webContents.debugger.detach(); }
+        console.log('PLUGIN_UI_FILES=passed (standard progress, Range, downloads, image message grants, CDP file input, DOM drop; native dialogs and OS drag not exercised)');
+      }
+
       assert.deepEqual(await inner().executeJavaScript("(()=>{const policy=document.permissionsPolicy??document.featurePolicy;return ['camera','microphone','geolocation','clipboard-write'].map(name=>policy.allowsFeature(name));})()"),[false,false,false,false]);
       assert.equal(await inner().executeJavaScript("Notification.requestPermission()"),'denied');
       assert.equal(await inner().executeJavaScript("(()=>{try{window.parent.document.body;return false;}catch{return true;}})()"),true);
@@ -272,6 +339,7 @@ try {
       const doc={viewId,html:'<!doctype html><body>owner test',csp:appCsp().header,prefersBorder:true};supplyMcpAppDocument(doc);globalThis.mcpTestOwner={};
       assert.equal((await net.fetch('cindy-mcp-app://'+viewId+'-view/resource')).status,404);
       if(process.env.CINDY_MCP_APP_TEST_REMOTE==='1')console.log('MCP_APPS_REMOTE_FRAME_VERDICT=passed (Main-bound remote View, authenticated frame RPC, rejected Renderer forgery, remote teardown)');
+      if(pluginMode)console.log('PLUGIN_UI_VERDICT=passed (virtual MCP, real dispatcher, main.js handler, '+(independent?'raw JSON-RPC':'official App SDK')+')');
       console.log(independent?'MCP_APPS_RAW_SANDBOX_VERDICT=passed (SDK-free dashboard, blob/list, tool/message/context, display/size, Light/Dark, declared CSP domains, teardown, owner)':'MCP_APPS_SANDBOX_VERDICT=passed (official App, edit/create, Light/Dark, origins, preload, CSP, navigation, teardown, owner)');
     }).catch(error=>{console.error(error);process.exitCode=1;}).finally(async()=>{
       await modelClient?.close();await modelFacade?.close();await host?.reset();await connection?.close();forbidden?.close();window?.destroy();app.exit(process.exitCode??0);
@@ -282,6 +350,7 @@ try {
   const environment = {
     ...process.env,
     CINDY_MCP_APP_TEST_DIR: temporary,
+    CINDY_MCP_APP_TEST_PLUGIN: pluginView ? '1' : '0',
     CINDY_MCP_APP_TEST_URL: endpoint.url,
     CINDY_MCP_APP_TEST_RAW: independent ? '1' : '0',
     CINDY_MCP_APP_TEST_REMOTE: remoteView ? '1' : '0',
