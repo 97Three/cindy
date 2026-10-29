@@ -551,7 +551,13 @@ export class UserBrowserBackend implements BrowserBackend {
     // Right after an extension reload or update it reconnects within seconds: wait briefly before
     // reporting "not connected", so the agent does not give up on a browser that is coming back.
     const deadline = (this.opts.now ?? Date.now)() + (this.opts.reconnectWaitMs ?? 8000);
-    while (status.ok && !status.clients.some((c) => c.connected) && (this.opts.now ?? Date.now)() < deadline) {
+    // Only an extension seen recently (now dropped) is worth waiting for; none at all is reported at once.
+    while (
+      status.ok &&
+      status.clients.length > 0 &&
+      !status.clients.some((c) => c.connected) &&
+      (this.opts.now ?? Date.now)() < deadline
+    ) {
       await sleep(500);
       status = await control.bridge.status();
     }

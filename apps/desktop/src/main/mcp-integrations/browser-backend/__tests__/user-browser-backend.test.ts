@@ -741,10 +741,18 @@ describe('UserBrowserBackend · 读取与动作', () => {
     const realStatus = (fake.control.bridge as unknown as { status: () => Promise<{ ok: boolean; clients: Array<{ connected: boolean }> }> }).status;
     (fake.control.bridge as unknown as { status: () => Promise<unknown> }).status = async () => {
       const s = await realStatus();
-      return ++calls < 3 ? { ...s, clients: [] } : s;
+      return ++calls < 3 ? { ...s, clients: s.clients.map((c) => ({ ...c, connected: false })) } : s;
     };
     const b = new UserBrowserBackend({ getPageControl: () => fake.control, reconnectWaitMs: 5000, logger: { info: vi.fn(), warn: vi.fn() } });
     expect(await call(b, { action: 'status' })).toMatchObject({ ok: true, data: { connected: true } });
     expect(calls).toBe(3);
+  });
+
+  it('从没连过扩展时 status 立即报告未连接,不空等', async () => {
+    const fake = fakeControl({ clients: [] });
+    const b = new UserBrowserBackend({ getPageControl: () => fake.control, reconnectWaitMs: 60_000, logger: { info: vi.fn(), warn: vi.fn() } });
+    const started = Date.now();
+    expect(await call(b, { action: 'status' })).toMatchObject({ ok: true, data: { connected: false } });
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 });
