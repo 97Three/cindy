@@ -644,6 +644,18 @@ describe('UserBrowserBackend · 读取与动作', () => {
         await call(b, { action: 'upload', targetId: 't1', paths: [big], __mcpSessionId: 's1' }),
       ).toMatchObject({ ok: false, message: expect.stringContaining('30 MB') });
       expect(fake.jobs.length).toBe(jobsBefore);
+      // 2026-10-30: newer extensions also get the checked paths, so Chrome reads the files through the
+      // debugger; the bytes go along only when they fit the transfer.
+      const newer = fakeControl({ version: '0.4.56' });
+      newer.responses.set('upload', () => ({ ok: true, files: [{ name: 'big.bin', size: 31_000_000 }] }));
+      const nb = backend(newer.control, async () => [root]);
+      await call(nb, { action: 'tabs' });
+      expect(await call(nb, { action: 'upload', targetId: 't1', paths: [big], __mcpSessionId: 's1' })).toMatchObject({ ok: true });
+      const bigJob = newer.jobs.at(-1)?.[1] as { paths?: string[]; files?: unknown };
+      expect(bigJob.files).toBeUndefined();
+      expect(bigJob.paths?.[0]).toMatch(/big\.bin$/);
+      await call(nb, { action: 'upload', targetId: 't1', paths: [file], __mcpSessionId: 's1' });
+      expect(newer.jobs.at(-1)?.[1]).toMatchObject({ files: [{ name: 'a.png', data: 'AQID' }], paths: [expect.stringMatching(/a\.png$/)] });
       expect(
         await call(b, {
           action: 'upload',

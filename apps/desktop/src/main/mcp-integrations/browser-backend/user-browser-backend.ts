@@ -98,9 +98,16 @@ export const USER_BROWSER_PARITY_CAPABILITIES = Object.freeze({
 });
 
 export function extensionSupportsParity(version: string | null | undefined): boolean {
+  return extensionAtLeast(version, USER_BROWSER_PARITY_VERSION);
+}
+
+/** Extensions from this version upload by path through Chrome's debugger, without the ~30 MB transfer bound. */
+export const USER_BROWSER_PATH_UPLOAD_VERSION = '0.4.56';
+
+function extensionAtLeast(version: string | null | undefined, wanted: string): boolean {
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version ?? '');
   if (!match) return false;
-  const want = USER_BROWSER_PARITY_VERSION.split('.').map(Number);
+  const want = wanted.split('.').map(Number);
   for (let i = 0; i < 3; i++) {
     const diff = Number(match[i + 1]) - want[i];
     if (diff) return diff > 0;
@@ -151,12 +158,16 @@ function outdated(action: BackendRequest['action'], what: string): BackendResult
   );
 }
 
-/** Bytes per upload the extension accepts (its job validation caps base64 at 40 million characters). */
+/**
+ * Bytes per upload the extension can take as data (its job validation caps base64 at 40 million
+ * characters). Newer extensions also get the paths and let Chrome read the files through the debugger,
+ * so larger batches work there once the user has allowed the debugger.
+ */
 const UPLOAD_BATCH_BYTES_MAX = 30_000_000;
 function uploadTooLarge(action: BackendRequest['action']): BackendResult {
   return actionFailed(
     action,
-    '上传文件总大小超过约 30 MB:浏览器扩展一次只能接收这么多,请分批上传',
+    `上传文件总大小超过约 30 MB:这个版本的 Cindy 浏览器扩展只能直接传这么多。请告知用户把扩展更新到 ${USER_BROWSER_PATH_UPLOAD_VERSION} 或更新版本(之后经 Chrome 调试接口按文件位置上传,不受此限),或分批上传`,
     'BROWSER_RUNTIME_INVALID_REQUEST',
   );
 }
@@ -1273,13 +1284,19 @@ export class UserBrowserBackend implements BrowserBackend {
         ? await this.opts.resolveUploadRoots(sessionId)
         : [];
     const paths = await resolveUploadFiles(req.paths, roots);
-    // The extension takes about 30 MB per upload (its base64 limit); refuse before reading anything.
     let total = 0;
     for (const file of paths) total += (await fs.stat(file)).size;
-    if (total > UPLOAD_BATCH_BYTES_MAX) return uploadTooLarge(req.action);
+    // Newer extensions get the checked paths and have Chrome read the files through the debugger, with
+    // no transfer bound; the bytes go along only when they fit, as the fallback without the debugger.
+    const byPath = extensionAtLeast(
+      this.connectedClients(gate.control).find((c) => c.id === record.clientId)?.version,
+      USER_BROWSER_PATH_UPLOAD_VERSION,
+    );
+    const withBytes = total <= UPLOAD_BATCH_BYTES_MAX;
+    if (!byPath && !withBytes) return uploadTooLarge(req.action);
     const files: Array<{ name: string; data: string; mimeType: string }> = [];
     let read = 0;
-    for (const file of paths) {
+    for (const file of withBytes ? paths : []) {
       // Read from the descriptor that was checked, so a file swapped for a link after the check
       // cannot pull bytes from outside the allowed roots. One file at a time bounds memory.
       const bytes = readRecipeInputFileSync(file, roots);
@@ -1294,7 +1311,8 @@ export class UserBrowserBackend implements BrowserBackend {
     const ref = req.inputRef ?? req.ref;
     const job = await this.pageJob(gate.control, record, 'upload', {
       ...(ref ? { ref } : req.selector ? { selector: req.selector } : { selector: 'input[type=file]' }),
-      files,
+      ...(withBytes ? { files } : {}),
+      ...(byPath ? { paths } : {}),
     });
     if (!job.ok) return this.failureResult(req.action, job);
     return actionOk(req.action, {

@@ -216,16 +216,30 @@ function validateParityPayload(action: string, payload: BrowserExtensionJobPaylo
   if (action === 'dialog' && payload.promptText != null && !str(payload.promptText, 16000))
     throw new Error('Invalid promptText.');
   if (action === 'upload') {
+    // Paths let Chrome read the files itself through the debugger (no size bound from the transfer);
+    // bytes are the fallback when the debugger is not allowed. At least one, for the same files.
     const files = payload.files as Array<{ name?: unknown; data?: unknown; mimeType?: unknown }> | undefined;
+    const paths = payload.paths as unknown[] | undefined;
+    if (files == null && paths == null) throw new Error('upload needs files or paths.');
     if (
-      !Array.isArray(files) ||
-      !files.length ||
-      files.length > 20 ||
-      files.some((f) => !f || !str(f.name, 255) || !f.name || typeof f.data !== 'string' || (f.mimeType != null && !str(f.mimeType, 200)))
+      files != null &&
+      (!Array.isArray(files) ||
+        !files.length ||
+        files.length > 20 ||
+        files.some((f) => !f || !str(f.name, 255) || !f.name || typeof f.data !== 'string' || (f.mimeType != null && !str(f.mimeType, 200))))
     )
       throw new Error('upload needs 1–20 files with name and base64 data.');
-    if (files.reduce((n, f) => n + (f.data as string).length, 0) > 40_000_000)
+    if (files != null && files.reduce((n, f) => n + (f.data as string).length, 0) > 40_000_000)
       throw new Error('Upload files must total at most about 30 MB.');
+    if (
+      paths != null &&
+      (!Array.isArray(paths) ||
+        !paths.length ||
+        paths.length > 20 ||
+        paths.some((p) => !str(p, 4096) || !p || !(/^\//.test(p as string) || /^[A-Za-z]:[\\/]/.test(p as string))) ||
+        (files != null && files.length !== paths.length))
+    )
+      throw new Error('upload paths must be 1–20 absolute file paths, one per file.');
   }
   if (action === 'cdp') {
     if (!['begin', 'end', 'events', 'command'].includes(payload.op as string))
