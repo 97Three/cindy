@@ -8,8 +8,8 @@ import { CINDY_BRIDGE_EXTENSION_SOURCE } from '../cindy-bridge-source.js';
 // loads this standalone source, so importing a parallel client would miss bugs.
 const source = CINDY_BRIDGE_EXTENSION_SOURCE;
 const compiled = ts.transpileModule(
-  source.slice(source.indexOf('const CINDY_MCP_LIST_TOOLS'), source.indexOf('async function connectServer'))
-    + '\nglobalThis.Client = McpHttpClient; globalThis.Gateway = CindyMcpGateway;',
+  source.slice(source.indexOf('const CINDY_MCP_LIST_TOOLS'), source.indexOf('// Pi 内置 find 依赖 fd'))
+    + '\nglobalThis.Client = McpHttpClient; globalThis.Gateway = CindyMcpGateway; globalThis.connect = connectServer;',
   { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } },
 ).outputText;
 
@@ -39,12 +39,83 @@ function gatewayWithFetch(fetchImpl: typeof fetch) {
   registered.find(t => t.name === 'cindy_mcp_list_tools').execute('list', { server: 'cindy', tool: 'ghost_call' });
   const call = (signal?: AbortSignal) => registered.find(t => t.name === 'cindy_mcp_call_tool')
     .execute('call', { server: 'cindy', tool: 'ghost_call', args: { ghost_id: 'demo' } }, signal);
-  return { call, gateway, client, resultHook: (event: unknown) => resultHooks[0]?.(event), list: (params: unknown = {}) => registered.find(t => t.name === 'cindy_mcp_list_tools').execute('list', params) };
+  return { call, gateway, client,
+    connect: () => context.connect({ name: 'cindy', url: 'https://example.test/mcp' }, 'fake-token'),
+    resultHook: (event: unknown) => resultHooks[0]?.(event),
+    list: (params: unknown = {}, signal?: AbortSignal) => registered.find(t => t.name === 'cindy_mcp_list_tools').execute('list', params, signal) };
 }
 
 afterEach(() => vi.useRealTimers());
 
 describe('Pi MCP request lifecycle', () => {
+  // A transport failure can follow a successful write. Recover the connection
+  // for a later explicit request, without replaying that ambiguous operation.
+  it('recovers a lost response on the next call with one handshake and no replay', async () => {
+    const methods: string[] = [];
+    let calls = 0;
+    const h = gatewayWithFetch(vi.fn(async (_url, options) => {
+      const body = JSON.parse(String(options!.body));
+      methods.push(body.method);
+      if (body.method === 'tools/call' && ++calls === 1) throw { code: 'ECONNRESET' };
+      return Response.json({ result: body.method === 'tools/list' ? { tools: [{ name: 'ghost_call', inputSchema: {
+        type: 'object', properties: { ghost_id: { type: 'string' } }, required: ['ghost_id'],
+      } }] } : { content: [{ type: 'text', text: 'ok' }] } });
+    }));
+    const connect = vi.fn(h.connect);
+    h.gateway.registerReconnect('cindy', connect);
+    await expect(h.call()).rejects.toThrow('not replayed');
+    expect(methods).toEqual(['tools/call']);
+    await Promise.all([h.call(), h.call()]);
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(methods).toEqual(['tools/call', 'initialize', 'notifications/initialized', 'tools/list', 'tools/call', 'tools/call']);
+  });
+
+  it('recovers an initially unavailable server through targeted discovery and cancels only one waiter', async () => {
+    const h = gatewayWithFetch(vi.fn(async () => Response.json({ result: {
+      content: [{ type: 'text', text: 'healthy server' }],
+    } })));
+    let finish!: (value: unknown) => void;
+    const connect = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+    h.gateway.registerReconnect('catalog', connect);
+    h.gateway.markUnavailable('catalog', 'HTTP 503');
+    await h.list();
+    expect(connect).not.toHaveBeenCalled();
+    const controller = new AbortController();
+    const cancelled = h.list({ server: 'catalog' }, controller.signal);
+    const waiting = h.list({ server: 'catalog' });
+    controller.abort();
+    await expect(cancelled).rejects.toThrow('cancelled');
+    finish({ client: h.client, tools: [{ name: 'ready' }] });
+    expect((await waiting).details.tools[0].name).toBe('ready');
+    expect(connect).toHaveBeenCalledTimes(1);
+    await expect(h.call()).resolves.toMatchObject({ content: [{ text: 'healthy server' }] });
+  });
+
+  it.each(['changed', 'removed'])('does not dispatch an approved call when recovery returns a %s definition', async (mode) => {
+    const fetchImpl = vi.fn(async () => { throw { code: 'ECONNRESET' }; });
+    const h = gatewayWithFetch(fetchImpl);
+    h.gateway.registerReconnect('cindy', async () => ({ client: h.client,
+      tools: mode === 'removed' ? [] : [{ name: 'ghost_call', inputSchema: { type: 'object' } }],
+    }));
+    await expect(h.call()).rejects.toThrow('ECONNRESET');
+    await expect(h.call()).rejects.toThrow('tool definition changed');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks an expired session for recovery while leaving authentication failures alone', async () => {
+    let status = 200;
+    const h = gatewayWithFetch(vi.fn(async () => Response.json({ result: {} }, {
+      status, headers: status === 200 ? { 'mcp-session-id': 'fixture-session' } : {},
+    })));
+    await h.client.initialize();
+    status = 401;
+    await expect(h.call()).rejects.toThrow('HTTP 401');
+    expect(h.client.needsReconnect).toBe(false);
+    status = 404;
+    await expect(h.call()).rejects.toThrow('HTTP 404');
+    expect(h.client.needsReconnect).toBe(true);
+  });
+
   it('bounds broad discovery, pages all tools, and inspects the full searchable description', async () => {
     const h = gatewayWithFetch(vi.fn());
     const description = 'Documentation '.repeat(200) + 'needle';

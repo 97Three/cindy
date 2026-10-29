@@ -74,6 +74,10 @@ Cindy 以 `pi --mode rpc` spawn pi 二进制(JSONL/stdio),`translator.ts` 把 pi
   MCP 请求接入 Pi 的取消信号；Bun fetch 的独立空闲计时关闭，由既有请求期限统一约束响应头与
   正文。取消只中止本次 HTTP 等待，不承诺撤销服务端已执行的动作。网络错误只附白名单错误码，
   仅 JSON-RPC `-32602` 明确参数错误附 schema，工具业务错误保留原反馈。
+  启动失败、传输断开、请求超时或已建立的 MCP session 返回 404 后，下一次定向发现／调用
+  按服务重新 initialize + tools/list，复用既有启动期限；并发等待共享一次握手，取消只退出
+  当前等待。恢复不自动重放 tools/call，不重启 Pi 或其它服务；新工具表替换旧表，定义改变
+  或删除时拒绝用旧定义继续调用。只恢复启动快照里的服务，不热加载配置变更。
 - **plan 模式**:自动挂载 Pi 分发包自带的 plan-mode 扩展，无需用户另装。UI 勾选是下一条
   消息的一次性意图，与原生运行态分开；`StartSessionOptions.planMode` 设置起始档，
   `SendOptions.planMode` 快照决定本轮，切档与 prompt 在同一 RPC 串行段执行。发送后消耗
