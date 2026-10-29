@@ -11,21 +11,27 @@ import { buildConversationShareContentWidth, type ConversationShareMessage, type
 import { prepareConversationShareImages } from './conversationShareImages';
 import { cleanupConversationSharePngTemps, deleteConversationSharePngTemp, writeConversationSharePngTemp } from './ConversationShareWebView';
 import { withDownloadedRemoteMediaFile } from './remoteMediaDiskCacheExpo';
+import { shareSelectionStore, useShareSelectionActive } from './shareSelectionStore';
 
 /** Exports selected messages through the system image share sheet. */
-export function BotGroupTopicImageShare({ messages, allIds, resolveMedia, onClose }: {
-  messages: BotGroupMessageView[]; allIds: string[]; onClose(): void;
+export function BotGroupTopicImageShare({ messages, allIds, resolveMedia, selectionScope, onBusyChange }: {
+  messages: BotGroupMessageView[]; allIds: string[];
+  selectionScope: string; onBusyChange(busy: boolean): void;
   resolveMedia?: (id: string, signal?: AbortSignal) => Promise<BotGroupAttachment>;
 }) {
   const { t } = useTranslation(); const { colors, mode } = useTheme(); const dimensions = useWindowDimensions();
   const { colors: ownUserBubble } = useUserBubbleAppearance();
   const [busy, setBusy] = useState(false);
   const [prepared, setPrepared] = useState<ConversationShareMessage[] | null>(null);
+  const selectionActive = useShareSelectionActive(selectionScope);
   const svg = useRef<ConversationShareSvgHandle>(null);
-  const job = useRef<{ controller: AbortController; owner: ReturnType<typeof getMobileAuthOwner> } | null>(null);
+  const job = useRef<{ controller: AbortController; owner: ReturnType<typeof getMobileAuthOwner>; handedOff: boolean } | null>(null);
   const signature = JSON.stringify(messages);
+  const currentSignature = useRef(signature); currentSignature.current = signature;
   const stop = () => { job.current?.controller.abort(); job.current = null; };
-  useEffect(() => { stop(); setBusy(false); setPrepared(null); return stop; }, [signature]);
+  useEffect(() => stop, [selectionScope]);
+  useEffect(() => { if (job.current?.handedOff) return; stop(); setBusy(false); setPrepared(null); }, [signature, selectionActive]);
+  useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
   const palette = useMemo<ConversationShareWebViewColors>(() => ({ background: colors.surface, ownUserBubble, border: colors.border,
     codeSurface: colors.chatCodeSurface, inlineCode: colors.chatInlineCodeText, surfaceChip: colors.surfaceChip, surfaceElevated: colors.surfaceElevated,
     textPrimary: colors.textPrimary, textSecondary: colors.textSecondary, textTertiary: colors.textTertiary, dark: mode === 'dark',
@@ -33,9 +39,10 @@ export function BotGroupTopicImageShare({ messages, allIds, resolveMedia, onClos
       number: colors.syntaxNumber, property: colors.syntaxProperty, string: colors.syntaxString },
   }), [colors, mode, ownUserBubble]);
   const start = async () => {
-    if (job.current || !messages.length) return;
-    const active = { controller: new AbortController(), owner: getMobileAuthOwner() }; job.current = active; setBusy(true);
-    const valid = () => job.current === active && !active.controller.signal.aborted && isMobileAuthOwnerCurrent(active.owner);
+    if (job.current || !messages.length || !shareSelectionStore.isActive(selectionScope)) return;
+    const active = { controller: new AbortController(), owner: getMobileAuthOwner(), handedOff: false }; job.current = active; setBusy(true);
+    const valid = () => job.current === active && !active.controller.signal.aborted && isMobileAuthOwnerCurrent(active.owner)
+      && signature === currentSignature.current && shareSelectionStore.isActive(selectionScope);
     try {
       const authorized = new Map<string, BotGroupAttachment>();
       const projected: ConversationShareMessage[] = [];
@@ -75,23 +82,26 @@ export function BotGroupTopicImageShare({ messages, allIds, resolveMedia, onClos
   useEffect(() => {
     const active = job.current;
     if (!prepared || !active) return;
-    const valid = () => job.current === active && !active.controller.signal.aborted && isMobileAuthOwnerCurrent(active.owner);
+    const valid = () => job.current === active && !active.controller.signal.aborted && isMobileAuthOwnerCurrent(active.owner)
+      && (active.handedOff || signature === currentSignature.current && shareSelectionStore.isActive(selectionScope));
     void (async () => {
       let uri: string | null = null, shared = false;
+      let restoreSelection: (() => boolean) | undefined;
       try {
         await cleanupConversationSharePngTemps(); if (!valid()) return;
         const image = await svg.current?.exportPng(); if (!valid() || !image) return;
         uri = await writeConversationSharePngTemp(image); if (!valid()) return;
         if (!uri) throw new Error('SHARE_EXPORT_FAILED');
         const sharing = await import('expo-sharing'); if (!valid()) return;
+        active.handedOff = true;
+        restoreSelection = shareSelectionStore.exitForShare();
         await sharing.shareAsync(uri, { mimeType: 'image/png' }); shared = true;
-        if (valid()) onClose();
-      } catch { if (valid()) Alert.alert(t('session.screen.shareFailedTitle'), t('session.screen.shareImageFailed')); }
+      } catch { if (valid() && (!restoreSelection || restoreSelection())) Alert.alert(t('session.screen.shareFailedTitle'), t('session.screen.shareImageFailed')); }
       finally { if (!shared && uri) await deleteConversationSharePngTemp(uri); if (valid()) { stop(); setBusy(false); setPrepared(null); } }
     })();
   }, [prepared]);
   return <>
-    <ShareSelectionBar busy={busy} count={messages.length} onCancel={() => { stop(); onClose(); }} onShare={() => void start()} />
+    {selectionActive ? <ShareSelectionBar busy={busy} count={messages.length} onCancel={() => { stop(); shareSelectionStore.exit(); }} onShare={() => void start()} /> : null}
     {prepared ? <ConversationShareSvg ref={svg} allShareableIds={allIds} messages={prepared} colors={palette} width={buildConversationShareContentWidth(dimensions)} /> : null}
   </>;
 }

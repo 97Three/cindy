@@ -834,7 +834,7 @@ Desktop 群聊与话题之间的分隔线支持左右拖拽和方向键调宽；
 - 手机「同时发到群聊」沿既有耐久发件箱增加可选后段信息：先持久保存真实回复回执 ID，再保存固定 `thread-share:<replyId>` 请求体，随后发送并保存发群回执。结果未知不开始后段，后段失败只重试后段，不阻塞后续普通回复；离页和新版重启恢复同一记录、请求体和操作 ID。
 - 后段 `unavailable` 是终态，保留原因供关闭，不继续自动重试。真实群撤权永久停止旧记录，重新入群不自动复活。后段完成还要在已持久历史中看到本人贴回引用才回收记录；回执缺 ID 只显示不可定位的已贴回标记，不伪造跳转。账号与 realm 隔离沿既有 ledger 和清理规则。
 - 旧记录没有后段字段时行为不变；**降级到不支持后段的旧版，不能保证未完成的同时发群意图继续**。这不是新版重启恢复保证，也不新增版本门或发布排空前置。
-- 表情、复制、准确时间及图片分享复用既有消息菜单、原生导出与系统分享；图片分享只导出选中且当前可见的内容，图片按媒体 ID 重新鉴权；切账号、来源变更或关闭会取消本次导出。此处不新增群消息编辑／删除、播放器、附件上传或远程话题协议。
+- 复制、准确时间及图片分享复用既有消息菜单、导出与系统分享。图片分享的选择交互直接复用 session 的 `ShareMessageCheckbox`、`ShareSelectAllButton`、`ShareSelectionBar` 与 `shareSelectionStore`：整行短按或圆形勾选、顶部全选／恢复原选择，选择时隐藏普通消息操作，交接系统分享时退出选择，只有打开失败才恢复勾选。只导出选中且当前可见的内容，图片按媒体 ID 重新鉴权；切账号、来源变更或关闭会取消本次导出。此处不新增群消息编辑／删除、播放器、附件上传或远程话题协议。
 
 实现：`maker-ipc/chatServerThreads.ts`、`chatServer.ts`（`decorateThreads`、`shareToMain`）、`renderer/features/bots/BotGroupThreadViews.tsx`、
 `ChatThreadPanel.tsx`。回归：`chatServerThreads.test.ts`、`chatServer.test.ts`（thread previews and main-chat shares）、

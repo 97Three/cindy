@@ -1,5 +1,8 @@
 import { deviceDisplayName } from '@/device-link/deviceName';
 import { BotGroupTopicImageShare } from './BotGroupTopicImageShare';
+import { ShareMessageCheckbox } from './ShareMessageCheckbox';
+import { ShareSelectAllButton } from './ShareSelectAllButton';
+import { shareSelectionStore, useShareSelectionActive, useShareSelectionRevision } from './shareSelectionStore';
 import { pendingChatMessage } from '@/chat/chatOutbox';
 import { useDelayedConnectionNotice } from '@/components/ConnectionNoticeOverlay';
 import type { DurableOutboxRecord } from './durableOutbox';
@@ -176,7 +179,7 @@ function BotGroupChatContent({ deviceId, deviceName, groupId, messageId, notific
   const [settings, setSettings] = useState(false);
   const [replyTo, setReplyTo] = useState<BotGroupQuoteView | null>(null);
   const [replyFocusRequest, setReplyFocusRequest] = useState(0);
-  const [imageSelection, setImageSelection] = useState<{ owner: string; ids: string[] } | null>(null);
+  const [imageShareBusy, setImageShareBusy] = useState(false);
   const [olderError, setOlderError] = useState(false);
   const autoPaging = useRef(false);
   const userScrolled = useRef(false);
@@ -212,12 +215,27 @@ function BotGroupChatContent({ deviceId, deviceName, groupId, messageId, notific
     focused && foreground,
   );
   const viewportOwner = `${user?.id ?? ''}:${accountGeneration}:${deviceId}:${groupId}:${threadRootId ?? 'main'}`;
-  const selectedImages = imageSelection?.owner === viewportOwner ? imageSelection.ids : undefined;
+  const shareScope = `bot-group:${viewportOwner}`;
+  const imageSelectionActive = useShareSelectionActive(shareScope);
+  useShareSelectionRevision();
+  const selectedImages = imageSelectionActive ? shareSelectionStore.getSelectedIds() : undefined;
   const shareableMessages = group?.messages.filter(message => message.kind === 'message' && !message.deleted
     && (!message.threadShare || message.threadShare.status === 'available')
     && (threadRootId ? message.id === threadRootId || message.threadRootId === threadRootId : !message.threadRootId)) ?? [];
   const shareDeliveries = threadRootId ? chat.pending.filter(row => row.chat?.messageId && row.chat.shareToMain && row.chat.shareToMain.state !== 'sent') : [];
   const selectedMessages = shareableMessages.filter(message => selectedImages?.includes(message.id));
+  const shareableIds = shareableMessages.map(message => message.id);
+  useEffect(() => () => {
+    if (shareSelectionStore.isActive(shareScope)) shareSelectionStore.exit();
+  }, [shareScope]);
+  useEffect(() => {
+    if (!focused && shareSelectionStore.isActive(shareScope)) shareSelectionStore.exit();
+  }, [focused, shareScope]);
+  useEffect(() => {
+    if (!shareSelectionStore.isActive(shareScope)) return;
+    const exposed = shareSelectionStore.getSelectedIdsInOrder(shareableIds);
+    if (exposed.length !== shareSelectionStore.count()) shareSelectionStore.setSelection(exposed);
+  }, [imageSelectionActive, shareScope, shareableIds.join('\0')]);
   if (initialRead.current.owner !== viewportOwner) initialRead.current = { owner: viewportOwner, sequence: chat.threadMeta?.readSeq };
   else if (initialRead.current.sequence === undefined) initialRead.current.sequence = chat.threadMeta?.readSeq;
   const [seen, setSeen] = useState<{ owner: string; sequence: string } | null>(null);
@@ -520,7 +538,10 @@ function BotGroupChatContent({ deviceId, deviceName, groupId, messageId, notific
   const threadFollow = threadRootId && chat.followThread ? <BotGroupThreadFollow nativeHeader={nativeHeader}
     following={chat.threadMeta?.following} online={chat.online}
     onChange={chat.followThread} onError={error => report(error, 'groupChat.thread.followFailed')} /> : undefined;
-  const header = <><ChatIdentityHeader testIDPrefix="botGroup" settingsTestID="botGroup.settingsButton" nativeHeader={nativeHeader}
+  const header = imageSelectionActive ? <View style={styles.shareHeader}>
+    <Stack.Screen options={{ headerShown: false }} />
+    <ShareSelectAllButton busy={imageShareBusy} shareableIds={shareableIds} />
+  </View> : <><ChatIdentityHeader testIDPrefix="botGroup" settingsTestID="botGroup.settingsButton" nativeHeader={nativeHeader}
     mark={threadRootId ? null : peer ? <BotGroupAvatar deviceId={deviceId} identity={identityFor(peer.botId, peer.name)} size={CHAT_HEADER_MARK_SIZE} online={chat.online} /> : <BotGroupDuoAvatar deviceId={deviceId} members={headerMembers} online={chat.online} variant="header"
       working={group?.round.status === 'running'} />}
     title={threadRootId ? t('groupChat.thread.title') : title}
@@ -594,9 +615,8 @@ function BotGroupChatContent({ deviceId, deviceName, groupId, messageId, notific
           onRetrySource={chat.reload}
           onOpenTopic={!deviceId && chat.server ? openTopic : undefined} onRevealShare={revealShare}
           onShare={chat.shareToMain ? id => { void chat.shareToMain!(id).catch(error => report(error, 'groupChat.thread.shareFailed')); } : undefined}
-          selectedImages={selectedImages} onToggleImage={id => setImageSelection(old => ({ owner: viewportOwner,
-            ids: old?.owner === viewportOwner && old.ids.includes(id) ? old.ids.filter(value => value !== id) : [...(old?.owner === viewportOwner ? old.ids : []), id] }))}
-          onShareImage={!deviceId && chat.server ? id => { Keyboard.dismiss(); setImageSelection({ owner: viewportOwner, ids: [id] }); } : undefined}
+          selectedImages={selectedImages} imageShareBusy={imageShareBusy}
+          onShareImage={!deviceId && chat.server ? id => { Keyboard.dismiss(); shareSelectionStore.enter(shareScope, id); } : undefined}
           sharedReplies={chat.threadMeta?.shares} readBefore={initialRead.current.sequence} olderError={olderError}
           highlightId={highlightId} onLocateMessage={locateMessage}
           pending={chat.pending} onPendingAction={(id, action) => { void chat.pendingAction?.(id, action).catch(error => report(error, 'groupChat.composer.sendFailed')); }}
@@ -632,7 +652,7 @@ function BotGroupChatContent({ deviceId, deviceName, groupId, messageId, notific
         </CompanionFadeIn>
       </View> : null}
       </View>
-      {shareDeliveries.length ? <ScrollView style={styles.shareDeliveries} nestedScrollEnabled>
+      {!imageSelectionActive && shareDeliveries.length ? <ScrollView style={styles.shareDeliveries} nestedScrollEnabled>
         {shareDeliveries.filter(row => row.chat?.shareToMain?.state === 'failed').length > 1 ? <Text style={styles.threadEmpty}>{t('groupChat.thread.shareFailed_many', { count: shareDeliveries.filter(row => row.chat?.shareToMain?.state === 'failed').length })}</Text> : null}
         {shareDeliveries.map(row => <View key={row.item.clientId} style={styles.sharePending} testID={`botGroup.thread.delivery.${row.item.clientId}`}>
         <Text numberOfLines={2} style={styles.threadEmpty}>{row.item.text}</Text>
@@ -641,14 +661,14 @@ function BotGroupChatContent({ deviceId, deviceName, groupId, messageId, notific
         {row.chat!.shareToMain!.state === 'unavailable' || row.suspended ? <MainWindowActionButton density="compact" action={{ label: t('groupChat.thread.dismiss'), onPress: () => { void chat.pendingAction?.(row.item.clientId, 'dismiss-share').catch(error => report(error, 'groupChat.thread.shareFailed')); } }} /> : null}
       </View>)}
       </ScrollView> : null}
-      {replyTo ? <View style={styles.replyDraft}>
+      {!imageSelectionActive && replyTo ? <View style={styles.replyDraft}>
         <View style={styles.flex}><BotGroupQuote display={resolveBotGroupQuote(replyTo, group.messages)} onPress={() => locateMessage(replyTo.messageId)} /></View>
         <MainWindowActionButton density="compact" action={{ label: t('message.quote.remove'), onPress: () => setReplyTo(null), testID: 'botGroup.cancelReply' }} />
       </View> : null}
-      {!threadRootId ? <BotGroupWorkArea group={group} deviceId={deviceId} online={chat.online} identityFor={identityFor}
+      {!imageSelectionActive && !threadRootId ? <BotGroupWorkArea group={group} deviceId={deviceId} online={chat.online} identityFor={identityFor}
         onError={message => { if (message) Alert.alert(message); }} /> : null}
-      {selectedImages ? <BotGroupTopicImageShare messages={selectedMessages} allIds={shareableMessages.map(message => message.id)}
-        resolveMedia={chat.media} onClose={() => setImageSelection(null)} /> : null}
+      <BotGroupTopicImageShare key={shareScope} selectionScope={shareScope} messages={selectedMessages} allIds={shareableIds}
+        resolveMedia={chat.media} onBusyChange={setImageShareBusy} />
       <View style={selectedImages ? styles.hiddenComposer : undefined} testID="botGroup.composerContainer">
         <BotGroupComposer key={`${viewportOwner}:composer`} topic={!!threadRootId} members={group.members} identityFor={identityFor} deviceId={deviceId} online={(chat.online || !!chat.canQueue) && !group.archived && !group.dissolvedAt && (!threadRootId || group.messages.some(message => message.id === threadRootId && !message.deleted))}
         quoteMessageId={replyTo?.messageId} focusRequest={replyFocusRequest}
@@ -665,7 +685,7 @@ function BotGroupChatContent({ deviceId, deviceName, groupId, messageId, notific
     {floatingHeader ? <>
       <View style={[styles.flex, group ? null : { paddingTop: headerHeight }]}>{body}</View>
       <SessionHeaderNativeBlur height={Math.max(headerHeight, nativeHeader ? nativeHeaderHeight : insets.top + navigationChrome.target)} fadeInside={CHAT_HEADER_BLUR_FADE_INSIDE} />
-      <View style={[styles.floatingHeader, { paddingTop: nativeHeader ? nativeHeaderHeight : insets.top }]} onLayout={(event) => setHeaderHeight(event.nativeEvent.layout.height)}>
+      <View style={[styles.floatingHeader, { paddingTop: nativeHeader && !imageSelectionActive ? nativeHeaderHeight : insets.top }]} onLayout={(event) => setHeaderHeight(event.nativeEvent.layout.height)}>
         {header}
         {offlineNote}
       </View>
@@ -692,7 +712,7 @@ function followUpPending(action: PlanPending['action'] | null): BotGroupFollowUp
 export function BotGroupTimeline({
   group, deviceId, online, identityFor, resolveMedia, resolveServerMedia, loadOlder, loadingOlder, continuing, planPending, onContinue, onPlanAction, onEditStep,
   onMessageLayout, onLocateMessage, highlightId, onReply, onOpenThread, threadRootId, pending = [], onPendingAction,
-  onOpenTopic, onRevealShare, onShare, sharedReplies, readBefore, olderError, onRetrySource, onShareImage, selectedImages, onToggleImage,
+  onOpenTopic, onRevealShare, onShare, sharedReplies, readBefore, olderError, onRetrySource, onShareImage, selectedImages, imageShareBusy,
 }: {
   group: BotGroupRemoteChatData;
   pending?: readonly DurableOutboxRecord[];
@@ -720,7 +740,7 @@ export function BotGroupTimeline({
   onRevealShare?: (messageId: string | null) => void;
   onShare?: (messageId: string) => void;
   onRetrySource?: () => void;
-  selectedImages?: string[]; onToggleImage?: (messageId: string) => void; onShareImage?: (messageId: string) => void;
+  selectedImages?: string[]; imageShareBusy?: boolean; onShareImage?: (messageId: string) => void;
   sharedReplies?: Record<string, { messageId: string; bySelf: boolean }>;
   readBefore?: string;
   olderError?: boolean;
@@ -788,17 +808,13 @@ export function BotGroupTimeline({
             onShare={onShare && !isRoot && message.threadRootId ? () => onShare(message.id) : undefined}
             shared={shared} onReveal={revealShare} />;
       const key = rowKey(message.id);
-      return <View key={key} testID={`botGroup.row.${message.id}`} style={[styles.item, highlightId === message.id && styles.locatedMessage]}
-        onLayout={event => onMessageLayout?.(message.id, event.nativeEvent.layout.y, event.nativeEvent.layout.height)}>
-        {selectedImages && !queued && message.kind === 'message' && (!message.threadShare || message.threadShare.status === 'available') ? <Pressable
-          accessibilityRole="checkbox" accessibilityState={{ checked: selectedImages.includes(message.id) }} accessibilityLabel={t('session.shareImage.checkboxLabel')}
-          onPress={() => onToggleImage?.(message.id)} style={styles.shareSelection} testID={`botGroup.thread.image.${message.id}`}>
-          <Text style={styles.threadCaption}>{t(selectedImages.includes(message.id) ? 'groupChat.thread.selected' : 'groupChat.thread.select')}</Text>
-        </Pressable> : null}
+      const selectable = selectedImages && !queued && message.kind === 'message' && !message.deleted
+        && (!message.threadShare || message.threadShare.status === 'available');
+      const messageRow = <>
         {!threadRootId && groupTime !== undefined ? <Text style={styles.time}>{formatBotMessageGroupTime(groupTime, i18n.language)}</Text> : null}
         {firstNew !== undefined && index === firstNew && firstNew > firstReply ? <View style={styles.newReplyBoundary}><View style={styles.newReplyLine} /><Text style={styles.newReplyDivider}>{t('groupChat.thread.newRepliesDivider')}</Text></View> : null}
         <CompanionEntering id={key} createdAt={message.createdAt} kind={message.authorKind === 'user' ? 'send' : 'reply'}>
-        <BotGroupTimelineItem footer={<>
+        <BotGroupTimelineItem footer={selectedImages ? undefined : <>
         {!queued && onOpenThread && !message.threadRootId && !message.threadShare && !message.deleted ? <View style={[styles.messageFooter, styles.threadSummaryFooter]}>
           <BotGroupThreadEntry message={message} identityFor={identityFor} onPress={() => onOpenThread(message)} />
         </View> : null}
@@ -825,6 +841,12 @@ export function BotGroupTimeline({
         </CompanionEntering>
         {longRoot ? <MainWindowActionButton density="compact" action={{ label: t(expandedRoot ? 'groupChat.thread.collapseRoot' : 'groupChat.thread.expandRoot'), onPress: () => setExpandedRoot(value => !value), testID: 'botGroup.thread.expandRoot' }} /> : null}
         {isRoot ? threadBoundary : null}
+      </>;
+      return <View key={key} testID={`botGroup.row.${message.id}`} style={[styles.item, highlightId === message.id && styles.locatedMessage]}
+        onLayout={event => onMessageLayout?.(message.id, event.nativeEvent.layout.y, event.nativeEvent.layout.height)}>
+        {selectable ? <ShareMessageCheckbox clientId={message.id} disabled={imageShareBusy} fill>
+          <View style={styles.flex}>{messageRow}</View>
+        </ShareMessageCheckbox> : messageRow}
         {queued ? <View style={styles.pendingRow} testID={`botGroup.pending.${queued.item.clientId}`}>
           <Text style={styles.pendingText}>{t(queued.state === 'failed' ? 'message.queue.notSent' : !online ? 'message.queue.waitingForNetwork' : 'message.queue.queued')}</Text>
           {queued.state === 'failed' && !queued.suspended ? <MainWindowActionButton density="compact" action={{ label: t('message.queue.retry'), onPress: () => onPendingAction?.(queued.item.clientId, 'retry') }} /> : null}
@@ -996,7 +1018,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   emptyActions: { flexDirection: 'row', justifyContent: 'center', gap: spacing.sm, marginTop: spacing.lg },
   threadTimeline: { justifyContent: 'flex-start' },
   threadBoundary: { paddingTop: spacing.md, gap: spacing.sm },
-  shareSelection: { minHeight: 44, justifyContent: 'center' },
+  shareHeader: { minHeight: 44, paddingLeft: spacing.sm },
   shareDeliveries: { maxHeight: 160, flexGrow: 0 },
   sharePending: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
   threadLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.border },

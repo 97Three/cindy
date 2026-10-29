@@ -3,6 +3,7 @@ import { act, createElement as el, useEffect, useImperativeHandle, useRef, useSt
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BOT_GROUP_RUNTIME_FAILURE_CODES, type BotGroupRemoteChatData } from '@cindy/maker-shared/botGroupChat';
+import { shareSelectionStore } from '@/session/shareSelectionStore';
 
 const h = vi.hoisted(() => ({
   chat: null as any, pngExport: vi.fn(async () => 'encoded'), sharedImage: vi.fn(async () => {}), exported: [] as any[],
@@ -322,6 +323,7 @@ async function render(data: BotGroupRemoteChatData | null = group(), kind: 'read
 }
 
 beforeEach(() => {
+  shareSelectionStore.exit();
   h.management = null;
   h.navigation = { index: 0, routes: [{ params: {} }] }; h.hardwareBack = null;
   vi.clearAllMocks();
@@ -1954,18 +1956,48 @@ describe('mobile group threads', () => {
     await click('botGroup.thread.alsoSend');
     await openTopicMenu('reply');
     await click('botGroup.thread.context.reply.action.image');
-    expect(byId('botGroup.thread.image.reply')).not.toBeNull();
+    expect(byId('session.shareImage.checkbox.reply')).not.toBeNull();
+    expect(byId('botGroup.thread.more.reply')).toBeNull();
+    await click('session.shareImage.selectAll');
+    expect(shareSelectionStore.getSelectedIds()).toEqual([rootId, 'reply']);
+    await click('session.shareImage.selectAll');
+    expect(shareSelectionStore.getSelectedIds()).toEqual(['reply']);
+    await click(`session.shareImage.checkbox.${rootId}`);
+    expect(shareSelectionStore.count()).toBe(2);
+    await click(`session.shareImage.checkbox.${rootId}`);
+    let finishShare!: () => void;
+    if (exit === 'share') h.sharedImage.mockImplementationOnce(() => new Promise<void>(resolve => { finishShare = resolve; }));
     await click(`session.shareImage.${exit}`);
     if (exit === 'share') {
       expect(h.exported.at(-1)).toMatchObject([{ clientId: 'reply', body: 'Only this reply' }]);
       expect(h.exported.at(-1)).toHaveLength(1);
       expect(h.sharedImage).toHaveBeenCalledWith('file:///export.png', { mimeType: 'image/png' });
+      expect(byId('session.shareImage.bar')).toBeNull();
+      expect(byId('session.shareImage.selectAll')).toBeNull();
+      await act(async () => finishShare());
     } else expect(h.sharedImage).not.toHaveBeenCalled();
     expect(h.row.value).toBe('Keep my draft');
     expect(byId('botGroup.composerContainer')?.style.display).not.toBe('none');
     expect(h.chat.act).not.toHaveBeenCalled();
     await click('botGroup.composer.send');
     expect(h.chat.act).toHaveBeenLastCalledWith('send', expect.objectContaining({ text: 'Keep my draft', alsoSendToMain: true }));
+  });
+
+  // Session parity, unit: an opening failure restores the same selection without losing the draft.
+  it('restores selection when the system share sheet cannot open', async () => {
+    h.chat.server = true;
+    h.sharedImage.mockRejectedValueOnce(new Error('share unavailable'));
+    await render(threadGroup({ messages: [rootMessage(), message('reply', 2, { threadRootId: rootId, content: 'Reply' })] }), 'ready', rootId, '');
+    await act(async () => h.row.onChangeText('Keep my draft'));
+    await openTopicMenu('reply');
+    await click('botGroup.thread.context.reply.action.image');
+    await click('session.shareImage.share');
+    expect(byId('session.shareImage.bar')).not.toBeNull();
+    expect(shareSelectionStore.getSelectedIds()).toEqual(['reply']);
+    expect(h.alert).toHaveBeenCalledWith('session.screen.shareFailedTitle', 'session.screen.shareImageFailed');
+    await click('session.shareImage.cancel');
+    expect(h.row.value).toBe('Keep my draft');
+    expect(h.chat.act).not.toHaveBeenCalled();
   });
 
   it('returns to the retained group only when it is the previous route; cold notifications locate their own root', async () => {
