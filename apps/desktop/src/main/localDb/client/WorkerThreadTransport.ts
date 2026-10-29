@@ -1839,7 +1839,7 @@ function rewindCommit(readyDb, args) {
       rewindParentlessSubagentTail.run(now, sessionId, targetCreatedAt);
     }
     if (nativeContextReset) {
-      readyDb.prepare('UPDATE sessions SET user_send_at = ?, updated_at = ?, context_tokens = 0, context_window = 0, codex_plan_json = NULL, sdk_session_id = NULL, list_preview = NULL, list_preview_role = NULL WHERE id = ?').run(now, now, sessionId);
+      readyDb.prepare('UPDATE sessions SET user_send_at = ?, updated_at = ?, context_tokens = 0, context_window = 0, codex_plan_json = NULL, sdk_session_id = NULL, list_preview = NULL, list_preview_role = NULL, list_message_count = NULL WHERE id = ?').run(now, now, sessionId);
       readyDb.prepare("INSERT INTO messages (id, client_id, session_id, role, content, created_at, rewind_at) VALUES (?, ?, ?, 'context_rebuild', ?, ?, ?)").run(
         nativeContextReset.markerId,
         nativeContextReset.markerClientId,

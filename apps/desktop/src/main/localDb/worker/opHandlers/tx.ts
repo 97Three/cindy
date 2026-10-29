@@ -2792,7 +2792,7 @@ function rewindCommit(db: Database.Database, args: unknown): void {
         `UPDATE sessions
            SET user_send_at = ?, updated_at = ?, context_tokens = 0, context_window = 0,
                codex_plan_json = NULL, sdk_session_id = NULL,
-               list_preview = NULL, list_preview_role = NULL
+               list_preview = NULL, list_preview_role = NULL, list_message_count = NULL
          WHERE id = ?`,
       ).run(now, now, sessionId);
       db.prepare(

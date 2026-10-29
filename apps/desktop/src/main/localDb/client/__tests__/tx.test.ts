@@ -1277,7 +1277,7 @@ describe('db worker tx handlers', () => {
     async (useInlineWorker) => {
       await withClient(async (client) => {
         await seedSession(client, 's1');
-        await client.exec('UPDATE sessions SET sdk_session_id = ? WHERE id = ?', ['sdk-old', 's1']);
+        await client.exec('UPDATE sessions SET sdk_session_id = ?, list_message_count = 2 WHERE id = ?', ['sdk-old', 's1']);
         await client.exec(
           'INSERT INTO messages (id, client_id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)',
           ['m1', 'c1', 's1', 'user', 'stopped', 100, 'm2', 'c2', 's1', 'user', 'target', 200],
@@ -1301,8 +1301,8 @@ describe('db worker tx handlers', () => {
           { id: 'mk', role: 'context_rebuild', content: markerContent, created_at: 999, rewind_at: 999 },
         ]);
         await expect(
-          client.queryOne('SELECT sdk_session_id FROM sessions WHERE id = ?', ['s1']),
-        ).resolves.toEqual({ sdk_session_id: null });
+          client.queryOne('SELECT sdk_session_id, list_message_count FROM sessions WHERE id = ?', ['s1']),
+        ).resolves.toEqual({ sdk_session_id: null, list_message_count: null });
       }, { useInlineWorker });
     },
   );
