@@ -682,6 +682,29 @@ describe('UserBrowserBackend · 读取与动作', () => {
     expect(fake.jobs.length).toBe(jobsBefore);
   });
 
+  // Review 2026-10-30 (Codex P2): fn gets its own full wait after the earlier conditions used up time.
+  it('wait 的 fn 在前置条件耗时之后重新计时', async () => {
+    let clock = 0;
+    const fake = fakeControl({ version: '0.4.56' });
+    let evaluations = 0;
+    fake.responses.set('wait', () => {
+      clock += 5000;
+      return { ok: true };
+    });
+    fake.responses.set('evaluate', () => ({ ok: true, result: ++evaluations >= 2 }));
+    const b = new UserBrowserBackend({
+      getPageControl: () => fake.control,
+      reconnectWaitMs: 0,
+      now: () => clock,
+      logger: { info: vi.fn(), warn: vi.fn() },
+    } as ConstructorParameters<typeof UserBrowserBackend>[0]);
+    await call(b, { action: 'tabs' });
+    expect(
+      await call(b, { action: 'act', targetId: 't1', request: { kind: 'wait', selector: '#x', fn: '() => ready', timeoutMs: 1000 } }),
+    ).toMatchObject({ ok: true, data: { kind: 'wait', result: true } });
+    expect(evaluations).toBe(2);
+  });
+
   // Review 2026-10-30 (Codex P1): a profile that disagrees with the tab's own connection must be refused.
   it('navigate 的 targetId 与 profile 属于不同连接时拒绝', async () => {
     const fake = fakeControl({
@@ -712,6 +735,11 @@ describe('UserBrowserBackend · 读取与动作', () => {
     expect(await call(b, { action: 'open', url: 'https://b.test/', profile: 'client-aaa' })).toMatchObject({
       ok: false,
       message: expect.stringContaining('匹配多个'),
+    });
+    expect(await call(b, { action: 'tabs', profile: 'nope' })).toMatchObject({
+      ok: false,
+      errorCode: 'BROWSER_RUNTIME_INVALID_REQUEST',
+      message: expect.stringContaining('未找到'),
     });
     expect(await call(b, { action: 'tabs', profile: 'client-aaa' })).toMatchObject({
       ok: false,

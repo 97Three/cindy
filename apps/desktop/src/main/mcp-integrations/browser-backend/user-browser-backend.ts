@@ -742,6 +742,12 @@ export class UserBrowserBackend implements BrowserBackend {
         `浏览器连接 ${req.profile} 匹配多个连接,请写得更完整;用 profiles 查看当前连接`,
         'BROWSER_RUNTIME_INVALID_REQUEST',
       );
+    if (clients.length === 0 && req.profile && connected.length > 0)
+      return actionFailed(
+        req.action,
+        `未找到浏览器连接 ${req.profile};用 profiles 查看当前连接`,
+        'BROWSER_RUNTIME_INVALID_REQUEST',
+      );
     if (clients.length === 0)
       return actionFailed(req.action, DISCONNECTED_MESSAGE, 'BROWSER_RUNTIME_UNAVAILABLE');
     const tabs: Array<Record<string, unknown>> = [];
@@ -1140,7 +1146,8 @@ export class UserBrowserBackend implements BrowserBackend {
       if (!job.ok) return this.failureResult(req.action, job);
     }
     if (!request.fn) return result();
-    const deadline = started + timeoutMs;
+    // fn gets its own full wait after the other conditions, as in Cindy's dedicated browser.
+    const deadline = now() + timeoutMs;
     for (;;) {
       const job = await this.pageJob(control, record, 'evaluate', { fn: request.fn });
       if (!job.ok) return this.failureResult(req.action, job);
