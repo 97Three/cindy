@@ -403,6 +403,7 @@
         "30d": "30日",
         "all": "すべて"
       },
+      "showCollapsedTeammateAvatars": "折りたたみ時にアバターを表示",
       "displayHeading": "表示",
       "view": {
         "text": "テキスト",
@@ -694,7 +695,14 @@
     "createMenu": "新規作成",
     "awaiting": "確認待ち",
     "taskResult": "タスクの結果",
-    "collapseResult": "結果を閉じる"
+    "collapseResult": "結果を閉じる",
+    "avatarStatus": {
+      "awaiting": "確認待ち",
+      "error": "要確認",
+      "running": "作業中",
+      "done": "完了",
+      "unread": "未読"
+    }
   },
   "companionProfile": {
     "avatar": "アバター",

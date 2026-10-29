@@ -1649,6 +1649,7 @@
     }
   },
   "settings": {
+    "newChatDefaults": { "title": "新しいタスクのデフォルト権限" },
     "imConnection": {
       "reconnect": "再接続",
       "savedNote": "連携情報は保存されています。そのまま再接続できます。",
@@ -9858,6 +9859,13 @@
     }
   },
   "bots": {
+    "avatarStatus": {
+      "awaiting": "確認待ち",
+      "error": "要確認",
+      "running": "作業中",
+      "done": "完了",
+      "unread": "未読"
+    },
     "workbench": {
       "ownedMark": "担当：{{names}}",
       "createdMark": "{{names}} が作成",

@@ -403,6 +403,7 @@
         "30d": "30 天",
         "all": "全部"
       },
+      "showCollapsedTeammateAvatars": "收起時顯示頭像",
       "displayHeading": "顯示",
       "view": {
         "text": "文字",
@@ -694,7 +695,14 @@
     "createMenu": "新增",
     "awaiting": "等你確認",
     "taskResult": "任務結果",
-    "collapseResult": "收起結果"
+    "collapseResult": "收起結果",
+    "avatarStatus": {
+      "awaiting": "待你確認",
+      "error": "需要注意",
+      "running": "正在工作",
+      "done": "已完成",
+      "unread": "未讀"
+    }
   },
   "companionProfile": {
     "avatar": "頭像",
