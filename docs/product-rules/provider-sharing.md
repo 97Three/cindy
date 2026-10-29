@@ -4,6 +4,8 @@
 > 实现与本文的差异以实施计划 §0「实施记录」为准。
 > 交互设计稿见 [`docs/design-previews/provider-sharing/index.html`](../design-previews/provider-sharing/index.html)（2026-10-07 已确认）；
 > 客户端与服务端的工作拆分见 [`docs/provider-sharing-implementation-plan.md`](../provider-sharing-implementation-plan.md)。
+> 2026-10-27 新目标：跨账号分享经供应商组分配后，受邀者优先连接实际执行电脑，并以 30 分钟为
+> 离线授权上限；详见[受邀者与执行电脑直连](provider-sharing-direct-execution.md)。该目标未上线时仍按本文现行授权和中转规则运行。
 > 读取时机：新增或修改供应商分享、分享链接、分享申请与审批、分享管理页，或受邀者使用
 > 分享供应商的任何路径之前。
 > 分享出去的供应商建了[供应商组](provider-groups.md)时，§1 的运行位置、§7.2 管理页、§7.4 用量
