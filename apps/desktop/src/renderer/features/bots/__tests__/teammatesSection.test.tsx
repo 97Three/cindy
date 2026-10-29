@@ -490,11 +490,15 @@ describe('TeammatesSection header', () => {
     expect(screen.getByRole('button', { name: 'Writer' }).hasAttribute('aria-current')).toBe(false);
   });
 
-  it('keeps a completed unread reply green after the live snapshot returns to idle, then clears on read', async () => {
+  it('keeps a completed unread reply green after the live snapshot is removed, then clears on read', async () => {
     mocks.profiles = [{ ...bot({ id: 'bot-1', name: 'Writer' }), lastMessageRole: 'assistant' }];
     mocks.unread = { 'bot-1': 1 };
-    mocks.islandActivity = new Map([['bot-1-chat', { sessionId: 'bot-1-chat', phase: 'idle' }]]);
+    mocks.islandActivity = new Map([['bot-1-chat', { sessionId: 'bot-1-chat', phase: 'completed' }]]);
     const view = await renderSidebar();
+    expect(view.container.querySelector('[data-teammate-status="done"]')).not.toBeNull();
+    // Idle is represented by no activity entry, not an AgentIslandSessionPhase.
+    mocks.islandActivity = new Map();
+    view.rerender(<TeammatesSection />);
     expect(view.container.querySelector('[data-teammate-status="done"]')).not.toBeNull();
     mocks.unread = {};
     view.rerender(<TeammatesSection />);

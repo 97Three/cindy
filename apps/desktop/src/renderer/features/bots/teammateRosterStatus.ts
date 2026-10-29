@@ -7,7 +7,7 @@ import type { RemoteBot } from './remoteBotRoster';
 export function localTeammateStatus(bot: BotProfile, activities: ReadonlyMap<string, AgentIslandSessionActivity>, unread: boolean) {
   const canonical = activities.get(canonicalBotSessionId(bot) ?? '');
   return resolveTeammateStatus({ unread, failed: bot.needsAttention,
-    activities: [canonical && canonical.phase !== 'idle' ? canonical : (bot.lastMessageRole === 'assistant' ? { phase: 'completed' } : undefined),
+    activities: [canonical ?? (bot.lastMessageRole === 'assistant' ? { phase: 'completed' } : undefined),
       ...bot.sessions.filter(session => session.role === 'delegation' && session.status !== 'archived' && session.status !== 'deleted')
         .map(session => activities.get(session.id))] });
 }
