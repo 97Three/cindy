@@ -116,7 +116,7 @@ export const SCHEDULER_TASK_ACTION_TOOLS: ReadonlySet<string> = new Set([
 
 export type TaskActionRisk = 'remove' | 'permission' | 'resume' | 'command' | 'authority';
 export type TaskActionScheduleDefinition = Pick<Schedule,
-  'id' | 'name' | 'executionMode' | 'scriptConfig' | 'preRunHook' | 'workingDir' | 'targetSessionId'> & {
+  'id' | 'name' | 'prompt' | 'persistentSession' | 'executionMode' | 'scriptConfig' | 'preRunHook' | 'workingDir' | 'targetSessionId'> & {
     hookInstallation?: { workingDir?: string; fallbackDir: string };
   };
 export interface TaskActionConfirmation {
@@ -140,6 +140,23 @@ export interface TaskActionRoutineSnapshot {
   assertCurrent(): void;
 }
 
+/** Independent Agent runs use the runner's existing Full Access default; bound
+ * continuations inherit their target permissions. Persistent runs may create a replacement. */
+export function taskActionStartsIndependentAgent(call: Pick<Call, 'server' | 'tool' | 'args'>,
+  schedule?: TaskActionScheduleDefinition | null): boolean {
+  if (call.server !== 'cindy_scheduler' || !['schedule_create', 'schedule_update', 'schedule_run_now'].includes(call.tool))
+    return false;
+  const args = call.args && typeof call.args === 'object' && !Array.isArray(call.args)
+    ? call.args as Record<string, unknown> : {};
+  if (call.tool !== 'schedule_create' && args.device && args.device !== 'local') return false;
+  const definition = call.tool === 'schedule_run_now' ? schedule : { ...schedule, ...args };
+  const bindsCurrent = call.tool !== 'schedule_run_now' && args.bindToCurrentSession === true;
+  return (definition?.executionMode ?? 'agent') === 'agent' &&
+    typeof definition?.prompt === 'string' && !!definition.prompt.trim() &&
+    (definition.persistentSession === true ||
+      (!(typeof definition.targetSessionId === 'string' && definition.targetSessionId.trim()) && !bindsCurrent));
+}
+
 /** A small, explicit risk list. Everything else follows the task's normal permissions. */
 export function taskActionRisk(call: Pick<Call, 'server' | 'tool' | 'args'>,
   facts?: { routineEnabled?: boolean; routinePrompt?: string; routineBuiltin?: boolean; routinePreRunCommand?: string; schedule?: TaskActionScheduleDefinition | null }): TaskActionRisk | undefined {
@@ -161,6 +178,10 @@ export function taskActionRisk(call: Pick<Call, 'server' | 'tool' | 'args'>,
         return 'command';
     }
   }
+  if (taskActionStartsIndependentAgent(call, facts?.schedule) &&
+    (call.tool !== 'schedule_update' ||
+      (['prompt', 'workingDir', 'executionMode', 'targetSessionId', 'persistentSession'] as const)
+        .some(key => key in args && args[key] !== facts?.schedule?.[key]))) return 'command';
   if (call.tool === 'routine_run_now' && facts?.routinePreRunCommand?.trim()) return 'command';
   const routineHook = args.preRunHook;
   if (call.tool === 'routine_save' && routineHook && typeof routineHook === 'object' &&

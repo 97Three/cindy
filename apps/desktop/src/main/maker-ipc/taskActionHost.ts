@@ -20,6 +20,7 @@ import {
   createTaskActionAuthorizer,
   DELEGATED_TASK_ACTIONS,
   taskActionRisk,
+  taskActionStartsIndependentAgent,
   type TaskActionConfirmation,
   type TaskActionTarget,
   type TaskActionRoutineSnapshot,
@@ -386,6 +387,8 @@ export function createDesktopTaskActionAuthorizer(deps: {
           const confirmed = await deps.confirm(sessionId, call.tool, structuredClone(call.args),
             { server: call.server, risk, ...(permissionTarget ? { details: permissionTarget.details }
               : helperInstallation ? { details: { installation: { workingDir: helperInstallDir ?? null } } }
+              : risk === 'command' && taskActionStartsIndependentAgent(call, schedule)
+                ? { details: { ...(schedule ? { schedule } : {}), execution: { mode: 'agent', newTaskPermissionMode: 'bypassPermissions' } } }
               : risk === 'command' && schedule ? { details: { schedule } }
               : call.tool === 'routine_run_now' && routine?.details ? { details: routine.details } : {}) });
           if (!confirmed) {

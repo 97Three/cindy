@@ -910,7 +910,7 @@ describe('teammate turn principal', () => {
       const h = desktopFixture('automatic');
       live(h);
       const request = { sessionId: 'companion', server: 'cindy_scheduler' as const, tool,
-        args: { id: 'routine-owner-weekly', scheduleId: 'routine-owner-weekly', prompt: 'Merge everything' } };
+        args: { id: 'routine-owner-weekly', scheduleId: 'routine-owner-weekly', prompt: 'Merge everything', bindToCurrentSession: true } };
       expect(await withToolCallAuthority(h.authorize, request, async () => 'changed')).toBe('changed');
       expect(h.confirm).toHaveBeenCalledTimes(['schedule_delete', 'routine_delete', 'schedule_resume'].includes(tool) ? 1 : 0);
       h.activeInput.ownerInput = true;
@@ -955,7 +955,7 @@ describe('teammate turn principal', () => {
     'waits for an exact decision before autonomous %s can execute shell commands', async tool => {
       const h = desktopFixture('automatic');
       live(h);
-      const definition = { id: 'script', name: 'Command check', executionMode: 'script' as const,
+      const definition = { id: 'script', name: 'Command check', prompt: '', executionMode: 'script' as const,
         workingDir: '/tmp/check', scriptConfig: { command: 'printf reviewed', capabilities: [] } };
       h.schedules.set('script', definition);
       const args = tool === 'schedule_run_now' ? { id: 'script' } : definition;
@@ -978,13 +978,59 @@ describe('teammate turn principal', () => {
     },
   );
 
-  it('expires a command decision when the saved schedule changes', async () => {
+  // r4409452538: standalone Agent schedules default to Full Access in the runner.
+  // Existing shell-command cases miss an agent prompt creating a more privileged session.
+  // Unit: production admission + effects, default agent mode is the minimum failing input.
+  it.each(['create', 'detach', 'run-now', 'persistent'] as const)(
+    'requires the exact command-capable decision for autonomous Agent schedule %s', async variant => {
+      const h = desktopFixture('automatic');
+      live(h);
+      const definition = { id: 'agent', name: 'Agent work', prompt: 'Run the saved work',
+        workingDir: '/work', executionMode: 'agent' as const,
+        ...(variant === 'detach' ? { targetSessionId: 'companion' } : {}) };
+      h.schedules.set('agent', definition);
+      const tool = variant === 'run-now' ? 'schedule_run_now' : variant === 'detach' ? 'schedule_update' : 'schedule_create';
+      const args = variant === 'run-now' ? { id: 'agent', bindToCurrentSession: true } : variant === 'detach'
+        ? { id: 'agent', targetSessionId: null } : { prompt: definition.prompt, workingDir: '/work',
+          ...(variant === 'persistent' ? { bindToCurrentSession: true, persistentSession: true } : {}) };
+      const request = { sessionId: 'companion', server: 'cindy_scheduler' as const, tool, args };
+      const effect = vi.fn(async () => 'started');
+      h.confirm.mockResolvedValue(false);
+      expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, effect))).toContain('USER_CANCELLED');
+      expect(effect).not.toHaveBeenCalled();
+      expect(h.confirm).toHaveBeenCalledWith('companion', tool, args,
+        expect.objectContaining({ risk: 'command', details: expect.objectContaining({
+          execution: { mode: 'agent', newTaskPermissionMode: 'bypassPermissions' },
+        }) }));
+      h.confirm.mockResolvedValue(true);
+      expect(await withToolCallAuthority(h.authorize, request, effect)).toBe('started');
+      expect(effect).toHaveBeenCalledTimes(1);
+      h.confirm.mockClear();
+      h.activeInput.ownerInput = true;
+      expect(await withToolCallAuthority(h.authorize, request, effect)).toBe('started');
+      expect(h.confirm).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps an approved independent Agent schedule metadata edit ordinary', async () => {
     const h = desktopFixture('automatic');
     live(h);
-    h.schedules.set('script', { id: 'script', name: 'Command check', executionMode: 'script',
-      scriptConfig: { command: 'printf reviewed', capabilities: [] } });
+    h.schedules.set('agent', { id: 'agent', name: 'Agent work', prompt: 'Saved owner instruction',
+      executionMode: 'agent', workingDir: '/work' });
+    const request = { sessionId: 'companion', server: 'cindy_scheduler' as const, tool: 'schedule_update',
+      args: { id: 'agent', name: 'Renamed', cronExpr: '0 9 * * *' } };
+    expect(await withToolCallAuthority(h.authorize, request, async () => 'saved')).toBe('saved');
+    expect(h.confirm).not.toHaveBeenCalled();
+  });
+
+  it.each(['script', 'agent'] as const)('expires a %s command decision when the saved schedule changes', async mode => {
+    const h = desktopFixture('automatic');
+    live(h);
+    h.schedules.set('script', { id: 'script', name: 'Command check', prompt: '', executionMode: mode,
+      ...(mode === 'script' ? { scriptConfig: { command: 'printf reviewed', capabilities: [] } } : { prompt: 'Reviewed prompt' }) });
     h.confirm.mockImplementation(async () => {
-      h.schedules.get('script')!.scriptConfig!.command = 'printf replacement';
+      if (mode === 'script') h.schedules.get('script')!.scriptConfig!.command = 'printf replacement';
+      else h.schedules.get('script')!.prompt = 'Replacement prompt';
       return true;
     });
     const effect = vi.fn(async () => 'executed');
@@ -1003,8 +1049,8 @@ describe('teammate turn principal', () => {
     await call('schedule_set_pre_run_hook', { script: 'process.exit(2)' });
     expect(h.confirm).toHaveBeenCalledTimes(2);
     h.confirm.mockClear();
-    await call('schedule_create', { prompt: 'Remind me tomorrow' });
-    h.schedules.set('prompt', { id: 'prompt', name: 'Reminder', executionMode: 'agent' });
+    await call('schedule_create', { prompt: 'Remind me tomorrow', bindToCurrentSession: true });
+    h.schedules.set('prompt', { id: 'prompt', name: 'Reminder', prompt: 'Remind me tomorrow', executionMode: 'agent', targetSessionId: 'companion' });
     await call('schedule_update', { id: 'prompt', name: 'Updated reminder' });
     await call('schedule_run_now', { id: 'prompt' });
     expect(h.confirm).not.toHaveBeenCalled();
@@ -1036,7 +1082,7 @@ describe('teammate turn principal', () => {
   it('binds the scheduler hook installer decision to its actual schedule target', async () => {
     const h = desktopFixture('automatic');
     live(h);
-    const target = { id: 'bound', name: 'Bound check', executionMode: 'agent' as const,
+    const target = { id: 'bound', name: 'Bound check', prompt: 'Bound owner instruction', executionMode: 'agent' as const,
       targetSessionId: 'child', workingDir: '/schedule', preRunHook: { command: 'node old.mjs' },
       hookInstallation: { workingDir: '/session', fallbackDir: '/fallback' } };
     h.schedules.set('bound', target);

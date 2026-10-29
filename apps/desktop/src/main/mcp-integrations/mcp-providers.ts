@@ -330,8 +330,8 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       getScheduleDefinition: async (id, hookInstallation) => {
         const schedule = await getScheduler().get(id);
         if (!schedule) return null;
-        const { name, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId } = schedule;
-        const definition = { id, name, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId };
+        const { name, prompt, persistentSession, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId } = schedule;
+        const definition = { id, name, prompt, persistentSession, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId };
         if (!hookInstallation) return definition;
         let installWorkingDir = hookInstallation.workingDir;
         if (!installWorkingDir && executionMode !== 'script' && targetSessionId)
