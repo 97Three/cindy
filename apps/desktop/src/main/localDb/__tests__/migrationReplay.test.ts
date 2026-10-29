@@ -115,6 +115,7 @@ describeMigrationReplay('migration replay', () => {
         db.exec("INSERT INTO sessions (id) VALUES ('legacy-session')");
         // These reduced historical fixtures still need the group table present since schema 83.
         db.exec(readFileSync(path.join(drizzleDir(), '0083_gray_katie_power.sql'), 'utf-8'));
+        db.exec(readFileSync(path.join(drizzleDir(), '0088_thankful_captain_midlands.sql'), 'utf-8'));
         const result = runMigrationReplay(db, { drizzleDir: drizzleDir(), currentVersion: 124 });
         expect(result.applied.map((migration) => migration.seq)).toEqual([
           125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136,
@@ -150,6 +151,7 @@ describeMigrationReplay('migration replay', () => {
         .run('legacy-tool', 'subject', 0, 100, 'run');
       // These reduced historical fixtures still need the group table present since schema 83.
       db.exec(readFileSync(path.join(drizzleDir(), '0083_gray_katie_power.sql'), 'utf-8'));
+      db.exec(readFileSync(path.join(drizzleDir(), '0088_thankful_captain_midlands.sql'), 'utf-8'));
       runMigrationReplay(db, { drizzleDir: drizzleDir(), currentVersion: 131 });
       expect(db.prepare('SELECT call_id,subject_id,occurred_at,entry_kind FROM plugin_usage_events').all()).toEqual([
         { call_id: 'legacy-tool', subject_id: 'subject', occurred_at: 100, entry_kind: 'tool' },
@@ -208,6 +210,7 @@ describeMigrationReplay('migration replay', () => {
       db.exec("CREATE TABLE bot_delegations (id TEXT PRIMARY KEY)");
       // These reduced historical fixtures still need the group table present since schema 83.
       db.exec(readFileSync(path.join(drizzleDir(), '0083_gray_katie_power.sql'), 'utf-8'));
+      db.exec(readFileSync(path.join(drizzleDir(), '0088_thankful_captain_midlands.sql'), 'utf-8'));
       const result = runMigrationReplay(db, { drizzleDir: drizzleDir(), currentVersion: 125 });
       expect(result.applied.map((migration) => migration.seq)[0]).toBe(126);
       expect(columnNames(db, 'sessions')).toContain('hidden_at');
@@ -227,6 +230,7 @@ describeMigrationReplay('migration replay', () => {
       db.exec("CREATE TABLE plugin_usage_events (call_id TEXT PRIMARY KEY)");
       // These reduced historical fixtures still need the group table present since schema 83.
       db.exec(readFileSync(path.join(drizzleDir(), '0083_gray_katie_power.sql'), 'utf-8'));
+      db.exec(readFileSync(path.join(drizzleDir(), '0088_thankful_captain_midlands.sql'), 'utf-8'));
       const result = runMigrationReplay(db, { drizzleDir: drizzleDir(), currentVersion: 129 });
       expect(result.applied.map((migration) => migration.seq)).toEqual([
         130, 131, 132, 133, 134, 135, 136,

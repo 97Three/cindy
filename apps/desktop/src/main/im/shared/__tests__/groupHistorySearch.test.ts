@@ -50,6 +50,7 @@ function installClient(): void {
 function installGroupHistoryMigrations(): void {
   sqlite.exec(readMigration('0087_'));
   sqlite.exec(readMigration('0088_'));
+  sqlite.exec(readMigration('0136_'));
 }
 
 function insertRaw(
@@ -96,7 +97,6 @@ beforeEach(() => {
   sqlite = new Database(':memory:');
   sqlite.exec(readMigration('0083_'));
   sqlite.exec(readMigration('0086_'));
-  sqlite.exec(readMigration('0136_'));
   rawSequence = 0;
   holder.queries = [];
   installClient();
@@ -236,6 +236,31 @@ describe('group history FTS', () => {
 });
 
 describe('group window storage guardrails', () => {
+  // #7756 review: the existing aggregate tests contain text only. Unit: public
+  // writer/stats and real SQLite triggers must charge UTF-8 image metadata on
+  // insert, image/provider update, clearing refs and delete, without cross-lane totals.
+  it('accounts image metadata through insert, update, namespace move and delete', async () => {
+    installGroupHistoryMigrations();
+    const refs = [{ fileId: 'photo', name: '图.png', mimeType: 'image/png', downloadToken: '签'.repeat(100) }];
+    await recordGroupWindowEntry({
+      ...LANE, messageId: 'image-stats', text: '正文', author: { name: 'sender' }, imageRefs: refs, sentAt: 1,
+    });
+    expect(await getGroupWindowNamespaceStats(LANE.provider)).toEqual({
+      rows: 1, textBytes: Buffer.byteLength('正文') + Buffer.byteLength(JSON.stringify(refs)),
+    });
+    const otherProvider = 'telegram:other';
+    const updatedRefs = JSON.stringify([{ ...refs[0], downloadToken: '新'.repeat(150) }]);
+    sqlite.prepare('UPDATE hook_group_messages SET provider = ?, text = ?, image_refs = ? WHERE message_id = ?')
+      .run(otherProvider, '新正文', updatedRefs, 'image-stats');
+    expect(await getGroupWindowNamespaceStats(LANE.provider)).toEqual({ rows: 0, textBytes: 0 });
+    expect(await getGroupWindowNamespaceStats(otherProvider)).toEqual({
+      rows: 1, textBytes: Buffer.byteLength('新正文') + Buffer.byteLength(updatedRefs),
+    });
+    sqlite.prepare('UPDATE hook_group_messages SET image_refs = NULL WHERE message_id = ?').run('image-stats');
+    expect(await getGroupWindowNamespaceStats(otherProvider)).toEqual({ rows: 1, textBytes: Buffer.byteLength('新正文') });
+    sqlite.prepare('DELETE FROM hook_group_messages WHERE message_id = ?').run('image-stats');
+    expect(await getGroupWindowNamespaceStats(otherProvider)).toEqual({ rows: 0, textBytes: 0 });
+  });
   it('正文按 UTF-8 约 16KB 硬上限安全截断，统计按命名空间给出行数与字节', async () => {
     installGroupHistoryMigrations();
     const text = '中'.repeat(6_000);
