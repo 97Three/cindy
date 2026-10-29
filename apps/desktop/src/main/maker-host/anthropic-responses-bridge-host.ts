@@ -780,6 +780,7 @@ export function getPiNativeSubscriptionHandler(
       let recordGuestUsage: ReturnType<typeof captureGuestRequestUsage>;
       let outboundBody = rawBody;
       let contentEncoding: string | undefined = ctx.headers['content-encoding'];
+      let rewriteOpenaiBody: (() => Promise<void> | null) | undefined;
       if (isOpenAiSubscriptionProviderId(providerId)) {
         // Retain the decoded object across both rewrites. Unchanged requests keep
         // their original bytes; changed zstd requests stay compressed on the wire.
@@ -802,10 +803,10 @@ export function getPiNativeSubscriptionHandler(
         current = profile ?? current;
         let changed = profile !== null;
         let standardApplied = false;
-        for (;;) {
-          throwIfOwnerBoundDispatchUnsafe(scopeAtStart);
-          // Restrictions may tighten while decoding or encoding. Once restricted,
-          // this request cannot regain priority while an asynchronous codec runs.
+        // Finalize only after credentials and the latest model grant are read.
+        // Return pending codec work so every async rewrite is followed by another
+        // grant/Fast check, with no async gap between the last check and dispatch.
+        rewriteOpenaiBody = () => {
           forceStandard ||= !subscriptionRequestAllowsFast(sessionId, providerId);
           if (forceStandard && !standardApplied) {
             if (decodeError) throw decodeError;
@@ -814,15 +815,15 @@ export function getPiNativeSubscriptionHandler(
             current = standard;
             standardApplied = true;
           }
-          if (!changed) break;
+          if (!changed) return null;
           const bytes = Buffer.from(JSON.stringify(current));
-          // Keep large codecs off Electron main, as in the existing profile path.
-          outboundBody = compressed ? await zstdCompressAsync(bytes) : bytes;
-          if (!compressed) contentEncoding = undefined;
           changed = false;
-          if (standardApplied || !compressed) break;
-          // A profile-only compression can yield to a newly restrictive policy.
-        }
+          // Keep large codecs off Electron main, as in the existing profile path.
+          if (compressed) return zstdCompressAsync(bytes).then(encoded => { outboundBody = encoded; });
+          outboundBody = bytes;
+          contentEncoding = undefined;
+          return null;
+        };
       } else if (isXaiSubscriptionProviderId(providerId)) {
         const parsed = isPlainRecord(parsedBody)
           ? parsedBody
@@ -861,10 +862,15 @@ export function getPiNativeSubscriptionHandler(
       }
       headers['content-type'] = ctx.headers['content-type'] ?? 'application/json';
       headers.accept = ctx.headers.accept ?? 'text/event-stream';
+      for (;;) {
+        throwIfOwnerBoundDispatchUnsafe(scopeAtStart);
+        if (!await modelAllowed()) return;
+        throwIfOwnerBoundDispatchUnsafe(scopeAtStart);
+        const pendingRewrite = rewriteOpenaiBody?.();
+        if (!pendingRewrite) break;
+        await pendingRewrite;
+      }
       if (contentEncoding) headers['content-encoding'] = contentEncoding;
-
-      throwIfOwnerBoundDispatchUnsafe(scopeAtStart);
-      if (!await modelAllowed()) return;
       throwIfOwnerBoundDispatchUnsafe(scopeAtStart);
       const response = await deps.fetch(upstream.url, {
         method: 'POST',

@@ -237,6 +237,47 @@ describe('PI native subscription forwarding', () => {
     expect(zstdDecompress).toHaveBeenCalledTimes(compressed ? 1 : 0);
   });
 
+  // Credential refresh and the final guest grant check can both suspend while
+  // the provider/group closes Fast. The outgoing bytes must reflect that change.
+  it.each(['auth', 'final-grant'].flatMap(timing => [false, true].map(compressed => ({ timing, compressed }))))(
+    'rechecks Fast after $timing, compressed=$compressed', async ({ timing, compressed }) => {
+      const providerId = 'openai-fast-race-fixture';
+      setCustomProviders([buildUserProvider({ id: providerId, name: 'Fast race fixture',
+        auth: { method: 'oauth', native: 'codex' },
+        runtimes: { codex: { baseUrl: 'https://chatgpt.example', wireProtocol: 'openai-responses',
+          models: [{ id: 'gpt-6.1-sol', name: 'Fixture' }] } } })]);
+      let authRead = false;
+      const binding = registerGuestProviderRoute('pi-fast-race', providerId, async () => {
+        if (authRead && timing === 'final-grant') ownerState.fastAllowed = false;
+        return true;
+      });
+      const injected = deps({ getChatgptAuth: vi.fn(async () => {
+        authRead = true;
+        if (timing === 'auth') ownerState.fastAllowed = false;
+        return { accessToken: 'fixture-token', accountId: 'fixture-account' };
+      }) });
+      const payload = { model: 'gpt-6.1-sol', service_tier: 'priority', input: [] };
+      const raw = Buffer.from(JSON.stringify(payload));
+      try {
+        const res = responseRecorder();
+        await getPiNativeSubscriptionHandler(providerId, 'pi-fast-race', injected)({
+          rawBody: compressed ? zstdCompressSync(raw) : raw, parsedBody: compressed ? undefined : payload,
+          ctx: { reqId: 1, method: 'POST', url: '/codex/responses', headers: compressed ? { 'content-encoding': 'zstd' } : {} },
+          res,
+        } as never);
+        expect(res.status).toBe(200);
+        expect(injected.getChatgptAuth).toHaveBeenCalledOnce();
+        expect(injected.fetch).toHaveBeenCalledOnce();
+        const sent = vi.mocked(injected.fetch).mock.calls[0]![1]!;
+        const bytes = Buffer.from(sent.body as Uint8Array);
+        expect(JSON.parse((compressed ? zstdDecompressSync(bytes) : bytes).toString()))
+          .toEqual({ ...payload, service_tier: 'default' });
+        expect(zstdDecompress).toHaveBeenCalledTimes(compressed ? 1 : 0);
+        expect(zstdCompress).toHaveBeenCalledTimes(compressed ? 1 : 0);
+      } finally { binding.release(); }
+    },
+  );
+
   it('rechecks Fast after asynchronous profile recompression before dispatch', async () => {
     const actual = await vi.importActual<typeof import('node:zlib')>('node:zlib');
     vi.mocked(zstdCompress).mockImplementationOnce(((...args: unknown[]) => {
