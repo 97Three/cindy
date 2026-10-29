@@ -245,6 +245,7 @@ const externalChromeBackend = new ExternalChromeBackend(
       ? {
           createLinkHandoff: (isAgentOpeningTab: () => boolean) => new ExternalLinkHandoff({
             cdpHttpUrl: () => currentGuardIdentity().cdpHttpUrl,
+            managedUserDataDir: () => currentGuardIdentity().managedUserDataDir,
             isAgentOpeningTab,
             logger,
           }),

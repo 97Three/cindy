@@ -29,7 +29,12 @@ afterEach(async () => {
 });
 
 /** Reports `existingTargets` the way Chrome does: before the discover reply. */
-async function createFakeBrowser(existingTargets: Array<Record<string, unknown>> = []) {
+const USER_DATA_DIR = '/Users/me/Library/Application Support/Cindy/browser/Cindy/user-data';
+
+async function createFakeBrowser(
+  existingTargets: Array<Record<string, unknown>> = [],
+  userDataDir = USER_DATA_DIR,
+) {
   const commands: CdpCommand[] = [];
   let browserSocket: WebSocket | undefined;
   const wsServer = new WebSocketServer({ noServer: true });
@@ -42,7 +47,9 @@ async function createFakeBrowser(existingTargets: Array<Record<string, unknown>>
       if (command.method === 'SystemInfo.getInfo') {
         socket.send(JSON.stringify({
           id: command.id,
-          result: { commandLine: `${APP}/Contents/MacOS/Google Chrome --remote-debugging-port=18800` },
+          result: {
+            commandLine: `${APP}/Contents/MacOS/Google Chrome --remote-debugging-port=${port()} --user-data-dir=${userDataDir}`,
+          },
         }));
         return;
       }
@@ -54,6 +61,7 @@ async function createFakeBrowser(existingTargets: Array<Record<string, unknown>>
       socket.send(JSON.stringify({ id: command.id, result: {} }));
     });
   });
+  const port = () => (server.address() as AddressInfo).port;
   const server = createServer((req, res) => {
     const address = server.address() as AddressInfo;
     res.setHeader('content-type', 'application/json');
@@ -77,13 +85,15 @@ async function connectedHandoff(options: {
   agentOpening?: boolean;
   openFails?: boolean;
   existingTargets?: Array<Record<string, unknown>>;
+  browserUserDataDir?: string;
 } = {}) {
-  const browser = await createFakeBrowser(options.existingTargets);
+  const browser = await createFakeBrowser(options.existingTargets, options.browserUserDataDir);
   const openInUserBrowser = vi.fn(async () => {
     if (options.openFails) throw new Error('open failed');
   });
   const handoff = new ExternalLinkHandoff({
     cdpHttpUrl: () => browser.cdpHttpUrl,
+    managedUserDataDir: () => USER_DATA_DIR,
     isAgentOpeningTab: () => options.agentOpening === true,
     logger: { warn: vi.fn() },
     openInUserBrowser,
@@ -91,8 +101,10 @@ async function connectedHandoff(options: {
   });
   handoffs.push(handoff);
   handoff.ensure();
-  await vi.waitFor(() => expect(browser.commands.map((c) => c.method)).toContain('Fetch.enable'));
-  return { browser, openInUserBrowser };
+  if (options.browserUserDataDir === undefined) {
+    await vi.waitFor(() => expect(browser.commands.map((c) => c.method)).toContain('Fetch.enable'));
+  }
+  return { browser, openInUserBrowser, handoff };
 }
 
 /** Sends a new tab and its first document request; returns how it was resolved. */
@@ -152,5 +164,28 @@ describe('ExternalLinkHandoff', () => {
     const { browser } = await connectedHandoff({ openFails: true });
 
     expect(await openTab(browser, externalTab)).toEqual(['Fetch.continueRequest']);
+  });
+
+  it('does not install interception on a browser that is not the managed one', async () => {
+    // Another Cindy or the user's Chrome may hold the configured CDP port.
+    const { browser } = await connectedHandoff({ browserUserDataDir: '/Users/me/Library/Application Support/Cindy/browser/Cindy-other/user-data' });
+
+    await vi.waitFor(() => expect(browser.commands.map((c) => c.method)).toContain('SystemInfo.getInfo'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(browser.commands.map((c) => c.method)).not.toContain('Fetch.enable');
+  });
+
+  it('attaches again after dispose, as when the backend is switched away and back', async () => {
+    const { browser, openInUserBrowser, handoff } = await connectedHandoff();
+    handoff.dispose();
+    const attachedBefore = browser.commands.filter((c) => c.method === 'Fetch.enable').length;
+
+    handoff.ensure();
+    await vi.waitFor(() => expect(
+      browser.commands.filter((c) => c.method === 'Fetch.enable').length,
+    ).toBe(attachedBefore + 1));
+
+    expect(await openTab(browser, externalTab)).toEqual(['Fetch.failRequest', 'Target.closeTarget']);
+    expect(openInUserBrowser).toHaveBeenCalledTimes(1);
   });
 });

@@ -19,7 +19,7 @@ import { promisify } from 'node:util';
 
 import WebSocket from 'ws';
 
-import { fetchBrowserWebSocketUrl } from './proxy-auth.js';
+import { commandLineHasExactArgument, fetchBrowserWebSocketUrl } from './proxy-auth.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -45,6 +45,11 @@ type TargetInfo = { targetId?: unknown; type?: unknown; url?: unknown; openerId?
 
 export interface ExternalLinkHandoffOptions {
   cdpHttpUrl: () => string;
+  /**
+   * Profile directory of the managed browser. Only a browser launched with
+   * this directory on this port is touched; unknown means do not attach.
+   */
+  managedUserDataDir: () => string | undefined;
   /** True while an agent `open` may be creating a tab with a URL. */
   isAgentOpeningTab: () => boolean;
   logger: { warn(message: string, ...args: unknown[]): void };
@@ -93,7 +98,8 @@ export class ExternalLinkHandoff {
   private discoverCommandId: number | undefined;
   private live = false;
   private appPath: string | undefined;
-  private disposed = false;
+  /** Bumped by every reset, so a connect that started before one gives up. */
+  private epoch = 0;
 
   constructor(private readonly options: ExternalLinkHandoffOptions) {}
 
@@ -103,7 +109,7 @@ export class ExternalLinkHandoff {
    * up only a moment after the call that found it stopped.
    */
   ensure(): void {
-    if (this.disposed || this.socket || this.connecting) return;
+    if (this.socket || this.connecting) return;
     this.connecting = true;
     void this.connect()
       .catch(() => this.reset())
@@ -112,13 +118,18 @@ export class ExternalLinkHandoff {
       });
   }
 
+  /**
+   * Detach from the browser. Reversible: the backend object outlives a switch
+   * to the embedded browser and back, so the next `ensure()` attaches again.
+   */
   dispose(): void {
-    this.disposed = true;
     this.reset();
   }
 
   private async connect(): Promise<void> {
-    const wsUrl = await fetchBrowserWebSocketUrl(this.options.cdpHttpUrl());
+    const epoch = this.epoch;
+    const cdpHttpUrl = this.options.cdpHttpUrl();
+    const wsUrl = await fetchBrowserWebSocketUrl(cdpHttpUrl);
     const socket = new WebSocket(wsUrl, { handshakeTimeout: COMMAND_TIMEOUT_MS });
     socket.on('message', (data) => {
       if (this.socket === socket) this.handleMessage(data);
@@ -134,7 +145,7 @@ export class ExternalLinkHandoff {
       socket.once('error', () => reject(new Error('link handoff channel could not open')));
       socket.once('close', () => reject(new Error('link handoff channel closed before setup')));
     });
-    if (this.disposed) {
+    if (this.epoch !== epoch) {
       socket.terminate();
       return;
     }
@@ -145,6 +156,19 @@ export class ExternalLinkHandoff {
     if (!appPath || !(this.options.appExists ?? existsSync)(appPath)) {
       throw new Error('managed browser app bundle is unknown');
     }
+    // A loopback DevTools endpoint alone does not prove it is ours: the port
+    // may be held by another Cindy or a user's Chrome. Same proof as
+    // closeAdoptedManagedBrowser.
+    const userDataDir = this.options.managedUserDataDir();
+    const commandLine = info.commandLine as string;
+    const port = new URL(cdpHttpUrl).port || '80';
+    if (
+      !userDataDir
+      || !commandLineHasExactArgument(commandLine, `--remote-debugging-port=${port}`)
+      || !commandLineHasExactArgument(commandLine, `--user-data-dir=${userDataDir}`)
+    ) {
+      throw new Error('browser on the CDP port is not the managed browser');
+    }
     this.appPath = appPath;
     this.discoverCommandId = this.nextId;
     await this.command('Target.setDiscoverTargets', { discover: true });
@@ -154,6 +178,7 @@ export class ExternalLinkHandoff {
   }
 
   private reset(): void {
+    this.epoch += 1;
     const socket = this.socket;
     this.socket = undefined;
     this.live = false;
