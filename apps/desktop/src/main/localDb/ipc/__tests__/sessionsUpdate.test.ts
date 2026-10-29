@@ -287,6 +287,7 @@ function createDb(): void {
       im_default_route TEXT,
       summary TEXT,
       provider_id TEXT,
+      project_dir TEXT,
       plan_mode_enabled INTEGER NOT NULL DEFAULT 0,
       active_turn_started_at INTEGER,
       active_turn_pid INTEGER,
@@ -1127,6 +1128,24 @@ describe('local-db:sessions:update handler wiring', () => {
     h.tapWindowBroadcast.mockClear();
     await touchUserSendInDb('codex-local', 1_786_500_050_000);
     expect(h.tapWindowBroadcast).not.toHaveBeenCalled();
+  });
+
+  // Unit with isolated SQLite: first send and later sends used to retain the
+  // temporary cwd as a project. Reopen/move must not retain stale membership.
+  it('retains only the selected project on send and clears membership on an explicit move', async () => {
+    h.sqlite!.prepare("UPDATE sessions SET workspace_kind = 'project', project_dir = '/product', working_dir = '/tmp/checkout' WHERE id = ?")
+      .run('codex-local');
+    const real = await vi.importActual<typeof import('../recentWorkdirs')>('../recentWorkdirs');
+    h.upsertRecentWorkdir.mockImplementation(async (dir, atMs, platform) => real.upsertRecentWorkdir(dir, atMs, platform));
+    await touchUserSendInDb('codex-local', 100);
+    await touchUserSendInDb('codex-local', 200);
+    expect(h.sqlite!.prepare('SELECT path FROM recent_workdirs').all()).toEqual([{ path: '/product' }]);
+    await invokeUpdate('codex-local', { title: 'Renamed' });
+    expect(h.sqlite!.prepare('SELECT project_dir FROM sessions WHERE id = ?').get('codex-local')).toEqual({ project_dir: '/product' });
+    await invokeUpdate('codex-local', { workingDir: '/tmp/next-checkout' });
+    expect(h.sqlite!.prepare('SELECT project_dir FROM sessions WHERE id = ?').get('codex-local')).toEqual({ project_dir: '/product' });
+    await invokeUpdate('codex-local', { workingDir: '/another-project', workspaceKind: 'project' });
+    expect(h.sqlite!.prepare('SELECT project_dir FROM sessions WHERE id = ?').get('codex-local')).toEqual({ project_dir: null });
   });
 
   it('does not advance a terminal handoff while the goal is active', async () => {

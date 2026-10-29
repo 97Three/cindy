@@ -674,7 +674,9 @@ Session 任务遵守同一套机制与呈现契约：
 - Session 任务只创建一层子任务，受并发上限约束；超时是持久化的执行边界。默认执行预算
   30 分钟，创建时 `timeout_ms` 可指定至 24 小时；终态续接从新的开始时间按原预算计算，
   普通补充不延长正在运行的期限。没有 Host 回读证据不得声称已延长。
-- 项目执行显式传 `working_dir`，可用 `use_worktree=true` 在启动前复用现有 worktree 管理器
+- 新建独立任务必须从 `list_projects` 选择 `project_path`；新增或恢复项目显式走
+  `create_project`。`working_dir` 只决定执行位置，缺省为所选项目；临时目录和 worktree
+  不登记项目，复制或续跑保留 `projectDir`。可用 `use_worktree=true` 在启动前复用现有 worktree 管理器
   完成独立分支、目录与 Session 绑定；失败不得落回共享目录。只在 Shell 中新建 worktree
   不会修改任务登记或运行时 cwd；`check_session_task` 返回实际登记目录与项目归属。
   终态续接复用原 Session、完整历史、目录和分支，worktree 归属不迁移；每轮有独立的

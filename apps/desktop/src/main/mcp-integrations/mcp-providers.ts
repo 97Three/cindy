@@ -10,7 +10,7 @@ import { getPluginMarketService } from '../plugin-market/service.js';
 import { resolveHelperSurface } from './helperSurface.js';
 import { createProject } from './createProject.js';
 import { createMoveSession } from './moveSession.js';
-import { listProjects, renameProject, removeProject } from './projectManagement.js';
+import { listProjects, renameProject, removeProject, resolveSessionProject, readCurrentSessionProject } from './projectManagement.js';
 import { activeOwnerScopeKey, getActiveAppSession, isAppSessionBoundaryPending, ownerScopedUserDataPath } from '../appSessionState.js';
 import { botProfileDir } from '../maker-ipc/botProfileFolder.js';
 import type { createBotCapabilityService } from '../maker-ipc/botCapabilityService.js';
@@ -756,6 +756,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     // 启动早期跑, 那时 registerMakerIpc 还没执行, holder 是 null; 回调真正被调时
     // (LLM 调工具时) registerMakerIpc 早已执行完毕, holder 已 ready。
     xdtHelper: {
+      getSessionProject: readCurrentSessionProject,
       runtimeCapabilities: deps.runtimeCapabilities,
       productHelpDocs: HELP_KNOWLEDGE,
       // Install / auto-update requests become owner-only Host cards (see agent-app-update/).
@@ -1002,6 +1003,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         title,
         useWorktree,
         workingDir,
+        projectDir,
         agentKind,
         model,
         effort,
@@ -1027,6 +1029,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
             title,
             useWorktree,
             workingDir,
+            projectDir,
             ...(hasExecutionOverrides
               ? {
                   execution: {
@@ -1058,7 +1061,13 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
             };
           }
           try {
-            return await svc.startSessionTask(params);
+            if (!params.projectDir) return { ok: false, errorCode: 'INVALID_ARGS',
+              message: '新建任务必须指定 project_path，请先用 list_projects 选择已有项目。' };
+            const project = await resolveSessionProject({ callerSessionId: params.callerSessionId, projectDir: params.projectDir });
+            if (!project.ok) return project;
+            const result = await svc.startSessionTask({ ...params, projectDir: project.projectDir,
+              workingDir: params.workingDir ?? project.projectDir });
+            return result.ok ? { ...result, projectDir: project.projectDir } : result;
           } catch (err) {
             return {
               ok: false,

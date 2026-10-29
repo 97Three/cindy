@@ -245,6 +245,7 @@ import {
   ownerScopedUserDataPath,
 } from '../appSessionState.js';
 import { upsertRecentWorkdir } from '../localDb/ipc/recentWorkdirs.js';
+import { resolveSessionProject } from '../mcp-integrations/projectManagement.js';
 import { isRetainableProjectSession } from '../../shared/sessionSource.js';
 import { initializePluginOauthCards } from '../plugin-oauth/cards.js';
 import { currentOauthIdentityScope, loadOauthSigningKey } from '../plugin-oauth/desktopIdentity.js';
@@ -2559,6 +2560,7 @@ type SendToSessionCreateDefaults = {
   fastMode?: boolean | 'ultrafast';
   workingDir: string;
   workspaceKind?: 'project' | 'dialogue';
+  projectDir?: string | null;
   permissionMode?: 'ask' | 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions';
 };
 
@@ -2576,6 +2578,8 @@ type SendToSessionInternalResult =
       queuedMessageId?: string;
       /** create + useWorktree 成功时为新 session 的 worktree 绝对路径;其余情况 undefined。 */
       worktreePath?: string | null;
+      projectDir?: string | null;
+      workingDir?: string;
       model?: string;
       effort?: SendToSessionCreateDefaults['effort'] | null;
       fastMode?: boolean | 'ultrafast';
@@ -2752,6 +2756,7 @@ interface OrcaCollabService {
     title?: string;
     /** create 分支可选:true = 为新 session 预建独立 git worktree 并以其为 workingDir(jump 忽略)。 */
     useWorktree?: boolean;
+    projectDir?: string;
     /** create 分支可选:新 session 的工作目录覆盖(绝对路径,须已存在;jump 忽略)。#811 */
     workingDir?: string;
     /** create 分支可选:显式执行配置；未提供的字段继续继承 dispatcher。jump 忽略。 */
@@ -12349,6 +12354,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     dispatcherSessionId?: string;
     title?: string;
     useWorktree?: boolean;
+    projectDir?: string;
     /** create 分支可选:新 session 的工作目录覆盖(绝对路径,须已存在;jump 忽略)。#811 */
     workingDir?: string;
     /** create 分支可选:显式执行配置；未提供的字段继续继承 dispatcher。jump 忽略。 */
@@ -12532,9 +12538,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           const inheritedBase: SendToSessionCreateDefaults = {
             agentKind: meta.agentKind,
             workingDir: resolvedWorkDir,
-            // 覆盖目录必有真实项目目录 → 归 project 工作区(标题/侧栏分组按项目
-            // 语义走);未覆盖时保持缺省继承,行为不变。
-            ...(workingDirOverride !== undefined ? { workspaceKind: 'project' as const } : {}),
+            // Execution directories do not introduce projects. Host-owned
+            // child tasks inherit membership; helper callers select it explicitly.
+            workspaceKind: params.projectDir ? 'project' : (meta.workspaceKind ?? 'project'),
+            projectDir: params.projectDir ?? meta.projectDir,
             model: meta.model,
             effort: (row?.effort ?? undefined) as SendToSessionCreateDefaults['effort'],
             fastMode: (row?.fastMode ?? false),
@@ -12633,6 +12640,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           ...(handoffWorktree ? { id: handoffWorktree.sessionId } : {}),
           agentKind: inherited.agentKind,
           workspaceKind: inherited.workspaceKind,
+          projectDir: inherited.projectDir,
           workingDir: handoffWorktree ? handoffWorktree.meta.path : inherited.workingDir,
           model: inherited.model,
           effort: inherited.effort as CreateOpts['effort'],
@@ -12648,7 +12656,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             agentKind: inherited.agentKind === 'claude-code' ? 'cc' : inherited.agentKind,
             model: inherited.model, providerId: inherited.providerId, effort: inherited.effort,
             fastMode: (inherited.fastMode ?? false), permissionMode: createOpts.permissionMode,
-            workspaceKind: inherited.workspaceKind, workingDir: createOpts.workingDir,
+            workspaceKind: inherited.workspaceKind, projectDir: inherited.projectDir, workingDir: createOpts.workingDir,
             ...(inheritedAgentDeviceId ? { agentDeviceId: inheritedAgentDeviceId } : {}) },
         }, async (row, assertCurrent) => {
           const created = await bootstrapSession({ ...createOpts, id: row.id, model: row.model,
@@ -12741,6 +12749,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           targetTitle: newTitle,
           targetLastUserSendAt: null,
           worktreePath: handoffWorktree?.meta.path ?? null,
+          projectDir: inherited.projectDir ?? null,
+          workingDir: createOpts.workingDir,
           model: openedRow.model,
           effort: openedRow.effort || null,
           fastMode: openedRow.fastMode,
@@ -17837,13 +17847,25 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     getSessionRuntime: (params) => sessionControlService.getSessionRuntime(params),
     setSessionRuntime: (params) => sessionControlService.setSessionRuntime(params),
     sendToSession: async (params) => {
+      const ownerScope = captureDataOwnerBroadcastScope();
+      if (!params.targetSessionId && !params.createDefaults) {
+        if (!params.projectDir || !params.dispatcherSessionId) {
+          return { ok: false, errorCode: 'INVALID_ARGS',
+            message: '新建任务必须指定 project_path。先用 list_projects 选择已有项目；新增项目请显式调用 create_project。' };
+        }
+        const project = await resolveSessionProject({
+          callerSessionId: params.dispatcherSessionId, projectDir: params.projectDir,
+        });
+        if (!project.ok) return { ok: false, errorCode: 'INVALID_ARGS', message: project.message };
+        params = { ...params, projectDir: project.projectDir,
+          workingDir: params.workingDir ?? project.projectDir };
+      }
       // A script follow-up may name a companion as its dispatcher while no
       // owner turn is active. Never quote that companion's stale last input.
       const request: CapturedAgentRequest = params[AUTO_REVIEW_DELEGATED_CONTINUATION]
         ? { message: params.message, autoReviewUserText: { kind: 'agent-request' } }
         : await captureSessionAgentRequest(params.dispatcherSessionId ?? '', params.message);
       params = { ...params, message: request.message };
-      const ownerScope = captureDataOwnerBroadcastScope();
       let classification: Awaited<ReturnType<typeof classifySessionMessagePurpose>>;
       try {
         classification = await classifySessionMessagePurpose({

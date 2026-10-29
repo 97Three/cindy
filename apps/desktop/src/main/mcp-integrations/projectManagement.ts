@@ -1,18 +1,48 @@
 import path from 'node:path';
+import { eq } from 'drizzle-orm';
+import { collapseWorktreeDirForGrouping, sessionProjectDirectory } from '@cindy/maker-shared/worktree-paths';
+import { getActiveDataOwnerPushStamp, isAppSessionBoundaryPending } from '../appSessionState.js';
+import { tryGetDbClient } from '../localDb/client/current.js';
 import { listRecentWorkdirs } from '../localDb/ipc/recentWorkdirs.js';
 import { listProjectAliases, upsertProjectAlias } from '../localDb/ipc/projectAliases.js';
-import { recentWorkdirs } from '../localDb/schema.js';
+import { recentWorkdirs, sessions } from '../localDb/schema.js';
 import { loadSidebarSettingsSnapshot, setLocalProjectHidden } from '../sidebarSettingsStore.js';
 import { projectKeyComparisonKey } from '../../shared/projectKeys.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
 import {
   validateLocalProjectDirectory,
+  validateExistingLocalProjectDirectory,
   withLocalProjectContext,
   type LocalProjectContext,
 } from './createProject.js';
 
 const identity = (directory: string) =>
   projectKeyComparisonKey(`local:${directory}`, process.platform);
+
+/** Self-inspection only: reads current membership without touching the catalog. */
+export async function readCurrentSessionProject(sessionId: string) {
+  const client = tryGetDbClient();
+  if (!client || isAppSessionBoundaryPending()) throw new Error('Project storage unavailable');
+  const owner = getActiveDataOwnerPushStamp();
+  const [row] = await client.drizzle.select({
+    projectDir: sessions.projectDir,
+    workingDir: sessions.workingDir,
+    workspaceKind: sessions.workspaceKind,
+    remoteHostId: sessions.remoteHostId,
+  }).from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+  const current = getActiveDataOwnerPushStamp();
+  if (isAppSessionBoundaryPending() || tryGetDbClient() !== client ||
+      current.dataOwnerId !== owner.dataOwnerId || current.ownerGeneration !== owner.ownerGeneration)
+    throw new Error('Active account changed');
+  if (!row) throw new Error('Calling task unavailable');
+  const directory = sessionProjectDirectory(row);
+  return {
+    projectDir: row.workspaceKind === 'dialogue' || !directory
+      ? null : collapseWorktreeDirForGrouping(directory),
+    workspaceKind: row.workspaceKind,
+    remoteHostId: row.remoteHostId,
+  };
+}
 
 /** Metadata edits remain usable even when a registered directory is temporarily offline. */
 async function requireRegisteredProject(
@@ -30,6 +60,27 @@ async function requireRegisteredProject(
       'Project is not registered. Use list_projects to find it or create_project to add it.',
     );
   return match.path;
+}
+
+/** Selecting a task's project is read-only: never register or restore a directory. */
+export async function resolveSessionProject(params: {
+  callerSessionId: string;
+  projectDir: string;
+}) {
+  const directory = validateLocalProjectDirectory(params.projectDir);
+  if (!directory.ok) return directory;
+  return withLocalProjectContext(params.callerSessionId, async (context) => {
+    const projectDir = await requireRegisteredProject(context, directory.workingDir);
+    const hidden = loadSidebarSettingsSnapshot().hiddenProjectKeys.some(
+      (key) => projectKeyComparisonKey(key, process.platform) === identity(projectDir),
+    );
+    if (hidden) return { ok: false as const, errorCode: 'INVALID_ARGS',
+      message: '项目已移除，请选择 list_projects 中的可见项目；确需恢复时显式调用 create_project。' };
+    const checked = await validateExistingLocalProjectDirectory(projectDir);
+    if (!checked.ok) return checked;
+    context.assertCurrent();
+    return { ok: true as const, projectDir };
+  });
 }
 
 export async function listProjects(params: {

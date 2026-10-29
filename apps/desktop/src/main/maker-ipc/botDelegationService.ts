@@ -231,6 +231,8 @@ export interface BotDelegationServiceDeps {
 
 /** Start one tracked Cindy Session task from a persistent Bot task. */
 export interface SessionTaskInput {
+  /** Explicit project selected by the model-facing tool; independent of execution cwd. */
+  projectDir?: string;
   /** One task only; the catalog id includes source and Harness. */
   modelSelection?: TaskModelSelection;
   callerSessionId: string;
@@ -2429,6 +2431,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     useWorktree?: boolean;
     session: {
       workingDir: string;
+      projectDir?: string | null;
       model: string;
       effort?: string;
       fastMode?: boolean | 'ultrafast';
@@ -2523,6 +2526,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
             id: childRow.id,
             title: childRow.title,
             workingDir: childRow.workingDir ?? null,
+            projectDir: childRow.projectDir,
             workspaceKind: childRow.workspaceKind,
             model: childRow.model,
             effort: childRow.effort,
@@ -2774,6 +2778,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       useWorktree: input.useWorktree,
       session: {
         workingDir,
+        projectDir: input.projectDir,
         workspaceKind: input.workingDir?.trim() ? 'project' : 'dialogue',
         model: taskRuntime.model,
         agentDeviceId: taskRuntime.agentDeviceId ?? null,
@@ -3298,6 +3303,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         title: sessions.title,
         workingDir: sessions.workingDir,
         worktreePath: sessions.worktreePath,
+        projectDir: sessions.projectDir,
         workspaceKind: sessions.workspaceKind,
         model: sessions.model,
         effort: sessions.effort,
@@ -3388,6 +3394,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
           id: childSessionId,
           title: oldChild.title,
           workingDir: oldChild.workingDir,
+          projectDir: oldChild.projectDir,
           workspaceKind: oldChild.workspaceKind,
           model: oldChild.model,
           effort: oldChild.effort,
@@ -3643,7 +3650,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     }
     const [child] = row.childSessionId
       ? await getDbClient().drizzle
-        .select({ title: sessions.title, status: sessions.status, workingDir: sessions.workingDir, workspaceKind: sessions.workspaceKind })
+        .select({ title: sessions.title, status: sessions.status, workingDir: sessions.workingDir, projectDir: sessions.projectDir, workspaceKind: sessions.workspaceKind })
         .from(sessions)
         .where(eq(sessions.id, row.childSessionId))
         .limit(1)
@@ -3684,6 +3691,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         status: sessionTaskViewStatus(row),
         control: taskControlView(row),
         working_dir: child?.workingDir ?? null,
+        project_path: child?.projectDir ?? (child?.workspaceKind === 'project' ? child.workingDir : null),
         workspace_kind: child?.workspaceKind ?? null,
         queue,
         queue_error: queueError,

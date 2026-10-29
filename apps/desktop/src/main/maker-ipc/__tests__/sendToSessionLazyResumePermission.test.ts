@@ -381,6 +381,30 @@ describe('companion internal delivery after automation', () => {
 });
 
 // PR #6514: source receipts must not promote a prior owner's deployment permission.
+// Guard: execute the production create closure with separate membership and cwd.
+// Both ordinary and managed-worktree tasks must persist the chosen project.
+it.each([false, true])('preserves explicit project membership during creation (worktree=%s)', async useWorktree => {
+  const executionDir = useWorktree ? '/repo/.cindy-worktrees/child' : '/tmp/checkout';
+  const row = { id: 'new-child', permissionMode: 'auto', planModeEnabled: false };
+  const open = vi.fn(async (_input: unknown, create: (row: object, guard: () => Promise<void>) => Promise<unknown>) =>
+    ({ row, value: await create(row, async () => {}) }));
+  const h = botTaskDispatchHarness({ 'new-child': row }, {}, {
+    openSession: open,
+    validateHandoffWorkingDir: async (dir: string) => ({ ok: true, dir }),
+    broadcastSessionCreated: vi.fn(),
+    worktreeManager: {},
+    resolveFreshSourceBranch: vi.fn(),
+    prepareHandoffWorktree: async () => ({ ok: true, sessionId: 'new-child', meta: { path: executionDir } }),
+  });
+  const result = await h.sendToSessionInternal({ dispatcherSessionId: 'source', message: 'Work',
+    projectDir: '/selected-project', workingDir: '/tmp/checkout', useWorktree, forceQueue: true });
+  expect(result).toMatchObject({ ok: true, projectDir: '/selected-project', workingDir: executionDir });
+  expect(open).toHaveBeenCalledWith(expect.objectContaining({ body: expect.objectContaining({
+    projectDir: '/selected-project', workingDir: executionDir, workspaceKind: 'project',
+  }) }), expect.any(Function));
+  expect(h.bootstrapped[0]).toMatchObject({ projectDir: '/selected-project', workingDir: executionDir });
+});
+
 // Existing cold-start tests omitted the receipt. Execute the actual production dispatch closure
 // for both idle branches; guard tier because register.ts has no separately exported entry.
 describe('idle forwarded request authorization', () => {

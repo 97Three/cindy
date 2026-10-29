@@ -297,6 +297,7 @@ function createDb(filename = ':memory:'): void {
       id TEXT PRIMARY KEY NOT NULL,
       title TEXT NOT NULL DEFAULT 'New Maker',
       working_dir TEXT,
+      project_dir TEXT,
       workspace_kind TEXT NOT NULL DEFAULT 'project',
       model TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
       scheduled_model_baseline TEXT,
@@ -5014,10 +5015,12 @@ describe('Bot Session task end-to-end runtime', () => {
     const postGroupTaskMessage = vi.fn(async (input: { clientId: string }) => ({ ok: true as const, messageId: `posted:${input.clientId}` }));
     const runtime = createDelegationRuntime({ readCallerPermission, postGroupTaskMessage });
     try {
-      const result = await runtime.delegation.startSessionTask({ callerSessionId: 'group-lane', objective: 'Fixture-only development task' });
+      const result = await runtime.delegation.startSessionTask({ callerSessionId: 'group-lane', objective: 'Fixture-only development task', projectDir: '/selected-project', workingDir: h.userDataDir });
       expect(result).toMatchObject({ ok: true, completionDestination: 'group' });
       if (!result.ok) throw new Error(result.message);
       expect(readCallerPermission).toHaveBeenCalledWith('group-lane');
+      expect(h.sqlite!.prepare('SELECT project_dir, working_dir FROM sessions WHERE id = ?').get(result.childSessionId))
+        .toEqual({ project_dir: '/selected-project', working_dir: h.userDataDir });
       const row = h.sqlite!.prepare('SELECT parent_session_id, permission_snapshot_json FROM bot_delegations WHERE id=?').get(result.delegationId) as { parent_session_id: string; permission_snapshot_json: string };
       // The lane that started the task stays its parent; no private chat is created or re-used.
       expect(row.parent_session_id).toBe('group-lane');

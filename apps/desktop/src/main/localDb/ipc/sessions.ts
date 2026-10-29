@@ -1213,6 +1213,7 @@ export async function touchUserSendInDb(id: string, atMs?: number): Promise<void
       lastActivityAt: sessions.lastActivityAt,
       updatedAt: sessions.updatedAt,
       workingDir: sessions.workingDir,
+      projectDir: sessions.projectDir,
       workspaceKind: sessions.workspaceKind,
       remoteHostId: sessions.remoteHostId,
       source: sessions.source,
@@ -1246,7 +1247,7 @@ export async function touchUserSendInDb(id: string, atMs?: number): Promise<void
     !row.remoteHostId &&
     isRetainableProjectSession(row)
   ) {
-    const projectDir = normalizeWorkingDirForProjectSettings(row.workingDir);
+    const projectDir = normalizeWorkingDirForProjectSettings(row.projectDir ?? row.workingDir);
     const touched = await upsertRecentWorkdir(projectDir, ts, process.platform, dbClient);
     if (touched && projectDir) broadcastRecentWorkdirsChanged(projectDir, ownerScope);
   }
@@ -1837,7 +1838,7 @@ export function registerSessionIpc(
       !insertRow.remoteHostId &&
       isRetainableProjectSession(insertRow)
     ) {
-      void upsertRecentWorkdir(insertRow.workingDir, now);
+      void upsertRecentWorkdir(insertRow.projectDir ?? insertRow.workingDir, now);
     }
     // 订阅槽①旁路通知(fire-and-forget,动态 import 防环):意识旁听会话创建。
     // 资格过滤(用户主会话)与订阅者快路径都在 cindy-brain 内部,这里零判断。
@@ -2531,12 +2532,12 @@ export async function updateSessionInDb(
       isRetainableProjectSession(row)
     ) {
       const touched = await upsertRecentWorkdir(
-        row.workingDir,
+        row.projectDir ?? row.workingDir,
         Date.now(),
         process.platform,
         dbClient,
       );
-      if (touched) broadcastRecentWorkdirsChanged(row.workingDir, ownerScope);
+      if (touched) broadcastRecentWorkdirsChanged(row.projectDir ?? row.workingDir, ownerScope);
     }
     // status 广播必须用**广播时刻的持久化真值**,不能带请求值 p.status,也不能用
     // 上方读行的快照:写入(withStatusWriteLock)与广播不在同一串行区间,且读行

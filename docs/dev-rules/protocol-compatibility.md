@@ -261,6 +261,18 @@ Telegram 复用个人 bot 的变体池；X 不发送该声明。
 两仓可独立发布/回滚。完整效果要求两端支持，之后换肤色或表情池只需改客户端。
 本次声明仅包含状态表情；进度和终稿文案继续复用已有客户端渲染，服务端命令文案未迁移。
 
+## Session 显式项目归属（2026-10-30）
+
+Session 列表与搜索摘要新增可选 `projectDir`，数据库 migration 0137 新增可空
+`sessions.project_dir`。缺省/null 继续按 `workingDir` 归组；新值只用于项目身份，
+命令、文件、Git 与权限仍使用实际 `workingDir`。新客户端兼容旧宿主缺字段；旧客户端
+忽略新字段，执行目录与项目不同时仍显示旧分组，需升级查看端获得一致归属。
+没有修改 device-link allowlist、账号边界或任务路径权限。
+
+本机 Agent 工具的新建模式要求 `project_path`；`list_projects` / `create_project`
+保留 `working_dir` 并新增 `project_path` 回执。旧调用缺参数明确失败，不静默新建。
+`send_to_session` 的既有任务投递不要求项目，跨电脑投递合同不变。
+
 ## 手机读取项目别名（#6916）
 
 同账号 device-link 只读白名单增加 `local-db:project-aliases:list`，返回宿主现有的
