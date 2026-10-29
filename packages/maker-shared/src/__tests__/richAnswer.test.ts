@@ -512,6 +512,23 @@ describe('append to a container stays readable', () => {
     expect(doc.nodes.get('card-1')?.props.text).toBe('onetwo');
     expect(doc.issues).toBe(0);
   });
+
+  // 维护者 zqchris：append → create 子节点 → 再 append 时，第二段正文不能并进
+  // 排在子节点之前的隐式子节点，否则读者看到的顺序与模型写的顺序不一致。
+  it('keeps appended prose in the order the model wrote it', () => {
+    const doc = new RichAnswerStream().update(
+      line(1, { op: 'create', id: 'card', kind: 'stack' }) +
+      line(2, { op: 'append', id: 'card', text: 'before' }) +
+      line(3, { op: 'create', id: 'table', kind: 'markdown', parent: 'card', props: { text: '| a |' } }) +
+      line(4, { op: 'append', id: 'card', text: 'after' }),
+    );
+    const children = doc.nodes.get('card')?.children ?? [];
+    expect(children).toHaveLength(3);
+    expect(doc.nodes.get(children[0])?.props.text).toBe('before');
+    expect(doc.nodes.get(children[1])?.props.text).toBe('| a |');
+    expect(doc.nodes.get(children[2])?.props.text).toBe('after');
+    expect(doc.issues).toBe(0);
+  });
 });
 describe('inline draft limits', () => {
   it('caps nested inline drafts at the depth limit', () => {

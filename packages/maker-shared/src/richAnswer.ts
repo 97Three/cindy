@@ -281,13 +281,16 @@ export class RichAnswerStream {
           // container instead of being dropped, like the #7627 salvages.
           const existing = this.implicitText.get(current.id);
           const child = existing ? this.nodes.get(existing) : undefined;
-          // Reuse only the implicit markdown child this container owns: a
-          // rebuilt container may already hold a different node under the same
-          // id, and prose written into e.g. a stat would never be displayed.
+          // Reuse only the implicit markdown child this container owns, and
+          // only while it is still the last child: a rebuilt container may hold
+          // a different node under the same id, and prose written into e.g. a
+          // stat would never be displayed. Reusing a child that sits before
+          // later children would also reorder the answer against the order the
+          // model wrote it in.
           if (
             child &&
             child.kind === "markdown" &&
-            current.children.includes(existing!)
+            current.children.at(-1) === existing
           ) {
             this.nodes.set(child.id, {
               ...child,
