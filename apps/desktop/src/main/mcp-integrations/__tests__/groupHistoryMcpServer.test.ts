@@ -33,6 +33,7 @@ async function callSearch(
     tool?: string;
     getImages?: Parameters<typeof createGroupHistoryMcpServer>[0]['getImages'];
     readImage?: Parameters<typeof createGroupHistoryMcpServer>[0]['readImage'];
+    compressInlineImage?: Parameters<typeof createGroupHistoryMcpServer>[0]['compressInlineImage'];
   } = {},
 ) {
   const release = scope
@@ -70,6 +71,7 @@ async function callSearch(
     search,
     getImages: options.getImages,
     readImage: options.readImage,
+    compressInlineImage: options.compressInlineImage,
   });
   const [clientTx, serverTx] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'group-history-test', version: '0.0.0' });
@@ -218,6 +220,35 @@ describe('cindy_group_history search permission boundary', () => {
 // Test value: real MCP call must return image blocks, not a filename/path, and must not
 // publish images after the turn's lease ends. Existing search tests cover text only. Tier: unit.
 describe('get_images tool', () => {
+  // #7756 review: exact-bot reader cannot serve a different bot's uncached file ID.
+  // Unit MCP boundary; search tests cover cross-bot text, not image retrieval.
+  it('rejects another bot before looking up even a cached image', async () => {
+    const getImages = vi.fn(async () => ({ imageRefs: [ref] }));
+    const { result } = await callSearch(
+      { message_id: '42', lane: OTHER_PERSONAL_LANE },
+      { access: 'owner', provider: LANE_A.provider, lane: null },
+      { tool: 'get_images', getImages },
+    );
+    expect(JSON.stringify(result)).toContain('PERMISSION_DENIED');
+    expect(getImages).not.toHaveBeenCalled();
+  });
+  // #7756: multiple raw images could overflow the MCP output line. Unit: real tool
+  // response fits a shared budget and counts an image the compressor cannot fit.
+  it('shares the inline budget and reports images that cannot fit', async () => {
+    const compressInlineImage = vi.fn()
+      .mockResolvedValueOnce({ buffer: Buffer.alloc(60_000), mime: 'image/webp' })
+      .mockResolvedValueOnce(null);
+    const { result } = await callSearch({ message_id: '42' }, scope, {
+      tool: 'get_images', getImages: async () => ({ imageRefs: [ref, ref] }),
+      readImage: async () => ({ data: Buffer.alloc(160_000).toString('base64'), mimeType: 'image/png' }),
+      compressInlineImage,
+    });
+    const images = (result.content as Array<{ type: string; data?: string }>).filter(b => b.type === 'image');
+    expect(images).toHaveLength(1);
+    expect(Buffer.from(images[0].data!, 'base64')).toHaveLength(60_000);
+    expect(compressInlineImage).toHaveBeenCalledWith(expect.any(Buffer), 'image/png', { targetBytes: 70_000 });
+    expect(JSON.parse((result.content as Array<{ text: string }>)[0].text)).toMatchObject({ imageCount: 1, unavailable: 1 });
+  });
   it('retrieves a native Feishu message absent from the local index and rejects cross-topic access', async () => {
     const lane = { provider: 'feishu-personal:bot', chatId: 'oc_chat', threadId: 'omt_topic' };
     const readMessageImages = vi.fn(async () => [
@@ -293,6 +324,21 @@ describe('get_images tool', () => {
       readImage: async () => {
         resetGroupHistoryAccessForTests();
         return { data: 'aW1hZ2U=', mimeType: 'image/jpeg' };
+      },
+    });
+    expect(JSON.stringify(result)).toContain('SCOPE_EXPIRED');
+    expect(result.content).not.toContainEqual(expect.objectContaining({ type: 'image' }));
+  });
+  // Compression is another asynchronous boundary; revoking the same lease there
+  // must discard even successfully compressed private images. Tier: unit.
+  it('discards a compressed image when its turn ends during compression', async () => {
+    const { result } = await callSearch({ message_id: '42' }, scope, {
+      tool: 'get_images',
+      getImages: async () => ({ imageRefs: [ref] }),
+      readImage: async () => ({ data: Buffer.alloc(160_000).toString('base64'), mimeType: 'image/png' }),
+      compressInlineImage: async () => {
+        resetGroupHistoryAccessForTests();
+        return { buffer: Buffer.alloc(60_000), mime: 'image/webp' };
       },
     });
     expect(JSON.stringify(result)).toContain('SCOPE_EXPIRED');

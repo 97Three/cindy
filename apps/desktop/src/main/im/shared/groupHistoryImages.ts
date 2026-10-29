@@ -56,12 +56,18 @@ export async function readGroupHistoryImage(args: {
   const cached = await integrationCacheGet(cacheKey, snapshot.client.drizzle);
   assertCurrent();
   if (cached) {
-    if ((await stat(cached.absPath)).size > 20 * 1024 * 1024) return null;
-    const bytes = await readFile(cached.absPath);
-    assertCurrent();
-    if (bytes.length <= 20 * 1024 * 1024)
-      return { data: bytes.toString('base64'), mimeType: cached.mimeType };
-    return null;
+    try {
+      if ((await stat(cached.absPath)).size > 20 * 1024 * 1024) return null;
+      const bytes = await readFile(cached.absPath);
+      assertCurrent();
+      if (bytes.length > 0 && bytes.length <= 20 * 1024 * 1024)
+        return { data: bytes.toString('base64'), mimeType: cached.mimeType };
+      return null;
+    } catch (error) {
+      assertCurrent();
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      // Reclamation can delete the blob after the cache existence check.
+    }
   }
   const bytes =
     args.lane.provider.startsWith('telegram:') && args.ref.downloadToken

@@ -52,7 +52,7 @@ export async function recordReceivedImageMessage(args: {
       text: args.text,
       author: { name: args.author ?? 'user' },
       chatName: args.chatName,
-      fileNames: refs.map((ref) => ref.name),
+      fileNames: args.attachments.map((attachment) => attachment.originalName),
       imageRefs: refs,
       sentAt: Date.now(),
     },

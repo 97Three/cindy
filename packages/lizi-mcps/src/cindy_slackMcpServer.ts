@@ -26,8 +26,9 @@ import { z } from 'zod';
 
 import { jsonObjectArg } from './json-object-arg.js';
 import { withAccountDataAccess } from './account-data-access.js';
+import { fitInlineImages } from './shared/inlineImages.js';
 import { PathBoundaryError, resolvePathInsideRoot } from './shared/assertInsidePath.js';
-import type { SlackHookMcpDeps, SlackToolBridgeLike } from './types.js';
+import type { CompressInlineImageFn, SlackHookMcpDeps, SlackToolBridgeLike } from './types.js';
 
 import descStatus from './prompts/cindy_slack/tools/slack_status.md?raw';
 import descListTools from './prompts/cindy_slack/tools/slack_list_tools.md?raw';
@@ -99,6 +100,7 @@ async function deliver(
   outFile: string | undefined,
   workingDir: string | undefined,
   assertCurrent: () => Promise<void>,
+  compressInlineImage?: CompressInlineImageFn,
 ): Promise<SlackToolResult> {
   // MCP images must reach the model as image blocks, not base64 JSON spilled to a file.
   if (
@@ -108,33 +110,63 @@ async function deliver(
     'content' in data &&
     Array.isArray(data.content)
   ) {
-    const images = data.content
-      .filter((block: unknown): block is { type: 'image'; data: string; mimeType: string } => {
+    const imageBlocks = data.content.filter((block: { type?: string } | null) => block?.type === 'image');
+    const validImages = imageBlocks.filter(
+      (block: unknown): block is { type: 'image'; data: string; mimeType: string } => {
         if (!block || typeof block !== 'object') return false;
         const image = block as Record<string, unknown>;
         return (
           image.type === 'image' &&
           typeof image.data === 'string' &&
+          image.data.length > 0 &&
           image.data.length <= 7 * 1024 * 1024 &&
           /^[A-Za-z0-9+/]*={0,2}$/.test(image.data) &&
           typeof image.mimeType === 'string' &&
           /^image\/(png|jpeg|gif|webp)$/.test(image.mimeType)
         );
-      })
-      .slice(0, 4);
-    if (images.length) {
+      },
+    );
+    const fitted = await fitInlineImages(validImages.slice(0, 4), compressInlineImage);
+    await assertCurrent();
+    const omittedImages = {
+      invalid: imageBlocks.length - validImages.length,
+      countLimit: Math.max(0, validImages.length - 4),
+      inlineBudget: fitted.omitted,
+    };
+    const imageReport = {
+      imageCount: fitted.images.length,
+      unavailable: imageBlocks.length - fitted.images.length,
+      omittedImages,
+    };
+    if (fitted.images.length) {
       await assertCurrent();
       const metadata = {
         ...data,
+        ...imageReport,
         content: data.content.filter((block: { type?: string }) => block?.type !== 'image'),
       };
       const summary = await deliver(metadata, undefined, workingDir, assertCurrent);
       await assertCurrent();
-      return { ...summary, content: [...summary.content, ...images] };
+      return {
+        ...summary,
+        content: [
+          ...summary.content,
+          // Keep omissions visible even if the text metadata spills to a file.
+          ...(imageReport.unavailable
+            ? [{ type: 'text' as const, text: JSON.stringify(imageReport) }]
+            : []),
+          ...fitted.images.map(image => ({ type: 'image' as const, ...image })),
+        ],
+      };
     }
-    if (data.content.some((block: { type?: string } | null) => block?.type === 'image')) {
+    if (imageBlocks.length) {
       await assertCurrent();
-      return errorResult('IMAGE_UNAVAILABLE', 'Slack 图片格式不支持或超过大小限制。');
+      return jsonResult({
+        ok: false,
+        errorCode: 'IMAGE_UNAVAILABLE',
+        message: 'Slack 图片格式不支持或超过下载/内联大小限制。',
+        ...imageReport,
+      }, true);
     }
   }
   const text = JSON.stringify(data ?? null);
@@ -228,7 +260,7 @@ export function createSlackMcpGatewayServer(deps: SlackHookMcpDeps): McpServer {
       const r = await bridge.callTool('listTools', undefined, team_id ?? null);
       await assertCurrent();
       if (!r.ok) return errorResult(r.error.code, r.error.message);
-      return deliver(r.result, out_file, deps.workingDir, assertCurrent);
+      return deliver(r.result, out_file, deps.workingDir, assertCurrent, deps.compressInlineImage);
     }),
   );
 
@@ -253,7 +285,7 @@ export function createSlackMcpGatewayServer(deps: SlackHookMcpDeps): McpServer {
       // Recheck before returning private bytes or spilling them to the workdir.
       await assertCurrent();
       if (!r.ok) return errorResult(r.error.code, r.error.message);
-      return deliver(r.result, out_file, deps.workingDir, assertCurrent);
+      return deliver(r.result, out_file, deps.workingDir, assertCurrent, deps.compressInlineImage);
     }),
   );
 

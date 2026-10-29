@@ -172,7 +172,7 @@ describe('Telegram group history access scope', () => {
     expect(
       adapter.groupHistoryAccessFor?.({
         contextId: 'bot-1',
-        senderId: '12345',
+        senderId: '123',
         messageId: 'm-2',
         chatId: '12345',
         text: '查历史',
@@ -186,6 +186,20 @@ describe('Telegram group history access scope', () => {
       lane: null,
     });
   });
+
+  // #7756 security review: guest DMs on companion bots used to get owner history.
+  // Unit: the real adapter must omit the lease for a non-owner DM (with/without speaker).
+  it.each([undefined, { id: '999', name: 'Guest', isOwner: false }])(
+    'does not grant history access to a guest DM: %j',
+    (speaker) => {
+      const teammate = buildTelegramAdapter({ getOwnerUserId: () => '123' } as never, {} as never, {
+        companionBotId: 'bot-mimi',
+      });
+      expect(teammate.groupHistoryAccessFor?.({
+        contextId: 'bot-1', senderId: '999', text: 'history', speaker,
+      } as IMMessageEvent)).toBeUndefined();
+    },
+  );
 
   it('names the group in the channel note but leaves the speaker to the existing [发言人] line', async () => {
     expect(

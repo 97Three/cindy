@@ -123,11 +123,17 @@ describe('group history FTS', () => {
         scope,
         messageId: 'non-numeric-id',
         text: '截图',
-        attachments: [attachment, { ...attachment, url: 'file:///private/file.png' }],
+        attachments: [attachment, { ...attachment, url: 'file:///private/file.png' }, {
+          kind: 'file', absPath: '/unused', originalName: 'requirements.pdf', mimeType: 'application/pdf',
+        }],
       });
       expect(
         await getGroupHistoryImages({ lane: scope.lane!, messageId: 'non-numeric-id' }),
       ).toEqual({ imageRefs: [{ fileId: url, name: 'screen.png', mimeType: 'image/png' }] });
+      // #7756 mixed attachment regression: early image indexing wins the INSERT
+      // conflict, so it must keep the non-image filename searchable too. Unit, in-memory SQLite.
+      expect(await searchGroupHistory({ lane: scope.lane!, query: 'requirements.pdf' }))
+        .toEqual([expect.objectContaining({ fileNames: expect.arrayContaining(['requirements.pdf']) })]);
       expect(
         await getGroupHistoryImages({
           lane: { ...scope.lane!, provider: `${channel}-personal:other` },

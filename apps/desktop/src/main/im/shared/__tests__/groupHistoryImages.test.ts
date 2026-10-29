@@ -80,6 +80,18 @@ describe('history image bytes and account cache', () => {
     expect(input.scope.readImage).not.toHaveBeenCalled();
     expect(f.put).not.toHaveBeenCalled();
   });
+  // #7756 review: eviction between cache lookup and stat/read must be a miss, not
+  // IMAGE_READ_FAILED. Existing reuse coverage has no disappearing file. Tier: unit.
+  it.each(['stat', 'read'] as const)('redownloads when eviction races cached %s', async (stage) => {
+    f.get.mockResolvedValue({ absPath: '/cache/image', mimeType: 'image/png' });
+    f[stage].mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+    const input = args();
+    expect(await readGroupHistoryImage(input)).toEqual({
+      data: png.toString('base64'),
+      mimeType: 'image/png',
+    });
+    expect(input.scope.readImage).toHaveBeenCalledWith('file');
+  });
   it('downloads a personal image and stores it in the reclaimable shared cache', async () => {
     const input = args();
     await readGroupHistoryImage(input);
