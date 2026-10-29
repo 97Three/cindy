@@ -230,11 +230,21 @@ describe.each(modes)('%s remote history visibility', (mode) => {
     } });
     let cursor: string | undefined;
     for (let i = 0; i < 3; i++) {
+      const queries = vi.spyOn(state.client, 'query');
       const page = historyPayload(await registry.call('search_chat_history', {
         query: 'budgetneedle', limit: 10, context_radius: radius, ...(cursor ? { cursor } : {}),
       })) as any;
+      const contextQueries = queries.mock.calls.filter(([sql]) => String(sql).includes('_anchorOrder'));
+      queries.mockRestore();
       expect(page.hits).toHaveLength(1);
       expect(page.hits[0].context.find((row: any) => row.isHit).content).toBe(text);
+      if (radius === 2) {
+        expect(contextQueries).toHaveLength(1);
+        const contextParams = (contextQueries[0][1] ?? []) as unknown[];
+        expect(new Set(contextParams.filter((value): value is string =>
+          typeof value === 'string' && ids.includes(value),
+        )).size).toBe(1);
+      }
       found.push(page.hits[0].messageId);
       expect(page.hasMore).toBe(i < 2);
       if (page.nextCursor !== null) { expect(page.nextCursor).not.toBe(cursor); cursor = page.nextCursor; }
