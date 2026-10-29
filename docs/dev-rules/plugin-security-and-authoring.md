@@ -148,8 +148,10 @@ Library 请求同时绑定迁移代次和安装批准，根解析、排队及开
   只在首次任务能力调用通过既有宿主权限界面确认，原插件的启用态、其它能力、凭证和
   设置保持不变。拒绝、窗口不可用、账号或安装版本变化均不授予任务权限；同能力更新
   保留既有明确批准，移除该能力后不保留。清单或旧未知字段本身不能补写批准。
+  批准后，插件创建的任务及 Worker 中的 Agent 按普通任务的权限使用已连接工具；
+  插件直接调用 `cindy.tasks` 仍只管理本插件的任务。
 - `agent.targets` 必须与 `agent.tasks: true` 同时声明，独立列出 `agent:targets` 权限并要求 Host receipt 的 `targetCapabilityApproved` 显式批准。
-  可查询本机项目、任务和伙伴的目标元数据，并投递文字/图片；不授予其他任务的历史读取、设置修改或停止权限。
+  可查询本机项目、任务和伙伴的目标元数据，并投递文字/图片；该接口本身不授予其他任务的历史读取、设置修改或停止权限。
   安装/更新复用既有权限确认；历史 tasks 批准和未知 targets 字段不能自动扩权，缺新批准时只阻止新目标接口，首次调用复用既有宿主确认。
   实现与作者契约见 [通用投递目标](plugin-task-api-implementation.md#通用投递目标增量接口尚未发布)。
 - `agent.hiddenTasks`（后台任务）只在与 `agent.tasks: true` 同时声明时有效：新包缺 tasks 或非布尔
@@ -982,8 +984,8 @@ Main 按真实逻辑页或专属协议分区定位物理实例，绑定当前 ow
 合法 public Broker 声明仍由服务端既有 public 规则与精确 ACL 判断，不靠声明直接拒绝。
 
 个人工具与旧企业 Forge 发布是独立能力入口。任务权限只决定是否可以执行公开写入，不决定
-public 身份归属；共享访客及插件托管/errand 任务与其 Worker 沿既有 restricted helper surface，
-不能借用 Host 个人发布能力。普通个人用户任务和正常 Worker 不因此被封禁。
+public 身份归属；共享访客和插件来源的当前输入不能借用 Host 个人发布能力。
+插件创建的任务及 Worker 可使用普通 helper surface，但个人投稿仍核验输入来源。
 
 详见 [客户端实现与验证边界](../plugin-community-contribution.md) 和
 [HTTP 契约](../plugin-community-contribution-contract.md)。此改动涉及打包原语和授权边界，仍须人工 review

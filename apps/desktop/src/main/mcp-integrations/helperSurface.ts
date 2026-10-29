@@ -17,7 +17,7 @@ export function classifyHelperSurface(
     : 'bot';
 }
 
-/** Reuse the helper's existing runtime gate; plugin tasks need Orca, not account-wide helper tools. */
+/** Plugin-owned tasks use the ordinary helper surface; revoked plugin input stays restricted. */
 export async function resolveHelperSurface(
   db: Pick<DbClient, 'queryOne' | 'drizzle'>,
   sessionId: string,
@@ -37,10 +37,11 @@ export async function resolveHelperSurface(
          SELECT 1 FROM plugin_task_requests p
           WHERE p.operation = 'create' AND p.id IN (s.id, t.lead_session_id)
             AND CASE WHEN json_valid(p.payload) THEN
-              CASE WHEN json_type(p.payload) = 'object'
-                     AND json_type(p.payload, '$.ownershipRevoked') = 'true'
-                   THEN 0 ELSE 1 END
-              ELSE 1 END = 1
+              CASE WHEN json_type(p.payload) = 'object' THEN
+                CASE WHEN json_type(p.payload, '$.ownershipRevoked') = 'true'
+                  THEN 0 ELSE 1 END
+              ELSE 0 END
+            ELSE 0 END = 1
        ) AS pluginOwned
        FROM sessions s
        LEFT JOIN bot_session_links b ON b.session_id = s.id
@@ -51,9 +52,10 @@ export async function resolveHelperSurface(
   );
   // Retained Workers inherit the Lead's receipt even after the team ends.
   // Revocation does not make still-executing plugin input a trusted user input.
-  // Bad receipts stay restricted; legacy plugin-source tasks have no receipt.
-  if (!row || row.pluginOwned) return 'restricted';
-  if (row.retainedPlugin) {
+  // Bad receipts stay restricted during old plugin input; legacy tasks without
+  // a receipt use the ordinary task surface.
+  if (!row) return 'restricted';
+  if (row.retainedPlugin && !row.pluginOwned) {
     if (execution.executing && !await hasAcceptedUserTaskInput(db, sessionId, execution.input, !!row.isWorker)) return 'restricted';
     // Do not transfer an in-flight tool call to a different accepted input.
     const current = readExecution(sessionId);

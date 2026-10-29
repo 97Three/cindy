@@ -37,13 +37,13 @@ describe('classifyHelperSurface', () => {
 });
 
 
-describe('personal author tools reuse the helper surface', () => {
+describe('resolveHelperSurface', () => {
   const ordinary = { source: 'user', botId: null, botRole: null, status: 'active', remoteHostId: null, pluginOwned: 0, retainedPlugin: 0, isWorker: 0 };
   function db(row: typeof ordinary) {
     return { queryOne: vi.fn().mockResolvedValue(row) } as unknown as Pick<DbClient, 'queryOne' | 'drizzle'>;
   }
-  it.each([0, 1])('restricts plugin-owned tasks and their Workers (worker=%s)', async (isWorker) => {
-    await expect(resolveHelperSurface(db({ ...ordinary, pluginOwned: 1, retainedPlugin: 1, isWorker }), 'session', () => ({ executing: true, input: { clientId: 'plugin-task:request', originKind: 'plugin' } }))).resolves.toBe('restricted');
+  it.each([0, 1])('gives plugin-owned tasks and their Workers the default surface (worker=%s)', async (isWorker) => {
+    await expect(resolveHelperSurface(db({ ...ordinary, pluginOwned: 1, retainedPlugin: 1, isWorker }), 'session', () => ({ executing: true, input: { clientId: 'plugin-task:request', originKind: 'plugin' } }))).resolves.toBe('default');
   });
   it('keeps revoked-but-still-executing plugin input restricted', async () => {
     await expect(resolveHelperSurface(db({ ...ordinary, retainedPlugin: 1, isWorker: 1 }), 'worker', () => ({ executing: true, input: { clientId: 'plugin-task:request', originKind: 'orca' } }))).resolves.toBe('restricted');

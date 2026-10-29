@@ -470,7 +470,7 @@ async function packForgeSource(
  * ──────────────────────────────────────────────────────────────────────── */
 
 export interface GhostGrantLiveSessionState {
-  /** Rechecks accepted account input and the existing plugin-managed helper surface. */
+  /** Rechecks account-owned input and the current helper surface. */
   contributionAccountAllowed?: (acceptedOperation?: boolean) => Promise<boolean>;
   permissionMode: PermissionMode | null;
   remoteHostId: string | null;
