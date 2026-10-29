@@ -1,0 +1,86 @@
+# Desktop 按需性能跟踪
+
+入口：应用内菜单的「性能跟踪」，macOS 也在帮助菜单。采集当前 Desktop 电脑；界面 CPU
+profile 与输入观测绑定启动录制的主窗口，Chromium 时间线和资源采样覆盖本应用的相关进程。
+不远程启动另一台电脑的采集，也不声称覆盖 Mobile、SSH、Agent 子进程或原生输入法内部。
+录制只由用户启动，最长 60 秒；Chromium 缓冲区 32 MiB，95% 时提前停止。停止后可填写说明，
+提交完整性能文件的脱敏副本，或查看本地原始文件。已有报告未提交也可以重新录制，旧文件仍保留。
+
+计时与停止按钮在主内容区顶部独占一行，不覆盖输入区；为已有的左右侧栏悬浮入口预留空间。
+采集控制器保持在窗口级，状态栏通过 portal 放入布局占位，避免内容区重排影响录制生命周期。
+
+实现：`main/performance-trace/`；本机 preload 契约 `shared/performanceTrace.ts`；
+界面 `renderer/components/performance-trace/PerformanceTrace.tsx`。
+
+## 证据与边界
+
+- Chromium `contentTracing` 保存本地 `chromium-trace.json`，只开启显式性能类别，不采截图、
+  堆快照或网络正文；**仍可能包含敏感路径和用户生成的性能标记，不自动上传**。
+- Node inspector 与当前 renderer 的 CDP Profiler 分别按 4ms 采样，保存两份原始 `.cpuprofile`。
+  不抢占已有的 renderer debugger；不可用时保留其它证据并标记 `partial`。
+- 每秒采样 Electron 进程 CPU／内存及主进程事件循环延迟；不保存窗口／任务标题和命令行。
+- Renderer 被动记录 long task、输入总延迟／排队延迟／处理时间、组合输入起止和窗口可见性；
+  不读取按键值、输入内容、DOM 文本或目标。后台窗口样本仍保留可见性，供分析时剔除绘制节流。
+- 既有 invoke registry 只对固定任务列表、消息视图和 Skill 查询计时，不读取参数、返回内容
+  或异常正文；本地调用与执行端收到的远程调用都计时，但没有跨电脑时钟关联或远程耗时承诺。
+- 相同录制的事件用 epoch ms，CPU profile 保留采样间隔及相对录制起点的偏移。
+  性能开销是相关证据，不自动判定根因。压缩 bundle 的位置需结合对应发行构建映射分析；
+  本功能不新增公开 source map 分发。
+
+## 存储与发送
+
+文件保存在当前 owner 的 `diagnostics/performance-traces/<报告编号>/`，签出状态使用已有
+`ownerScopedUserDataPath` 临时空间。开始时固定路径，切换账号不会把旧录制写入新账号。
+下次录制时尽力清理本功能生成的 7 天前目录；应用未运行时不执行清理，用户另存的副本不删除。
+重启后可通过入口「查看本地文件」找到此前记录；界面内提交重试仅支持本次运行的当前报告。
+
+`report.json` 为结构化摘要：数值事件、资源采样、CPU profile 的节点与采样时间线。
+CPU 仅保留 Cindy 自有代码的文件名、位置及有限字符的函数名；外部、动态代码不保留名称与路径。
+未知 event 类型／标签及多余字段拒绝或剔除，事件最多 3000 条，CPU 每进程最多 20000 节点／
+30000 样本。因上限丢弃的证据必须注明。完整采样位于另外三份文件，不受摘要投影上限裁剪。
+
+2026-10-29 用户明确选择日志通道并要求完整性能文件上传。上传入口固定读取本次录制目录内的
+`report.json`、`chromium-trace.json`、`main.cpuprofile`、`renderer.cpuprofile`，不接受 Renderer
+传入路径，不扫描其它文件。拒绝符号链接／非普通文件；有界读取前后核对文件身份、大小和修改时间。
+每个文件最多 64 MiB，原始及脱敏后的总量最多 128 MiB，gzip 后总量最多 64 MiB；超限失败而不截断。
+采集已标记 `partial` 时允许部分原生文件不存在，清单明确列出 `missing`；`report.json` 必须存在。
+
+上传前解析 JSON，对字段值复用现有 `log-upload/redact.ts`，可识别的敏感字段整值移除；保留所有
+事件、节点、采样与时间戳，不修改本地原始文件。JSON 结构始终可解析；遍历定期让出事件循环，
+gzip 异步执行。不是任意内容匿名化保证，路径和用户生成的性能标记仍可能存在，提交区明确告知。
+
+用户点击提交才发送。复用日志服务目标、区域校验和隐私同意事实；每批发送前重新核对同意
+和账号代次（包括最后一批响应后），不受使用统计开关影响。专用 `performance-trace-files` 记录
+不扩充普通日志来源白名单，不读取任意文件，也不加入自动上传。报告以既有 `uploadCode` 检索。
+附加说明经过现有脱敏器，用户界面明确告知它也会提交。
+上传失败或未配置目标保留本地证据；不回退到公共 OSS，不新增服务端接口。
+
+## 分片协议与取回
+
+`msg` 使用 `protocol: cindy-performance-files`、`version: 1`、`reportId`、`attemptId`、
+`sequence`、`data`。重试保留报告编号但使用新 attemptId，不能拼接不同尝试的分片。
+
+- 首条 `manifest` 包含文件名、脱敏后字节数、gzip 字节数、SHA-256、分片数、缺失文件和说明。
+- 每份 gzip 按 12 KiB 切片，`chunk` 记录文件名、从 0 开始的 index 和 base64 content。
+- 沿用现有发送器的 1 MiB 批次上限。所有数据批次成功后，单独发送最后一条 `complete`，
+  其中给出总记录数和文件数。仅此请求成功且账号仍匹配时，UI 才显示「已上传」及可选中的报告编号。
+- 后台需按 `uploadCode` 和 `scope: performance-trace-files` 检索并导出**全部原始记录**，不要
+  使用截断的表格预览或仅导出第一页。无需新增服务端文件上传接口；当前提供本地还原工具，未声称
+  后台已有一键下载页面。
+
+导出 JSON 数组或 JSONL（每行保留 `scope`、`msg` 字段）后运行：
+
+```sh
+pnpm --dir apps/desktop exec tsx scripts/restore-performance-report.ts <导出文件> <报告编号> <不存在的输出目录> [attemptId]
+```
+
+工具按 sequence 和文件 index 重排，容忍一致的重复行；只接受完整尝试，拒绝缺片、冲突行、非法
+文件名、超限解压和校验不一致。先核验所有文件再新建目录，绝不覆盖已有目录／文件。成功得到四份
+性能文件（不完整采集按 manifest 实际数量）及 `upload-manifest.json`，可导入相应性能分析器。
+
+## 验证
+
+生命周期、账号切换、文件上传／还原、失败重试及脱敏：`performance-trace/__tests__/performanceTrace.test.ts`。
+真实界面及五语／双主题：`pnpm ui:check --page performance-trace --case all --theme all --locale all`。
+原生采集需使用隔离 Electron 实例验证两份 CPU profile、Chromium trace 和资源样本；
+UI 场景不能代替原生采集或实际网络上传验证。

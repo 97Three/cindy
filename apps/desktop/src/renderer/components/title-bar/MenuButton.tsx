@@ -1,4 +1,5 @@
 import { Menu } from 'lucide-react';
+import { openPerformanceTrace } from '@/components/performance-trace/PerformanceTrace';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -79,6 +80,9 @@ export function MenuButton({ onExitFullscreen }: { onExitFullscreen?: () => void
           }}
         >
           {t('titleBar.menuItems.resourceUsage')}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={openPerformanceTrace}>
+          {t('performanceTrace.title')}
         </DropdownMenuItem>
         <DropdownMenuItem
           onSelect={() => {
