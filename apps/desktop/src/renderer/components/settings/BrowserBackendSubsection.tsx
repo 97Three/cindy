@@ -40,6 +40,12 @@ interface BrowserBackendSubsectionProps {
   userBrowserSetupBusy?: boolean;
 }
 
+const BACKEND_DESCRIPTION_KEYS: Record<BackendKind, string> = {
+  'rsb-webview': 'settings.computerUse.browserBackend.rsbWebview.description',
+  external: 'settings.computerUse.browserBackend.external.description',
+  'user-browser': 'settings.computerUse.browserBackend.userBrowser.description',
+};
+
 const SETUP_KEY = 'settings.computerUse.browserBackend.userBrowserSetup';
 const PLUGIN_STEP_KEYS = {
   'not-installed': {
@@ -103,8 +109,9 @@ export function BrowserBackendSubsection({
           <p className="text-12 font-medium leading-[1.4] text-[var(--settings-section-title)]">
             {t('settings.computerUse.browserBackend.title')}
           </p>
-          <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)]">
-            {t('settings.computerUse.browserBackend.description')}
+          {/* 选中哪个就介绍哪个,切换时一起变。 */}
+          <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)]" aria-live="polite">
+            {t(BACKEND_DESCRIPTION_KEYS[active])}
           </p>
         </div>
         <SegmentedControl<BackendKind>

@@ -5257,7 +5257,7 @@
         "title": "Use my browser logins",
         "description": "The agent will open sites with your signed-in Chrome, Edge, or Brave accounts.",
         "toggleAria": "Use my browser logins",
-        "unavailableEmbedded": "Only available with the standalone external browser. The sidebar browser cannot load Chrome’s login files.",
+        "unavailableEmbedded": "Only applies to the standalone browser. Turning it off deletes the copied login files.",
         "confirmTitle": "Let the agent use your browser logins?",
         "confirmDescription": "The agent will be able to open sites with your signed-in accounts, including email, cloud drives, and work consoles. You can turn it off anytime; the copy will be deleted.",
         "confirmDescriptionMac": "The agent will be able to open sites with your signed-in accounts, including email, cloud drives, and work consoles. Reading Chrome’s login files also needs Full Disk Access. You can turn this off anytime; the copy will be deleted.",
@@ -5274,16 +5274,15 @@
       },
       "browserBackend": {
         "title": "Automation browser target",
-        "description": "Pick which browser the agent drives by default during automation. Sign-ins are independent across the three targets; an explicit choice in a task wins.",
         "defaultTag": "Default",
         "resetToDefault": "Reset to default",
         "toggleFailed": "Failed to switch browser target",
         "health": {
-          "ready": "Embedded browser control is connected.",
-          "error": "Embedded browser connection failed: {{reason}}. Choose “Recover Browser” to rebuild the control connection.",
+          "ready": "Sidebar browser control is connected.",
+          "error": "Sidebar browser connection failed: {{reason}}. Choose “Recover Browser” to rebuild the control connection.",
           "reasons": {
             "disposing": "the previous shutdown has not completed",
-            "hostUnavailable": "the embedded browser interface is not ready or its connection was lost",
+            "hostUnavailable": "the sidebar browser interface is not ready or its connection was lost",
             "startFailed": "the replacement controller could not start",
             "statusFailed": "the controller status check failed",
             "recoveryFailed": "the control connection could not be rebuilt",
@@ -5293,22 +5292,22 @@
           "reconnect": "Reconnect Browser",
           "recover": "Recover Browser",
           "recovering": "Recovering Browser…",
-          "recovered": "Embedded browser reconnected",
-          "recoverFailed": "Failed to recover the embedded browser. Review the reason and try again.",
+          "recovered": "Sidebar browser reconnected",
+          "recoverFailed": "Failed to recover the sidebar browser. Review the reason and try again.",
           "userBrowserReady": "Your browser is connected: the agent can operate the browser you are using.",
           "userBrowserError": "Your browser is unavailable: {{reason}}."
         },
         "rsbWebview": {
-          "title": "Sidebar embedded browser",
-          "description": "Agent operates inside the right-sidebar webview tabs. No popup window; sign-ins are kept separately."
+          "title": "Sidebar browser",
+          "description": "Opens pages in Cindy’s right sidebar so you can watch what the agent does. Sign-ins are kept separately."
         },
         "external": {
-          "title": "Standalone external browser",
-          "description": "Agent drives a dedicated Chrome window (vendored Playwright)."
+          "title": "Standalone browser",
+          "description": "A Chrome window just for Cindy, apart from the Chrome you use every day. Sign-ins are kept separately."
         },
         "userBrowser": {
           "title": "My browser",
-          "description": "Agent operates the Chrome / Edge you are using through the Cindy extension, with your sign-ins. New pages open in a separate background window, so what you are viewing stays put."
+          "description": "Works in the Chrome or Edge you are using, with your existing sign-ins. New pages open in a background window and stay out of your way."
         },
         "userBrowserSetup": {
           "installPluginTitle": "Step 1: Install the Cindy Chrome plugin",

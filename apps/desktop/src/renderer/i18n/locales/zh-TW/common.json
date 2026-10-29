@@ -5225,7 +5225,7 @@
         "title": "使用我的瀏覽器登入態",
         "description": "Agent 會用你在 Chrome、Edge 或 Brave 裡已登入的身分造訪網站。",
         "toggleAria": "使用我的瀏覽器登入態",
-        "unavailableEmbedded": "僅獨立外置瀏覽器可用。側邊欄內建瀏覽器無法讀取 Chrome 的登入檔。",
+        "unavailableEmbedded": "只對獨立瀏覽器生效。關閉後會刪除已複製的登入檔。",
         "confirmTitle": "允許 Agent 使用你的瀏覽器登入態？",
         "confirmDescription": "Agent 將能以你已登入的身分開啟網頁，包括信箱、雲端硬碟和公司後台。可以隨時關掉，拷貝會被刪除。",
         "confirmDescriptionMac": "Agent 將能以你已登入的身分開啟網頁，包括信箱、雲端硬碟和公司後台。讀取 Chrome 登入檔還需要「完全磁碟存取權」。可以隨時關掉，拷貝會被刪除。",
@@ -5242,16 +5242,15 @@
       },
       "browserBackend": {
         "title": "瀏覽器自動化目標",
-        "description": "選擇 Agent 自動化操作時預設控制哪個瀏覽器。三種目標的登入態相互獨立；任務裡明確指定時按指定來。",
         "defaultTag": "預設",
         "resetToDefault": "恢復預設",
         "toggleFailed": "切換瀏覽器目標失敗",
         "health": {
-          "ready": "內建瀏覽器已連線。",
-          "error": "內建瀏覽器連線異常：{{reason}}。點選「恢復瀏覽器」重建控制連線。",
+          "ready": "側邊欄瀏覽器已連線。",
+          "error": "側邊欄瀏覽器連線異常：{{reason}}。點選「恢復瀏覽器」重建控制連線。",
           "reasons": {
             "disposing": "上一次關閉尚未完成",
-            "hostUnavailable": "內建瀏覽器介面尚未就緒或連線已中斷",
+            "hostUnavailable": "側邊欄瀏覽器介面尚未就緒或連線已中斷",
             "startFailed": "瀏覽器連線未能啟動",
             "statusFailed": "無法檢查瀏覽器連線狀態",
             "recoveryFailed": "控制連線未能重建",
@@ -5261,22 +5260,22 @@
           "reconnect": "重新連線瀏覽器",
           "recover": "恢復瀏覽器",
           "recovering": "正在恢復瀏覽器…",
-          "recovered": "內建瀏覽器已重新連線",
-          "recoverFailed": "恢復內建瀏覽器失敗，請根據錯誤原因重試",
+          "recovered": "側邊欄瀏覽器已重新連線",
+          "recoverFailed": "恢復側邊欄瀏覽器失敗，請根據錯誤原因重試",
           "userBrowserReady": "我的瀏覽器已連線：Agent 可以操作你正在使用的瀏覽器。",
           "userBrowserError": "我的瀏覽器無法使用：{{reason}}。"
         },
         "rsbWebview": {
-          "title": "側邊欄內建瀏覽器",
-          "description": "Agent 在右側欄內嵌的 webview tab 裡操作。無彈窗、登入態獨立保留。"
+          "title": "側邊欄瀏覽器",
+          "description": "在 Cindy 右側欄裡開啟網頁，你能直接看到 Agent 在做什麼。登入狀態單獨保存。"
         },
         "external": {
-          "title": "獨立外接瀏覽器",
-          "description": "Agent 操作 {{appName}} 專用的獨立 Chrome 視窗（vendored Playwright）。"
+          "title": "獨立瀏覽器",
+          "description": "一個 Cindy 專用的 Chrome 視窗，和你日常用的 Chrome 分開，登入狀態單獨保存。"
         },
         "userBrowser": {
           "title": "我的瀏覽器",
-          "description": "Agent 透過 Cindy 擴充功能操作你正在使用的 Chrome / Edge，登入態現成；新頁面開在獨立的背景視窗，不打擾你正在看的頁面。"
+          "description": "直接操作你正在用的 Chrome 或 Edge，沿用你已有的登入。新頁面在背景視窗開啟，不打擾你。"
         },
         "userBrowserSetup": {
           "installPluginTitle": "第 1 步：安裝 Cindy Chrome 插件",

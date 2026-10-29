@@ -5225,7 +5225,7 @@
         "title": "내 브라우저 로그인 사용",
         "description": "Chrome, Edge, Brave에 로그인한 계정으로 사이트에 접근합니다.",
         "toggleAria": "내 브라우저 로그인 사용",
-        "unavailableEmbedded": "독립 외부 브라우저에서만 사용할 수 있습니다. 사이드바 내장 브라우저는 Chrome 로그인 파일을 읽지 못합니다.",
+        "unavailableEmbedded": "독립 브라우저에서만 적용됩니다. 끄면 복사한 로그인 파일이 삭제됩니다.",
         "confirmTitle": "Agent가 브라우저 로그인을 사용하도록 할까요?",
         "confirmDescription": "Agent가 이메일, 클라우드, 업무 콘솔 등 이미 로그인한 사이트에서 사용자 계정으로 동작할 수 있습니다. 언제든 끌 수 있으며 복사본은 삭제됩니다.",
         "confirmDescriptionMac": "Agent가 이메일, 클라우드, 업무 콘솔 등 이미 로그인한 사이트에서 사용자 계정으로 동작할 수 있습니다. Chrome 로그인 파일을 읽으려면 ‘전체 디스크 접근 권한’도 필요합니다. 언제든 끌 수 있으며, 복사본은 삭제됩니다.",
@@ -5242,41 +5242,40 @@
       },
       "browserBackend": {
         "title": "자동화 브라우저 대상",
-        "description": "자동화 시 에이전트가 기본으로 제어할 브라우저를 선택합니다. 세 대상의 로그인 상태는 서로 독립적이며, 작업에서 명시하면 그 선택이 우선합니다.",
         "defaultTag": "기본",
         "resetToDefault": "기본값으로 재설정",
         "toggleFailed": "브라우저 대상 전환에 실패했습니다",
         "health": {
-          "ready": "내장 브라우저 제어 연결이 준비되었습니다.",
-          "error": "내장 브라우저 연결 오류: {{reason}}. ‘내장 브라우저 복구’를 눌러 제어 연결을 다시 만드세요.",
+          "ready": "사이드바 브라우저 제어 연결이 준비되었습니다.",
+          "error": "사이드바 브라우저 연결 오류: {{reason}}. ‘사이드바 브라우저 복구’를 눌러 제어 연결을 다시 만드세요.",
           "reasons": {
             "disposing": "이전 종료 작업이 완료되지 않았습니다",
-            "hostUnavailable": "내장 브라우저 화면이 준비되지 않았거나 연결이 끊어졌습니다",
+            "hostUnavailable": "사이드바 브라우저 화면이 준비되지 않았거나 연결이 끊어졌습니다",
             "startFailed": "새 제어 프로세스를 시작하지 못했습니다",
             "statusFailed": "제어 프로세스 상태 확인에 실패했습니다",
             "recoveryFailed": "제어 연결을 다시 구성하지 못했습니다",
             "extensionDisconnected": "연결된 브라우저 확장이 없습니다 (Cindy Chrome 플러그인과 확장을 설치하고 활성화하세요)",
             "pluginMissing": "Cindy Chrome 플러그인이 설치되지 않았거나 꺼져 있습니다"
           },
-          "reconnect": "내장 브라우저 다시 연결",
-          "recover": "내장 브라우저 복구",
-          "recovering": "내장 브라우저 복구 중…",
-          "recovered": "내장 브라우저가 다시 연결되었습니다",
-          "recoverFailed": "내장 브라우저 복구에 실패했습니다. 오류 원인을 확인하고 다시 시도하세요.",
+          "reconnect": "사이드바 브라우저 다시 연결",
+          "recover": "사이드바 브라우저 복구",
+          "recovering": "사이드바 브라우저 복구 중…",
+          "recovered": "사이드바 브라우저가 다시 연결되었습니다",
+          "recoverFailed": "사이드바 브라우저 복구에 실패했습니다. 오류 원인을 확인하고 다시 시도하세요.",
           "userBrowserReady": "내 브라우저가 연결되었습니다: 에이전트가 사용 중인 브라우저를 조작할 수 있습니다.",
           "userBrowserError": "내 브라우저를 사용할 수 없습니다: {{reason}}."
         },
         "rsbWebview": {
-          "title": "사이드바 내장 브라우저",
-          "description": "에이전트가 오른쪽 사이드바의 webview 탭에서 작동합니다. 팝업 없음, 로그인 상태는 별도 유지됩니다."
+          "title": "사이드바 브라우저",
+          "description": "Cindy 오른쪽 사이드바에서 페이지를 열어 에이전트가 하는 일을 바로 볼 수 있습니다. 로그인 상태는 따로 저장됩니다."
         },
         "external": {
-          "title": "독립 외부 브라우저",
-          "description": "에이전트가 전용 Chrome 창을 제어합니다 (vendored Playwright)."
+          "title": "독립 브라우저",
+          "description": "Cindy 전용 Chrome 창으로, 평소 쓰는 Chrome과 분리되어 있습니다. 로그인 상태는 따로 저장됩니다."
         },
         "userBrowser": {
           "title": "내 브라우저",
-          "description": "에이전트가 Cindy 확장을 통해 사용 중인 Chrome / Edge를 로그인 상태 그대로 조작합니다. 새 페이지는 별도의 백그라운드 창에서 열려 보고 있는 페이지를 방해하지 않습니다."
+          "description": "사용 중인 Chrome 또는 Edge를 기존 로그인 그대로 조작합니다. 새 페이지는 백그라운드 창에서 열려 방해하지 않습니다."
         },
         "userBrowserSetup": {
           "installPluginTitle": "1단계: Cindy Chrome 플러그인 설치",

@@ -5225,7 +5225,7 @@
         "title": "ブラウザのログイン状態を使う",
         "description": "Chrome、Edge、Brave でログイン済みのアカウントとしてサイトを開きます。",
         "toggleAria": "ブラウザのログイン状態を使う",
-        "unavailableEmbedded": "スタンドアロンの外部ブラウザでのみ利用できます。サイドバーの内蔵ブラウザは Chrome のログインファイルを読めません。",
+        "unavailableEmbedded": "独立ブラウザでのみ有効です。オフにするとコピーしたログインファイルは削除されます。",
         "confirmTitle": "Agent にブラウザのログイン状態を使わせますか？",
         "confirmDescription": "Agent はメール、クラウド、社内コンソールなど、すでにログインしているサイトであなたとして操作できます。いつでもオフにでき、コピーは削除されます。",
         "confirmDescriptionMac": "Agent はメール、クラウド、社内コンソールなど、すでにログインしているサイトであなたとして操作できます。Chrome のログインファイルを読むには「フルディスクアクセス」も必要です。いつでもオフにでき、コピーは削除されます。",
@@ -5242,41 +5242,40 @@
       },
       "browserBackend": {
         "title": "自動操作のブラウザ対象",
-        "description": "自動操作でエージェントが既定で操作するブラウザを選びます。3 つの対象のログイン状態は独立しており、タスクで明示した場合はそちらが優先されます。",
         "defaultTag": "デフォルト",
         "resetToDefault": "デフォルトに戻す",
         "toggleFailed": "ブラウザ対象の切り替えに失敗しました",
         "health": {
-          "ready": "内蔵ブラウザの制御接続は正常です。",
-          "error": "内蔵ブラウザの接続に失敗しました：{{reason}}。「内蔵ブラウザを復旧」で制御接続を再構築してください。",
+          "ready": "サイドバーブラウザの制御接続は正常です。",
+          "error": "サイドバーブラウザの接続に失敗しました：{{reason}}。「サイドバーブラウザを復旧」で制御接続を再構築してください。",
           "reasons": {
             "disposing": "前回の終了処理が完了していません",
-            "hostUnavailable": "内蔵ブラウザー画面の準備ができていないか、接続が切れています",
+            "hostUnavailable": "サイドバーブラウザ画面の準備ができていないか、接続が切れています",
             "startFailed": "新しい制御プロセスを起動できませんでした",
             "statusFailed": "制御プロセスの状態確認に失敗しました",
             "recoveryFailed": "制御接続を再構築できませんでした",
             "extensionDisconnected": "接続中のブラウザ拡張がありません（Cindy Chrome プラグインと拡張をインストール・有効化してください）",
             "pluginMissing": "Cindy Chrome プラグインがインストールまたは有効化されていません"
           },
-          "reconnect": "内蔵ブラウザを再接続",
-          "recover": "内蔵ブラウザを復旧",
-          "recovering": "内蔵ブラウザを復旧中…",
-          "recovered": "内蔵ブラウザを再接続しました",
-          "recoverFailed": "内蔵ブラウザの復旧に失敗しました。理由を確認して再試行してください。",
+          "reconnect": "サイドバーブラウザを再接続",
+          "recover": "サイドバーブラウザを復旧",
+          "recovering": "サイドバーブラウザを復旧中…",
+          "recovered": "サイドバーブラウザを再接続しました",
+          "recoverFailed": "サイドバーブラウザの復旧に失敗しました。理由を確認して再試行してください。",
           "userBrowserReady": "自分のブラウザが接続済み：エージェントは使用中のブラウザを操作できます。",
           "userBrowserError": "自分のブラウザを利用できません：{{reason}}。"
         },
         "rsbWebview": {
-          "title": "サイドバー内蔵ブラウザ",
-          "description": "エージェントは右サイドバーの webview タブ内で操作します。ポップアップなし、ログイン状態は独立保持。"
+          "title": "サイドバーブラウザ",
+          "description": "Cindy の右サイドバーでページを開くので、エージェントの操作をそのまま見られます。ログイン状態は別に保存されます。"
         },
         "external": {
-          "title": "独立した外部ブラウザ",
-          "description": "エージェントは専用の Chrome ウィンドウを操作します（vendored Playwright）。"
+          "title": "独立ブラウザ",
+          "description": "Cindy 専用の Chrome ウィンドウで、普段使いの Chrome とは分かれています。ログイン状態は別に保存されます。"
         },
         "userBrowser": {
           "title": "自分のブラウザ",
-          "description": "エージェントは Cindy 拡張経由で使用中の Chrome / Edge をログイン状態のまま操作します。新しいページは別のバックグラウンドウィンドウで開き、閲覧中のページには触れません。"
+          "description": "使用中の Chrome / Edge をそのまま操作し、既存のログインを使います。新しいページはバックグラウンドのウィンドウで開き、邪魔をしません。"
         },
         "userBrowserSetup": {
           "installPluginTitle": "ステップ 1：Cindy Chrome プラグインをインストール",

@@ -1550,7 +1550,8 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
             onSetUpUserBrowser={() => void handleSetUpUserBrowser()}
           />
         ) : null}
-        {browserBackendKind !== null ? (
+        {/* 拷贝登录文件只对独立浏览器有用;别的浏览器下隐藏,但已经开着时仍要能关掉并删除拷贝。 */}
+        {browserBackendKind === 'external' || (browserBackendKind !== null && useRealProfile) ? (
           <BrowserRealProfileSubsection
             enabled={useRealProfile}
             pending={useRealProfilePending}
