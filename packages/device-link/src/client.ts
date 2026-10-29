@@ -1,4 +1,4 @@
-import { isPeerResetRetryableInvoke, bypassInvokeScheduling, resolveInvokePriority } from './invokePolicy.js';
+import { isPeerResetRetryableInvoke, bypassInvokeScheduling, resolveInvokePriority, canCoalesceRemoteListing } from './invokePolicy.js';
 import { InvokeScheduler } from './invokeScheduler.js';
 import { SessionMessageReuse } from './sessionMessageReuse.js';
 import {
@@ -786,6 +786,8 @@ interface ReceiveStreamState {
 // ─── 客户端实现 ───────────────────────────────────────────────────────────────
 
 export class DeviceLinkClient {
+  /** Only concurrent listing reads, never a result cache or a write retry. */
+  private readonly listingReads = new Map<string, Promise<InvokeResultPayload>>();
   private readonly invokeScheduler = new InvokeScheduler((id) => {
     const peer = this.peerTransport.get(id);
     return (this.ws?.bufferedAmount ?? 0) > SOCKET_DATA_LOW_WATER_BYTES
@@ -1120,6 +1122,17 @@ export class DeviceLinkClient {
     }, delay);
   }
 
+  /** A peer timeout is inconclusive when even the shared relay has gone quiet.
+   * Use the existing bounded, single-flight network probe before blaming a peer.
+   * Any valid relay traffic settles that probe; one silent peer cannot reset a
+   * shared connection that is still serving other peers. */
+  confirmRelayForPeerTimeout(): boolean {
+    if (this.status !== 'online') return false;
+    if (this.monotonicNow() - this.lastInboundAt <= this.timing.pingIntervalMs) return true;
+    this.notifyNetworkChanged({ urgent: true });
+    return false;
+  }
+
   private clearNetworkProbe(): void {
     if (this.networkChangeTimer) clearTimeout(this.networkChangeTimer);
     if (this.networkProbeTimer) clearTimeout(this.networkProbeTimer);
@@ -1132,12 +1145,9 @@ export class DeviceLinkClient {
    * 有界等待连接就绪。online 立即 resolve;否则订阅状态变化,在 timeoutMs 内
    * 等到 online 就 resolve,超时 / stopped 则 reject(NOT_CONNECTED)。
    *
-   * 关键:若当前正 park 在重连退避计时器上,先 connectNow() un-park 立即重连——
-   * 让"掉线/重连窗口里发起的请求"主动促成重连并在上线后放行,而不是被退避 gap
-   * (最坏 30s)拖成干等十几秒。退避被打断后又会立刻重连成功,所以等待通常 <1s。
-   *
-   * additive + opt-in:此方法供"用户正在等"的场景(移动端发请求)显式调用;
-   * 桌面端不调用它,默认重连/退避曲线完全不变。已 stopped 时不自动拉起连接
+   * 普通请求只等待既有重连，不清零 DNS/网络错误的指数退避。显式用户重试或
+   * 前台恢复仍可调用 connectNow；网络变化由 notifyNetworkChanged 处理。
+   * 已 stopped 时不自动拉起连接
    * (start/stop 仍由宿主生命周期掌管),直接快速失败让上层感知。
    */
   waitUntilOnline(timeoutMs?: number): Promise<void> {
@@ -1145,10 +1155,6 @@ export class DeviceLinkClient {
     if (this.stopped) {
       return Promise.reject(new DeviceLinkError('NOT_CONNECTED', 'client stopped'));
     }
-    // 仅在 park 在退避计时器上时 un-park(connectNow);若已有 connect 在途
-    // (reconnectTimer 为 null),不重复打断,避免并发等待者互相 thrash。
-    if (this.reconnectTimer) this.connectNow('wait-until-online');
-
     const timeout = timeoutMs ?? this.timing.requestTimeoutMs;
     return new Promise<void>((resolve, reject) => {
       let off: (() => void) | null = null;
@@ -1598,6 +1604,7 @@ export class DeviceLinkClient {
     reason: LinkCloseReason,
     direction: 'outbound' | 'inbound' = 'outbound',
   ): void {
+    this.listingReads.clear();
     // 本地永久关闭必须同步撤销已排期的 transport-timeout 重试通知:否则迟到
     // 的回调会在链路已关闭后补发瞬时重置帧,诱使对端重开用户已关掉的控制方向。
     this.cancelTimeoutCloseNotify(dst);
@@ -1672,6 +1679,42 @@ export class DeviceLinkClient {
     timeoutMs?: number,
     options?: { preSend?: () => void; background?: boolean },
   ): Promise<InvokeResultPayload> {
+    const priority = resolveInvokePriority(payload.channel, options?.background);
+    const coalescible = canCoalesceRemoteListing(payload);
+    // Fresh reads and writes invalidate joining old reads. A push does the same
+    // below. Use the existing conservative freshness policy, not retry safety.
+    if (!coalescible) this.listingReads.clear();
+    let key: string | undefined;
+    if (coalescible) {
+      const serialized = JSON.stringify([dst, payload, timeoutMs, priority]);
+      if (serialized.length <= 16_384) key = serialized;
+    }
+    const existing = key && this.listingReads.get(key);
+    if (existing) {
+      options?.preSend?.();
+      const result = await existing;
+      options?.preSend?.(); // Each consumer retains its own cancellation/owner check.
+      return JSON.parse(JSON.stringify(result)) as InvokeResultPayload;
+    }
+    const work = this.invokeUnshared(dst, payload, timeoutMs, options);
+    if (key && this.listingReads.size < 128) this.listingReads.set(key, work);
+    try {
+      const result = await work;
+      if (key) options?.preSend?.();
+      return key ? JSON.parse(JSON.stringify(result)) as InvokeResultPayload : result;
+    } finally {
+      // A read started while a write was in flight can predate its commit too.
+      if (!coalescible) this.listingReads.clear();
+      if (key && this.listingReads.get(key) === work) this.listingReads.delete(key);
+    }
+  }
+
+  private async invokeUnshared(
+    dst: string,
+    payload: InvokePayload,
+    timeoutMs?: number,
+    options?: { preSend?: () => void; background?: boolean },
+  ): Promise<InvokeResultPayload> {
     if (this.status !== 'online' && !this.hasOfflineDirectPath(dst)) {
       throw new DeviceLinkError('NOT_CONNECTED', 'not connected to relay');
     }
@@ -1679,6 +1722,10 @@ export class DeviceLinkClient {
       // Admission may wait: validate caller ownership/cancellation after dequeue,
       // synchronously before creating the request or retaining a transport frame.
       options?.preSend?.();
+      if (resolveInvokePriority(payload.channel, options?.background) === 'background'
+        && (this.networkProbeTimer || this.networkChangeTimer)) {
+        throw new DeviceLinkError('BACKPRESSURE', 'background refresh paused while checking relay connectivity');
+      }
       // Prepare at dispatch, not when joining the admission queue. Earlier
       // reads may have filled the existing cache while this one was waiting.
       const reuse = this.messageReuse.prepare(dst, payload);
@@ -1700,10 +1747,16 @@ export class DeviceLinkClient {
           }
         : result;
     };
-    return bypassInvokeScheduling(payload) ? send() : this.invokeScheduler.run(
+    const queuedAt = this.monotonicNow();
+    return (bypassInvokeScheduling(payload) ? send() : this.invokeScheduler.run(
       dst, resolveInvokePriority(payload.channel, options?.background),
       Math.min(timeoutMs ?? this.timing.requestTimeoutMs, 30_000), send,
-    );
+    )).catch((error: unknown) => {
+      if (error instanceof DeviceLinkError && error.code === 'BACKPRESSURE' && !error.inFlight) {
+        this.log.debug(`device-link invoke admission failed dst=${dst.slice(0, 8)} channel=${payload.channel} priority=${resolveInvokePriority(payload.channel, options?.background)} elapsedMs=${Math.round(this.monotonicNow() - queuedAt)} reason=${error.message}`);
+      }
+      throw error;
+    });
   }
 
   /** 被控端:回 invoke-result(对应入站 invoke 的 id) */
@@ -2048,6 +2101,7 @@ export class DeviceLinkClient {
   }
 
   private failAllPending(err: DeviceLinkError): void {
+    this.listingReads.clear();
     this.invokeScheduler.clear(err);
     for (const pending of this.pending.values()) {
       pending.reject(err);
@@ -2056,6 +2110,7 @@ export class DeviceLinkClient {
   }
 
   private failNonReliablePending(err: DeviceLinkError): void {
+    this.listingReads.clear();
     this.invokeScheduler.clear(err);
     for (const [id, pending] of this.pending) {
       if (pending.reliableDst && pending.hasWritten()) continue;
@@ -2549,6 +2604,7 @@ export class DeviceLinkClient {
       return;
     }
     if (validForHeartbeat) {
+      if (env.kind === 'push') this.listingReads.clear();
       this.lastInboundAt = this.monotonicNow();
       if (env.src && ROUTED_KINDS.has(env.kind)) this.lastPeerInboundAt = this.lastInboundAt;
       if (this.networkProbeTimer) {
