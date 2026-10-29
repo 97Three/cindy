@@ -54,6 +54,11 @@ Catalog (version)
 | 某个用户的显式设置 | 本机 `model-catalog-overrides.json` 等既有偏好 | 不写回 Server；刷新保留，恢复默认删除 override |
 | 新执行协议、SDK 参数、token 计量 | 本仓对应 host / harness / bridge | 加目录字段不会自动获得执行能力 |
 
+模型高级设置的「图片输入」可选跟随目录、支持、不支持。显式选择按账号、供应商、模型及引擎
+保存到本地覆盖；同一模型行的对话引擎别名一并更新。目录刷新保留选择，恢复默认只删除图片输入
+覆盖，保留其它自定义资料。已有任务的接口快照保留原传输协议，图片声明继续读取本地覆盖。
+这只修正客户端的能力声明，不改变上游服务实际能接收的内容。
+
 结构例外：条目没有 `models[].defaults`；Registry agents / perAgent 只接受 Claude Code、Codex，
 Pi 走 `providers[].models.pi`（用户补丁 perAgent.pi 另属合法 schema）。媒体 route 使用 `agents: []`。
 `contextWindowMax` 是客户端容量投影，不能填进 Registry；容量与工作预算见 [运行时细则](model-catalog-runtime.md)。

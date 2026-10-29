@@ -29,6 +29,13 @@ export default {
       throw Error('Ultrafast capability does not match the account');
     }
     await ui.capture('ultra-selected');
+    const imageInput = page.getByRole('button', { name: await ui.t('settings.providers.models.advanced.imageInput'), exact: true });
+    await imageInput.click();
+    await ui.capture('image-input-options');
+    await page.getByRole('menuitemradio', { name: await ui.t('settings.providers.models.advanced.unsupported'), exact: true }).click();
+    if (!(await imageInput.textContent()).includes(await ui.t('settings.providers.models.advanced.unsupported'))) throw Error('Explicit image input false was not shown');
+    await imageInput.click();
+    await page.getByRole('menuitemradio', { name: await ui.t('settings.providers.models.advanced.imageCapability.default'), exact: true }).click();
     const compaction = page.locator('[data-model-compaction]');
     await compaction.locator('summary').click();
     const trigger = compaction.getByRole('button');

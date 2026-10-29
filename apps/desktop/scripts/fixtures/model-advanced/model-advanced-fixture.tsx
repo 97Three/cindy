@@ -3,6 +3,7 @@ import { ModelAdvancedDrawer } from '../../../src/renderer/components/settings/M
 import { buildUnionRows } from '../../../src/renderer/components/settings/UnifiedModelList';
 import { BUNDLED_CATALOG, resolveModelMetadata, type CatalogModel, type ProviderView } from '@cindy/model-providers';
 
+let imageInput: boolean | null = null;
 let compactionPct: number | null = null;
 const contextView = () => ({ limit: 272000, isCustomized: false,
   compaction: { pct: compactionPct ?? 90, isCustomized: compactionPct !== null },
@@ -13,6 +14,10 @@ const contextView = () => ({ limit: 272000, isCustomized: false,
 
 void mountPage({
   host: { maker: {
+    getModelImageInputOverride: async () => ({ value: imageInput, mixed: false }),
+    setModelImageInputOverride: async (_target: unknown, value: boolean | null) => {
+      imageInput = value; return { value, mixed: false };
+    },
     getModelContextLimit: async () => contextView(),
     setModelCompaction: async (_target: unknown, pct: number | null) => {
       compactionPct = pct;

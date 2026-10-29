@@ -309,6 +309,8 @@ export const MAKER_INVOKE = {
    * (远程改被控端全局设置越权)。
    */
   MODEL_CONTEXT_LIMIT_GET: 'maker:model-context-limit:get',
+  MODEL_IMAGE_INPUT_GET: 'maker:model-image-input:get',
+  MODEL_IMAGE_INPUT_SET: 'maker:model-image-input:set',
   MODEL_COMPACTION_SET: 'maker:model-compaction:set',
   MODEL_CONTEXT_LIMIT_SET: 'maker:model-context-limit:set',
   MODEL_CONTEXT_LIMIT_RESET: 'maker:model-context-limit:reset',

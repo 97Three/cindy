@@ -1184,6 +1184,7 @@ import {
 import { registerStopAgentTaskHandler } from './stopAgentTaskHandler.js';
 import { registerStopSessionBackgroundTasksHandler } from './stopSessionBackgroundTasksHandler.js';
 import { registerProviderHandlers } from './providerHandlers.js';
+import { readModelImageInputOverride, writeModelImageInputOverride } from '../maker-host/model-catalog-override-store.js';
 import { createLocalCliScanDeps, scanLocalCliAuth } from './localCliDetect.js';
 import { registerMcpHandlers } from './mcpHandlers.js';
 import {
@@ -1195,6 +1196,7 @@ import {
   getDesktopSelectableCatalog,
   refreshActiveCatalogFromSource,
   refreshCustomProvidersIntoCatalog,
+  syncLocalCatalogOverridesIntoActiveCatalog,
 } from '../maker-host/createDesktopProviderService.js';
 import {
   deviceAvailableModels,
@@ -7676,6 +7678,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // Expose the actual next-start configuration, explicitly marked as pending.
       return configured && sessionId ? { ...configured, pendingApply: true } : configured;
     },
+    readModelImageInputOverride,
+    writeModelImageInputOverride: (targets, value) => writeModelImageInputOverride(targets, value, async () => {
+      syncLocalCatalogOverridesIntoActiveCatalog();
+      // Claude/Codex consume live catalog and interface metadata at dispatch.
+      // Only Pi caches input modalities in its native model registry.
+      const piTargets = targets.filter(target => target.agent === 'pi');
+      if (piTargets.length) await refreshContextSettings(piTargets);
+    }),
     readModelContextLimit: (target) => ({
       limit: readModelContextLimit(target.agent, target.providerId, target.modelId),
       isCustomized: isModelContextLimitCustomized(

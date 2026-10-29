@@ -3771,6 +3771,7 @@
           },
           "capabilityHint": "Uses capabilities declared by this provider. Image support falls back to model naming when undeclared.",
           "imageInput": "Image input",
+          "imageInputMixed": "Varies by engine",
           "supported": "Supported",
           "unsupported": "Not supported",
           "undeclared": "Not declared",

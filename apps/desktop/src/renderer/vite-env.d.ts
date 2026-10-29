@@ -5987,6 +5987,15 @@ interface ElectronAPI {
     resetModelPriceOverride: (
       target: import('../shared/modelPriceOverride').ModelPriceOverrideTarget,
     ) => Promise<import('../shared/modelPriceOverride').ModelPriceOverrideView>;
+    /** Local image-input capability; null removes the user override. */
+    getModelImageInputOverride: (
+      target: import('../shared/modelImageInputOverride').ModelImageInputTarget,
+    ) => Promise<import('../shared/modelImageInputOverride').ModelImageInputView>;
+    setModelImageInputOverride: (
+      target: import('../shared/modelImageInputOverride').ModelImageInputTarget,
+      value: boolean | null,
+      owner: import('../shared/modelImageInputOverride').ModelImageInputOwner,
+    ) => Promise<import('../shared/modelImageInputOverride').ModelImageInputView>;
     /**
      * 单模型上下文上限 override(设置 → 模型 → 高级设置)。窗口是自动压缩比例的分母,
      * 调小它让压缩按用户设的长度提前触发。target 与价格 override 同形。
