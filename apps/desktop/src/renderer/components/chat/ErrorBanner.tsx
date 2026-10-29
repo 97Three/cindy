@@ -28,7 +28,6 @@ import {
   isCindyGatewayProxyTokenInvalidError,
   isResponsesLiteParallelToolCallsError,
   isRemoteCompactEncryptedContentError,
-  REMOTE_COMPACT_ENCRYPTED_CONTENT_REASON,
   parseAgentErrorCode,
   requiresAgentErrorConfigurationChange,
 } from '@cindy/maker-shared/error-redaction';
@@ -254,8 +253,7 @@ export function ErrorBanner({
   // 仅本地 Codex 会话:远端会话 rollout 在远端机器, 本地 fork 剥离做不到, 不给入口。
   const showInvalidEncryptedContentRecovery =
     agentKind === 'codex' &&
-    errorReason !== REMOTE_COMPACT_ENCRYPTED_CONTENT_REASON &&
-    !isRemoteCompactEncryptedContentError(error) &&
+    !isRemoteCompactEncryptedContentError(error, errorReason) &&
     !isAnyRemoteSession &&
     !silentEncryptedRetryEnabled &&
     isInvalidEncryptedContentError(error);

@@ -1,9 +1,14 @@
 export const REMOTE_COMPACT_ENCRYPTED_CONTENT_REASON = 'remote-compact-encrypted-content';
 
-/** Compact ciphertext rejection is recoverable by rebuilding, not proof of oversized input. */
-export function isRemoteCompactEncryptedContentError(message: string): boolean {
-  if (/\bCINDY_ENCRYPTED_COMPACTION_INCOMPATIBLE\b/.test(message)) return true;
-  return /invalid_encrypted_content/i.test(message) && /remote compact/i.test(message);
+/**
+ * Raw failures require explicit ciphertext evidence. For persisted UI errors,
+ * the old overflow reason plus remote-compact message recovers details that an
+ * older translator discarded. A bare compact message remains insufficient.
+ */
+export function isRemoteCompactEncryptedContentError(message: string, reason?: unknown): boolean {
+  if (reason === REMOTE_COMPACT_ENCRYPTED_CONTENT_REASON || /\bCINDY_ENCRYPTED_COMPACTION_INCOMPATIBLE\b/.test(message)) return true;
+  return /remote compact/i.test(message)
+    && (reason === 'context-overflow' || /invalid_encrypted_content/i.test(message));
 }
 
 /**

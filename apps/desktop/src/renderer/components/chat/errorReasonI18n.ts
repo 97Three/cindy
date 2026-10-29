@@ -53,7 +53,7 @@ export const ERROR_REASON_I18N_KEYS: Record<string, string> = {
 
 /** Also correct persisted failures from hosts that used the old overflow reason. */
 export function errorReasonI18nKey(reason: string | null | undefined, message: string): string | undefined {
-  if ((!reason || reason === 'context-overflow') && isRemoteCompactEncryptedContentError(message)) {
+  if ((!reason || reason === 'context-overflow') && isRemoteCompactEncryptedContentError(message, reason)) {
     return 'chat.errorBanner.remoteCompactEncryptedContent';
   }
   return reason ? ERROR_REASON_I18N_KEYS[reason] : undefined;

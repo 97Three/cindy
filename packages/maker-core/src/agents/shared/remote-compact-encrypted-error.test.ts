@@ -28,4 +28,16 @@ describe("isRemoteCompactEncryptedContentError", () => {
       ),
     ).toBe(false);
   });
+
+  // Older translators discarded additionalDetails after assigning the overflow
+  // reason. Only that persisted evidence can recover a missing ciphertext code.
+  it.each([
+    ['context-overflow', 'Error running remote compact task', true],
+    [undefined, 'Error running remote compact task', false],
+    ['upstream-overload', 'Error running remote compact task', false],
+    ['context-overflow', 'invalid_encrypted_content', false],
+    ['remote-compact-encrypted-content', 'Compaction failed', true],
+  ])('uses reason evidence without widening raw compact classification (%s)', (reason, message, expected) => {
+    expect(isRemoteCompactEncryptedContentError(message, reason)).toBe(expected);
+  });
 });

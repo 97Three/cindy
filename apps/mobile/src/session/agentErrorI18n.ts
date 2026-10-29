@@ -1,4 +1,4 @@
-import { isResponsesLiteParallelToolCallsError, parseAgentErrorCode, isRemoteCompactEncryptedContentError, REMOTE_COMPACT_ENCRYPTED_CONTENT_REASON } from '@cindy/maker-shared/error-redaction';
+import { isResponsesLiteParallelToolCallsError, parseAgentErrorCode, isRemoteCompactEncryptedContentError } from '@cindy/maker-shared/error-redaction';
 import { requiresAgentErrorConfigurationChange as requiresConfigurationChange } from '@cindy/maker-shared/error-redaction';
 import { i18n } from '@/i18n';
 import { describeAgentAuthError } from '@/device-link/remoteStatus';
@@ -17,7 +17,7 @@ export function describeNonRetryableAgentError(text: string, reason?: unknown): 
   const authGuidance = describeAgentAuthError(text);
   if (authGuidance) return authGuidance;
   if (/thread not found/i.test(text)) return i18n.t('session.tail.codexThreadLost');
-  if (reason === REMOTE_COMPACT_ENCRYPTED_CONTENT_REASON || isRemoteCompactEncryptedContentError(text)) return null;
+  if (isRemoteCompactEncryptedContentError(text, reason)) return null;
   if (/invalid_encrypted_content/i.test(text)) return i18n.t('session.tail.encryptedContentInvalid');
   return null;
 }
@@ -73,7 +73,7 @@ export function localizeAgentError(
   toolLoop: MobileToolLoopErrorDetails | null,
   message = '',
 ): string | null {
-  if (reason === REMOTE_COMPACT_ENCRYPTED_CONTENT_REASON || isRemoteCompactEncryptedContentError(message)) return i18n.t('session.tail.remoteCompactEncryptedContent');
+  if (isRemoteCompactEncryptedContentError(message, reason)) return i18n.t('session.tail.remoteCompactEncryptedContent');
   if (reason === 'yield-continuation-incomplete') return i18n.t('session.tail.executionResultUnavailable');
   if (reason === 'output-limit') return i18n.t('session.tail.outputLimit');
   if (reason !== 'tool_use_loop_detected') return null;

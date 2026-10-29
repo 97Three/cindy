@@ -7,13 +7,14 @@ const error = 'Error running remote compact task: invalid_encrypted_content';
 
 function Fixture({ kind }: { kind: string }) {
   const [retries, setRetries] = useState(0);
+  const message = kind.endsWith('-split') ? 'Error running remote compact task' : error;
   return (
     <div className="p-4" data-retries={retries}>
-      {kind === 'history' ? (
-        <ErrorMessageCard message={error} reason="context-overflow" />
+      {kind.startsWith('history') ? (
+        <ErrorMessageCard message={message} reason="context-overflow" />
       ) : (
-        <ErrorBanner error={error}
-          errorReason={kind === 'legacy' ? 'context-overflow' : 'remote-compact-encrypted-content'}
+        <ErrorBanner error={message}
+          errorReason={kind.startsWith('legacy') ? 'context-overflow' : 'remote-compact-encrypted-content'}
           agentKind="codex" retryText="Continue the fixture task"
           onRetry={() => setRetries((value) => value + 1)} />
       )}

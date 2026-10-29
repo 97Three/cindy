@@ -174,7 +174,9 @@ timeout 不得触发自动换窗或 replay。Codex 当前没有与 Claude `AutoC
 确定性失败，走同一套 host-controlled rollover；单独的 `invalid_encrypted_content`（HTTP 静默剥
 推理密文范围）不得当成换窗。此类 compact 失败使用 `remote-compact-encrypted-content`
 原因，桌面与手机展示加密历史无法读取、自动接续未完成，不解释为单条输入超长；
-旧 Host 留下的 `context-overflow` 记录仍按原始 compact 错误识别。手动压缩入口不受此规则影响，
+旧 Host 留下的 `context-overflow` 加 remote compact 主消息也按压缩错误显示，兼容密文错误码
+只在已丢失的 `additionalDetails` 中的记录；原始错误未带此持久化原因时仍须有密文证据。
+手动压缩入口不受此规则影响，
 手动 compact 失败不得锁存换窗。
 
 Cindy 保底压缩是**一套**交接重建流程。装得进当前约束就不动；字节预算破了

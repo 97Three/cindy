@@ -139,12 +139,16 @@ describe('resolveSessionTailBanner — error-tail', () => {
   });
 
   // Compact-specific failures can be rebuilt by the host, unlike bare ciphertext errors.
-  it.each(['context-overflow', 'remote-compact-encrypted-content'])(
+  it.each([
+    ['context-overflow', 'Error running remote compact task: invalid_encrypted_content'],
+    ['remote-compact-encrypted-content', 'Error running remote compact task: invalid_encrypted_content'],
+    ['context-overflow', 'Error running remote compact task'],
+  ])(
     'keeps recovery available for a compact ciphertext failure (%s)',
-    (reason) => {
+    (reason, message) => {
       const state = resolveSessionTailBanner(baseInput({
         messages: [errorRow('compact', '2026-01-01T00:00:02.000Z', {
-          message: 'Error running remote compact task: invalid_encrypted_content', reason,
+          message, reason,
         })],
       }));
       expect(state).toMatchObject({

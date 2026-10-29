@@ -78,21 +78,28 @@ describe('ErrorBanner Codex xAI auth classification', () => {
 });
 
 describe('ErrorBanner context-overflow retry', () => {
-  it('corrects a persisted legacy compact error without rewriting history', () => {
+  it.each([
+    'Error running remote compact task: invalid_encrypted_content',
+    'Error running remote compact task',
+  ])('corrects a persisted legacy compact error without rewriting history (%s)', (message) => {
     render(createElement(ErrorMessageCard, {
-      message: 'Error running remote compact task: invalid_encrypted_content',
+      message,
       reason: 'context-overflow',
     }));
     expect(screen.getByText('chat.errorBanner.remoteCompactEncryptedContent')).toBeTruthy();
     expect(screen.queryByText('chat.errorBanner.contextOverflow')).toBeNull();
   });
   // The same compact failure used to show either oversized-input or switch-provider advice.
-  it.each([['context-overflow', false], ['remote-compact-encrypted-content', true]])(
+  it.each([
+    ['context-overflow', false, 'Error running remote compact task: invalid_encrypted_content'],
+    ['remote-compact-encrypted-content', true, 'Error running remote compact task: invalid_encrypted_content'],
+    ['context-overflow', true, 'Error running remote compact task'],
+  ])(
     'shows compact recovery guidance for %s (remote=%s)',
-    (errorReason, remote) => {
+    (errorReason, remote, error) => {
       const onRetry = vi.fn();
       render(createElement(ErrorBanner, {
-        error: 'Error running remote compact task: invalid_encrypted_content',
+        error,
         errorReason,
         agentKind: 'codex',
         deviceLinkDeviceId: remote ? 'other-computer' : null,
