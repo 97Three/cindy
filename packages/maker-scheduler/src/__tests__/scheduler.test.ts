@@ -268,6 +268,54 @@ it.each([
   await restarted.scheduler.stop();
 });
 
+// Review discussion_r4418701657: unlike the isolated restart cases above,
+// a newer automatic fire finishes while recovery awaits its runner/host lock.
+// Public tick + resume entries must preserve that newer fire's schedule fields.
+it.each([
+  [false, false], [false, true], [true, false], [true, true],
+] as const)('keeps newer completion scheduling during recovery (recurring=%s, failed=%s)', async (recurring, failed) => {
+  let finishNewer!: () => void;
+  let finishRecovery!: () => void;
+  const h = makeHarness({ runnerImpl: async (_schedule, ctx) => {
+    await ctx.onSessionBound?.(ctx.resumeSessionId ?? 'newer-task');
+    if (ctx.resumeSessionId) {
+      await new Promise<void>((resolve) => { finishRecovery = resolve; });
+      if (failed) throw new Error('continuation failed');
+    } else {
+      await new Promise<void>((resolve) => { finishNewer = resolve; });
+    }
+    return { sessionId: ctx.resumeSessionId ?? 'newer-task' };
+  } });
+  await h.scheduler.start();
+  const schedule = await h.scheduler.create({ ...baseInput, recurring, intervalMs: 120_000 });
+  const oldRun: ScheduleRun = { id: 'interrupted-run', scheduleId: schedule.id,
+    sessionId: 'original-task', firedAt: h.clock.now() - 5000,
+    status: 'interrupted', errorMsg: 'app restarted' };
+  await h.storage.insertRun(oldRun);
+  h.storage.claimInterruptedRun = async () => h.storage.updateRun(oldRun.id, { status: 'running' });
+  h.clock.setTo(schedule.nextFireAt!);
+  const newer = h.scheduler.tick();
+  await vi.waitFor(() => expect(finishNewer).toBeTypeOf('function'));
+  const recovered = await h.scheduler.resumeInterruptedRun('original-task');
+  await vi.waitFor(() => expect(finishRecovery).toBeTypeOf('function'));
+  finishNewer();
+  await newer;
+  const newerSchedule = (await h.storage.get(schedule.id))!;
+  expect(newerSchedule.lastFiredAt).toBeGreaterThan(oldRun.firedAt);
+  h.clock.advance(30_000);
+  finishRecovery();
+  await recovered!.completion;
+  expect(await h.storage.get(schedule.id)).toMatchObject({
+    lastFiredAt: newerSchedule.lastFiredAt,
+    nextFireAt: newerSchedule.nextFireAt,
+    status: newerSchedule.status,
+    lastFinishedAt: h.clock.now(),
+  });
+  expect(h.storage.runs.get(oldRun.id)?.status).toBe(failed ? 'failed' : 'success');
+  expect(h.storage.runs.size).toBe(2);
+  await h.scheduler.stop();
+});
+
 class FakeClock {
   current = Date.UTC(2026, 0, 1, 0, 0, 30); // start at 2026-01-01 00:00:30 UTC
   now(): number {

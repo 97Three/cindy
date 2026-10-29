@@ -1006,11 +1006,16 @@ export class Scheduler extends EventEmitter {
       return;
     }
 
-    await this.finishAutomaticRun(schedule, firedAt, finishedAt);
+    await this.finishRunSchedule(schedule, firedAt, finishedAt, 'automatic');
     this.emitEvent({ type: 'changed', scheduleId: schedule.id });
   }
 
-  private async finishAutomaticRun(schedule: Schedule, firedAt: number, finishedAt: number): Promise<void> {
+  private async finishRunSchedule(
+    schedule: Schedule,
+    firedAt: number,
+    finishedAt: number,
+    source: 'automatic' | 'run-now' | 'recovery',
+  ): Promise<void> {
     // Update the schedule row (schedules table — different from schedule_runs above).
     // lastFinishedAt 跟随终态写入：success/failed 都算"跑完了一次"，UI 列表
     // "Last X ago" 用本字段，避免显示出 fired vs finished 间的间隙感。
@@ -1019,6 +1024,17 @@ export class Scheduler extends EventEmitter {
     // agent 调 schedule_update 自适应降档改 cron）。用 fire 时刻的快照重排会把
     // 刚改好的新节奏覆盖回旧值。行已不存在时回退快照（storage.update 是 no-op）。
     const current = (await this.storage.get(schedule.id)) ?? schedule;
+    // Decide recovery ownership from this same fresh row, after runner/lock
+    // waits. runNow records its fire before dispatch; automatic fire records
+    // it on completion. A recorded or newer fire retains its schedule slot.
+    if (source === 'run-now' || (source === 'recovery' &&
+      (current.manual || (current.lastFiredAt !== undefined && current.lastFiredAt >= firedAt)))) {
+      const updated = await this.storage.update(schedule.id, { lastFinishedAt: finishedAt });
+      if (updated && updated.status === 'active') {
+        this.activeSchedules.set(updated.id, updated);
+      }
+      return;
+    }
     if (current.recurring) {
       // intervalMs 模式：finishedAt + N（时间已经走到 finishedAt，不需要再 max(now,...)）。
       // cron 模式：保持原行为，从 finishedAt 找下一个壁钟槽位。
@@ -1333,21 +1349,8 @@ export class Scheduler extends EventEmitter {
     // Aborted 路径同 fireOne:schedule 大概率已被 delete/pause,不要重写 lastFinishedAt
     // (避免污染已删除/已暂停 schedule 的字段)。守卫 abort 例外:schedule 仍在,
     // "跑完了一次(以失败收场)"该如实反映到列表。
-    // runNow records lastFiredAt before dispatch; automatic fire records it only
-    // on completion. An unrecorded recovered trigger still owes automatic
-    // scheduling. A newer recorded trigger must keep its existing schedule.
-    const unfinishedAutomaticFire = recovery && !schedule.manual &&
-      (schedule.lastFiredAt === undefined || schedule.lastFiredAt < firedAt);
-    if ((!wasAborted || stallAborted) && unfinishedAutomaticFire) {
-      await this.finishAutomaticRun(schedule, firedAt, finishedAt);
-    } else if (!wasAborted || stallAborted) {
-      // runNow 跟 cron 路径一致：把 lastFinishedAt 写到 schedule row，让 UI 列表
-      // 立刻反映"刚跑完了一次"。nextFireAt 不动（manual 触发不该改 cron 排定时间）。
-      await this.storage.update(schedule.id, { lastFinishedAt: finishedAt });
-      const cachedAfter = this.activeSchedules.get(schedule.id);
-      if (cachedAfter) {
-        this.activeSchedules.set(schedule.id, { ...cachedAfter, lastFinishedAt: finishedAt });
-      }
+    if (!wasAborted || stallAborted) {
+      await this.finishRunSchedule(schedule, firedAt, finishedAt, recovery ? 'recovery' : 'run-now');
     }
     // Revalidate history for either a new run or the recovered original row.
     this.emitEvent({ type: 'changed', scheduleId: schedule.id });
