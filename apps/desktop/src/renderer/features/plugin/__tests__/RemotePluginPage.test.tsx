@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RemotePluginUiEnablePrompt } from '@/components/new-chat/RemotePluginUiEnablePrompt';
 import { RemotePluginPage } from '../RemotePluginPage';
 import { setDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 import { ghostInstallApprovalToken } from '../../../../shared/ghost';
@@ -10,6 +11,7 @@ const { invoke, confirm, localGhosts, notices } = vi.hoisted(() => ({
   confirm: vi.fn(async () => true),
   localGhosts: vi.fn(),
 }));
+vi.mock('../PluginDevicePicker', async importOriginal => ({ ...await importOriginal<typeof import('../PluginDevicePicker')>(), usePluginDeviceDirectory: () => ({ online: true, target: { name: 'Execution computer' } }) }));
 vi.mock('@/lib/toast', () => ({ toast: notices }));
 vi.mock('@/components/new-chat/AddRemoteProjectDialog', () => ({
   AddRemoteProjectDialog: ({ fixedDeviceId, onProjectAdded, onOpenChange }: {
@@ -186,18 +188,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe('selected plugin host', () => {
-  it('presents cancellation as a neutral overlay without inserting a banner', async () => {
+  it.each(['cancelled', 'changed'] as const)('presents the %s receipt with the existing notice', async outcome => {
     const normal = invoke.getMockImplementation()!;
     invoke.mockImplementation(async (device, channel, args) =>
       args[0]?.actionId === 'management:begin'
-        ? { effects: [], result: { operationId: args[0].input.operationId, phase: 'cancelled' } }
+        ? { effects: [], result: { operationId: args[0].input.operationId, phase: outcome === 'changed' ? 'failed' : 'cancelled', ...(outcome === 'changed' ? { errorCode: 'NOT_FOUND' } : {}) } }
         : normal(device, channel, args),
     );
     render(<RemotePluginPage device={{ deviceId: 'computer-a', name: 'A' }} online />);
     fireEvent.click(await screen.findByText('computer-a'));
     fireEvent.click(screen.getByText('Disable'));
     await waitFor(() =>
-      expect(notices.info).toHaveBeenCalledWith('settings.ghosts.remote.cancelled'),
+      expect(outcome === 'changed' ? notices.error : notices.info).toHaveBeenCalledWith(`settings.ghosts.remote.${outcome}`),
     );
     expect(screen.queryByText('settings.ghosts.remote.cancelled')).toBeNull();
     expect(screen.queryByRole('button', { name: 'settings.ghosts.remote.retry' })).toBeNull();
@@ -903,4 +905,73 @@ describe('selected plugin host', () => {
     expect(screen.queryByText('settings.ghosts.remote.readFailed')).toBeNull();
     expect(screen.getByRole('button', { name: 'settings.ghosts.remote.refresh' })).toBeTruthy();
   });
+});
+
+// unit: the remote task prompt must negotiate before sending, and a lost approval
+// receipt must never replay consent. Minimum input: one pending UI plugin and one answer.
+describe('remote task interactive-page consent prompt', () => {
+  function setup(capability: boolean, lost = false) {
+    const normal = invoke.getMockImplementation()!;
+    invoke.mockImplementation(async (device, channel, args) => {
+      const action = args?.[0]?.actionId;
+      if (action === 'management:snapshot') {
+        const data = snapshot(device);
+        return { effects: [], result: { ...data, ...(capability ? { uiCapabilityApproval: true } : {}),
+          ghosts: data.ghosts.map(g => ({ ...g, manifest: { ...g.manifest, ui: { pages: { planner: { html: 'ui.html' } }, tools: {} } } })) } };
+      }
+      if (action === 'management:operation') return { effects: [], result: {
+        operationId: args[0].input.operationId, phase: 'confirmation', consent: {
+          requestId: 'page-consent', purpose: 'ui-capability', initiator: 'user', origin: 'local-file',
+          facts: { kind: 'install', ghostId: 'weather', name: 'Weather', version: '1.0.0', permissions: [] },
+        },
+      } };
+      if (action === 'management:answer' && lost) throw new Error('receipt lost');
+      return normal(device, channel, args);
+    });
+  }
+  it('shows an upgrade hint without sending an unnegotiated operation to an old Host', async () => {
+    setup(false); render(<RemotePluginUiEnablePrompt deviceId="computer-a" />);
+    await screen.findByText('newChat.pluginUi.updateHost');
+    expect(screen.queryByText('newChat.pluginUi.enable')).toBeNull();
+    expect(invoke.mock.calls.some(c => c[2]?.[0]?.actionId === 'management:begin')).toBe(false);
+  });
+  it('answers page consent once, then queries the same operation after a lost receipt', async () => {
+    setup(true, true); render(<RemotePluginUiEnablePrompt deviceId="computer-a" />);
+    const button = await screen.findByText('newChat.pluginUi.enable');
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(button); });
+    expect(invoke.mock.calls.filter(c => c[2]?.[0]?.actionId === 'management:answer')).toHaveLength(1);
+    const begin = invoke.mock.calls.find(c => c[2]?.[0]?.actionId === 'management:begin')!;
+    expect(begin[2][0].input).toMatchObject({ kind: 'approve-ui', uiConsentVersion: 1 });
+    expect(confirm).toHaveBeenCalledOnce();
+    // Poll with fake time; no network replay and no second consent dialog.
+    await act(async () => { await vi.advanceTimersByTimeAsync(2400); });
+    expect(invoke.mock.calls.filter(c => c[2]?.[0]?.actionId === 'management:operation').length).toBeGreaterThan(1);
+    expect(invoke.mock.calls.filter(c => c[2]?.[0]?.actionId === 'management:answer')).toHaveLength(1);
+    expect(confirm).toHaveBeenCalledOnce();
+  });
+  // M04, unit: a confirmation for an updated install fails; the prompt must not
+  // silently disappear. Existing tests only covered success and lost receipts.
+  it('shows the existing changed-plugin notice for a stale page approval', async () => {
+    setup(true);
+    const normal = invoke.getMockImplementation()!;
+    let answered = false;
+    invoke.mockImplementation(async (device, channel, args) => {
+      const request = args?.[0];
+      if (request?.actionId === 'management:answer') answered = true;
+      if (request?.actionId === 'management:operation' && answered) return { effects: [], result: {
+        operationId: request.input.operationId, phase: 'failed', errorCode: 'NOT_FOUND',
+      } };
+      return normal(device, channel, args);
+    });
+    render(<RemotePluginUiEnablePrompt deviceId="computer-a" />);
+    const button = await screen.findByText('newChat.pluginUi.enable');
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(button); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200); });
+    expect(notices.error).toHaveBeenCalledWith('settings.ghosts.remote.changed');
+    expect(invoke.mock.calls.filter(c => c[2]?.[0]?.actionId === 'management:answer')).toHaveLength(1);
+    expect(screen.queryByText('newChat.pluginUi.ready')).toBeNull();
+  });
+
 });

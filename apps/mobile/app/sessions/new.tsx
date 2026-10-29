@@ -1,3 +1,4 @@
+import { PluginUiEnablePrompt } from '@/plugins/PluginUiEnablePrompt';
 import { deviceDisplayName } from '@/device-link/deviceName';
 import {
   reconcileNewSessionCatalogDraft,
@@ -5470,6 +5471,9 @@ function NewRemoteSessionContent({ creatingRef }: { creatingRef: { current: bool
                 - safeAreaInsets.top - navigationChrome.target - spacing.xl),
               paddingBottom: composerDock.enabled ? 0 : spacing.md,
             }]} testID="newSession.composer">
+              <PluginUiEnablePrompt deviceId={selectedDeviceId || undefined} deviceName={selectedDeviceLabel}
+                online={deviceLinkStatus === 'online' && !!selectedDeviceId && getPresenceAvailability(selectedDeviceId) !== false}
+                active={isShareTargetFocused && !creating} />
               <ComposerPluginPalette
                 deviceId={selectedDeviceId || undefined}
                 workingDir={draft.workspaceKind === 'project' ? draft.workingDir.trim() : undefined}

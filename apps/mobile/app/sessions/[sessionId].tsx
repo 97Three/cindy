@@ -1,4 +1,5 @@
 import { snapshotRichAnswerValues } from '@/session/RichAnswer';
+import { PluginUiEnablePrompt } from '@/plugins/PluginUiEnablePrompt';
 import { deviceDisplayName } from '@/device-link/deviceName';
 import { SessionQuickSendProvider } from '@/session/SessionQuickSendContext';
 import { incomingShareSlotOrder } from '@/session/mobileLocalAttachmentUpload';
@@ -10746,6 +10747,8 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
               <ChevronRight color={colors.textTertiary} size={iconSize.sm} strokeWidth={iconStroke.regular} />
             </Pressable>
           ) : null}
+          <PluginUiEnablePrompt deviceId={deviceId} deviceName={deviceName} sessionId={sessionId}
+            online={!remoteRealtimeControlsUnavailable} active={creationScreenFocused && !shareSelectionActive} />
           {/*
             手机端终结不了的请求(plugin_setup 等)只贴在输入框上方:能看清电脑端
             在等什么、能取消,但不吃掉 composer —— 否则用户既处理不了这张卡又发不

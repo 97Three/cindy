@@ -1,3 +1,4 @@
+import { sharedTaskHostPeer, providerShareHostPeer } from '@cindy/device-link';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getMobileAuthOwner, setMobileAuthOwner } from '@/auth/authOwnerGeneration';
 import { createPluginManagementClient, type PluginManagementInvoke } from '@/plugins/pluginManagementClient';
@@ -273,4 +274,70 @@ describe('mobile management transactions', () => {
     await c.answer(true);
     expect(h.requests.some((r) => r.actionId === 'management:answer')).toBe(false);
   });
+});
+
+/* 新增依据：页面批准是增量能力；旧 Host 不接新写入，丢失回执不能重放。
+ * 缺口/最小输入：v1 snapshot 缺 capability 或批准 answer 超时；tier: unit，真实 client/controller。 */
+describe('interactive page capability approval', () => {
+  it.each(['approve-ui', 'defer-ui'] as const)('requires advertised support before %s and binds the revision and consent version', async (kind) => {
+    const h = host(() => receipt('succeeded'));
+    const c = controller(h.client);
+    await c.refresh();
+    const start = () => kind === 'approve-ui' ? c.approveUi(plugin) : c.deferUi(plugin);
+    await start();
+    expect(c.getState()).toMatchObject({ outcome: 'failed', errorCode: 'PLUGIN_UI_APPROVAL_UNSUPPORTED' });
+    expect(h.requests.some((r) => r.actionId === 'management:begin')).toBe(false);
+    h.setFacts({ ...snapshot(), uiCapabilityApproval: true });
+    await start();
+    expect(h.requests.find((r) => r.actionId === 'management:begin')).toMatchObject({
+      resourceRef: { id: plugin.instanceKey }, input: { kind, uiConsentVersion: 1,
+        expectedInstalledApproval: 'approved:12345678-1234-4123-8123-123456789abc' },
+    });
+    expect(c.getState().outcome).toBe('succeeded');
+  });
+  it.each([false, true])('only marks generic install consent when the Host advertises UI approval (%s)', async (supported) => {
+    const h = host(() => receipt('succeeded'));
+    h.setFacts({ ...snapshot(), ...(supported ? { uiCapabilityApproval: true as const } : {}) });
+    const c = controller(h.client); await c.refresh(); await c.install(detail, plugin);
+    expect(h.requests.find((r) => r.actionId === 'management:begin')!.input.uiConsentVersion).toBe(supported ? 1 : undefined);
+  });
+  it('retains the UI purpose, trust, approval and Host suppression without assuming them on old Hosts', () => {
+    const data = parsePluginManagementSnapshot({ ...snapshot([{ ...plugin, uiCapabilityApproved: true, uiPromptSuppressed: true }]), uiCapabilityApproval: true });
+    expect(data.uiCapabilityApproval).toBe(true);
+    expect(data.ghosts[0]).toMatchObject({ uiCapabilityApproved: true, uiPromptSuppressed: true });
+    expect(parsePluginManagementSnapshot(snapshot()).uiCapabilityApproval).toBeUndefined();
+    const consent = { ...confirmation().consent, purpose: 'ui-capability', trust: 'unverified' };
+    expect(parsePluginManagementReceipt({ ...confirmation(), consent }, 'operation-1').consent).toMatchObject(consent);
+    expect(() => parsePluginManagementSnapshot({ ...snapshot(), uiCapabilityApproval: 'true' })).toThrow('INVALID_RESPONSE');
+  });
+  it('queries a lost UI approval receipt without replaying the answer', async () => {
+    const h = host((r) => r.actionId === 'management:begin' ? { ...confirmation(), consent: {
+      ...confirmation().consent!, purpose: 'ui-capability',
+    } } : r.actionId === 'management:answer' ? Promise.reject(new Error('TIMEOUT')) : receipt('succeeded'));
+    h.setFacts({ ...snapshot(), uiCapabilityApproval: true });
+    const c = controller(h.client); await c.refresh(); await c.approveUi(plugin); await c.answer(true);
+    expect(c.getState().outcome).toBe('unknown');
+    await c.answer(true); await c.reconcile();
+    expect(h.requests.filter((r) => r.actionId === 'management:answer')).toHaveLength(1);
+    expect(h.requests.filter((r) => r.actionId === 'management:begin')).toHaveLength(1);
+    expect(c.getState().outcome).toBe('succeeded');
+  });
+  it.each(['revision', 'owner', 'disconnect'] as const)('does not send a stale UI confirmation after %s changes', async (change) => {
+    const h = host(() => ({ ...confirmation(), consent: { ...confirmation().consent!, purpose: 'ui-capability' } }));
+    h.setFacts({ ...snapshot(), uiCapabilityApproval: true });
+    const c = controller(h.client); await c.refresh(); await c.approveUi(plugin);
+    if (change === 'revision') h.setFacts({ ...snapshot([{ ...plugin, approval: { state: 'approved', revision: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' } }]), uiCapabilityApproval: true });
+    else if (change === 'owner') setMobileAuthOwner('other-owner');
+    else c.setOnline(false);
+    await c.answer(true);
+    expect(h.requests.some((r) => r.actionId === 'management:answer')).toBe(false);
+  });
+});
+
+it.each([sharedTaskHostPeer('task', 'device'), providerShareHostPeer('share', 'device')])('never sends management requests for a guest peer', async (deviceId) => {
+  const invoke = vi.fn();
+  const client = createPluginManagementClient({ deviceId, invoke });
+  await expect(client.snapshot()).rejects.toThrow('PLUGIN_MANAGEMENT_OWNER_ONLY');
+  await expect(client.answer('operation', 'request', true)).rejects.toThrow('PLUGIN_MANAGEMENT_OWNER_ONLY');
+  expect(invoke).not.toHaveBeenCalled();
 });
