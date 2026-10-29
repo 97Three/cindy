@@ -18,6 +18,20 @@ const snapshot = (): ChatSnapshot => ({ room: room(), cursor: '9007199254741099'
 ] });
 
 describe('group list activity', () => {
+  it('refreshes pending execution state without a new message and tolerates an older server', async () => {
+    const request = vi.fn().mockResolvedValueOnce([{ status: 'running' }]).mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ status: 'needs_input' }]).mockResolvedValueOnce([])
+      .mockRejectedValueOnce(Object.assign(new Error('NOT_FOUND'), { status: 404 })).mockResolvedValueOnce([]);
+    const client = createChatServerClient(request);
+    const value = snapshot();
+    expect(await client.rosterActivity(value.room.id, value)).toEqual({ phase: 'running' });
+    const awaiting = await client.rosterActivity(value.room.id, value);
+    expect(chatRoomRow(value.room, value, undefined, awaiting).item.display.teammateActivity)
+      .toEqual({ phase: 'needs-interaction' });
+    expect(await client.rosterActivity(value.room.id, value)).toBeUndefined();
+    expect(request.mock.calls.every(([path]) => /\/(executions|plans)$/.test(path))).toBe(true);
+  });
+
   it('places a newly created empty group and a group with a new topic ahead of an older main chat', () => {
     const old = chatRoomRow(room(1), { ...snapshot(), messages: [{ ...message(20), createdAt: '2026-10-10T12:00:00Z' }] });
     const fresh = chatRoomRow({ ...room(2), created_at: '2026-10-11T12:00:00Z' }, { ...snapshot(), messages: [] });

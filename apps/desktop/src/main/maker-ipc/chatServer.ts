@@ -1,4 +1,5 @@
 import { botGroupProcessCard, readBotGroupProcessCard } from '../../shared/botGroupChat.js';
+import { teammateChatActivity } from '@cindy/maker-shared/teammate-status';
 import { prepareChatReplyFiles } from './chatServerReplyFiles.js';
 import type { ChatUploadAttachment } from './chatServerMedia.js';
 import { createConversationListState } from '@cindy/maker-shared/chatConversationList';
@@ -1609,6 +1610,8 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     // The sidebar never resolves shares: it names the sharer and never quotes the card's text.
     const lastIsShare = !!last && !!readBotGroupThreadShareCard(last);
     return { conversationKind: direct ? 'direct' : 'group', serverBacked: true, reactionRevision: reactionRevisions.get(roomId)?.room ?? runtimeReactionRevision, reactionRevisions: { ...reactionRevisions.get(roomId)?.messages }, supportsGroupLeave: !direct, supportsDissolve: !direct && supportsDissolve, supportsListRemoval, supportsMemberAvatar: !direct && supportsMemberAvatar, dissolvedAt: s.room.dissolved_at ?? null, migrationPending: [...upgradeErrors.keys()].some(source => upgradedGroups.get(source) === roomId), archived: s.room.archived, selfActorId: selfId, topic: s.room.topic, description: s.room.description, revision: s.room.revision, canInvite: !direct && !s.room.dissolved_at && s.members.some(m => m.ownerActorId === selfId && m.state === 'joined' && ['owner', 'admin'].includes(m.role)), canStopAll: !direct && singleSpeaker && !!managementActor(s), ...(!direct && singleSpeaker ? { singleSpeaker: true, supportsDivision: true } : {}), id: s.room.id, name: direct ? s.members.filter(m => m.state === 'joined' && m.id !== selfId).map(member => memberName(member, [])).join(', ') || s.room.name : s.room.name, replyMode: s.room.response_mode, speakingMode: s.room.speaking_mode,
+      teammateActivity: teammateChatActivity({ executions, plans: serverPlans, planning: !!deciding,
+        archived: s.room.archived, lastMessageAt: last ? Date.parse(last.createdAt) : 0 }),
       members: s.members.filter(m => m.state === 'joined').map(m => {
         const p = localBot(m.id);
         return { botId: p?.id ?? m.id, actorId: m.id, actorKind: m.kind, isSelf: m.id === selfId,

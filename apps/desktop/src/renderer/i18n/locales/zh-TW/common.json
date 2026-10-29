@@ -1649,6 +1649,7 @@
     }
   },
   "settings": {
+    "newChatDefaults": { "title": "新任務預設權限" },
     "imConnection": {
       "reconnect": "重新連線",
       "savedNote": "繫結資訊已保留，可直接重試連線。",
@@ -9858,6 +9859,13 @@
     }
   },
   "bots": {
+    "avatarStatus": {
+      "awaiting": "待你確認",
+      "error": "需要注意",
+      "running": "正在工作",
+      "done": "已完成",
+      "unread": "未讀"
+    },
     "workbench": {
       "ownedMark": "所屬夥伴：{{names}}",
       "createdMark": "由 {{names}} 建立",
