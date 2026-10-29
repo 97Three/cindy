@@ -96,15 +96,6 @@ vi.mock("@/theme", () => ({
   }),
 }));
 import { AnchoredPullDownMenu } from "@/platform/chrome/AnchoredPullDownMenu.android";
-vi.mock('@/platform/chrome/AnchoredPullDownMenu', async () => import('@/platform/chrome/AnchoredPullDownMenu.android'));
-vi.mock('@/platform/chrome/NativePullDownMenu', () => ({
-  usesNativePullDownMenu: () => true,
-  NativePullDownMenu: (props: any) => <AnchoredPullDownMenu {...props} />,
-}));
-vi.mock('@/components/MobilePrimitives', () => ({ MainWindowRowButton: () => null }));
-vi.mock('@/session/CompanionSheet', () => ({ CompanionSheet: () => null }));
-vi.mock('lucide-react-native', () => ({ Check: () => null }));
-import { BotGroupMenu } from '@/session/BotGroupMenu';
 
 let root: Root;
 let container: HTMLDivElement;
@@ -125,23 +116,6 @@ const click = (label: string) =>
     button!.click();
   });
 
-// Unit regression: wrapping a message in an uncontrolled menu blocked its table/attachment touches.
-it('keeps group message content interactive while long press opens its Android menu', () => {
-  const preview = vi.fn(), selected = vi.fn();
-  act(() => root.render(<BotGroupMenu title="Actions" longPress
-    sections={[{ id: 'message', options: [{ id: 'copy', title: 'Copy' }] }]} onSelect={selected}>
-    {open => <div onContextMenu={open}><button onClick={preview}>Attachment</button></div>}
-  </BotGroupMenu>));
-  const attachment = Array.from(container.querySelectorAll('button')).find(button => button.textContent === 'Attachment')!;
-  expect(attachment.closest('[data-pointer-events="none"]')).toBeNull();
-  click('Attachment');
-  expect(preview).toHaveBeenCalledOnce();
-  expect(container.textContent).not.toContain('Copy');
-  act(() => attachment.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true })));
-  click('Copy');
-  expect(selected).toHaveBeenCalledWith('copy');
-  expect(container.textContent).not.toContain('Copy');
-});
 it("keeps groups, check states, disabled choices and repeated selections in the native popup", () => {
   const choose = vi.fn();
   act(() =>

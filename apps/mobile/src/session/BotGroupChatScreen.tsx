@@ -12,7 +12,7 @@ import type { DurableOutboxRecord } from './durableOutbox';
  * 每次电脑推送变化就重读，不在本地拼时间线。分工的安排卡、交接文件、「下一步 · 继续」
  * 「没做完 · 重试」见 BotGroupPlan.tsx；正在发言的伙伴与它待确认的操作见 BotGroupSpeakerRow。
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -110,7 +110,7 @@ import type { ResolveRemoteMediaFn } from './remoteMedia';
 import { useBotGroupChat } from './useBotGroupChat';
 import { useBotGroupRemoteMedia } from './useBotGroupRemoteMedia';
 import { botGroupRoute } from './botGroupNavigation';
-import { BotGroupThreadEntry, BotGroupThreadFollow, BotGroupThreadShare, BotGroupThreadPosted, BotGroupTopicActions } from './BotGroupThreadViews';
+import { BotGroupThreadEntry, BotGroupThreadFollow, BotGroupThreadShare, BotGroupThreadPosted, BotGroupMessageActions } from './BotGroupThreadViews';
 
 /** Toast copy when a plan action fails without a more specific cause. */
 const PLAN_ACTION_FAILED: Record<BotGroupPlanAction, string> = {
@@ -778,12 +778,12 @@ export function BotGroupTimeline({
       const posted = pending.find(row => row.chat?.messageId === message.id && row.chat.shareToMain?.state === 'sent')?.chat?.shareToMain;
       const shared = posted ? { messageId: posted.messageId ?? null, bySelf: true } : sharedReplies?.[message.id];
       const revealShare = () => onRevealShare?.(shared?.messageId ?? null);
-      const actions = (children: ReactElement) => <BotGroupTopicActions message={message} online={online} readOnly={!!group.archived || !!group.dissolvedAt}
+      const actions = <BotGroupMessageActions message={message} online={online} readOnly={!!group.archived || !!group.dissolvedAt}
             onShareImage={onShareImage && (!message.threadShare || message.threadShare.status === 'available') ? () => onShareImage(message.id) : undefined}
             onQuote={onReply && isBotGroupMessageQuotable(message) ? () => onReply(message) : undefined}
             onThread={onOpenThread && !message.threadRootId ? () => onOpenThread(message) : undefined}
             onShare={onShare && !isRoot && message.threadRootId ? () => onShare(message.id) : undefined}
-            shared={shared} onReveal={revealShare}>{children}</BotGroupTopicActions>;
+            shared={shared} onReveal={revealShare} />;
       const key = rowKey(message.id);
       return <View key={key} testID={`botGroup.row.${message.id}`} style={[styles.item, highlightId === message.id && styles.locatedMessage]}
         onLayout={event => onMessageLayout?.(message.id, event.nativeEvent.layout.y, event.nativeEvent.layout.height)}>
@@ -803,10 +803,11 @@ export function BotGroupTimeline({
           <BotGroupThreadEntry message={message} summary={messages.find(candidate => candidate.id === message.threadShare?.threadRootId) ?? message.threadShare}
             identityFor={identityFor} onPress={() => onOpenTopic?.(message.threadShare!.threadRootId, message.threadShare!.messageId)} />
         </View> : null}
+        {!queued && message.kind === 'message' && !message.deleted ? actions : null}
         {!queued && shared && message.kind === 'message' && !message.deleted ? <View style={styles.messageFooter}>
           <BotGroupThreadPosted messageId={message.id} shared={shared} onPress={revealShare} />
         </View> : null}
-        </>} renderContent={!queued && message.kind === 'message' ? actions : undefined} topic={!!threadRootId} isRoot={isRoot} onRetrySource={onRetrySource} message={displayMessage} continued={continued} member={message.authorBotId ? memberById.get(message.authorBotId) : undefined}
+        </>} topic={!!threadRootId} isRoot={isRoot} onRetrySource={onRetrySource} message={displayMessage} continued={continued} member={message.authorBotId ? memberById.get(message.authorBotId) : undefined}
           quoteDisplay={message.quote ? resolveBotGroupQuote(message.quote, messages) : undefined}
           onLocateQuote={message.quote && onLocateMessage ? () => onLocateMessage(message.quote!.messageId) : undefined}
           members={group.members} deviceId={deviceId} online={online} identityFor={identityFor} mentionLabels={mentionLabels}
@@ -841,12 +842,12 @@ export function BotGroupTimeline({
 }
 
 function BotGroupTimelineItem({
-  message, footer, renderContent = content => content, topic = false, isRoot = false, onRetrySource, continued = false, quoteDisplay, onLocateQuote, member, members, deviceId, online, identityFor, mentionLabels, resolveMedia, resolveServerMedia, canContinue, continuing, onContinue,
+  message, footer, topic = false, isRoot = false, onRetrySource, continued = false, quoteDisplay, onLocateQuote, member, members, deviceId, online, identityFor, mentionLabels, resolveMedia, resolveServerMedia, canContinue, continuing, onContinue,
   plan, planActionable, planReassignable, planPending, onPlanAction, onEditStep,
 }: {
   message: BotGroupMessageView;
   footer?: ReactNode;
-  renderContent?: (content: ReactElement) => ReactElement; onRetrySource?: () => void;
+  onRetrySource?: () => void;
   topic?: boolean; isRoot?: boolean;
   /** Same teammate as the message just above: no second avatar or name. */
   continued?: boolean;
@@ -914,7 +915,7 @@ function BotGroupTimelineItem({
     return <View style={styles.userRow} testID="botGroup.message.user">
       <View style={styles.userColumn}>
         {quoteDisplay ? <BotGroupQuote display={quoteDisplay} align="right" onPress={onLocateQuote} /> : null}
-        <View style={styles.userMessageFrame}>{renderContent(<View style={styles.userMessageContent}>
+        <View style={styles.userMessageContent}>
           {renderAttachments('right')}
           {bubble ? <View style={[
             styles.userBubble,
@@ -923,7 +924,7 @@ function BotGroupTimelineItem({
           ]} testID="botGroup.message.userBubble" onLayout={event => setBubbleLeft(event.nativeEvent.layout.x)}>
             <BotGroupUserText content={content} mentionLabels={mentionLabels} />
           </View> : null}
-        </View>)}</View>
+        </View>
         <View style={styles.userFooter}>
           <View style={[styles.footerSpacer, { width: bubble ? bubbleLeft : 0 }]} />
           <View style={styles.footerContent}>{shareFooter}{footer}</View>
@@ -963,11 +964,11 @@ function BotGroupTimelineItem({
               the computer the group was opened through. */}
           {message.task ? <BotGroupTaskCard task={message.task} owned={member !== undefined && member.isOwned !== false}
             deviceId={member?.homeDeviceId || deviceId || ''} /> : null}
-          {renderContent(<View style={styles.botMessageContent}>
+          <View style={styles.botMessageContent}>
             {renderAttachments('left')}
             {message.threadShare && !authoredShare ? <BotGroupThreadShare onRetry={onRetrySource} share={message.threadShare} resolveMedia={resolveMedia} resolveServerMedia={resolveServerMedia} />
               : content.trim() ? <BotGroupMarkdownText content={content} authorKind={message.authorKind} /> : null}
-          </View>)}
+          </View>
           <BotGroupHandoffFiles files={message.files} />
           {shareFooter}
           {footer}
@@ -1016,7 +1017,6 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   userRow: { flexDirection: 'row', justifyContent: 'flex-end' },
   // Full width so the bubble keeps its 86% cap and attachments their own size limits.
   userColumn: { flex: 1, minWidth: 0, alignItems: 'flex-end', gap: spacing.xs },
-  userMessageFrame: { alignSelf: 'stretch' },
   userMessageContent: { width: '100%', alignItems: 'flex-end', gap: spacing.xs },
   botMessageContent: { gap: spacing.xs },
   // Give the summary its natural width first; only the alignment spacer shrinks

@@ -114,7 +114,7 @@ vi.mock('react-i18next', async (importOriginal) => ({
 }));
 vi.mock('expo-crypto', () => ({ randomUUID: () => `uuid-${++h.uuid}` }));
 vi.mock('lucide-react-native', () => Object.fromEntries(
-  ['Share', 'ArrowUpRight', 'CornerDownRight', 'Circle', 'Bell', 'ChevronLeft', 'Settings2', 'Plus', 'Square', 'Users', 'X', 'Check', 'CircleAlert', 'CircleCheck', 'CircleDashed', 'FileText', 'Sparkles', 'Folder', 'Camera', 'Image',
+  ['Copy', 'Share', 'ArrowUpRight', 'CornerDownRight', 'Circle', 'Bell', 'ChevronLeft', 'Settings2', 'Plus', 'Square', 'Users', 'X', 'Check', 'CircleAlert', 'CircleCheck', 'CircleDashed', 'FileText', 'Sparkles', 'Folder', 'Camera', 'Image',
     'Layers', 'ListChecks', 'ListTodo', 'Ellipsis', 'ChevronRight', 'ChevronDown']
     .map((name) => [name, () => null]),
 ));
@@ -135,7 +135,7 @@ vi.mock('@/platform/chrome/NativePullDownMenu', () => ({
   NativePullDownMenu: ({ actions, onAction, children, testID, disabled, longPress }: any) => {
     const [opened, setOpened] = useState(false);
     const flat = (list: any[]): any[] => list.flatMap((action) => action.subactions ? flat(action.subactions) : [action]);
-    return el('div', { 'data-testid': testID, onContextMenu: () => setOpened(true) }, children, disabled || (longPress && !opened) ? null : flat(actions).map((action) => el('button', {
+    return el('div', { 'data-testid': testID, onContextMenu: longPress ? () => setOpened(true) : undefined }, children, disabled || (longPress && !opened) ? null : flat(actions).map((action) => el('button', {
       key: action.id, 'data-testid': `${testID}.action.${action.id}`, 'data-state': action.state, disabled: action.disabled,
       onClick: () => onAction(action.id),
     }, action.title)));
@@ -310,7 +310,7 @@ async function click(id: string) {
 async function openTopicMenu(messageId: string) {
   const menu = byId(`botGroup.thread.context.${messageId}`);
   expect(menu).not.toBeNull();
-  await act(async () => menu!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true })));
+  await click(`botGroup.thread.more.${messageId}`);
 }
 async function render(data: BotGroupRemoteChatData | null = group(), kind: 'ready' | 'loading' | 'missing' | 'error' = 'ready', threadRootId?: string, deviceId = 'mac') {
   h.chat = { pending: [],
@@ -739,7 +739,6 @@ describe('group composer', () => {
     await render(group({ serverBacked: true, openPlan: null, messages: [
       message(originalId, 1, { authorName: '咪咪', authorBotId: 'mimi', content: '请回复这条' }),
     ] }));
-    await openTopicMenu(originalId);
     await click(`botGroup.thread.context.${originalId}.action.quote`);
     await type('引用回复');
     h.chat.act.mockRejectedValueOnce(new Error('QUOTE_UNAVAILABLE'));
@@ -767,11 +766,9 @@ describe('group composer', () => {
     await render(group({ serverBacked: true, openPlan: null, messages: [
       message(originalId, 1, { authorName: '咪咪', authorBotId: 'mimi', content: '请回复这条' }),
     ] }));
-    await openTopicMenu(originalId);
     await click(`botGroup.thread.context.${originalId}.action.quote`);
     h.inputFocus.mockClear(); h.inputBlur.mockClear();
     h.inputFocused = focused; h.keyboardVisible = keyboard;
-    await openTopicMenu(originalId);
     await click(`botGroup.thread.context.${originalId}.action.quote`);
     expect(h.inputBlur).toHaveBeenCalledTimes(blurs);
     expect(h.inputFocus).toHaveBeenCalledTimes(1);
@@ -1640,8 +1637,8 @@ describe('mobile group threads', () => {
     messages: [rootMessage()], plans: [], openPlan: null, serverBacked: true, ...overrides,
   });
 
-  // Unit regression: text-only menu coverage missed attachment-only messages.
-  it.each(['user', 'bot'] as const)('opens a thread from an attachment-only %s message on long press', async authorKind => {
+  // Unit: attachment-only messages retain footer actions without wrapping the attachment.
+  it.each(['user', 'bot'] as const)('opens a thread from an attachment-only %s message using More', async authorKind => {
     h.chat.server = true;
     await render(threadGroup({ messages: [message(rootId, 1, { authorKind, isSelf: authorKind === 'user', content: '',
       attachments: [{ id: 'media', name: 'brief.pdf', category: 'pdf', mimeType: 'application/pdf', size: 9, url: null, path: null }],
@@ -1651,16 +1648,23 @@ describe('mobile group threads', () => {
     expect(h.push).toHaveBeenLastCalledWith({ pathname: '/companions/groups/[groupId]', params: { groupId: 'g1', threadRootId: rootId } });
   });
 
-  // #7847 review, unit: mixed messages left attachments outside the native menu.
-  // Dispatch from the actual attachment, then verify the existing thread action.
-  it.each(['user', 'bot'] as const)('opens the same message menu from a %s attachment beside text', async authorKind => {
+  // User correction, unit: removing message long press must keep the footer and topic entry together.
+  // Mixed attachments stay outside the native More trigger so preview taps reach their responder.
+  it.each(['user', 'bot'] as const)('keeps a %s attachment outside More while showing reply actions and the topic entry', async authorKind => {
     h.chat.server = true;
-    await render(threadGroup({ messages: [message(rootId, 1, { authorKind, isSelf: authorKind === 'user', content: 'See attachment',
+    await render(threadGroup({ messages: [message(rootId, 1, { authorKind, isSelf: authorKind === 'user', content: 'See attachment', replyCount: 2,
       attachments: [{ id: 'media', name: 'brief.pdf', category: 'pdf', mimeType: 'application/pdf', size: 9, url: null, path: null }],
     })] }), 'ready', undefined, '');
     const attachment = byId('attachment.file')!;
     expect(attachment).not.toBeNull();
-    await act(async () => attachment.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true })));
+    expect(attachment.closest('[data-testid^="botGroup.thread.context."]')).toBeNull();
+    expect(byId(`botGroup.thread.${rootId}`)).not.toBeNull();
+    expect(byId(`botGroup.thread.context.${rootId}.action.copy`)).not.toBeNull();
+    expect(byId(`botGroup.thread.${rootId}`)!.compareDocumentPosition(byId(`botGroup.thread.context.${rootId}.action.copy`)!)
+      & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    await click(`botGroup.thread.context.${rootId}.action.quote`);
+    expect(byId('botGroup.cancelReply')).not.toBeNull();
+    await openTopicMenu(rootId);
     await click(`botGroup.thread.context.${rootId}.action.thread`);
     expect(h.push).toHaveBeenLastCalledWith({ pathname: '/companions/groups/[groupId]', params: { groupId: 'g1', threadRootId: rootId } });
     expect(all(`botGroup.thread.context.${rootId}`)).toHaveLength(1);
@@ -1702,7 +1706,6 @@ describe('mobile group threads', () => {
       await render(threadGroup({ messages: [{ ...posted, threadShare }] }), 'ready', undefined, '');
       expect(byId('botGroup.message.userBubble')).toBeNull();
       expect(byId('botGroup.thread.share')).not.toBeNull();
-      await openTopicMenu('posted');
       expect(byId('botGroup.thread.context.posted.action.copy')?.disabled).toBe(threadShare.status !== 'available');
       expect(byId('botGroup.thread.open.posted')).toBeNull();
       expect(byId('botGroup.thread.posted')).not.toBeNull();
@@ -1738,7 +1741,6 @@ describe('mobile group threads', () => {
     expect(byId(`botGroup.thread.${rootId}`)).toBeNull();
     await openTopicMenu(rootId);
     expect(byId(`botGroup.thread.context.${rootId}.action.thread`)?.textContent).toBe('groupChat.thread.create');
-    await openTopicMenu(rootId);
     await click(`botGroup.thread.context.${rootId}.action.quote`);
     expect(h.push).not.toHaveBeenCalled();
     await act(async () => h.row.onChangeText('Quote in main'));
@@ -1763,7 +1765,6 @@ describe('mobile group threads', () => {
     expect(node.textContent).toContain('Thread reply');
     expect(node.textContent).not.toContain('Unrelated main message');
     expect(node.textContent!.indexOf('Original question')).toBeLessThan(node.textContent!.indexOf('Thread reply'));
-    await openTopicMenu(rootId);
     expect(byId(`botGroup.thread.context.${rootId}.action.quote`)).toBeNull();
     expect(byId('botGroup.composer.more')).toBeNull();
     await act(async () => h.row.onChangeText('Continue here'));
@@ -1830,7 +1831,6 @@ describe('mobile group threads', () => {
     expect(h.replace).toHaveBeenCalledTimes(3);
     await render(threadGroup(), 'ready', undefined, 'mac');
     expect(byId(`botGroup.thread.${rootId}`)).toBeNull();
-    await openTopicMenu(rootId);
     expect(byId(`botGroup.thread.context.${rootId}.action.quote`)).not.toBeNull();
   });
 
@@ -1864,7 +1864,7 @@ describe('mobile group threads', () => {
     expect(h.chat.markRead).not.toHaveBeenCalled();
   });
 
-  it('renders authoritative reply summary and keeps creation and quote actions separate on long press', async () => {
+  it('renders authoritative reply summary alongside the reply and More actions', async () => {
     h.chat.server = true;
     const root = { ...rootMessage(), replyCount: 17, threadUnread: { count: 2, mentioned: true }, threadPreview: {
       replies: [{ id: 'reply', authorKind: 'user' as const, authorBotId: 'other', authorName: 'Other', isSelf: false,
@@ -1875,7 +1875,6 @@ describe('mobile group threads', () => {
     expect(byId(`botGroup.thread.${rootId}`)?.textContent).toContain('groupChat.thread.mentioned');
     expect(byId(`botGroup.thread.${rootId}`)?.textContent).not.toContain('lastMinutes');
     await click(`botGroup.thread.${rootId}`); expect(h.push).toHaveBeenCalledOnce();
-    await act(async () => byId(`botGroup.thread.context.${rootId}`)?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true })));
     await click(`botGroup.thread.context.${rootId}.action.quote`);
     expect(h.push).toHaveBeenCalledOnce(); expect(byId('botGroup.cancelReply')).not.toBeNull();
   });

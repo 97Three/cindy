@@ -4,12 +4,11 @@
  * MenuView 时退回同样选项的底部面板，等面板收起后再执行选中的项，避免两层遮罩叠在一起。
  */
 import { useRef, useState, type ReactElement } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { Check } from 'lucide-react-native';
 import { Text } from '@/components/AppText';
 import { MainWindowRowButton } from '@/components/MobilePrimitives';
 import { NativePullDownMenu, usesNativePullDownMenu, type NativePullDownAction } from '@/platform/chrome/NativePullDownMenu';
-import { AnchoredPullDownMenu } from '@/platform/chrome/AnchoredPullDownMenu';
 import { useTheme, useThemedStyles, type ThemeColors } from '@/theme';
 import { fontWeight, iconSize, lineHeight, spacing, typeScale } from '@/theme/tokens';
 import { CompanionSheet } from './CompanionSheet';
@@ -46,14 +45,13 @@ export function botGroupMenuActions(sections: readonly BotGroupMenuSection[]): N
     : section.options.map(toAction));
 }
 
-export function BotGroupMenu({ title, sections, onSelect, accessibilityLabel, disabled = false, longPress = false, testID, children }: {
+export function BotGroupMenu({ title, sections, onSelect, accessibilityLabel, disabled = false, testID, children }: {
   /** Fallback sheet title. */
   title: string;
   sections: readonly BotGroupMenuSection[];
   onSelect(id: string): void;
   accessibilityLabel?: string;
   disabled?: boolean;
-  longPress?: boolean;
   testID?: string;
   /** The trigger. `open` is set only when the fallback sheet has to be opened by the trigger itself. */
   children(open: (() => void) | undefined): ReactElement;
@@ -61,17 +59,11 @@ export function BotGroupMenu({ title, sections, onSelect, accessibilityLabel, di
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
   const [sheet, setSheet] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   const chosen = useRef<string | null>(null);
   const known = new Set(sections.flatMap((section) => section.options.filter((option) => !option.disabled).map((option) => option.id)));
   const select = (id: string) => { if (known.has(id)) onSelect(id); };
-  // The message retains attachment taps and horizontal table scrolling.
-  if (longPress && Platform.OS === 'android') return <AnchoredPullDownMenu actions={botGroupMenuActions(sections)}
-    onAction={select} open={!disabled && menuOpen} onOpenChange={setMenuOpen} accessibilityLabel={accessibilityLabel} testID={testID}>
-    {children(disabled ? undefined : () => setMenuOpen(true))}
-  </AnchoredPullDownMenu>;
   if (usesNativePullDownMenu()) {
-    return <NativePullDownMenu actions={botGroupMenuActions(sections)} onAction={select} disabled={disabled} longPress={longPress}
+    return <NativePullDownMenu actions={botGroupMenuActions(sections)} onAction={select} disabled={disabled}
       accessibilityLabel={accessibilityLabel} testID={testID}>
       {children(undefined)}
     </NativePullDownMenu>;

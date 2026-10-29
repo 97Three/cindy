@@ -1,11 +1,12 @@
-import { useState, type ReactElement } from 'react';
+import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
-import { CornerDownRight } from 'lucide-react-native';
+import { Copy, CornerDownRight, Ellipsis } from 'lucide-react-native';
 import { Stack } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import * as Clipboard from 'expo-clipboard';
 import type { BotGroupAttachment, BotGroupMessageView, BotGroupThreadShareView } from '@cindy/maker-shared/botGroupChat';
 import { Text } from '@/components/AppText';
+import { ChatReplyIcon } from '@/components/ChatReplyIcon';
 import { MainWindowActionButton } from '@/components/MobilePrimitives';
 import { fontWeight, iconSize, lineHeight, spacing, typeScale, useTheme, useThemedStyles, type ThemeColors } from '@/theme';
 import { ChatThreadSummary } from './ChatThreadSummary';
@@ -14,7 +15,6 @@ import type { BotGroupIdentityLookup } from './BotGroupPlan';
 import { BotGroupMenu } from './BotGroupMenu';
 import { BotGroupMessageAttachments } from './BotGroupMessageAttachments';
 import { BotGroupMarkdownText } from './BotGroupMessageText';
-import { MessageContentLongPressContext } from './messageContentLongPress';
 import type { ResolveRemoteMediaFn } from './remoteMedia';
 
 type BotGroupThreadSummary = Pick<BotGroupMessageView, 'replyCount' | 'threadPreview' | 'threadUnread'>;
@@ -70,30 +70,44 @@ export function BotGroupThreadShare({ share, resolveMedia, resolveServerMedia, o
   </View>;
 }
 
-export function BotGroupTopicActions({ message, onQuote, onThread, onShare, onReveal, shared, online, readOnly, children, onShareImage }: {
-  children: ReactElement; onShareImage?: () => void;
+export function BotGroupMessageActions({ message, onQuote, onThread, onShare, onReveal, shared, online, readOnly, onShareImage }: {
+  onShareImage?: () => void;
   message: BotGroupMessageView; onQuote?: () => void; onThread?: () => void; onShare?: () => void; onReveal?: () => void;
   shared?: { messageId: string | null; bySelf: boolean }; online: boolean; readOnly: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t } = useTranslation(); const styles = useThemedStyles(makeStyles); const { colors } = useTheme();
+  const copyDisabled = message.threadShare ? message.threadShare.status !== 'available' : !message.content;
+  const copy = () => { void Clipboard.setStringAsync(message.threadShare?.status === 'available' ? message.threadShare.content : message.content); };
+  const actionId = `botGroup.thread.context.${message.id}.action`;
   const options = [
-    ...(onQuote ? [{ id: 'quote', title: t('groupChat.thread.quoteReply'), disabled: readOnly }] : []),
     ...(onThread ? [{ id: 'thread', title: t(message.replyCount === 0 ? 'groupChat.thread.create' : 'groupChat.thread.open') }] : []),
     ...(onShare && !readOnly ? [{ id: 'share', title: t(shared?.bySelf ? 'groupChat.thread.showInGroup' : 'groupChat.thread.shareToGroup'), disabled: shared?.bySelf ? !shared.messageId : !online }] : []),
     ...(onShareImage ? [{ id: 'image', title: t('session.shareImage.title') }] : []),
-    { id: 'copy', title: t('groupChat.thread.copy'), disabled: message.threadShare ? message.threadShare.status !== 'available' : !message.content },
   ];
   const select = (id: string) => {
-          if (id === 'image') onShareImage?.(); else if (id === 'quote') onQuote?.(); else if (id === 'thread') onThread?.();
-          else if (id === 'share') { if (shared?.bySelf) onReveal?.(); else onShare?.(); }
-          else if (id === 'copy') void Clipboard.setStringAsync(message.threadShare?.status === 'available' ? message.threadShare.content : message.content);
-        };
-  const timedSections = [{ id: 'time', options: [{ id: 'timestamp', title: new Date(message.createdAt).toLocaleString(), disabled: true }] }, { id: 'message', options }];
-  return <BotGroupMenu title={t('groupChat.thread.actions')} sections={timedSections} onSelect={select} longPress testID={`botGroup.thread.context.${message.id}`}>
-    {open => <MessageContentLongPressContext.Provider value={open}>
-      <Pressable onLongPress={open} delayLongPress={350}>{children}</Pressable>
-    </MessageContentLongPressContext.Provider>}
-  </BotGroupMenu>;
+    if (id === 'image') onShareImage?.();
+    else if (id === 'thread') onThread?.();
+    else if (id === 'share') { if (shared?.bySelf) onReveal?.(); else onShare?.(); }
+  };
+  const sections = [{ id: 'time', options: [{ id: 'timestamp', title: new Date(message.createdAt).toLocaleString(), disabled: true }] },
+    { id: 'message', options }];
+  return <View style={styles.messageActions} testID={`botGroup.messageActions.${message.id}`}>
+    <Pressable accessibilityRole="button" accessibilityLabel={t('groupChat.thread.copy')} disabled={copyDisabled}
+      accessibilityState={{ disabled: copyDisabled }} onPress={copy} style={styles.actionButton} testID={`${actionId}.copy`}>
+      <Copy size={iconSize.sm} color={copyDisabled ? colors.textTertiary : colors.textSecondary} />
+    </Pressable>
+    {onQuote ? <Pressable accessibilityRole="button" accessibilityLabel={t('message.renderer.reply')} disabled={readOnly}
+      accessibilityState={{ disabled: readOnly }} onPress={onQuote} style={styles.actionButton} testID={`${actionId}.quote`}>
+      <ChatReplyIcon size={iconSize.sm} color={readOnly ? colors.textTertiary : colors.textSecondary} />
+    </Pressable> : null}
+    {options.length ? <BotGroupMenu title={t('groupChat.thread.actions')} sections={sections}
+      onSelect={select} testID={`botGroup.thread.context.${message.id}`}>
+      {open => <Pressable accessibilityRole="button" accessibilityLabel={t('message.renderer.moreActions')}
+        onPress={open} style={styles.actionButton} testID={`botGroup.thread.more.${message.id}`}>
+        <Ellipsis size={iconSize.sm} color={colors.textSecondary} />
+      </Pressable>}
+    </BotGroupMenu> : null}
+  </View>;
 }
 
 export function BotGroupThreadPosted({ messageId, shared, onPress }: {
@@ -105,6 +119,8 @@ export function BotGroupThreadPosted({ messageId, shared, onPress }: {
   </Pressable>;
 }
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
+  messageActions: { flexDirection: 'row', alignItems: 'center' },
+  actionButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   entry: { minHeight: 44, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.sm },
   count: { fontSize: typeScale.bodySmall, lineHeight: lineHeight.bodySmall, fontWeight: fontWeight.medium, color: colors.textPrimary },
   note: { fontSize: typeScale.footnote, lineHeight: lineHeight.caption, fontWeight: fontWeight.regular, color: colors.textSecondary },
