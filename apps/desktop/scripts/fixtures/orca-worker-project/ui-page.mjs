@@ -184,5 +184,12 @@ export default {
         .waitFor();
     }
     await ui.capture('other-project');
+    await page.getByText(await ui.t('orca.workerProject.newWorktree'), { exact: true }).click();
+    const rememberedBranch = page.getByRole('button', {
+      name: await ui.t('newChat.branchChip.label'),
+      exact: true,
+    });
+    assert.equal(await rememberedBranch.textContent(), 'release/v2');
+    await ui.capture('remembered-source-branch');
   },
 };

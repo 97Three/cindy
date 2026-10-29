@@ -1,3 +1,4 @@
+import { readLocalWorkerCreationSelection } from '../../../state/workerCreationPrefs';
 // @vitest-environment jsdom
 import { WorkerProjectField, useWorkerProjectSelection } from '../WorkerProjectField';
 import type { WorkerProjectContext } from '../../../../shared/orca-worker-project';
@@ -2402,6 +2403,27 @@ describe('local Worker project selection', () => {
       expect(onCreate).toHaveBeenCalledWith({workingDir: directory, projectPath: '/repo'});
     },
   );
+  // Unit/jsdom: production form selection now reads a repository's main-task branch memory.
+  // Previous cases only covered checkout HEAD. Missing refs/read failures must display and submit HEAD.
+  it.each(['remembered', 'remote-default', 'missing', 'read-failed'])('uses actual default branch for another project: %s', async scenario => {
+    window.electronAPI.getNewMakerWorktreeBranchPreference = vi.fn().mockImplementation(async () => {
+      if (scenario === 'read-failed') throw new Error('old host');
+      return { baseRepo: '/other', sourceBranch: scenario === 'remote-default' ? 'refs/remotes/origin/main' : 'release', revision: 1 };
+    });
+    window.electronAPI.worktreeListBranches = vi.fn().mockResolvedValue({ branches: scenario === 'missing' ? ['main'] : ['main', 'release'], remoteDefaultBranch: 'refs/remotes/origin/main' });
+    projectContext.mockImplementation(async (_id, dir) => dir ? { ...project, directory: '/other', baseRepo: '/other' } : context);
+    const { result } = renderHook(() => useWorkerProjectSelection(true, 'lead', true));
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    expect(window.electronAPI.getNewMakerWorktreeBranchPreference).not.toHaveBeenCalled();
+    act(() => result.current.select('/other'));
+    await waitFor(() => expect(result.current.context?.selected.directory).toBe('/other'));
+    const expected = scenario === 'remote-default' ? 'refs/remotes/origin/main' : scenario === 'remembered' ? 'release' : project.branch;
+    expect(result.current.branch).toBe(expected);
+    act(() => result.current.setChecked(true));
+    expect(result.current.fields.worktree?.sourceBranch).toBe(expected);
+    act(() => result.current.setSourceBranch('manual'));
+    expect(result.current.fields.worktree?.sourceBranch).toBe('manual');
+  });
   it('allows a Git project selected from a dialogue Lead and never probes a disabled remote form', async () => {
     projectContext.mockResolvedValue({...context, dialogue: true, selected: {...project, directory: '/other', baseRepo: '/other'}});
     const {result} = renderHook(() => useWorkerProjectSelection(true, 'lead', true));
@@ -2410,4 +2432,18 @@ describe('local Worker project selection', () => {
     renderHook(() => useWorkerProjectSelection(true, 'remote', false));
     expect(projectContext).not.toHaveBeenCalled();
   });
+});
+
+// Unit: only submitted local host routes count, never synthetic or legacy per-agent defaults.
+it('exports only the current owner local route for tool defaults', () => {
+  const route = { agent: 'pi', model: 'test-model', providerId: 'provider', agentDeviceId: null, effort: '', fast: false };
+  localStorage.setItem('workerCreationPrefs', JSON.stringify({ lastAgent: 'pi', pi: route }));
+  expect(readLocalWorkerCreationSelection('owner')).toBeNull();
+  localStorage.setItem('workerCreationPrefs', JSON.stringify({ modelSelectionByHost: {
+    [JSON.stringify(['owner', 'device'])]: route,
+    [JSON.stringify(['other', 'local'])]: route,
+  } }));
+  expect(readLocalWorkerCreationSelection('owner')).toBeNull();
+  localStorage.setItem('workerCreationPrefs', JSON.stringify({ modelSelectionByHost: { [JSON.stringify(['owner', 'local'])]: route } }));
+  expect(readLocalWorkerCreationSelection('owner')).toEqual(route);
 });

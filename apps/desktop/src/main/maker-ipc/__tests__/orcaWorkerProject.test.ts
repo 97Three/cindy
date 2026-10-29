@@ -12,6 +12,7 @@ import { isDeviceLinkInvoke, runDeviceLinkInvokeContext } from '../../device-lin
 import {
   createWorkerWorktree,
   resolveWorkerWorktreeSource,
+  resolveWorkerWorktreeSourceSelection,
   getWorkerOwnedWorktree,
   probeWorkerProject,
   readWorkerProjectContext,
@@ -579,6 +580,23 @@ describe('Worker worktree source resolution', () => {
     await expect(resolveWorkerWorktreeSource('/repo', source, probe)).rejects.toThrow('source_branch');
     expect(probe).not.toHaveBeenCalled();
   });
+  // Defaults parity: previous source tests did not read repository preferences.
+  // Real resolver, injected read/probe; invalid remembered refs must fall back, explicit refs must fail.
+  it.each(['valid', 'missing', 'read-failed', 'same', 'explicit'])(
+    'resolves remembered source: %s', async scenario => {
+      const read = vi.fn(() => {
+        if (scenario === 'read-failed') throw new Error('store unavailable');
+        return { baseRepo: '/repo', sourceBranch: 'release', revision: 1 };
+      });
+      if (scenario === 'missing') vi.mocked(gitExec).mockRejectedValueOnce(new Error('not found'));
+      else if (scenario === 'valid' || scenario === 'explicit') vi.mocked(gitExec).mockResolvedValueOnce({stdout: 'abc', stderr: ''});
+      const result = await resolveWorkerWorktreeSourceSelection('/repo', scenario === 'explicit' ? 'picked' : undefined,
+        async () => target, scenario === 'same' ? '/repo' : '/lead', read);
+      expect(result.sourceBranch).toBe(scenario === 'valid' ? 'release' : scenario === 'explicit' ? 'picked' : 'main');
+      if (scenario === 'missing' || scenario === 'read-failed') expect(result.fallbackReason).toContain('current checkout');
+      if (scenario === 'same' || scenario === 'explicit') expect(read).not.toHaveBeenCalled();
+    },
+  );
   it('projects only metadata registered under the Worker session, not a directory spelling', () => {
     vi.mocked(getForSession).mockReturnValueOnce({path: '/checkout', branch: 'cindy/new', baseRepo: '/repo'} as never).mockReturnValueOnce(null);
     expect(getWorkerOwnedWorktree('owned')).toEqual({path: '/checkout', branch: 'cindy/new'});

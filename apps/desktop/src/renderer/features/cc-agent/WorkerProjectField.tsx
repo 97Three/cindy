@@ -37,6 +37,7 @@ export function useWorkerProjectSelection(
   const [snapshot, setSnapshot] = useState<{
     key: string;
     context?: WorkerProjectContext;
+    preferredBranch?: string;
     failed?: boolean;
   }>();
   const key = JSON.stringify([scope, directory, retry]);
@@ -67,14 +68,36 @@ export function useWorkerProjectSelection(
       return { ...base, selected };
     };
     void read().then(
-      (context) => {
+      async (context) => {
+        let preferredBranch: string | undefined;
+        if (
+          context.selected.directory !== context.inherited.directory &&
+          context.selected.baseRepo
+        ) {
+          try {
+            const baseRepo = context.selected.baseRepo;
+            const pref = await window.electronAPI.getNewMakerWorktreeBranchPreference(baseRepo);
+            const remembered = (pref as { sourceBranch?: string } | null)?.sourceBranch;
+            if (remembered) {
+              const listed = await window.electronAPI.worktreeListBranches({ baseRepo });
+              const branches = listed as { branches: string[]; remoteDefaultBranch?: string };
+              if (
+                branches.branches.includes(remembered) ||
+                branches.remoteDefaultBranch === remembered
+              )
+                preferredBranch = remembered;
+            }
+          } catch {
+            /* Old hosts without this read keep the checkout's current branch. */
+          }
+        }
         const current = getDataOwnerGeneration();
         if (
           !cancelled &&
           current.dataOwnerId === capturedOwner.dataOwnerId &&
           current.generation === capturedOwner.generation
         )
-          setSnapshot({ key, context });
+          setSnapshot({ key, context, preferredBranch });
       },
       () => {
         if (!cancelled) setSnapshot({ key, failed: true });
@@ -91,7 +114,11 @@ export function useWorkerProjectSelection(
     !!context.selected.baseRepo &&
     context.selected.headState !== 'unborn' &&
     !(sameProject && context.dialogue);
-  const branch = sourceBranch || context?.selected.branch || '';
+  const branch =
+    sourceBranch ||
+    (snapshot?.key === key ? snapshot.preferredBranch : undefined) ||
+    context?.selected.branch ||
+    '';
   return {
     context,
     sameProject,

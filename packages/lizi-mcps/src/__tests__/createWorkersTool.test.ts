@@ -290,3 +290,18 @@ describe('create_workers tool', () => {
     expect(createWorker).toHaveBeenCalledTimes(1);
   });
 });
+
+// Unit/public batch handler: an unusable saved route must fail only its item, not the batch.
+it('keeps processing after an omitted-agent default fails and returns the next actual route', async () => {
+  const createWorker = vi.fn<CreateWorkerDeps['createWorker']>()
+    .mockResolvedValueOnce({ ok: false, errorCode: 'INVALID_PARAMS', message: 'Saved route unavailable; specify agent and retry' })
+    .mockResolvedValueOnce({ ...created(2, 5), resolved: { agent: 'pi', model: 'test-model', providerId: 'provider',
+      agentDeviceId: null, effort: 'high', fastMode: false }, defaults: { source: 'original-policy', fallbackReason: 'saved provider disconnected' } });
+  const result = parse(await setup(createWorker).call('create_workers', { workers: [
+    { role: 'developer', label: 'one' }, { role: 'developer', label: 'two', agent: 'pi' },
+  ] }));
+  expect(result).toMatchObject({ success_count: 1, failure_count: 1, skipped_count: 0, results: [
+    { status: 'failed', error_code: 'INVALID_PARAMS' }, { status: 'created', agent: 'pi', model: 'test-model',
+      provider_id: 'provider', agent_device_id: 'local', defaults: { source: 'original-policy', fallback_reason: 'saved provider disconnected' } },
+  ] });
+});

@@ -3510,7 +3510,7 @@ describe('SSH remote worker model/provider compatibility gate (R23 P2)', () => {
 
 it('applies plan limit in atomic reservation',async()=>{const {deps,service}=createDeps({validateCreationPlan:vi.fn(async()=>2)});await service.createWorker({leadSessionId:'lead-1',role:'eval',agent:'codex',label:'sample'});expect(deps.reserveWorkerCreation).toHaveBeenCalledWith(expect.objectContaining({hardLimit:2}));});
 it('uses one canonical label at every plan check without mutating the caller', async () => {
-  const validateCreationPlan = vi.fn(async (_params: OrcaWorkerCreateParams) => 2);
+  const validateCreationPlan = vi.fn(async (_params: Parameters<NonNullable<OrcaWorkerCreationDeps['validateCreationPlan']>>[0]) => 2);
   const { service } = createDeps({ validateCreationPlan });
   const params = Object.freeze({ leadSessionId: 'lead-1', teamId: 'team-1', role: 'eval', agent: 'codex' as const, label: ' SAMPLE ', workerPermissionMode: 'auto' as const });
   await expect(service.createWorkerInTeam(params)).resolves.toMatchObject({ ok: true });
@@ -3855,7 +3855,7 @@ describe('local Worker worktree ownership', () => {
     vi.mocked(deps.getLeadSessionRow).mockResolvedValue({...lead!, workspaceKind: 'dialogue'});
     const selected = path.resolve('other-project');
     await expect(service.createWorker({...request, workingDir: selected})).resolves.toMatchObject({ok: true, workingDir: '/new/checkout'});
-    expect(deps.resolveWorkerWorktreeSource).toHaveBeenCalledWith(selected, 'feature');
+    expect(deps.resolveWorkerWorktreeSource).toHaveBeenCalledWith(selected, 'feature', 'C:\\repo');
     expect(deps.bootstrapSession).toHaveBeenCalledWith(expect.objectContaining({workspaceKind: 'project', workingDir: '/new/checkout'}));
   });
 
@@ -3916,5 +3916,95 @@ describe('local Worker worktree ownership', () => {
     const {deps, service} = createDeps({createWorkerWorktree: vi.fn(), discardWorkerWorktree: vi.fn()});
     await expect(service.createWorker({...request, executionDeviceId: 'other'})).resolves.toMatchObject({ok: false, errorCode: 'INVALID_PARAMS'});
     expect(deps.reserveWorkerCreation).not.toHaveBeenCalled();
+  });
+});
+
+// Worker defaults parity (unit): real creation/bootstrap results, not source inspection.
+// Old tests always supplied agent and had no submitted panel route. Minimal regression:
+// omit agent/model with a saved route, or disconnect that exact provider before creation.
+describe('Worker tool defaults follow the submitted panel route atomically', () => {
+  const request = { leadSessionId: 'lead-1', role: 'developer', label: 'worker', useCreationPrefs: true };
+  const saved = { agent: 'codex' as const, model: 'gpt-5.4', effort: 'high', fast: true,
+    providerId: 'xd', agentDeviceId: null };
+  it('checks existing creation authority before reading a remembered remote catalog', async () => {
+    const getCreationSelection = vi.fn(() => ({ ...saved, agentDeviceId: 'another-computer' }));
+    const validateCreationPlan = vi.fn(async () => { throw new Error('permission revoked'); });
+    const { service, deps } = createDeps({ getCreationSelection, validateCreationPlan });
+    await expect(service.createWorker({ ...request, label: ' WORKER ' })).rejects.toThrow('permission revoked');
+    expect(validateCreationPlan).toHaveBeenCalledWith(expect.objectContaining({ label: 'worker' }), undefined, undefined, undefined);
+    expect(getCreationSelection).not.toHaveBeenCalled();
+    expect(deps.getProviderRoutingContext).not.toHaveBeenCalled();
+    expect(deps.reserveWorkerCreation).not.toHaveBeenCalled();
+  });
+  it('restores a submitted model without reasoning effort instead of treating empty effort as no selection', async () => {
+    const { service } = createDeps({ getCreationSelection: () => ({ ...saved, model: 'no-effort', effort: '', fast: false }),
+      getAvailableModels: () => [{ id: 'no-effort', efforts: [], defaultEffort: null }],
+      getProviderRoutingContext: async () => providerRoutingContext({ codex: [{ id: 'xd', name: 'Gateway', models: ['no-effort'],
+        effortMetaByModel: { 'no-effort': { efforts: [], defaultEffort: null } } }] }),
+    });
+    expect(await service.createWorker(request)).toMatchObject({ ok: true, defaults: { source: 'memory' }, resolved: { model: 'no-effort', effort: null } });
+  });
+  it.each([{}, { agent: 'codex' as const }, { model: 'gpt-5.4' }])('restores the entire route for %j', async explicit => {
+    const { service, deps } = createDeps({ getCreationSelection: () => saved });
+    const result = await service.createWorker({ ...request, ...explicit });
+    expect(result).toMatchObject({ ok: true, defaults: { source: 'memory' }, resolved: {
+      agent: 'codex', model: 'gpt-5.4', providerId: 'xd', agentDeviceId: null, effort: 'high', fastMode: true,
+    } });
+    expect(deps.bootstrapSession).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-5.4', effort: 'high', fastMode: true }));
+  });
+  it.each([{ model: 'gpt-5.5' }, { agent: 'claude-code' as const }, { agent: 'codex' as const, agentDeviceId: null },
+    { agent: 'codex' as const, providerId: 'xd' }])('keeps original policy for explicit changes %j', async explicit => {
+    const { service } = createDeps({ getCreationSelection: () => saved });
+    const result = await service.createWorker({ ...request, ...explicit });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.defaults?.source).not.toBe('memory');
+      expect(result.resolved.model).not.toBe(saved.model);
+    }
+  });
+  it('requires an agent without a submitted selection and leaves all side effects untouched', async () => {
+    const { service, deps } = createDeps();
+    expect(await service.createWorker(request)).toMatchObject({ ok: false, errorCode: 'INVALID_PARAMS', message: expect.stringContaining('Specify agent') });
+    expect(deps.reserveWorkerCreation).not.toHaveBeenCalled();
+    expect(deps.bootstrapSession).not.toHaveBeenCalled();
+  });
+  it.each([{}, { agent: 'codex' as const }, { model: 'gpt-5.5' }])('drops every saved field on an unavailable provider %j', async explicit => {
+    const { service, deps } = createDeps({ getCreationSelection: () => ({ ...saved, providerId: 'disconnected' }) });
+    const result = await service.createWorker({ ...request, ...explicit });
+    if (!('agent' in explicit) && !('model' in explicit)) {
+      expect(result).toMatchObject({ ok: false, errorCode: 'INVALID_PARAMS', message: expect.stringContaining('Specify agent and retry') });
+      expect(deps.bootstrapSession).not.toHaveBeenCalled();
+    } else {
+      expect(result).toMatchObject({ ok: true, defaults: { source: 'original-policy' }, resolved: { model: 'gpt-5.5', fastMode: false } });
+      // Only matching route attempts must explain rejection; a different model never uses memory.
+      if ('agent' in explicit && result.ok) expect(result.defaults?.fallbackReason).toContain('provider is disconnected');
+    }
+  });
+  it.each(['[REMOTE_AGENT_SHARE_PAUSED] secret-endpoint', 'offline secret-endpoint'])('returns a safe reason and never switches a failed saved device silently: %s', async error => {
+    const { service, deps } = createDeps({ getCreationSelection: () => ({ ...saved, agentDeviceId: 'share:fake' }),
+      getProviderRoutingContext: vi.fn(async () => { throw new Error(error); }) });
+    const result = await service.createWorker(request);
+    expect(result).toMatchObject({ ok: false, errorCode: 'INVALID_PARAMS' });
+    if (!result.ok) { expect(result.message).toContain('shared provider'); expect(result.message).not.toContain('secret-endpoint'); }
+    expect(deps.reserveWorkerCreation).not.toHaveBeenCalled();
+  });
+  it('uses the saved agent to disambiguate a model, but refuses ambiguity after rejecting the route', async () => {
+    const { service, deps } = createDeps({ getCreationSelection: () => ({ ...saved, agent: 'pi', model: 'auto', fast: false }),
+      getAvailableModels: () => [{ id: 'auto', efforts: ['high'] }],
+      getProviderRoutingContext: async () => providerRoutingContext({ codex: [{ id: 'xd', name: 'Gateway', models: ['auto'] }],
+        pi: [{ id: 'xd', name: 'Gateway', models: ['auto'] }] }),
+    });
+    expect(await service.createWorker({ ...request, model: 'auto' })).toMatchObject({ ok: true, resolved: { agent: 'pi' } });
+    deps.getCreationSelection = () => ({ ...saved, agent: 'pi', model: 'auto', providerId: 'missing' });
+    expect(await service.createWorker({ ...request, label: 'retry', model: 'auto' })).toMatchObject({ ok: false, errorCode: 'INVALID_PARAMS', message: expect.stringContaining('multiple agents') });
+  });
+  it('does not apply panel memory to SSH, execution devices or manual creation', async () => {
+    for (const kind of ['ssh', 'execution', 'manual']) {
+      const getCreationSelection = vi.fn(() => saved);
+      const { service, deps } = createDeps({ getCreationSelection });
+      if (kind === 'ssh') vi.mocked(deps.getLeadSessionRow).mockResolvedValue({ ...(await deps.getLeadSessionRow('lead-1'))!, remoteHostId: 'ssh' });
+      await service.createWorker({ ...request, agent: 'codex', ...(kind === 'execution' ? { executionDeviceId: 'device' } : {}), useCreationPrefs: kind !== 'manual' });
+      expect(getCreationSelection).not.toHaveBeenCalled();
+    }
   });
 });
