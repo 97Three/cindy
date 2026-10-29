@@ -15,5 +15,7 @@ export function usePreviewChromeFrame() {
   const row = Platform.OS === 'ios'
     ? floatingTopRow({ ...window, insets }, HTML_BROWSER_CONTROL_SIZE)
     : { top: insets.top, left: insets.left + spacing.md, right: insets.right + spacing.md, sharedStatusRow: false };
-  return { ...row, bottom: insets.bottom, contentTop: row.top + HTML_BROWSER_CONTROL_SIZE + spacing.xs };
+  // Only the chrome row shares the status row; content stays below the status area.
+  const contentTop = Math.max(insets.top, row.top + HTML_BROWSER_CONTROL_SIZE + spacing.xs);
+  return { ...row, bottom: insets.bottom, contentTop };
 }
