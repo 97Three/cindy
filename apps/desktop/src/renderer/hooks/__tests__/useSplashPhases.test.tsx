@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   authInitializing: false,
   coverHeld: false,
   updateErrorCode: undefined as string | undefined,
+  hasPersistedSession: false,
 }));
 
 vi.mock('react-i18next', () => ({
@@ -61,13 +62,20 @@ describe('useSplash phase 表', () => {
     mocks.authInitializing = false;
     mocks.coverHeld = false;
     mocks.updateErrorCode = undefined;
+    mocks.hasPersistedSession = false;
     mocks.checkEnvironment.mockClear();
     (
       window as unknown as {
-        electronAPI: { clientEndpoints: { websiteUrl: string } };
+        electronAPI: {
+          clientEndpoints: { websiteUrl: string };
+          authHasPersistedSessionHintSync: () => boolean;
+        };
         open: typeof window.open;
       }
-    ).electronAPI = { clientEndpoints: { websiteUrl: 'https://cindy.example/download' } };
+    ).electronAPI = {
+      clientEndpoints: { websiteUrl: 'https://cindy.example/download' },
+      authHasPersistedSessionHintSync: () => mocks.hasPersistedSession,
+    };
     window.matchMedia = vi.fn().mockReturnValue({
       matches: false,
       addEventListener: () => {},
@@ -129,6 +137,32 @@ describe('useSplash phase 表', () => {
     // FADE_FALLBACK 500ms → splash_done(onTransitionEnd 兜底)
     act(() => {
       vi.advanceTimersByTime(500);
+    });
+    expect(result.current.phase).toBe('splash_done');
+  });
+
+  it('已有持久会话的返回启动使用 2s 地板，仍等待真实就绪条件', () => {
+    mocks.envStatus = 'passed';
+    mocks.hasPersistedSession = true;
+    const { result } = renderHook(() => useSplash());
+
+    act(() => {
+      vi.advanceTimersByTime(1_999);
+    });
+    expect(result.current.phase).toBe('splash_passed');
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(result.current.phase).toBe('fading_out');
+    expect(result.current.isReturningSession).toBe(true);
+
+    act(() => {
+      vi.advanceTimersByTime(349);
+    });
+    expect(result.current.phase).toBe('fading_out');
+    act(() => {
+      vi.advanceTimersByTime(1);
     });
     expect(result.current.phase).toBe('splash_done');
   });
