@@ -609,9 +609,11 @@ export function getBrowserMcpDeps(): {
               (typeof tab.targetId === 'string' && tab.targetId.startsWith(targetId)),
           )
         : [];
-      // Without a target (or one that matches nothing listed) the runtime acts on its last tab, or
-      // the call fails; check every tab conservatively.
-      return (named.length > 0 ? named : tabs).some((tab) => typeof tab.url === 'string' && isSecretPage(tab.url));
+      // A target the (possibly truncated) tab list does not show may still be the page the owner typed
+      // into: while any secret page is remembered, fail closed. Without a target the runtime acts on its
+      // last tab, so every listed tab is checked.
+      if (targetId && named.length === 0) return true;
+      return (targetId ? named : tabs).some((tab) => typeof tab.url === 'string' && isSecretPage(tab.url));
     },
     logger,
   };
