@@ -304,7 +304,7 @@ function desktopFixture(kind: 'private' | 'group' | 'automatic' = 'group') {
       },
     };
   });
-  const routines = new Map<string, { enabled: boolean; revision: number }>();
+  const routines = new Map<string, { enabled: boolean; revision: number; prompt?: string; preRunCommand?: string }>();
   const schedules = new Map<string, TaskActionScheduleDefinition>();
   const authorize = createDesktopTaskActionAuthorizer({
     input: () => ({ ...activeInput }), confirm, getSession,
@@ -314,7 +314,7 @@ function desktopFixture(kind: 'private' | 'group' | 'automatic' = 'group') {
       const row = routines.get(id);
       if (!row) return undefined;
       const captured = { ...row };
-      return { ...captured, assertCurrent() {
+      return { ...captured, prompt: captured.prompt ?? '', details: { routine: { id, ...captured } }, assertCurrent() {
         if (routines.get(id)?.revision !== captured.revision)
           throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
       } };
@@ -863,12 +863,12 @@ describe('teammate turn principal', () => {
     else expect(JSON.stringify(result)).toContain('TASK_ACTION_SOURCE_UNAUTHORIZED');
   });
 
-  // Creating/updating routines is ordinary work; deleting one needs an exact decision.
+  // Drafts/non-executing inputs remain ordinary; deletion needs an exact decision.
   it.each(['routine_save', 'routine_run_now', 'routine_delete', 'schedule_set_pre_run_hook'])(
-    'allows %s through ordinary permissions and asks only for deletion', async tool => {
+    'keeps draft or non-executing %s payloads ordinary except deletion', async tool => {
       const h = desktopFixture('automatic');
       live(h);
-      const request = helper(tool, { name: 'r', prompt: 'Message the owner\'s task', enabled: true });
+      const request = helper(tool, { name: 'r', prompt: 'Message the owner\'s task', enabled: false });
       expect(await withToolCallAuthority(h.authorize, request, async () => 'saved')).toBe('saved');
       expect(h.confirm).toHaveBeenCalledTimes(tool === 'routine_delete' ? 1 : 0);
       h.activeInput.ownerInput = true;
@@ -1005,6 +1005,75 @@ describe('teammate turn principal', () => {
     expect(h.confirm).not.toHaveBeenCalled();
   });
 
+  // Security r4409367066: saving instructions must not manufacture a standing
+  // owner grant for the next routine turn. Unit, production admission + effect.
+  it.each(['cindy_helper', 'cindy_scheduler'] as const)(
+    'requires an owner decision to mint or rewrite active routine instructions through %s', async server => {
+      const h = desktopFixture('automatic');
+      live(h);
+      const call = (args: Record<string, unknown>, effect = vi.fn(async () => 'saved')) =>
+        withToolCallAuthority(h.authorize, { ...helper('routine_save', args), server }, effect);
+      h.confirm.mockResolvedValue(false);
+      const create = vi.fn(async () => 'saved');
+      expect(JSON.stringify(await call({ botId: 'bot', prompt: 'Run my new instructions', enabled: true }, create)))
+        .toContain('USER_CANCELLED');
+      expect(create).not.toHaveBeenCalled();
+      expect(h.confirm).toHaveBeenCalledWith('companion', 'routine_save', expect.anything(),
+        { server, risk: 'authority' });
+      h.confirm.mockClear();
+      h.routines.set('standing', { enabled: true, revision: 1, prompt: 'Owner standing instructions' });
+      expect(await call({ botId: 'bot', id: 'standing', enabled: true, prompt: 'Owner standing instructions', name: 'Renamed' }))
+        .toBe('saved');
+      expect(await call({ botId: 'bot', enabled: false, prompt: 'Unapproved draft' })).toBe('saved');
+      expect(h.confirm).not.toHaveBeenCalled();
+      const rewrite = vi.fn(async () => 'saved');
+      expect(JSON.stringify(await call({ botId: 'bot', id: 'standing', enabled: true, prompt: 'Replacement instructions' }, rewrite)))
+        .toContain('USER_CANCELLED');
+      expect(rewrite).not.toHaveBeenCalled();
+      h.confirm.mockResolvedValue(true);
+      expect(await call({ botId: 'bot', prompt: 'Reviewed standing instructions', enabled: true })).toBe('saved');
+      h.confirm.mockClear();
+      h.activeInput.ownerInput = true;
+      expect(await call({ botId: 'bot', prompt: 'Owner explicit instructions', enabled: true })).toBe('saved');
+      expect(h.confirm).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['cindy_helper', 'cindy_scheduler'] as const)(
+    'does not turn a disabled draft into an entrusted run through %s without approval', async server => {
+      const h = desktopFixture('automatic');
+      live(h);
+      h.routines.set('draft', { enabled: false, revision: 2, prompt: 'Unapproved instructions' });
+      const request = { ...helper('routine_run_now', { botId: 'bot', id: 'draft' }), server };
+      const enqueue = vi.fn(async () => taskActionRoutineRevision('bot', 'draft'));
+      h.confirm.mockResolvedValue(false);
+      expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, enqueue))).toContain('USER_CANCELLED');
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(h.confirm).toHaveBeenCalledWith('companion', 'routine_run_now', request.args,
+        expect.objectContaining({ server, risk: 'resume' }));
+      h.confirm.mockResolvedValue(true);
+      expect(await withToolCallAuthority(h.authorize, request, enqueue)).toBe(2);
+      expect(enqueue).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(['cindy_helper', 'cindy_scheduler'] as const)('requires a command decision only for a changed routine hook through %s', async server => {
+    const h = desktopFixture('automatic');
+    live(h);
+    h.routines.set('standing', { enabled: true, revision: 1, prompt: 'Owner instructions', preRunCommand: 'node owner.mjs' });
+    const hook = { command: 'node owner.mjs' };
+    const request = { ...helper('routine_save', { botId: 'bot', id: 'standing', enabled: true,
+      prompt: 'Owner instructions', preRunHook: hook }), server };
+    const effect = vi.fn(async () => 'saved');
+    expect(await withToolCallAuthority(h.authorize, request, effect)).toBe('saved');
+    expect(h.confirm).not.toHaveBeenCalled();
+    hook.command = 'node replacement.mjs';
+    h.confirm.mockResolvedValue(false);
+    expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, effect))).toContain('USER_CANCELLED');
+    expect(effect).toHaveBeenCalledTimes(1);
+    expect(h.confirm).toHaveBeenCalledWith('companion', request.tool, request.args, { server, risk: 'command' });
+  });
+
   // Review #7782: approval must describe and bind the child's exact request, not
   // whichever request is current after the parent card is answered. Unit tier.
   it.each(['request-id', 'arguments'] as const)('expires a permission answer when child %s changes', async change => {
@@ -1046,7 +1115,7 @@ describe('teammate turn principal', () => {
     expect(h.confirm).not.toHaveBeenCalled();
   });
 
-  it('does not restore a routine changed during confirmation', async () => {
+  it.each(['routine_save', 'routine_run_now'])('does not execute %s after its routine changes during confirmation', async tool => {
     const h = desktopFixture('automatic');
     live(h);
     h.routines.set('saved', { enabled: false, revision: 1 });
@@ -1056,7 +1125,7 @@ describe('teammate turn principal', () => {
     });
     const effect = vi.fn(async () => 'enabled');
     const result = await withToolCallAuthority(h.authorize,
-      helper('routine_save', { id: 'saved', enabled: true }), effect);
+      helper(tool, { id: 'saved', enabled: true }), effect);
     expect(JSON.stringify(result)).toContain('AUTHORIZATION_EXPIRED');
     expect(effect).not.toHaveBeenCalled();
   });

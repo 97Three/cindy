@@ -326,7 +326,10 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         const routine = (await routineTools.list(botId)).find(row => row.id === id);
         if (!routine) return undefined;
         return {
-          enabled: routine.enabled, revision: routine.revision,
+          enabled: routine.enabled, revision: routine.revision, prompt: routine.prompt,
+          builtin: !!routine.builtin, preRunCommand: routine.preRunHook?.command,
+          details: { routine: { id, name: routine.name, prompt: routine.prompt, enabled: routine.enabled,
+            revision: routine.revision, preRunHook: routine.preRunHook } },
           assertCurrent() {
             if (engine.list(botId).find(row => row.id === id)?.revision !== routine.revision)
               throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
@@ -1052,6 +1055,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
           ...routineTools,
           save: (botId, input, id) => routineTools.save(botId, input, id,
             taskActionRoutineRevision(botId, id)),
+          runNow: (botId, id) => routineTools.runNow(botId, id, taskActionRoutineRevision(botId, id)),
         },
         resolveBotId: async (callerSessionId) => {
           const scope = activeOwnerScopeKey();

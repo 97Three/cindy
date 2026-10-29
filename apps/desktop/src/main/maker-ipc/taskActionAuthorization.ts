@@ -114,7 +114,7 @@ export const SCHEDULER_TASK_ACTION_TOOLS: ReadonlySet<string> = new Set([
   'schedule_pause', 'schedule_resume', 'schedule_set_pre_run_hook',
 ]);
 
-export type TaskActionRisk = 'remove' | 'permission' | 'resume' | 'command';
+export type TaskActionRisk = 'remove' | 'permission' | 'resume' | 'command' | 'authority';
 export type TaskActionScheduleDefinition = Pick<Schedule,
   'id' | 'name' | 'executionMode' | 'scriptConfig' | 'preRunHook' | 'workingDir' | 'targetSessionId'>;
 export interface TaskActionConfirmation {
@@ -129,6 +129,10 @@ export interface TaskActionTarget {
 }
 
 export interface TaskActionRoutineSnapshot {
+  prompt: string;
+  builtin?: boolean;
+  preRunCommand?: string;
+  details?: Record<string, unknown>;
   enabled: boolean;
   revision: number;
   assertCurrent(): void;
@@ -136,7 +140,7 @@ export interface TaskActionRoutineSnapshot {
 
 /** A small, explicit risk list. Everything else follows the task's normal permissions. */
 export function taskActionRisk(call: Pick<Call, 'server' | 'tool' | 'args'>,
-  facts?: { routineEnabled?: boolean; schedule?: TaskActionScheduleDefinition | null }): TaskActionRisk | undefined {
+  facts?: { routineEnabled?: boolean; routinePrompt?: string; routineBuiltin?: boolean; routinePreRunCommand?: string; schedule?: TaskActionScheduleDefinition | null }): TaskActionRisk | undefined {
   const args = call.args && typeof call.args === 'object' && !Array.isArray(call.args)
     ? call.args as Record<string, unknown> : {};
   // The local scheduler is a trusted MCP, but its script runner bypasses the
@@ -155,10 +159,20 @@ export function taskActionRisk(call: Pick<Call, 'server' | 'tool' | 'args'>,
         return 'command';
     }
   }
+  const routineHook = args.preRunHook;
+  if (call.tool === 'routine_save' && routineHook && typeof routineHook === 'object' &&
+    'command' in routineHook && typeof routineHook.command === 'string' && routineHook.command.trim() &&
+    routineHook.command !== facts?.routinePreRunCommand) return 'command';
   if (call.tool === 'routine_delete' || call.tool === 'schedule_delete')
     return 'remove';
   if (call.tool === 'message_session_task' && args.decision !== undefined) return 'permission';
-  if (call.tool === 'routine_save' && args.enabled === true && facts?.routineEnabled === false) return 'resume';
+  if ((call.tool === 'routine_save' && args.enabled === true || call.tool === 'routine_run_now') &&
+    facts?.routineEnabled === false) return 'resume';
+  // An active custom routine becomes a standing owner instruction on its next run.
+  // Drafts stay ordinary; manually running a draft requires the resume decision above.
+  if (call.tool === 'routine_save' && args.enabled === true && !facts?.routineBuiltin &&
+    typeof args.prompt === 'string' && args.prompt.trim() && args.prompt !== facts?.routinePrompt)
+    return 'authority';
   if ((call.tool === 'message_session_task' && args.mode === 'resume') || call.tool === 'schedule_resume')
     return 'resume';
   return undefined;
@@ -250,10 +264,10 @@ export function taskActionPrincipal(callerSessionId: string): TaskActionPrincipa
   return current?.sessionId === callerSessionId ? current.principal : undefined;
 }
 
-/** Keep a saved routine's reviewed state through the service's atomic revision check. */
+/** Bind a routine save or manual execution to the service's atomic revision check. */
 export function taskActionRoutineRevision(botId: string, id?: string): number | undefined {
   const current = actionContext.getStore();
-  return current?.tool === 'routine_save' && current.routine?.botId === botId && current.routine.id === id
+  return current && ['routine_save', 'routine_run_now'].includes(current.tool) && current.routine?.botId === botId && current.routine.id === id
     ? current.routine.revision : undefined;
 }
 

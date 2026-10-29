@@ -222,7 +222,7 @@ export function createDesktopTaskActionAuthorizer(deps: {
           ? args.botId : caller.botId;
         const routineId = typeof args.id === 'string' && args.id ? args.id : undefined;
         const routine = principal === 'autonomous' && runtimePermissionApplies &&
-          call.tool === 'routine_save' && args.enabled === true && routineBotId && routineId
+          (call.tool === 'routine_save' && (args.enabled === true || args.preRunHook != null) || call.tool === 'routine_run_now') && routineBotId && routineId
           ? await deps.captureRoutine(routineBotId, routineId) : undefined;
         // Read saved commands for execution/partial updates; the card must show
         // what a bare schedule ID will run, and a changed definition expires it.
@@ -368,13 +368,16 @@ export function createDesktopTaskActionAuthorizer(deps: {
         };
         // Missing owner provenance no longer disables ordinary work. Only explicit
         // risks on autonomous turns need an exact, visible owner decision. The decision
-        // does not change the principal or grant future calls; admission stays single-use.
-        const risk = principal === 'autonomous' ? taskActionRisk(call, { routineEnabled: routine?.enabled, schedule }) : undefined;
+        // keeps the caller principal and admits only this invocation. Reviewed active
+        // routine instructions can become the standing grant for later routine runs.
+        const risk = principal === 'autonomous' ? taskActionRisk(call, { routineEnabled: routine?.enabled, routinePrompt: routine?.prompt,
+          routineBuiltin: routine?.builtin, routinePreRunCommand: routine?.preRunCommand, schedule }) : undefined;
         if (risk && runtimePermissionApplies) {
           await scope.assertCurrent();
           const confirmed = await deps.confirm(sessionId, call.tool, structuredClone(call.args),
             { server: call.server, risk, ...(permissionTarget ? { details: permissionTarget.details }
-              : risk === 'command' && schedule ? { details: { schedule } } : {}) });
+              : risk === 'command' && schedule ? { details: { schedule } }
+              : call.tool === 'routine_run_now' && routine?.details ? { details: routine.details } : {}) });
           if (!confirmed) {
             rejectedDecision = { ok: false, errorCode: 'USER_CANCELLED',
               message: 'The action was not approved. Do not execute or retry it without a new request.' };

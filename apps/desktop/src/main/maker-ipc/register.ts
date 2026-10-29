@@ -3375,8 +3375,10 @@ export async function confirmTaskAction(
     kind: 'permission', requestId: randomUUID(),
     title: t('taskActionConfirmation.title'),
     // Generic tool previews are shortened. The owner must see the complete
-    // command and working directory here, including on remote permission cards.
-    description: context?.risk === 'command' ? `${description}\n\n${JSON.stringify(input, null, 2)}` : description,
+    // command or standing instructions here, including on remote permission cards.
+    description: context?.risk === 'command' || context?.risk === 'authority' ||
+      (tool === 'routine_run_now' && context?.risk === 'resume')
+      ? `${description}\n\n${JSON.stringify(input, null, 2)}` : description,
     toolName: `mcp__${context?.server ?? 'cindy_helper'}__${tool}`,
     input,
     metadata: { hostOwnedConfirmation: 'task_action' },
