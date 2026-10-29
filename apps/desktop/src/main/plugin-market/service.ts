@@ -2079,7 +2079,7 @@ export class PluginMarketService {
           'rejection' in packed.inspected
             ? { mode: 'unprompted' }
             : await obtainGhostInstallConsent(
-                consent,
+                consent.mode === 'prompt' ? { ...consent, trust: packed.inspected.trust.level } : consent,
                 installedGhostMatchingMarketPlugin(plugin),
                 packed.inspected.manifest,
                 packed.inspected.packageSha256,
@@ -2593,7 +2593,7 @@ export class PluginMarketService {
         'rejection' in inspected
           ? { mode: 'unprompted' }
           : await obtainGhostInstallConsent(
-              options.consent,
+              options.consent.mode === 'prompt' ? { ...options.consent, trust: inspected.trust.level } : options.consent,
               installedGhostMatchingMarketPlugin(plugin),
               inspected.manifest,
               inspected.packageSha256,

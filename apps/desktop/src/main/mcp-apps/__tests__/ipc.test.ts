@@ -37,6 +37,7 @@ vi.mock('electron', () => ({
   shell: { openExternal: vi.fn() },
 }));
 vi.mock('../host.js', () => ({
+  appServerRevision: (config: unknown) => JSON.stringify(config),
   McpAppsHost: class {
     open = state.open;
     dispatch = state.dispatch;
@@ -54,6 +55,7 @@ vi.mock('../sandboxProtocol.js', () => ({
   unmountRemoteAppDocument: vi.fn(),
   assertMcpAppDocumentCaller: vi.fn(),
   setMcpAppCallerCleanup: vi.fn(),
+  setMcpAppFileReader: vi.fn(),
 }));
 vi.mock('../../device-link/index.js', () => ({ remoteInvoke: state.invoke, getRemoteLinkCloseEpoch: () => 0 }));
 vi.mock('../../appCapabilities.js', () => ({ getAppCapabilities: () => ({ canUseDeviceLink: true }) }));
@@ -73,12 +75,9 @@ vi.mock('../../security/trustedAppRenderer.js', () => ({
 vi.mock('../../device-link/invoke-context.js', () => ({
   getDeviceLinkInvokeContext: () => state.remote,
 }));
-vi.mock('../../utils/ipcValidate.js', () => ({
-  throwIpcError: (code: string, message: string) => {
-    throw new Error('[' + code + '] ' + message);
-  },
-}));
 import { sessions } from '../../localDb/schema.js';
+import { readAppServer } from '../runtime.js';
+import { pagePermissionGrants, pagePermissionSessionChanged } from '../pagePermissions.js';
 import { registerMcpAppsIpc } from '../ipc.js';
 import { mountRemoteAppDocument } from '../sandboxProtocol.js';
 const record = {
@@ -92,6 +91,8 @@ const record = {
 const request = vi.fn(async () => ({ kind: 'permission' as const, behavior: 'allow' as const }));
 beforeEach(() => {
   vi.clearAllMocks();
+  pagePermissionGrants.clearServers();
+  vi.mocked(readAppServer).mockReturnValue({ id: 'example', url: 'https://example.com/mcp', transport: 'http' });
   state.remote = undefined;
   state.predicates = [];
   state.duringUpdate = () => {};
@@ -319,4 +320,125 @@ describe('MCP App persistence and IPC wiring', () => {
     await state.handle!({}, 'task', { op: 'message', viewId: 'remote-view', message });
     expect(state.dispatch).toHaveBeenCalledWith('device:phone', 'task', 'remote-view', message);
   });
+});
+
+// unit: page tools must use existing Auto-review, not always prompt. Minimal input:
+// one custom MCP call in auto mode, with each possible reviewer decision.
+it.each(['allow', 'block', 'ask'] as const)('routes page approval through Auto (%s)', async verdict => {
+  state.session.permissionMode = 'auto';
+  const review = vi.fn(async () => ({ verdict }));
+  registerMcpAppsIpc(async () => {}, request, review);
+  const result = state.deps!.authorizeTool('task', record.tool, { value: 3 }, new AbortController().signal,
+    { clientId: 'card', serverId: 'custom', title: 'Planner' });
+  if (verdict === 'block') await expect(result).rejects.toThrow('MCP_APP_TOOL_DENIED');
+  else await result;
+  expect(review).toHaveBeenCalledWith('task', 'custom', 'form', { value: 3 });
+  expect(request).toHaveBeenCalledTimes(verdict === 'ask' ? 1 : 0);
+  if (verdict === 'ask') expect(request).toHaveBeenCalledWith('task', expect.objectContaining({ metadata: expect.objectContaining({ mcpApp: { clientId: 'card', serverId: 'custom', title: 'Planner', scope: 'once' } }) }), expect.any(AbortSignal));
+});
+
+// unit: page-only task grants were absent. Minimum input is two page calls with one
+// session-scoped answer, then change one authority boundary. Model stores are never involved.
+describe('page-only task permission lifetime', () => {
+  const source = { clientId: 'card', serverId: 'example', title: 'Planner' };
+  const tool = { name: 'read', inputSchema: { type: 'object' as const } };
+  const call = (id = 'task', target = tool) => state.deps!.authorizeTool(id, target, {}, new AbortController().signal, source);
+  it('remembers only this task/service/tool and clears on session clear, end, config and owner changes', async () => {
+    request.mockResolvedValue({ kind: 'permission', behavior: 'allow', permissionUpdates: [{ destination: 'session' }] } as never);
+    await call(); await call(); expect(request).toHaveBeenCalledTimes(1);
+    await call('other'); expect(request).toHaveBeenCalledTimes(2);
+    await call('task', { ...tool, name: 'another' }); expect(request).toHaveBeenCalledTimes(3);
+    pagePermissionSessionChanged('task', { clearedAt: 1 });
+    await call(); expect(request).toHaveBeenCalledTimes(4);
+    pagePermissionSessionChanged('task', { status: 'archived' });
+    await call(); expect(request).toHaveBeenCalledTimes(5);
+    vi.mocked(readAppServer).mockReturnValue({ id: 'example', url: 'https://example.com/new', transport: 'http' });
+    await call(); expect(request).toHaveBeenCalledTimes(6);
+    state.owner = { ...(state.owner as object) };
+    await call(); expect(request).toHaveBeenCalledTimes(7);
+    pagePermissionGrants.clearServers(new Set(['example']));
+    await call(); expect(request).toHaveBeenCalledTimes(8);
+  });
+  it('never remembers destructive, Auto or once-only answers', async () => {
+    request.mockResolvedValue({ kind: 'permission', behavior: 'allow', permissionUpdates: [{ destination: 'session' }] } as never);
+    const destructive = { ...tool, annotations: { destructiveHint: true } };
+    await call('task', destructive); await call('task', destructive);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenNthCalledWith(1, 'task', expect.objectContaining({ suggestions: undefined, metadata: { mcpApp: { ...source, scope: 'once' } } }), expect.any(AbortSignal));
+    state.session.permissionMode = 'auto';
+    const review = vi.fn(async () => ({ verdict: 'allow' as const }));
+    registerMcpAppsIpc(async () => {}, request, review);
+    await call(); await call(); expect(review).toHaveBeenCalledTimes(2);
+    state.session.permissionMode = 'default';
+    request.mockResolvedValue({ kind: 'permission', behavior: 'allow' });
+    await call(); await call(); expect(request).toHaveBeenCalledTimes(4);
+  });
+  it('settles only the waiting page request after committed Full Access, without another prompt', async () => {
+    let resolve!: (value: { kind: 'permission'; behavior: 'allow' }) => void;
+    const prompt = vi.fn(() => new Promise<{ kind: 'permission'; behavior: 'allow' }>(r => { resolve = r; }));
+    const allow = vi.fn(() => resolve({ kind: 'permission', behavior: 'allow' }));
+    registerMcpAppsIpc(async () => {}, prompt, undefined, allow);
+    const pending = call();
+    await vi.waitFor(() => expect(prompt).toHaveBeenCalledOnce());
+    state.session = { ...state.session, permissionMode: 'bypassPermissions' };
+    pagePermissionSessionChanged('other', { permissionMode: 'bypassPermissions' });
+    expect(allow).not.toHaveBeenCalled();
+    pagePermissionSessionChanged('task', { permissionMode: 'bypassPermissions' });
+    await pending; expect(allow).toHaveBeenCalledWith('task', expect.any(String));
+    await call(); expect(prompt).toHaveBeenCalledOnce();
+  });
+});
+
+// M05, unit: original Host tests bypassed the second IPC error envelope on the
+// viewer. Exercise the registered remote entry + RemoteMcpAppViews + real Host,
+// with only device-link transport substituted. One Library result is sufficient.
+it('preserves the local-files limitation across Desktop and phone remote entry points', async () => {
+  const { McpAppsHost: RealHost, appServerRevision: revision } = await vi.importActual<typeof import('../host.js')>('../host.js');
+  const { createPluginAppTransport, pluginAppTool } = await import('../pluginServer.js');
+  const tools = [{ name: 'open', description: 'Open' }];
+  const ui = { pages: { page: { html: 'ui.html' } }, tools: { open: { page: 'page' } } };
+  const config: import('../connection.js').AppServerConfig = { id: 'remote-files', url: '', transport: 'in-process', plugin: {
+    instance: 'remote-files', revision: 'approved', packageSha256: 'hash', title: 'Files', trust: 'unverified', domains: [], assertCurrent() {},
+    createTransport: () => createPluginAppTransport({ instance: 'remote-files', revision: 'approved', tools, ui, assertCurrent() {}, readHtml: () => '<p>Standard page</p>', call: async () => ({ content: [] }) }),
+  } };
+  const actual = new RealHost({ owner: () => state.owner!, config: () => config,
+    readCard: async (_task, card) => ({ version: 1, serverId: config.id, serverRevision: revision(config), resourceUri: 'ui://remote-files/page', tool: pluginAppTool('remote-files', tools[0], ui), arguments: {},
+      result: { content: card === 'files' ? [{ type: 'resource_link', uri: 'library:report.png', name: 'report' }] : [] } }),
+    writeCard: async () => {}, authorizeTool: async () => {}, sendMessage: async () => {},
+  });
+  state.open.mockImplementation(actual.open.bind(actual));
+  // Model the actual IPC serialization, including its [PRECONDITION_FAILED] prefix.
+  state.invoke.mockImplementation(async (_device, _channel, args, options) => {
+    options.preSend();
+    const saved = state.remote;
+    state.remote = { controllerDeviceId: 'viewer' };
+    try { return { ok: true, result: await state.handle!({}, args[0], args[1]) }; }
+    catch (error) { return { ok: false, error: { code: 'PRECONDITION_FAILED', message: (error as Error).message } }; }
+    finally { state.remote = saved; }
+  });
+  try {
+    for (const viewer of ['desktop', 'phone']) {
+      state.remote = viewer === 'phone' ? { controllerDeviceId: 'phone' } : undefined;
+      const route = viewer === 'desktop' ? { deviceId: 'execution-computer' } : {};
+      await expect(state.handle!({ sender: { id: 1 } }, 'task', { ...route, op: 'open', clientId: 'files' }))
+        .rejects.toThrow('[PRECONDITION_FAILED] MCP_APP_FILES_LOCAL_ONLY');
+      vi.mocked(mountRemoteAppDocument).mockReturnValue('local-standard');
+      const doc = await state.handle!({ sender: { id: 1 } }, 'task', { ...route, op: 'open', clientId: 'standard' });
+      expect(doc).toMatchObject(viewer === 'desktop' ? { viewId: 'local-standard', transport: 'sandbox' } : { html: '<p>Standard page</p>' });
+    }
+  } finally { await actual.reset(); }
+});
+
+// Wrapped public codes survive, but upstream text/URLs/secrets must never leak.
+it.each([
+  ['MCP_APP_FILE_NOT_AUTHORIZED', 'MCP_APP_FILE_NOT_AUTHORIZED'],
+  ['MCP_APP_TOOL_DENIED', 'MCP_APP_TOOL_DENIED'],
+  ['MCP_APP_CALL_NOT_AUTHORIZED', 'MCP_APP_CALL_NOT_AUTHORIZED'],
+  ['MCP_PLUGIN_CSP_DOMAIN_NOT_DECLARED', 'MCP_PLUGIN_CSP_DOMAIN_NOT_DECLARED'],
+  ['MCP_PLUGIN_UNAVAILABLE', 'MCP_PLUGIN_UNAVAILABLE'],
+  ['MCP_APP_FILES_LOCAL_ONLY https://private.invalid/?token=secret', 'MCP_APP_REQUEST_FAILED'],
+])('preserves only public remote App errors: %s', async (message, expected) => {
+  state.invoke.mockResolvedValue({ ok: false, error: { code: 'PRECONDITION_FAILED', message: `[PRECONDITION_FAILED] ${message}` } });
+  await expect(state.handle!({ sender: { id: 1 } }, 'task', { deviceId: 'execution-computer', op: 'open', clientId: 'card' }))
+    .rejects.toThrow(`[PRECONDITION_FAILED] ${expected}`);
 });

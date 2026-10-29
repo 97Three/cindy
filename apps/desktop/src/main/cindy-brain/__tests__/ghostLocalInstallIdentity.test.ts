@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import type { InstalledGhost } from '../../../shared/ghost.js';
 import type { GhostInstallConsentRequest } from '../../../shared/ghostInstallConsent.js';
 import { findInstalledGhostForDeliveryTarget, installedGhostStoragePart } from '../../../shared/pluginIdentity.js';
-import { assertGhostInstallConsent, confirmedTaskCapability, obtainGhostInstallConsent } from '../ghostInstallConsent.js';
+import { assertGhostInstallConsent, confirmedUiCapability, confirmedTaskCapability, obtainGhostInstallConsent } from '../ghostInstallConsent.js';
 import { ghostInstallApprovalToken } from '../../../shared/ghost.js';
 import { createGhostProductionCallbacks } from './ghostProductionCallbacksFixture.js';
 import { GhostManager } from '../GhostManager.js';
@@ -39,7 +39,7 @@ describe('local root installation consent identity', () => {
     const release = vi.fn();
     const manager = {
       list: () => [organization],
-      inspect: vi.fn(async () => ({ manifest, packageSha256 })),
+      inspect: vi.fn(async () => ({ manifest, packageSha256, trust: { level: 'unverified' } })),
       install: vi.fn(async () => ({ ghost: root })),
     };
     const callbacks = createCallbacks({
@@ -48,7 +48,7 @@ describe('local root installation consent identity', () => {
       rejectBrokerWithoutDeclaredRedirectPort: vi.fn(), rejectUnauthorizedTokenBroker: vi.fn(),
       throwIpcError: (code: string) => { throw new Error(code); },
       throwInstallError: () => { throw new Error('install rejected'); },
-      obtainGhostInstallConsent, assertGhostInstallConsent, confirmedTaskCapability,
+      obtainGhostInstallConsent, assertGhostInstallConsent, confirmedUiCapability, confirmedTaskCapability,
       createWindowGhostInstallConsentPrompt: () => prompt,
       findInstalledGhostForDeliveryTarget, installedGhostStoragePart,
       withGhostInstallLock: async (_id: string, operation: () => unknown) => operation(),
@@ -87,7 +87,7 @@ it.each(['choose', 'update', 'copy', 'cancel', 'changed'] as const)('Forge insta
     return mode !== 'cancel';
   });
   const entry = forgeCallbacks({
-    getGhostManager: () => ({ list: () => [root], inspect: async () => ({ manifest, canonicalManifest: manifest, packageSha256: digest }) }),
+    getGhostManager: () => ({ list: () => [root], inspect: async () => ({ manifest, canonicalManifest: manifest, packageSha256: digest, trust: { level: 'unverified' } }) }),
     rejectReservedGhostId() {}, rejectBrokerWithoutDeclaredRedirectPort() {}, rejectUnauthorizedTokenBroker() {},
     getAuthState: () => ({ isAuthenticated: true, user: { membershipKind: 'org', orgSlug: 'acme' } }),
     forgeInstallOriginForMembership: () => 'agent-forge', isValidPluginNamespace: () => true, isValidNewGhostId: () => true,

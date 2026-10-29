@@ -21,7 +21,7 @@ import { loadGhostFirstPartyFactsLoader } from '../ghostFirstPartyFacts.js';
 import { authorizeGhostTokenBroker } from '../ghostFirstPartyPrivilege.js';
 import { createGhostInstallReceipt, type GhostInstallReceipt } from '../ghostInstallReceipt.js';
 import { classifyGhostLocalUpdateSource } from '../ghostLocalUpdateSource.js';
-import { confirmedTaskCapability } from '../ghostInstallConsent.js';
+import { confirmedUiCapability, confirmedTaskCapability } from '../ghostInstallConsent.js';
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
 
@@ -269,6 +269,7 @@ function harness(
     obtainGhostInstallConsent: vi.fn(async () => ({ action: 'install' })),
     createWindowGhostInstallConsentPrompt: vi.fn(),
     assertGhostInstallConsent: vi.fn(),
+    confirmedUiCapability,
     confirmedTaskCapability,
     withGhostInstallLock: async (_id: string, task: () => unknown) => task(),
     withActiveOwnerGhostOauthMutationLock: async (_id: string, task: () => unknown) => task(),
@@ -278,6 +279,7 @@ function harness(
     hasRunningGhostCindyWork: () => false,
     fsSlotSingleton: { hasInFlightRequests: () => options.fsBusy === true },
     networkSlotSingleton: { hasInFlightRequests: () => options.networkBusy === true },
+    stopPluginAppInstance: vi.fn(async () => {}),
     getGhostNodeRuntimeBroker: () => ({ stopAndWait: vi.fn() }),
     getGhostAgentSlot: () => ({ clearGhost: vi.fn() }),
     getGhostErrandSlot: () => ({ clearGhost: vi.fn() }),

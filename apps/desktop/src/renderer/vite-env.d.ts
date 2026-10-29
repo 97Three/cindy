@@ -1384,6 +1384,9 @@ interface ElectronAPI {
     onRetirementOpen: (callback: (id: string) => void) => () => void;
     acknowledgeRetirement: (id: string) => Promise<{ ok: true }>;
     setEnabled: (id: string, enabled: boolean, expectedInstalledApproval?: string) => Promise<{ ok: true }>;
+    uiPrompts: () => Promise<Array<{id: string; name: string; version: string}>>;
+    deferUiPrompt: (id: string, version: string) => Promise<void>;
+    requestUiApproval: (id: string) => Promise<{ granted: boolean }>;
     requestTaskApproval: (id: string) => Promise<{ granted: boolean }>;
     /** 详情页「后台任务」:本插件转入后台(hidden)且未删除的任务。 */
     listBackgroundTasks: (id: string) => Promise<{
