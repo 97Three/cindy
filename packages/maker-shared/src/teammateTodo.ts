@@ -381,7 +381,7 @@ export function applyTodoPatch(
       text(patch.next.label, 100, true, 'next.label');
       text(patch.next.instruction, 4000, true, 'next.instruction');
       if (!['advance', 'view', 'decide'].includes(patch.next.kind))
-        throw new TodoError('INVALID_INPUT');
+        throw invalidInput("next.kind must be 'advance', 'view' or 'decide'");
     }
     if (JSON.stringify(t.next) !== JSON.stringify(patch.next)) t.action = null;
     t.next = patch.next

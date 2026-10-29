@@ -501,6 +501,14 @@ describe('teammate affairs input errors name the field to fix', () => {
     expect(() =>
       applyTodoPatch(
         s,
+        { ...patch, next: { label: 'Next', instruction: 'Continue', kind: 'invalid' as 'advance' } },
+        'one',
+        now,
+      ),
+    ).toThrow("INVALID_INPUT: next.kind must be 'advance', 'view' or 'decide'");
+    expect(() =>
+      applyTodoPatch(
+        s,
         {
           ...patch,
           deadlineCandidate: {
