@@ -822,10 +822,13 @@ function projectInvokeResultForTunnel(
     // 只有远程 Agent 的选择入口按它筛选。只放行布尔值。
     delete rest.remoteInvocationEnabled;
     if (typeof p.remoteInvocationEnabled === 'boolean') rest.remoteInvocationEnabled = p.remoteInvocationEnabled;
-    const logoKind = typeof p.id === 'string'
-      ? resolveProviderLogoKind(p.id, p.routing as ProviderLogoRouting | undefined)
-      : null;
-    // Never trust/pass through an arbitrary pre-existing value: only shared resolver output crosses.
+    // Only the host's narrow Cindy AI identity override may supersede brand inference.
+    const logoKind = p.id === 'xd' && p.logoKind === 'xd'
+      ? 'xd'
+      : typeof p.id === 'string'
+        ? resolveProviderLogoKind(p.id, p.routing as ProviderLogoRouting | undefined)
+        : null;
+    // Other pre-existing values remain untrusted.
     delete rest.logoKind;
     if (
       logoKind
