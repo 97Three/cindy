@@ -199,6 +199,9 @@ it.each(["light", "dark"])("applies nested sidebar display choices in %s", (mode
     }}><span>More</span></HomeDisplayMenu>;
   }
   const host = mount(<DisplayMenu />);
+  // Preserve the existing automation identifier across component extraction;
+  // losing it would make the menu trigger undiscoverable by its stable ID.
+  expect(host.querySelector('[data-testid="home.displaySettingsButton"]')).not.toBeNull();
   const option = (id: string) => host.querySelector(`[data-testid="home.displayMenu.${id}"]`) as HTMLButtonElement;
   expect(option('status.archived')).not.toBeNull();
   act(() => option('status.archived').click());
