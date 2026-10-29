@@ -674,7 +674,7 @@ App 内不加扫码组件：加一个会改变原生指纹，需要冷更。
 - **不再清理其他服务器**：原先换服务器部署前会先清理上一台没完成的部署（`cleanup` 步骤），现在那条记录留在列表里，由用户继续或放弃。
 - **改名**：只改本机记录与正在用的线路名，不连服务器；部署或升级进行中改名，完成时不被覆盖。服务器上没有改名接口，新设备加入时等待页显示的仍是部署时的名字。
 - **实现**：`apps/desktop/src/shared/selfHostedRelay.ts`、`src/main/device-link/selfHostedRelayConfig.ts`、`selfHostedRelayRuntime.ts`、`src/renderer/components/settings/RelayServicePanel.tsx`。
-- **回归**：`selfHostedRelayRuntime.test.ts`（部署不切换、两台服务器并存、改名、没完成的记录保留）、`selfHostedRelayConfig.test.ts`（旧格式读取与旧字段写回）；单页场景 `relay-service` 新增 `deploy-steady`（每一步窗口位置与大小、表单输入框和步骤列表都不动）与 `multi`（两台服务器、改名）。
+- **回归**：`selfHostedRelayRuntime.test.ts`（部署不切换、两台服务器并存、改名、没完成的记录保留）、`selfHostedRelayConfig.test.ts`（旧格式读取与旧字段写回）；单页场景 `relay-service` 新增 `deploy-steady`（每一步窗口位置与大小、表单输入框和步骤列表都不动）、`multi`（两台服务器、改名）与 `retry-existing`（完整旧记录重新部署在改动服务器前失败时，仍可查看原因和重试）。
 
 ## 16. 设备签名：中转无法冒充你的设备
 

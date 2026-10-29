@@ -1727,13 +1727,15 @@ export function RelayServicePanel({ controller }: { controller: SelfHostedRelayC
     const deploying = running && rowJob.action === 'deploy';
     const removing = running && rowJob.action === 'uninstall';
     const complete = Boolean(deployment.relayVersion);
+    // 重新部署在改动服务器前失败时旧记录仍完整,也要保留查看原因和重试的入口。
+    const needsResume = !complete || (rowJob?.action === 'deploy' && rowJob.status === 'failed');
     const inUse = Boolean(isServer && deployment.active);
     const showStatus = inUse && complete && (deploymentStatus.status || deploymentStatus.checking);
     const hint = deploying ? (
       runningHint(t(`${ROUTE}.deployingStep`, { step: stepLabel(t, rowJob.step) }))
     ) : removing ? (
       runningHint(t(`${DEPLOY}.running.uninstall`))
-    ) : !complete ? (
+    ) : needsResume ? (
       t(`${DEPLOY}.failed.deploy`)
     ) : (
       <span className="flex min-w-0 flex-wrap items-center gap-x-1.5">
@@ -1755,7 +1757,7 @@ export function RelayServicePanel({ controller }: { controller: SelfHostedRelayC
       <Button variant="secondary" size="sm" onClick={() => openDeploy(null, false)}>
         {t(`${ROUTE}.viewProgress`)}
       </Button>
-    ) : removing ? null : !complete ? (
+    ) : removing ? null : needsResume ? (
       <Button
         variant="secondary"
         size="sm"

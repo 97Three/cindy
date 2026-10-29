@@ -30,9 +30,10 @@ function initialState(name: string): SelfHostedRelayState {
   const server = name === 'server' || name === 'multi';
   const host = name === 'host';
   const recovering = name.startsWith('retry-');
+  const redeploy = name === 'retry-existing';
   const fresh = name === 'deploy-steady';
   const finishedAt = Date.now();
-  const first = { ...deployment, active: server, ...(recovering ? { relayVersion: '' } : {}) };
+  const first = { ...deployment, active: server, ...(recovering && !redeploy ? { relayVersion: '' } : {}) };
   return {
     available: true,
     mode: server || host ? 'self-hosted' : 'official',
@@ -48,10 +49,12 @@ function initialState(name: string): SelfHostedRelayState {
     },
     deployments: fresh ? [] : name === 'multi' ? [first, backup] : [first],
     deployJob: recovering ? {
-      action: 'deploy', status: 'failed', step: 'runtime', error: 'DOWNLOAD_FAILED',
-      startedAt: finishedAt - 15_000, finishedAt, serverChanged: true, relayId: deployment.relayId,
+      action: 'deploy', status: 'failed', step: redeploy ? 'check' : 'runtime', error: redeploy ? 'DEPLOY_FAILED' : 'DOWNLOAD_FAILED',
+      startedAt: finishedAt - 15_000, finishedAt, serverChanged: !redeploy, relayId: deployment.relayId,
       target: { sshHostId: deployment.sshHostId, address: deployment.address, name: deployment.name, baseUrl: deployment.baseUrl },
-      logs: [{ at: finishedAt - 15_000, step: 'check' }, { at: finishedAt - 14_000, step: 'runtime' }],
+      logs: redeploy
+        ? [{ at: finishedAt - 15_000, step: 'check' }]
+        : [{ at: finishedAt - 15_000, step: 'check' }, { at: finishedAt - 14_000, step: 'runtime' }],
     } : null,
     bundledRelayVersion: '0.3.1',
     joinLink: null,

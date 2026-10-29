@@ -12,6 +12,7 @@ export default {
     host: { about: 'This computer is the relay: settings icon and its add-device area' },
     'retry-replace': { about: 'A failed replacement rechecks the server and asks again before clearing its relay' },
     'retry-own': { about: 'A failed deployment retains its elapsed time and retries its own relay without clearing it' },
+    'retry-existing': { about: 'An existing complete relay keeps an entry to view and retry a redeployment that failed before changing the server' },
     'retry-check-error': { about: 'A failed retry check stays in the deployment dialog with a visible error' },
     'deploy-steady': { about: 'Choosing a server, its check, each deployment step and the finished page keep the dialog and form fields in place' },
     multi: { about: 'Two server relays, one in use; renaming the other and deploying again stay available' },
@@ -25,6 +26,10 @@ export default {
     // #7921 review:真实组件回归替换重试、失败用时和弹窗内错误；旧场景只有成功状态。
     if (ui.case.startsWith('retry-')) {
       const deploy = `${relay}.deploy`;
+      // #7971 review:重新部署在改动服务器前失败时旧记录仍完整,原分支隐藏了查看和重试入口。
+      if (ui.case === 'retry-existing') {
+        assert.ok(await page.getByRole('button', { name: await ui.t(`${route}.resume`), exact: true }).isVisible(), 'failed redeployment has no resume entry');
+      }
       await page.getByRole('button', { name: await ui.t(`${route}.resume`), exact: true }).click();
       const dialog = page.getByRole('dialog', { name: await ui.t(`${deploy}.title`), exact: true });
       await dialog.waitFor();
