@@ -131,7 +131,10 @@ export function useChatServerRoster(enabled: boolean) {
                 || run.reasons.some(reason => ['focus', 'connected', 'visible'].includes(reason)));
             fresh.set(room.id, { owner: api.owner, head: room.head, value });
             // An archive can land between the list and the newer snapshot.
-            if (!value.room.archived) rows.push(chatRoomRow(room, value, self));
+            if (!value.room.archived) {
+              const activity = await api.client.rosterActivity(room.id, value);
+              rows.push(chatRoomRow(room, value, self, activity));
+            }
           } catch (error) {
             if (!chatAccessLost(error)) {
               mobileDebugLog('warn', 'recovery', 'companion-roster-refresh', { source: 'group-detail', status: (error as { status?: number })?.status });

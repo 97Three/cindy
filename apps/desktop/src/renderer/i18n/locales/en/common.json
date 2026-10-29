@@ -1679,6 +1679,7 @@
     }
   },
   "settings": {
+    "newChatDefaults": { "title": "Default permission for new tasks" },
     "imConnection": {
       "reconnect": "Reconnect",
       "savedNote": "Your saved binding is retained. You can retry the connection.",
@@ -9891,6 +9892,13 @@
     }
   },
   "bots": {
+    "avatarStatus": {
+      "awaiting": "Needs your confirmation",
+      "error": "Needs attention",
+      "running": "Working",
+      "done": "Completed",
+      "unread": "Unread"
+    },
     "workbench": {
       "ownedMark": "Belongs to {{names}}",
       "createdMark": "Created by {{names}}",
