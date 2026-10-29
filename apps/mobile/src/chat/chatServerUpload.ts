@@ -1,4 +1,6 @@
 import type { RemoteSerializedAttachment } from '@/session/types';
+import { effectiveUploadMimeType, extractRemoteFileExt } from '@/session/attachments';
+import type { MobileAttachmentUploadCandidate } from '@/session/mobileAttachmentUpload';
 import type { ChatRequest } from './chatServerClient';
 import { chatHttpsUrl, chatId } from './chatServerClient';
 
@@ -9,7 +11,7 @@ export function createChatServerUpload(deps: {
   operationId(): string;
   put(url: string, uri: string, mimeType: string, signal?: AbortSignal): Promise<void>;
 }) {
-  return async (roomId: string, candidate: { name: string; size: number; mimeType?: string }, uri: string,
+  return async (roomId: string, candidate: MobileAttachmentUploadCandidate, uri: string,
     signal?: AbortSignal): Promise<RemoteSerializedAttachment> => {
     const check = () => {
       if (!deps.current()) throw new Error('OWNER_CHANGED');
@@ -19,7 +21,7 @@ export function createChatServerUpload(deps: {
     if (!Number.isSafeInteger(candidate.size) || candidate.size <= 0) throw new Error('ATTACHMENT_UNAVAILABLE');
     if (candidate.size > 100 * 1024 * 1024) throw new Error('ATTACHMENT_TOO_LARGE');
     const room = chatId(roomId);
-    const type = candidate.mimeType?.trim() || 'application/octet-stream';
+    const type = effectiveUploadMimeType(candidate.mimeType);
     const upload = await deps.request<{ id: string; uploadUrl: string }>(`/conversations/${room}/media`, 'POST', {
       operationId: `media:${deps.operationId()}`, name: candidate.name, type, size: candidate.size,
     });
@@ -31,6 +33,6 @@ export function createChatServerUpload(deps: {
     check();
     // No computer/relay reference: abandoned media follows the server's media lifecycle.
     return { id, name: candidate.name, category: type.startsWith('image/') ? 'image' : 'file',
-      mimeType: type, size: candidate.size, path: '', ext: candidate.name.includes('.') ? candidate.name.split('.').pop()! : '' };
+      mimeType: type, size: candidate.size, path: '', ext: extractRemoteFileExt(candidate.name) };
   };
 }

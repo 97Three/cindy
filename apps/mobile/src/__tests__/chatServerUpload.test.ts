@@ -21,7 +21,9 @@ describe('mobile direct private media upload', () => {
       [`/conversations/${room}/media/${media}/complete`, 'POST', { operationId: `seal:${media}` }],
     ]);
     expect(f.put).toHaveBeenCalledWith('https://upload.example.invalid/signed', 'file:///picked', mimeType, undefined);
-    expect(result).toMatchObject({ id: media, name: file.name, path: '', category: mimeType.startsWith('image/') ? 'image' : 'file' });
+    // Unit: the upload entry returns the same dotted extension metadata as the existing attachment pipeline.
+    // report.pdf exposed the direct adapter's divergent 'pdf' value; existing success checks missed this field.
+    expect(result).toMatchObject({ id: media, name: file.name, path: '', ext: '.pdf', category: mimeType.startsWith('image/') ? 'image' : 'file' });
     expect(JSON.stringify(result)).not.toContain('https:');
   });
   it('does not seal or send after a failed PUT', async () => {
