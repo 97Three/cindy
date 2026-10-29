@@ -70,14 +70,12 @@ export function BotGroupThreadShare({ share, resolveMedia, resolveServerMedia, o
   </View>;
 }
 
-export function BotGroupTopicActions({ message, onQuote, onThread, onShare, onReveal, shared, onReact, online, readOnly, children, onShareImage }: {
+export function BotGroupTopicActions({ message, onQuote, onThread, onShare, onReveal, shared, online, readOnly, children, onShareImage }: {
   children: ReactElement; onShareImage?: () => void;
   message: BotGroupMessageView; onQuote?: () => void; onThread?: () => void; onShare?: () => void; onReveal?: () => void;
   shared?: { messageId: string | null; bySelf: boolean }; online: boolean; readOnly: boolean;
-  onReact?: (emoji: string, present: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const emojis = ['👍', '❤️', '😂', '🎉', '👀', '🙏', '✅', '🤔', '🔥', '👏', '🚀', '💯'];
   const options = [
     ...(onQuote ? [{ id: 'quote', title: t('groupChat.thread.quoteReply'), disabled: readOnly }] : []),
     ...(onThread ? [{ id: 'thread', title: t(message.replyCount === 0 ? 'groupChat.thread.create' : 'groupChat.thread.open') }] : []),
@@ -85,15 +83,12 @@ export function BotGroupTopicActions({ message, onQuote, onThread, onShare, onRe
     ...(onShareImage ? [{ id: 'image', title: t('session.shareImage.title') }] : []),
     { id: 'copy', title: t('groupChat.thread.copy'), disabled: message.threadShare ? message.threadShare.status !== 'available' : !message.content },
   ];
-  const sections = [{ id: 'message', options },
-        ...(onReact && !readOnly ? [{ id: 'reactions', title: t('groupChat.thread.reactions'), options: emojis.map(emoji => ({ id: `react:${emoji}`, title: emoji, disabled: !online })) }] : [])];
   const select = (id: string) => {
           if (id === 'image') onShareImage?.(); else if (id === 'quote') onQuote?.(); else if (id === 'thread') onThread?.();
           else if (id === 'share') { if (shared?.bySelf) onReveal?.(); else onShare?.(); }
           else if (id === 'copy') void Clipboard.setStringAsync(message.threadShare?.status === 'available' ? message.threadShare.content : message.content);
-          else if (id.startsWith('react:')) { const emoji = id.slice(6); onReact?.(emoji, !message.reactions?.some(reaction => reaction.emoji === emoji && reaction.me)); }
         };
-  const timedSections = [{ id: 'time', options: [{ id: 'timestamp', title: new Date(message.createdAt).toLocaleString(), disabled: true }] }, ...sections];
+  const timedSections = [{ id: 'time', options: [{ id: 'timestamp', title: new Date(message.createdAt).toLocaleString(), disabled: true }] }, { id: 'message', options }];
   return <BotGroupMenu title={t('groupChat.thread.actions')} sections={timedSections} onSelect={select} longPress testID={`botGroup.thread.context.${message.id}`}>
     {open => <MessageContentLongPressContext.Provider value={open}>
       <Pressable onLongPress={open} delayLongPress={350}>{children}</Pressable>

@@ -594,7 +594,6 @@ function BotGroupChatContent({ deviceId, deviceName, groupId, messageId, notific
           onRetrySource={chat.reload}
           onOpenTopic={!deviceId && chat.server ? openTopic : undefined} onRevealShare={revealShare}
           onShare={chat.shareToMain ? id => { void chat.shareToMain!(id).catch(error => report(error, 'groupChat.thread.shareFailed')); } : undefined}
-          onReact={chat.react ? (id, emoji, present) => { void chat.react!(id, emoji, present).catch(error => report(error, 'groupChat.thread.reactionFailed')); } : undefined}
           selectedImages={selectedImages} onToggleImage={id => setImageSelection(old => ({ owner: viewportOwner,
             ids: old?.owner === viewportOwner && old.ids.includes(id) ? old.ids.filter(value => value !== id) : [...(old?.owner === viewportOwner ? old.ids : []), id] }))}
           onShareImage={!deviceId && chat.server ? id => { Keyboard.dismiss(); setImageSelection({ owner: viewportOwner, ids: [id] }); } : undefined}
@@ -690,7 +689,7 @@ function followUpPending(action: PlanPending['action'] | null): BotGroupFollowUp
 export function BotGroupTimeline({
   group, deviceId, online, identityFor, resolveMedia, resolveServerMedia, loadOlder, loadingOlder, continuing, planPending, onContinue, onPlanAction, onEditStep,
   onMessageLayout, onLocateMessage, highlightId, onReply, onOpenThread, threadRootId, pending = [], onPendingAction,
-  onOpenTopic, onRevealShare, onShare, onReact, sharedReplies, readBefore, olderError, onRetrySource, onShareImage, selectedImages, onToggleImage,
+  onOpenTopic, onRevealShare, onShare, sharedReplies, readBefore, olderError, onRetrySource, onShareImage, selectedImages, onToggleImage,
 }: {
   group: BotGroupRemoteChatData;
   pending?: readonly DurableOutboxRecord[];
@@ -717,7 +716,6 @@ export function BotGroupTimeline({
   onOpenTopic?: (rootId: string, messageId?: string) => void;
   onRevealShare?: (messageId: string | null) => void;
   onShare?: (messageId: string) => void;
-  onReact?: (messageId: string, emoji: string, present: boolean) => void;
   onRetrySource?: () => void;
   selectedImages?: string[]; onToggleImage?: (messageId: string) => void; onShareImage?: (messageId: string) => void;
   sharedReplies?: Record<string, { messageId: string; bySelf: boolean }>;
@@ -785,7 +783,6 @@ export function BotGroupTimeline({
             onQuote={onReply && isBotGroupMessageQuotable(message) ? () => onReply(message) : undefined}
             onThread={onOpenThread && !message.threadRootId ? () => onOpenThread(message) : undefined}
             onShare={onShare && !isRoot && message.threadRootId ? () => onShare(message.id) : undefined}
-            onReact={onReact ? (emoji, present) => onReact(message.id, emoji, present) : undefined}
             shared={shared} onReveal={revealShare}>{children}</BotGroupTopicActions>;
       const key = rowKey(message.id);
       return <View key={key} testID={`botGroup.row.${message.id}`} style={[styles.item, highlightId === message.id && styles.locatedMessage]}
