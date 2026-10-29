@@ -57,7 +57,8 @@ vi.mock('react-native', () => {
   const box = (tag: string) => ({ children, testID, accessibilityLabel, style, onLayout }: any) =>
     el(tag, { 'data-testid': testID, 'aria-label': accessibilityLabel,
       ref: (node: any) => { if (node) node.nativeLayout = onLayout; },
-      style: { opacity: [style].flat().filter(Boolean).findLast((item: any) => item.opacity !== undefined)?.opacity } }, children);
+      style: { opacity: [style].flat().filter(Boolean).findLast((item: any) => item.opacity !== undefined)?.opacity,
+        display: [style].flat().filter(Boolean).findLast((item: any) => item.display !== undefined)?.display } }, children);
   return {
     View: box('div'), ScrollView: ({ ref, children, ...props }: any) => {
       h.scroll = props;
@@ -370,7 +371,7 @@ describe('group timeline', () => {
       { botId: 'mimi', name: '咪咪', avatar: '🐱', avatarColor: 'red', status: 'active', isOwned: true },
       { botId: 'abu', name: '阿布', avatar: '🦉', avatarColor: 'blue', status: 'active', isOwned: false },
     ] });
-    data.messages.push(message('t1', 20, { authorBotId: 'abu', authorName: '阿布', content: '我开了个任务',
+    data.messages.push(message('t1', 20, { authorBotId: 'abu', authorName: '阿布', content: '',
       task: { meta, state: 'waiting', title: '官网首页', summary: '首页要放几个案例？' } }));
     await render(parseBotGroupChatData(data)!);
     const card = byId('botGroup.task')!;
@@ -378,6 +379,8 @@ describe('group timeline', () => {
     expect(card.textContent).toContain('groupChat.task.state.waiting');
     expect(card.textContent).toContain('首页要放几个案例？');
     expect(byId('botGroup.task.live')).toBeNull();
+    await click('botGroup.thread.context.t1.action.quote');
+    expect(byId('botGroup.cancelReply')).not.toBeNull();
   });
 
   it('opens my own teammate\'s task live in a group entered straight from the Chat Server, via the companion\'s home computer', async () => {
@@ -1832,6 +1835,9 @@ describe('mobile group threads', () => {
     await render(threadGroup(), 'ready', undefined, 'mac');
     expect(byId(`botGroup.thread.${rootId}`)).toBeNull();
     expect(byId(`botGroup.thread.context.${rootId}.action.quote`)).not.toBeNull();
+    await click(`botGroup.thread.more.${rootId}`);
+    expect(byId(`botGroup.thread.context.${rootId}.sheet`)?.textContent)
+      .toContain(new Date(rootMessage().createdAt).toLocaleString());
   });
 
   it('restores the retained group viewport without scrolling or marking it read while a topic is open', async () => {
@@ -1939,18 +1945,27 @@ describe('mobile group threads', () => {
     expect(h.chat.pendingAction).toHaveBeenCalledWith('both-failed', 'retry'); expect(h.chat.act).not.toHaveBeenCalled();
   });
 
-  it('exports only selected authorized message content through the existing system image share', async () => {
+  // #7847 review, unit: sharing used to unmount the composer and lose its local draft/options.
+  // Both exits must preserve state through the real Screen/Composer entry, without sending the draft.
+  it.each(['cancel', 'share'] as const)('preserves the thread draft and destination after image share: %s', async exit => {
     h.chat.server = true;
     await render(threadGroup({ messages: [rootMessage(), message('reply', 2, { threadRootId: rootId, content: 'Only this reply' })] }), 'ready', rootId, '');
+    await act(async () => h.row.onChangeText('Keep my draft'));
+    await click('botGroup.thread.alsoSend');
     await openTopicMenu('reply');
     await click('botGroup.thread.context.reply.action.image');
     expect(byId('botGroup.thread.image.reply')).not.toBeNull();
-    expect(byId('botGroup.composer.send')).toBeNull();
-    await click('session.shareImage.share');
-    expect(h.exported.at(-1)).toMatchObject([{ clientId: 'reply', body: 'Only this reply' }]);
-    expect(h.exported.at(-1)).toHaveLength(1);
-    expect(h.sharedImage).toHaveBeenCalledWith('file:///export.png', { mimeType: 'image/png' });
+    await click(`session.shareImage.${exit}`);
+    if (exit === 'share') {
+      expect(h.exported.at(-1)).toMatchObject([{ clientId: 'reply', body: 'Only this reply' }]);
+      expect(h.exported.at(-1)).toHaveLength(1);
+      expect(h.sharedImage).toHaveBeenCalledWith('file:///export.png', { mimeType: 'image/png' });
+    } else expect(h.sharedImage).not.toHaveBeenCalled();
+    expect(h.row.value).toBe('Keep my draft');
+    expect(byId('botGroup.composerContainer')?.style.display).not.toBe('none');
     expect(h.chat.act).not.toHaveBeenCalled();
+    await click('botGroup.composer.send');
+    expect(h.chat.act).toHaveBeenLastCalledWith('send', expect.objectContaining({ text: 'Keep my draft', alsoSendToMain: true }));
   });
 
   it('returns to the retained group only when it is the previous route; cold notifications locate their own root', async () => {

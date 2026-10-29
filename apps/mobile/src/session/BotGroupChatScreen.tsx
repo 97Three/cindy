@@ -648,11 +648,14 @@ function BotGroupChatContent({ deviceId, deviceName, groupId, messageId, notific
       {!threadRootId ? <BotGroupWorkArea group={group} deviceId={deviceId} online={chat.online} identityFor={identityFor}
         onError={message => { if (message) Alert.alert(message); }} /> : null}
       {selectedImages ? <BotGroupTopicImageShare messages={selectedMessages} allIds={shareableMessages.map(message => message.id)}
-        resolveMedia={chat.media} onClose={() => setImageSelection(null)} /> : <BotGroupComposer key={`${viewportOwner}:composer`} topic={!!threadRootId} members={group.members} identityFor={identityFor} deviceId={deviceId} online={(chat.online || !!chat.canQueue) && !group.archived && !group.dissolvedAt && (!threadRootId || group.messages.some(message => message.id === threadRootId && !message.deleted))}
+        resolveMedia={chat.media} onClose={() => setImageSelection(null)} /> : null}
+      <View style={selectedImages ? styles.hiddenComposer : undefined} testID="botGroup.composerContainer">
+        <BotGroupComposer key={`${viewportOwner}:composer`} topic={!!threadRootId} members={group.members} identityFor={identityFor} deviceId={deviceId} online={(chat.online || !!chat.canQueue) && !group.archived && !group.dissolvedAt && (!threadRootId || group.messages.some(message => message.id === threadRootId && !message.deleted))}
         quoteMessageId={replyTo?.messageId} focusRequest={replyFocusRequest}
         placeholder={threadRootId ? t('groupChat.thread.placeholder') : undefined}
         running={!threadRootId && group.round.status === 'running'} planState={threadRootId ? null : botGroupComposerPlanState(openBotGroupPlan(group), group.replyMode)}
-        divisionSupported={!threadRootId && !chat.server && (!group.singleSpeaker || group.supportsDivision === true)} attachmentsSupported={!threadRootId && group.supportsAttachments === true} onSend={send} onStop={stop} />}
+        divisionSupported={!threadRootId && !chat.server && (!group.singleSpeaker || group.supportsDivision === true)} attachmentsSupported={!threadRootId && group.supportsAttachments === true} onSend={send} onStop={stop} />
+      </View>
     </KeyboardAvoidingView>;
   }
 
@@ -980,6 +983,7 @@ function BotGroupTimelineItem({
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface },
   flex: { flex: 1 },
+  hiddenComposer: { display: 'none' },
   newMessages: { position: 'absolute', bottom: spacing.md, alignSelf: 'center', maxWidth: '90%' },
   newMessagesButton: { backgroundColor: colors.surfaceElevated },
   locatedMessage: { backgroundColor: colors.surfaceElevated, borderRadius: radius.container },

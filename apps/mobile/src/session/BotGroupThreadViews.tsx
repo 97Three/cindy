@@ -100,13 +100,13 @@ export function BotGroupMessageActions({ message, onQuote, onThread, onShare, on
       accessibilityState={{ disabled: readOnly }} onPress={onQuote} style={styles.actionButton} testID={`${actionId}.quote`}>
       <ChatReplyIcon size={iconSize.sm} color={readOnly ? colors.textTertiary : colors.textSecondary} />
     </Pressable> : null}
-    {options.length ? <BotGroupMenu title={t('groupChat.thread.actions')} sections={sections}
+    <BotGroupMenu title={t('groupChat.thread.actions')} sections={sections}
       onSelect={select} testID={`botGroup.thread.context.${message.id}`}>
       {open => <Pressable accessibilityRole="button" accessibilityLabel={t('message.renderer.moreActions')}
         onPress={open} style={styles.actionButton} testID={`botGroup.thread.more.${message.id}`}>
         <Ellipsis size={iconSize.sm} color={colors.textSecondary} />
       </Pressable>}
-    </BotGroupMenu> : null}
+    </BotGroupMenu>
   </View>;
 }
 
