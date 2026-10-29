@@ -182,6 +182,10 @@ describe('窗口可见性广播（装饰动画闸门的兜底信号）', () => {
    */
   const BROADCAST_EXEMPT = new Map<string, string>([
     [
+      'cindy-media/videoInspection.ts',
+      '视频抽帧页从不显示、不加载 Cindy Renderer 或装饰动画；结束、失败或超时即销毁',
+    ],
+    [
       'region-screenshot/pageWindow.ts',
       // index.tsx dispatches these windows to region-screenshot(-pin)-entry,
       // not main-entry: neither installs hiddenAnimationGate or runs decorative

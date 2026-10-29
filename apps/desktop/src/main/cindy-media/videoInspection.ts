@@ -63,7 +63,9 @@ export async function extractVideoFrames(
         const context = canvas.getContext('2d');
         const frames = [];
         for (const time of ${JSON.stringify(times)}) {
-          if (!Number.isFinite(video.duration) || time >= video.duration) throw new Error('VIDEO_TIME_OUT_OF_RANGE');
+          // MediaRecorder WebM may have duration=Infinity despite loadeddata.
+          // Its loaded first frame is usable; later seeks still need a known bound.
+          if (Number.isFinite(video.duration) ? time >= video.duration : time !== 0) throw new Error('VIDEO_TIME_OUT_OF_RANGE');
           if (video.currentTime !== time) await wait('seeked', () => { video.currentTime = time; });
           context.drawImage(video, 0, 0, canvas.width, canvas.height);
           frames.push({ data: canvas.toDataURL('image/jpeg', 0.8).split(',')[1], mimeType: 'image/jpeg', time_seconds: time });
