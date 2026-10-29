@@ -19,7 +19,8 @@
  * - 作业一次送达绝不重投;已确认未完成的作业只能是 unknown,不能按成功或未执行报告;
  * - 不设站点名单(2026-10-30 决定):安全交给任务的权限档位与自动审核;旧扩展与旧插件仍收发
  *   的 policy 字段只作兼容,恒为「全部允许」;
- * - 每个 URL 交给模型前都经 redactBrowserUrl;读取结果标 untrusted_content。
+ * - Agent 读到的地址与链接原样返回(2026-10-30);转交给插件的翻译请求来源地址仍经 redactBrowserUrl;
+ *   读取结果标 untrusted_content。
  */
 
 import http from 'node:http';
@@ -358,55 +359,18 @@ export class BrowserExtensionBridge {
 
   // ── 结果脱敏 ────────────────────────────────────────────────────────────
 
-  private redactFields(record: Record<string, unknown>): {
-    record: Record<string, unknown>;
-    dropped: boolean;
-  } {
-    let out: Record<string, unknown> | null = null;
-    let dropped = false;
-    for (const [key, value] of Object.entries(record)) {
-      if (!isHttp(value)) continue;
-      let clean: string | null = redactBrowserUrl(value);
-      if (clean.length > FIELD_VALUE_MAX) {
-        clean = null;
-        dropped = true;
-      }
-      if (clean === value) continue;
-      out = out || { ...record };
-      out[key] = clean;
-    }
-    return { record: out || record, dropped };
-  }
-
-  /** 交给模型前的最后一道门:页面 URL、标签页、链接与提取字段里的凭证全部抹掉,并按预算截断。 */
-  private redactResult(result: Record<string, unknown>, maxChars = 6000): Record<string, unknown> {
+  /**
+   * 交给模型前按预算截断。链接与地址原样返回(2026-10-30 决定:与专用浏览器一致,Agent 能用页面里的
+   * 魔法链接、签名地址;安全交给任务的权限档位与自动审核)。
+   */
+  private boundResult(result: Record<string, unknown>, maxChars = 6000): Record<string, unknown> {
     const out: Record<string, unknown> = { ...result };
-    if (typeof out.url === 'string') out.url = redactBrowserUrl(out.url);
-    if (Array.isArray(out.tabs)) {
-      out.tabs = out.tabs.map((t: { redacted?: boolean; url?: unknown }) =>
-        t && !t.redacted && typeof t.url === 'string' ? { ...t, url: redactBrowserUrl(t.url) } : t,
-      );
-    }
-    if (Array.isArray(out.links)) {
-      out.links = out.links.map((l: { url?: unknown }) =>
-        l && typeof l.url === 'string' ? { ...l, url: redactBrowserUrl(l.url) } : l,
-      );
-    }
-    if (Array.isArray(out.requests)) {
-      // Network results carry page URLs too (OAuth codes, reset tokens, embedded credentials).
-      out.requests = out.requests.map((r: { url?: unknown }) =>
-        r && typeof r === 'object' && typeof r.url === 'string'
-          ? { ...r, url: r.url.length > 8192 ? null : redactBrowserUrl(r.url) }
-          : r,
-      );
-    }
     let remaining = maxChars;
     const boundRecord = (entry: unknown): unknown => {
       if (!entry || typeof entry !== 'object') return entry;
-      const r = this.redactFields(entry as Record<string, unknown>);
-      let truncated = r.dropped;
+      let truncated = false;
       const bounded: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(r.record)) {
+      for (const [key, value] of Object.entries(entry as Record<string, unknown>)) {
         let finalValue: unknown = value;
         if (typeof value === 'string') {
           const limit = Math.min(remaining, FIELD_VALUE_MAX);
@@ -439,7 +403,7 @@ export class BrowserExtensionBridge {
     if (!this.jobs.has(job.id)) return;
     clearTimeout(job.timer);
     this.jobs.delete(job.id);
-    const safe = this.redactResult(result, job.payload.maxChars || 6000);
+    const safe = this.boundResult(result, job.payload.maxChars || 6000);
     const timing = (safe.timing && typeof safe.timing === 'object' ? safe.timing : {}) as Record<
       string,
       unknown

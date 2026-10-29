@@ -103,6 +103,8 @@ export function extensionSupportsParity(version: string | null | undefined): boo
 
 /** Extensions from this version upload by path through Chrome's debugger, without the ~30 MB transfer bound. */
 export const USER_BROWSER_PATH_UPLOAD_VERSION = '0.4.56';
+/** Extensions from this version read and fill password, payment and one-time-code fields like any field. */
+export const USER_BROWSER_SENSITIVE_FIELDS_VERSION = '0.4.57';
 
 function extensionAtLeast(version: string | null | undefined, wanted: string): boolean {
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version ?? '');
@@ -1436,16 +1438,37 @@ export class UserBrowserBackend implements BrowserBackend {
         });
       if (job.error !== 'EVAL_BLOCKED_BY_PAGE') return this.failureResult(req.action, job);
     }
+    if (
+      domRead.kind === 'login-wall' &&
+      extensionAtLeast(
+        this.connectedClients(control).find((c) => c.id === record.clientId)?.version,
+        USER_BROWSER_SENSITIVE_FIELDS_VERSION,
+      )
+    ) {
+      // The page forbids scripts: probe the same two fields with the extension's declarative extract
+      // (password and one-time-code fields are readable like any field from this version on).
+      const probe = await this.pageJob(control, record, 'extract', {
+        fields: {
+          password: { selector: 'input[type=password]', attr: 'type' },
+          code: { selector: 'input[autocomplete="one-time-code"]', attr: 'autocomplete' },
+        },
+      });
+      if (!probe.ok) return this.failureResult(req.action, probe);
+      const found = (probe.record ?? {}) as { password?: unknown; code?: unknown };
+      return actionOk(req.action, {
+        backend: this.kind,
+        targetId: record.targetId,
+        result: { password: found.password != null, code: found.code != null },
+      });
+    }
     if (domRead.kind === 'login-wall') {
-      // The extension refuses to read password / one-time-code fields at all (they are sensitive
-      // fields), so a declarative probe cannot tell "absent" from "present but withheld". Report
-      // the check as unavailable instead of a false negative; the snapshot text still shows the
-      // sign-in page to the agent, and the user's own browser normally carries their sign-ins.
+      // Older extensions refuse to read password / one-time-code fields, so a declarative probe cannot
+      // tell "absent" from "present but withheld". Report the check as unavailable, not a false negative.
       return actionOk(req.action, {
         backend: this.kind,
         targetId: record.targetId,
         result: { password: false, code: false, unavailable: true },
-        note: '用户浏览器执行端不读取密码/验证码字段,无法做登录墙检测;以快照内容判断是否需要登录。',
+        note: '这个版本的扩展不读取密码/验证码字段,无法做登录墙检测;以快照内容判断是否需要登录。',
       });
     }
     if (domRead.kind !== 'extract' || !domRead.extract)

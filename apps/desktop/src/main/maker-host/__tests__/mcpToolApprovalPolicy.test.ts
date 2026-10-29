@@ -132,6 +132,10 @@ describe('desktop MCP approval policy', () => {
     }
     expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_browser', toolName: 'browser', toolParams: toUser }))
       .toBe('prompt-each-time');
+    // Each upload hands a local file to a website, so it is reviewed too (2026-10-30).
+    expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_browser', toolName: 'call_tool',
+      toolParams: { name: 'browser', args: { action: 'upload', paths: ['/tmp/a.pdf'] } },
+    })).toBe('prompt-each-time');
     for (const backend of ['external', 'rsb-webview']) {
       expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_browser', toolName: 'call_tool',
         toolParams: { name: 'browser', args: { action: 'setBackend', backend } },

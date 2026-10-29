@@ -188,8 +188,9 @@ describe('policy · 地址校验与 URL 脱敏', () => {
     ).not.toThrow();
   });
 
-  it('提取属性是封闭集合;载荷校验保留空文本与空选项', () => {
-    for (const attr of ['href', 'src', 'datetime', 'title', 'alt', 'aria-label', 'role']) {
+  // 2026-10-30: any attribute can be extracted, as in Cindy's own browser; only the name is checked.
+  it('提取任意属性名;载荷校验保留空文本与空选项', () => {
+    for (const attr of ['href', 'role', 'data-csrf-token', 'value', 'xlink:href']) {
       expect(() =>
         validateBrowserExtensionJob('extract', {
           url: 'https://example.test',
@@ -197,7 +198,7 @@ describe('policy · 地址校验与 URL 脱敏', () => {
         }),
       ).not.toThrow();
     }
-    for (const attr of ['data-csrf-token', 'nonce', 'value', 'outerHTML', 'onclick', 'HREF']) {
+    for (const attr of ['', 'a b', '1x', '<x>']) {
       expect(() =>
         validateBrowserExtensionJob('extract', {
           url: 'https://example.test',
@@ -446,8 +447,8 @@ describe('bridge · 作业生命周期', () => {
   });
 
   // 2026-10-30: site lists are gone. A plugin of the site-list era still pushes one; it is acknowledged
-  // and blocks nothing, while tab URLs keep their credential redaction.
-  it('旧插件推送的站点名单不再生效;标签页地址仍做凭证脱敏', async () => {
+  // and blocks nothing. Addresses come back whole, as in Cindy's own browser.
+  it('旧插件推送的站点名单不再生效;标签页地址原样返回', async () => {
     const { bridge, ready } = await fixture();
     const c = await ready();
     expect(
@@ -468,7 +469,7 @@ describe('bridge · 作业生命周期', () => {
     });
     const tabs = (await p).tabs as Array<Record<string, unknown>>;
     expect(tabs[0].title).toBe('mail');
-    expect(tabs[0].url).not.toContain('11111111');
+    expect(tabs[0].url).toContain('11111111');
     expect(tabs[1]).toEqual({ id: 2, redacted: true });
     const clicked = bridge.act('click', { url: 'https://example.test', selector: 'button' });
     await sleep(5);
@@ -479,42 +480,12 @@ describe('bridge · 作业生命周期', () => {
     expect((await clicked).ok).toBe(true);
   });
 
-  // Review 2026-10-29 (Codex P1): network-result entries were forwarded to the model with their URLs
-  // untouched, including OAuth codes and embedded credentials.
-  it('网络请求结果里的地址也由宿主脱敏', async () => {
-    const { bridge, ready } = await fixture();
-    const c = await ready();
-    const p = bridge.act('requests', { url: 'https://example.test', tabId: 1 });
-    await sleep(5);
-    const { job } = await c.request('/poll');
-    await c.request('/ack', { id: job.id });
-    await c.request('/result', {
-      id: job.id,
-      result: {
-        ok: true,
-        requests: [
-          { url: 'https://example.test/cb?code=11111111-1111-4111-8111-111111111111', status: 200 },
-          { url: 'https://user:secret@example.test/path', status: 200 },
-          { url: 'https://example.test/' + 'a'.repeat(9000), status: 200 },
-        ],
-      },
-    });
-    const result = await p;
-    const requests = result.requests as Array<{ url: string | null; status: number }>;
-    expect(requests[0].url).not.toContain('11111111');
-    expect(requests[1].url).not.toContain('secret');
-    expect(requests[2].url).toBeNull();
-    expect(requests.map((r) => r.status)).toEqual([200, 200, 200]);
-  });
-
-  it('提取结果的最终预算覆盖脱敏后的增长;__proto__ 字段按自有属性保留', async () => {
+  it('提取结果按最终预算截断,链接要么完整要么省略;__proto__ 字段按自有属性保留', async () => {
     const { bridge, ready } = await fixture({ jobTimeout: 3000 });
     const c = await ready();
-    const url =
-      'https://example.test/?' + Array.from({ length: 15 }, (_, i) => 'token' + i + '=x').join('&');
+    const url = 'https://example.test/?q=' + 'x'.repeat(280);
     const record = Object.fromEntries(Array.from({ length: 30 }, (_, i) => ['field' + i, url]));
-    expect(url.length * 30).toBeLessThan(6000);
-    expect(redactBrowserUrl(url).length * 30).toBeGreaterThan(6000);
+    expect(url.length * 30).toBeGreaterThan(6000);
     const promise = bridge.act('extract', {
       url: 'https://example.test',
       fields: { link: 'a' },
@@ -539,7 +510,7 @@ describe('bridge · 作业生命周期', () => {
     );
     expect(values.reduce((n, v) => n + (v?.length || 0), 0)).toBeLessThanOrEqual(6000);
     expect(result.truncated).toBe(true);
-    expect(values.every((v) => v === null || v === redactBrowserUrl(url))).toBe(true);
+    expect(values.every((v) => v === null || v === url)).toBe(true);
     const single = bridge.act('extract', {
       url: 'https://example.test',
       fields: { text: 'p' },

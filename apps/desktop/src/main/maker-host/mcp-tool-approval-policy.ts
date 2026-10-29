@@ -225,6 +225,9 @@ export function getDesktopMcpToolApprovalPolicy(
     // choosing My browser in Settings needs no tool call and so no approval.
     if (name === 'browser' && args?.action === 'setBackend' && args.backend === 'user-browser')
       return 'prompt-each-time';
+    // Uploading hands a local file to a website. Files are not filtered by name (2026-10-30), so each
+    // upload goes through the task's approval: Ask confirms, Auto reviews, Full Access proceeds.
+    if (name === 'browser' && args?.action === 'upload') return 'prompt-each-time';
   }
   if (serverName === 'cindy' && toolName === 'ghost_market_install') return 'prompt-each-time';
   // This bridge multiplexes independent imported connections and commands with

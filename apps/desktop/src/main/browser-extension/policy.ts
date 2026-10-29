@@ -45,15 +45,8 @@ export const BROWSER_EXTENSION_INTERACT_ACTIONS = [
 ] as const;
 /** Actions that address no page: listing tabs, and checking or granting the on-demand debugger. */
 const UNADDRESSED_ACTIONS: readonly unknown[] = ['tabs', 'debuggerAccess', 'unmark'];
-export const BROWSER_EXTENSION_EXTRACT_ATTRIBUTES = [
-  'href',
-  'src',
-  'datetime',
-  'title',
-  'alt',
-  'aria-label',
-  'role',
-] as const;
+/** Any attribute may be extracted, as in Cindy's own browser (2026-10-30); only the name is checked. */
+const EXTRACT_ATTRIBUTE_NAME = /^[A-Za-z_:][-A-Za-z0-9_:.]{0,99}$/;
 
 export type BrowserExtensionReadAction = (typeof BROWSER_EXTENSION_READ_ACTIONS)[number];
 export type BrowserExtensionInteractAction = (typeof BROWSER_EXTENSION_INTERACT_ACTIONS)[number];
@@ -362,11 +355,9 @@ export function validateBrowserExtensionJob(
             !spec.selector ||
             spec.selector.length > 2000 ||
             (spec.attr != null &&
-              !(BROWSER_EXTENSION_EXTRACT_ATTRIBUTES as readonly string[]).includes(spec.attr));
+              (typeof spec.attr !== 'string' || !EXTRACT_ATTRIBUTE_NAME.test(spec.attr)));
       if (invalid) {
-        throw new Error(
-          'Each field needs a CSS selector; attr may only be href, src, datetime, title, alt, aria-label or role.',
-        );
+        throw new Error('Each field needs a CSS selector; attr must be an attribute name.');
       }
     }
     if (payload.after != null && !payload.multiple)
