@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   live: {} as Record<string, unknown>,
   copy: vi.fn(),
   panel: null as any,
+  focused: true,
 }));
 
 vi.mock('react-native', () => ({
@@ -21,21 +22,24 @@ vi.mock('react-native', () => ({
 }));
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => ({ accountGeneration: 1 }) }));
 vi.mock('@/components/MobilePrimitives', () => ({ MainWindowActionButton: ({ action }: any) => el('button', { onClick: action.onPress }, action.label) }));
-vi.mock('expo-router', () => ({ useRouter: () => ({ push: h.push }), useFocusEffect: (effect: () => void) => useEffect(effect, [effect]) }));
+vi.mock('expo-router', () => ({ useRouter: () => ({ push: h.push }), useFocusEffect: (effect: () => void) => useEffect(() => h.focused ? effect() : undefined, [effect, h.focused]) }));
 vi.mock('lucide-react-native', () => ({ CircleAlert: () => null, Sparkles: () => null }));
 vi.mock('@/theme', () => ({ useThemedStyles: () => ({}), useTheme: () => ({ colors: {} }) }));
 vi.mock('@/components/AppText', () => ({ Text: ({ children }: any) => el('span', null, children) }));
 vi.mock('@/device-link/DeviceLinkContext', () => ({ useDeviceLink: () => ({ invoke: h.invoke, subscribe: h.subscribe, unsubscribe: h.unsubscribe }) }));
 vi.mock('@/session/BotGroupAvatars', () => ({ BOT_GROUP_MESSAGE_AVATAR_SIZE: 28, BOT_GROUP_INLINE_AVATAR_SIZE: 20, BotGroupAvatar: () => null }));
 vi.mock('@/session/InteractionPanel', () => ({ InteractionPanel: (props: any) => { h.panel = props; return el('div', { 'data-testid': 'panel' }); } }));
-vi.mock('@/session/remoteSessionStore', () => ({
+vi.mock('@/session/remoteSessionStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/session/remoteSessionStore')>();
+  return { ...actual,
   remoteSessionStore: {
+    ...actual.remoteSessionStore,
     subscribe: () => () => {},
     getSessionLiveActivity: (sessionId: string) => h.live[sessionId] ?? null,
     setPendingInteractions: h.setPending,
   },
   useSessionPendingInteractions: (sessionId: string) => h.pending[sessionId] ?? [],
-}));
+}; });
 vi.mock('@/session/useCompanionGenerationCopy', () => ({
   useCompanionGenerationCopy: (input: { phase: string | null; active: boolean }) => { h.copy(input); return input.active ? `copy:${input.phase}` : null; },
 }));
@@ -48,6 +52,7 @@ vi.mock('@/session/CompanionPresenceRing', () => ({ CompanionPresenceRing: () =>
 vi.mock('@/session/ThinkingDots', () => ({ ThinkingDots: () => null }));
 import { BotGroupSpeakerRow } from '@/session/BotGroupSpeakerRow';
 import i18n from '@/i18n';
+import { remoteSessionStore } from '@/session/remoteSessionStore';
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root;
@@ -59,6 +64,8 @@ async function render(props: Record<string, unknown>) {
 beforeEach(async () => {
   await i18n.changeLanguage('zh-CN');
   vi.clearAllMocks(); h.pending = {}; h.live = {}; h.panel = null;
+  h.focused = true;
+  remoteSessionStore.clear();
   h.invoke.mockResolvedValue([{ request: { requestId: 'r1' } }]);
   node = document.createElement('div'); root = createRoot(node);
 });
@@ -131,4 +138,29 @@ it.each([
   await i18n.changeLanguage(locale);
   await render({ executionStatus: 'queued' });
   expect(node.querySelector('[data-testid="status"]')?.textContent).toBe(expected);
+});
+
+// Unit regression: real store refuses new text after task-detail blur unless
+// the focused group owns a message lease. Previous row tests mocked this store.
+it('keeps new stage text visible after returning from the task and releases it on blur', async () => {
+  h.invoke.mockResolvedValue([]);
+  const props = { groupId: 'g1', executionId: 'exec', startedAt: 0 };
+  await render(props);
+  h.focused = false;
+  await render(props);
+  const task = remoteSessionStore.enterSessionMessageDetail('s1');
+  remoteSessionStore.leaveSessionMessageDetail('s1', 'detail-blur', task);
+  h.focused = true;
+  await render(props);
+  await act(async () => remoteSessionStore.applyMakerEvent('s1', {
+    type: 'text', data: { text: 'New stage after return', isFullText: true, isFinal: false },
+  }, 'continued'));
+  expect(remoteSessionStore.getMessages('s1').some(message => message.content === 'New stage after return')).toBe(true);
+  expect(node.textContent).toContain('New stage after return');
+  h.focused = false;
+  await render(props);
+  await act(async () => remoteSessionStore.applyMakerEvent('s1', {
+    type: 'text', data: { text: 'Late text after leaving', isFullText: true, isFinal: false },
+  }, 'late'));
+  expect(remoteSessionStore.getMessages('s1').some(message => message.content === 'Late text after leaving')).toBe(false);
 });

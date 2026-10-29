@@ -10,7 +10,7 @@ import { useRemoteSessionMessages } from './remoteSessionStore';
  * `session:<id>` 流并读一次挂起交互的快照，权限请求 / 提问就地用伙伴卡片样式显示在这位
  * 伙伴下面，作答走任务页同一条路径。等你确认时不再显示「正在…」。
  */
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useState, useSyncExternalStore } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -117,14 +117,17 @@ function BotGroupLiveNotes({ deviceId, sessionId, clientId, groupId, executionId
   const { invoke } = useDeviceLink();
   const messages = useRemoteSessionMessages(sessionId);
   const [history, setHistory] = useState<BotGroupProcessMessage[]>([]);
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     let cancelled = false;
+    // The task page revokes its own detail authority on blur. Hold a separate
+    // focused work lease so pushes remain writable when returning to this group.
+    const lease = remoteSessionStore.acquireSessionMessageWork(sessionId, true);
     setHistory([]);
     void readBotGroupProcessMessages({ sessionId, clientId, groupId, executionId }, cursor => invoke<BotGroupProcessMessage[]>(deviceId,
       'local-db:messages:around-client-id', [sessionId, cursor, { radius: 80 }]), () => cancelled)
       .then(notes => { if (!cancelled) setHistory(notes); }).catch(() => { /* Live status and the original task remain available. */ });
-    return () => { cancelled = true; };
-  }, [deviceId, sessionId, clientId, groupId, executionId, invoke]);
+    return () => { cancelled = true; lease.release(); };
+  }, [deviceId, sessionId, clientId, groupId, executionId, invoke]));
   const start = messages.findIndex(message => message.clientId === clientId);
   const live = messages.slice(start >= 0 ? start + 1 : 0).filter(message => {
     const meta = message.agentMeta;
