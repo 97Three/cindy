@@ -369,6 +369,34 @@ describe('browserExtensionSlot · 管子上行', () => {
     expect(again.sent.some(([, payload]) => (payload as { name?: string }).name === 'browser-extension-policy-request')).toBe(false);
   });
 
+  // Review 2026-10-30 (Codex P2): a native install that failed for a passing reason is retried on status.
+  it('原生连接程序安装失败后,status 请求按 30 秒节流重试', async () => {
+    let now = 1_000_000;
+    let installs = 0;
+    let state: 'ready' | 'unavailable' = 'unavailable';
+    const { slot, bridges, settle, ghosts } = await makeSlot({
+      now: () => now,
+      createNativeBinding: () => ({
+        token: 'f'.repeat(64),
+        install: vi.fn(async () => {
+          installs++;
+          if (installs >= 2) state = 'ready';
+          return state === 'ready' ? { ok: true as const } : { ok: false as const, error: 'NATIVE_BINDING_UNAVAILABLE' as const, reason: 'EBUSY' };
+        }),
+        close: vi.fn(async () => undefined),
+        status: () => state,
+      }),
+    });
+    slot.reconcile(ghosts);
+    await settle();
+    expect(installs).toBe(1);
+    await slot.handleRequest('_root__my-browser', { kind: 'status' });
+    expect(installs).toBe(2);
+    expect(bridges).toHaveLength(1);
+    await slot.handleRequest('_root__my-browser', { kind: 'status' });
+    expect(installs).toBe(2);
+  });
+
   // Review 2026-10-30 (Codex P2): a failed startup is rebuilt by the next request instead of staying failed.
   it('启动失败后下一次请求重建整套启动流程', async () => {
     const { slot, bridges, natives, settle, ghosts } = await makeSlot();

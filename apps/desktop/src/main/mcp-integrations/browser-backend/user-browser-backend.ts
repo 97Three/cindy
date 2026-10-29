@@ -1386,6 +1386,10 @@ export class UserBrowserBackend implements BrowserBackend {
   ): Promise<BackendResult> {
     const request = req.request!;
     if (request.fn || request.textGone) return unsupported(req.action, 'wait.fn / wait.textGone');
+    // Older extensions run one wait condition per call; a combination would silently drop all but the
+    // first, so it is refused instead.
+    const conditions = [request.selector, typeof request.timeMs === 'number', request.url, request.loadState].filter(Boolean);
+    if (conditions.length > 1) return unsupported(req.action, '同时组合多个 wait 条件(selector / timeMs / url / loadState)');
     const timeoutMs = Math.min(30000, Math.max(100, request.timeoutMs ?? 15000));
     const started = (this.opts.now ?? Date.now)();
     if (request.selector) {

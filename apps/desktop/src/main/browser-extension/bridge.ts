@@ -200,6 +200,15 @@ const failure = (
 const isHttp = (value: unknown): value is string =>
   typeof value === 'string' && /^https?:\/\//i.test(value);
 const FIELD_VALUE_MAX = 4000;
+/** Per-result backstops for list-shaped reads (see boundResult). */
+const LIST_ENTRY_CAPS: ReadonlyArray<readonly [string, number]> = [
+  ['requests', 1000],
+  ['messages', 1000],
+  ['links', 1000],
+  ['events', 5000],
+];
+const ENTRY_STRING_MAX = 8192;
+const TEXT_RESULT_MAX = 400_000;
 
 export class BrowserExtensionBridge {
   /** Wire compatibility only: extensions and plugins of the site-list era still read it. */
@@ -394,6 +403,33 @@ export class BrowserExtensionBridge {
     };
     if (Array.isArray(out.records)) out.records = out.records.map(boundRecord);
     if (out.record) out.record = boundRecord(out.record);
+    // Backstop for every other read result: a result is accepted up to ~32 MB and 16 jobs can be in
+    // flight, so an extension (or a corrupted one) must not make Main hold and forward all of it. Entry
+    // counts and string sizes are capped; a cut is reported in `truncated`.
+    for (const [key, max] of LIST_ENTRY_CAPS) {
+      const list = out[key];
+      if (!Array.isArray(list)) continue;
+      const capped = list.length > max ? list.slice(0, max) : list;
+      if (capped !== list) out.truncated = true;
+      out[key] = capped.map((entry) => {
+        if (!entry || typeof entry !== 'object') return entry;
+        const row: Record<string, unknown> = { ...(entry as Record<string, unknown>) };
+        for (const [field, value] of Object.entries(row)) {
+          if (typeof value === 'string' && value.length > ENTRY_STRING_MAX) {
+            row[field] = /^https?:\/\//i.test(value) ? null : value.slice(0, ENTRY_STRING_MAX);
+            out.truncated = true;
+          }
+        }
+        return row;
+      });
+    }
+    for (const key of ['text', 'html', 'markdown'] as const) {
+      const value = out[key];
+      if (typeof value === 'string' && value.length > TEXT_RESULT_MAX) {
+        out[key] = value.slice(0, TEXT_RESULT_MAX);
+        out.truncated = true;
+      }
+    }
     return out;
   }
 

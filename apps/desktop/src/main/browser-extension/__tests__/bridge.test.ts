@@ -493,6 +493,30 @@ describe('bridge · 作业生命周期', () => {
     expect((await clicked).ok).toBe(true);
   });
 
+  // Review 2026-10-30 (Codex P2): every read result is bounded, not only extract records.
+  it('requests / links / text 等读取结果也有数量与大小上限', async () => {
+    const { bridge, ready } = await fixture();
+    const c = await ready();
+    const pending = bridge.act('requests', { url: 'https://example.test', tabId: 1 });
+    await sleep(5);
+    const { job } = await c.request('/poll');
+    await c.request('/ack', { id: job.id });
+    await c.request('/result', {
+      id: job.id,
+      result: {
+        ok: true,
+        requests: Array.from({ length: 1500 }, (_, i) => ({ url: 'https://example.test/' + i, note: 'n'.repeat(20000) })),
+        text: 't'.repeat(900_000),
+      },
+    });
+    const result = await pending;
+    const requests = result.requests as Array<{ url: string; note: string }>;
+    expect(requests).toHaveLength(1000);
+    expect(requests[0].note.length).toBe(8192);
+    expect((result.text as string).length).toBe(400_000);
+    expect(result.truncated).toBe(true);
+  });
+
   it('提取结果按最终预算截断,链接要么完整要么省略;__proto__ 字段按自有属性保留', async () => {
     const { bridge, ready } = await fixture({ jobTimeout: 3000 });
     const c = await ready();

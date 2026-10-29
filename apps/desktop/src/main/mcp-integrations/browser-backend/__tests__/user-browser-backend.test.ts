@@ -328,6 +328,10 @@ describe('UserBrowserBackend · 读取与动作', () => {
     expect(
       await call(b, { action: 'act', targetId: 't1', request: { kind: 'wait', timeMs: 1 } }),
     ).toMatchObject({ ok: true, data: { kind: 'wait', waitedMs: 1 } });
+    // Review 2026-10-30 (Codex P2): older extensions run one wait condition per call, so a combination is refused.
+    expect(
+      await call(b, { action: 'act', targetId: 't1', request: { kind: 'wait', selector: '.ready', timeMs: 500 } }),
+    ).toMatchObject({ ok: false, message: expect.stringContaining('组合') });
     // Review 2026-10-30 (Codex P2): a loadState wait on an older extension must not navigate the tab.
     fake.responses.set('tabs', () => ({ ok: true, tabs: [{ id: 7, url: 'https://example.test/a', status: 'complete' }] }));
     const navigatesBefore = fake.jobs.filter(([name]) => name === 'navigate').length;

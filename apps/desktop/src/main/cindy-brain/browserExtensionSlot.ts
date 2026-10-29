@@ -116,6 +116,8 @@ interface Entry {
   closing: boolean;
   /** Paired clients as last persisted. */
   saved: SavedBrowserExtensionState;
+  /** Earliest time the native binding may be retried after a failed or pending install. */
+  nativeRetryAt?: number;
   /** The startup sequence failed (for example every compatible port was busy); the next request rebuilds it. */
   startFailed?: true;
   /** Where the installed package came from; pairings never carry over to a package from elsewhere. */
@@ -383,6 +385,19 @@ export class GhostBrowserExtensionSlot {
     try {
       switch (req.kind) {
         case 'status': {
+          // A native install that failed for a passing reason (a busy file, a registry timeout) would
+          // otherwise stay failed until the plugin is toggled; try again on a status request, at most
+          // every 30 seconds.
+          if (entry.native && entry.native.status() === 'unavailable') {
+            const now = (this.deps.now ?? Date.now)();
+            if (now >= (entry.nativeRetryAt ?? 0)) {
+              entry.nativeRetryAt = now + 30_000;
+              await entry.native.install(
+                entry.bridge.listeningPort,
+                entry.ghost.manifest.browserExtension!.extensionIds,
+              );
+            }
+          }
           const status = await entry.bridge.status();
           if (!status.ok) return { ...status, errorCode: 'HOST_NOT_READY' };
           return {
