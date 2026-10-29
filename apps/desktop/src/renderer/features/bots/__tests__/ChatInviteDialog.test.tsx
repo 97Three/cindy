@@ -3,13 +3,14 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 import { ChatInviteDialog } from '../ChatInviteDialog';
-const mocks = vi.hoisted(() => ({ createInvite: vi.fn(), previewInvite: vi.fn(), acceptInvite: vi.fn(), revokeInvite: vi.fn(), copy: vi.fn(), success: vi.fn() }));
+const mocks = vi.hoisted(() => ({ createInvite: vi.fn(), previewInvite: vi.fn(), acceptInvite: vi.fn(), status: vi.fn(), revokeInvite: vi.fn(), copy: vi.fn(), success: vi.fn() }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string, values?: { date?: string }) => values?.date ? `${key}: ${values.date}` : key, i18n: { language: 'en' } }) }));
 vi.mock('../botGroupStore', () => ({ refreshBotGroups: vi.fn() }));
 vi.mock('@/lib/toast', () => ({ toast: { success: mocks.success } }));
 const k = (name: string) => `bots.groupChat.server.${name}`;
 const link = `cindy://chat-invite/${'a'.repeat(43)}`;
 beforeEach(() => {
+  mocks.status.mockResolvedValue({ personalMask: false });
   vi.clearAllMocks(); setDataOwnerGeneration('account', 1);
   mocks.createInvite.mockResolvedValue({ ok: true, link, expiresAt: null, reusable: true });
   mocks.previewInvite.mockResolvedValue({ ok: true, groupId: 'room', name: 'Room', inviterName: 'Host', expiresAt: null, reusable: true, joined: false });

@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { Text, TextInput } from '@/components/AppText';
 import { MainWindowActionButton } from '@/components/MobilePrimitives';
 import { useTheme, useThemedStyles, type ThemeColors } from '@/theme';
-import { spacing, radius, typeScale, fontWeight } from '@/theme/tokens';
+import { spacing, radius, typeScale, lineHeight, fontWeight, iconSize } from '@/theme/tokens';
 import { chatMemberAvatar } from '@/chat/chatServerClient';
 import { botGroupMemberAvatar } from './botGroupRemote';
 import { NativeSwitch, showConfirm } from '@/platform/chrome';
@@ -15,14 +15,16 @@ import { BotGroupMenu } from './BotGroupMenu';
 import { BotGroupAvatar } from './BotGroupAvatars';
 import type { GroupPersonalMask } from './useGroupPersonalMask';
 
+// Overlapping avatar geometry belongs to this composition, like BotGroupDuoAvatar.
+const avatarSizes = { self: 28, companion: 18, reply: 20 } as const;
 const key = (name: string) => `groupChat.mask.${name}`;
 const maskIdentity = (value: ChatMaskIdentity) => ({ botId: value.id, name: value.name, ...chatMemberAvatar(value.avatarUrl), avatar: botGroupMemberAvatar({ name: value.name, ...chatMemberAvatar(value.avatarUrl), avatarColor: '' }) });
 export function GroupMaskAvatar({ self, companion, deviceId = '' }: { self: ChatMaskIdentity; companion: ChatMaskIdentity; deviceId?: string }) {
   const { colors } = useTheme(), { t } = useTranslation();
   return <View style={{ width: 36, height: 36 }} accessible accessibilityLabel={t(key('attribution'), { name: companion.name, owner: self.name })}>
-    <BotGroupAvatar deviceId={deviceId} identity={maskIdentity(self)} size={28} online />
+    <BotGroupAvatar deviceId={deviceId} identity={maskIdentity(self)} size={avatarSizes.self} online />
     <View style={{ position: 'absolute', right: 0, bottom: 0, borderRadius: radius.pill, borderWidth: 2, borderColor: colors.surface }}>
-      <BotGroupAvatar deviceId={deviceId} identity={maskIdentity(companion)} size={18} online />
+      <BotGroupAvatar deviceId={deviceId} identity={maskIdentity(companion)} size={avatarSizes.companion} online />
     </View>
   </View>;
 }
@@ -47,7 +49,7 @@ export function GroupMaskSettingsSheet({ visible, mask, onClose, onClosed }: { v
   const pick = (label: string, value: string, options: Array<{ id: string; title: string }>, select: (value: string) => void) =>
     <BotGroupMenu title={label} accessibilityLabel={label} disabled={mask.saving} sections={[{ id: 'options', options: options.map(o => ({ ...o, selected: o.id === value })) }]} onSelect={select}>
       {open => <Pressable onPress={open} style={styles.row} accessibilityRole="button"><Text style={styles.label}>{label}</Text>
-        <Text style={styles.value} numberOfLines={2}>{options.find(o => o.id === value)?.title ?? t(key('choose'))}</Text><ChevronDown size={16} color={colors.textSecondary} /></Pressable>}
+        <Text style={styles.value} numberOfLines={2}>{options.find(o => o.id === value)?.title ?? t(key('choose'))}</Text><ChevronDown size={iconSize.md} color={colors.textSecondary} /></Pressable>}
     </BotGroupMenu>;
   const toggle = (label: string, value: boolean, change: (value: boolean) => void, disabled = false) => <View style={styles.row}>
     <Text style={styles.label}>{label}</Text><NativeSwitch accessibilityLabel={label} value={value} disabled={mask.saving || disabled} onValueChange={change} /></View>;
@@ -100,14 +102,14 @@ export function GroupMaskCatchupSheet({ visible, mask, onClose, onClosed, onLoca
           <Text style={[styles.label, styles.author]}>{mention.authorName}</Text>
           {mention.reply ? <Pressable accessibilityRole="button" accessibilityState={{ expanded: expanded === mention.messageId }} style={styles.disclosure}
             onPress={() => setExpanded(value => value === mention.messageId ? null : mention.messageId)}>
-            <Text style={styles.secondary}>{t(key('catchup.answered'))}</Text><ChevronDown size={16} color={colors.textSecondary} />
+            <Text style={styles.secondary}>{t(key('catchup.answered'))}</Text><ChevronDown size={iconSize.md} color={colors.textSecondary} />
           </Pressable> : null}
         </View>
         <Pressable accessibilityRole="button" onPress={() => onLocate(mention)} style={styles.question}>
-          <Text style={styles.body}>{mention.text}</Text><ChevronRight size={18} color={colors.textSecondary} />
+          <Text style={styles.body}>{mention.text}</Text><ChevronRight size={iconSize.lg} color={colors.textSecondary} />
         </Pressable>
         {expanded === mention.messageId && mention.reply ? <View style={styles.reply}>
-          <BotGroupAvatar deviceId="" identity={maskIdentity(mention.reply.companion)} size={20} online />
+          <BotGroupAvatar deviceId="" identity={maskIdentity(mention.reply.companion)} size={avatarSizes.reply} online />
           <Text style={[styles.body, { color: colors.textSecondary }]}>{mention.reply.text}</Text>
         </View> : null}
       </View>)}
@@ -118,10 +120,10 @@ export function GroupMaskCatchupSheet({ visible, mask, onClose, onClosed, onLoca
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   content: { padding: spacing.lg, gap: spacing.sm },
   row: { flexDirection: 'row', alignItems: 'center', minHeight: 48, gap: spacing.sm },
-  label: { flex: 1, fontSize: typeScale.body, color: colors.textPrimary },
-  body: { flex: 1, fontSize: typeScale.body, color: colors.textPrimary, lineHeight: 24 },
-  value: { flexShrink: 1, maxWidth: '55%', fontSize: typeScale.body, color: colors.textSecondary, textAlign: 'right' },
-  secondary: { fontSize: typeScale.caption, color: colors.textSecondary },
+  label: { flex: 1, fontSize: typeScale.body, lineHeight: lineHeight.body, color: colors.textPrimary },
+  body: { flex: 1, fontSize: typeScale.body, lineHeight: lineHeight.bodyRelaxed, color: colors.textPrimary },
+  value: { flexShrink: 1, maxWidth: '55%', fontSize: typeScale.body, lineHeight: lineHeight.body, color: colors.textSecondary, textAlign: 'right' },
+  secondary: { fontSize: typeScale.caption, lineHeight: lineHeight.caption, color: colors.textSecondary },
   status: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, minHeight: 44 },
   time: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   input: { flex: 1, minHeight: 44, fontSize: typeScale.body, color: colors.textPrimary },
