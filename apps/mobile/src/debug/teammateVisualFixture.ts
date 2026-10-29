@@ -88,6 +88,28 @@ export function teammateVisualFixture(channel: string, args: unknown[], now = FI
     if (request.input?.operation === 'restore') todoDeleted = false;
     return { effects: [], todo: glanceTodo };
   }
+  // PR #7899: synthetic content for native partial selection and mention screenshots.
+  // Open /companions/groups/visual-group-text-selection?deviceId=cindy-visual-mock-mac in --mock.
+  if (channel === REMOTE_RESOURCE_GET_CHANNEL && request?.ref?.collectionId === BOT_GROUP_REMOTE_COLLECTION_ID
+    && request.ref.id === 'visual-group-text-selection') return {
+    ref: { collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, kind: BOT_GROUP_REMOTE_RESOURCE_KIND, id: request.ref.id },
+    revision: 'visual-1', display: { title: '文字选择 · 模拟数据' }, actions: [], links: [],
+    blocks: [{ id: 'chat', primitive: BOT_GROUP_CHAT_PRIMITIVE, fallbackMarkdown: '文字选择 · 模拟数据', data: {
+      id: request.ref.id, name: '文字选择 · 模拟数据',
+      members: [{ botId: 'cindy-default', name: 'Cindy', status: 'active' }, { botId: 'visual-bot-dash', name: 'Dash', status: 'active' }],
+      messages: [
+        { id: 'selection-user', sequence: 1, kind: 'message', authorKind: 'user', authorName: '演示用户',
+          content: '@Cindy @Dash 请看这段示例，只选中需要的几个字再复制。', createdAt: now - MINUTE },
+        { id: 'selection-reply', sequence: 2, kind: 'message', authorKind: 'bot', authorBotId: 'cindy-default', authorName: 'Cindy',
+          content: [
+            '这是一段用于局部文字选择的长回复。长按正文，拖动两端手柄，只选中需要的几个字，再复制到输入框。其余文字应继续保留原来的排版。',
+            '', '下面是代码块，可以选择其中的一小段：', '',
+            '~~~typescript', 'const greeting = "Hello Cindy";', 'console.log(greeting);', '~~~', '',
+            '| 项目 | 说明 |', '| --- | --- |', '| 文字选择 | 只复制需要的几个字 |', '| 表格单元格 | 拖动手柄调整选区 |',
+          ].join('\n'), createdAt: now },
+      ], plans: [], createdAt: now, updatedAt: now,
+    } }],
+  };
   // Nine members from three accounts: the header shows a member count, not every name.
   if (channel === REMOTE_RESOURCE_GET_CHANNEL && request?.ref?.collectionId === BOT_GROUP_REMOTE_COLLECTION_ID
     && request.ref.id === 'visual-crowded-group') return {
