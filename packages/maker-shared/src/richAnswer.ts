@@ -279,16 +279,17 @@ export class RichAnswerStream {
           // appends onto stack/details lost their whole body). Containers render
           // no text, so the prose lands in one implicit markdown child per
           // container instead of being dropped, like the #7627 salvages.
-          if (this.nodes.size >= MAX_NODES || this.depth(current.id) >= MAX_DEPTH)
-            throw Error("depth");
           const existing = this.implicitText.get(current.id);
+          const child = existing ? this.nodes.get(existing) : undefined;
+          // Reuse only the implicit markdown child this container owns: a
+          // rebuilt container may already hold a different node under the same
+          // id, and prose written into e.g. a stat would never be displayed.
           if (
-            existing &&
-            this.nodes.has(existing) &&
-            current.children.includes(existing)
+            child &&
+            child.kind === "markdown" &&
+            current.children.includes(existing!)
           ) {
-            const child = this.nodes.get(existing)!;
-            this.nodes.set(existing, {
+            this.nodes.set(child.id, {
               ...child,
               props: {
                 ...child.props,
@@ -296,6 +297,13 @@ export class RichAnswerStream {
               },
             });
           } else {
+            // Only creating a node is bounded by the node and depth limits;
+            // appending to an existing child needs neither.
+            if (
+              this.nodes.size >= MAX_NODES ||
+              this.depth(current.id) >= MAX_DEPTH
+            )
+              throw Error("depth");
             const id = this.inlineChildId(current.id, 1);
             this.nodes.set(id, {
               id,
@@ -321,8 +329,12 @@ export class RichAnswerStream {
         const remove = (id: string) => {
           this.nodes.get(id)?.children.forEach(remove);
           this.nodes.delete(id);
+          // The subtree is gone; its implicit-text mapping must not be reused.
+          this.implicitText.delete(id);
         };
         remove(current.id);
+        for (const [container, child] of this.implicitText)
+          if (!this.nodes.has(child)) this.implicitText.delete(container);
         this.roots = this.roots.filter((id) => id !== current.id);
         for (const [id, node] of this.nodes)
           if (node.children.includes(current.id))

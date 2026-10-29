@@ -475,6 +475,43 @@ describe('append to a container stays readable', () => {
     expect(doc.nodes.get('stat')?.props.text).toBeUndefined();
     expect(doc.issues).toBe(1);
   });
+
+  // Greptile P1：删除容器后旧映射仍在，重建同名容器时同 id 可能换成别的 kind，
+  // 正文会写进不渲染 props.text 的节点并且不计 issues。
+  it('keeps prose out of a rebuilt container child that is not the implicit one', () => {
+    const doc = new RichAnswerStream().update(
+      line(1, { op: 'create', id: 'card', kind: 'stack' }) +
+      line(2, { op: 'append', id: 'card', text: 'one' }) +
+      line(3, { op: 'remove', id: 'card' }) +
+      line(4, { op: 'create', id: 'card', kind: 'stack', props: { children: [{ kind: 'stat', props: { value: 1 } }] } }) +
+      line(5, { op: 'append', id: 'card', text: 'two' }),
+    );
+    const children = doc.nodes.get('card')?.children ?? [];
+    expect(children).toHaveLength(2);
+    const stat = doc.nodes.get(children[0]);
+    expect(stat?.kind).toBe('stat');
+    expect(stat?.props.text).toBeUndefined();
+    const body = doc.nodes.get(children[1]);
+    expect(body?.kind).toBe('markdown');
+    expect(body?.props.text).toBe('two');
+  });
+
+  // Greptile P2：节点数上限只在真要新建节点时才拦，追加到已有隐式子节点不受限。
+  it('appends to an existing implicit child after the node limit is reached', () => {
+    const head =
+      line(1, { op: 'create', id: 'card', kind: 'stack' }) +
+      line(2, { op: 'append', id: 'card', text: 'one' });
+    const filler = Array.from({ length: 2046 }, (_, i) =>
+      line(i + 3, { op: 'create', id: `n${i}`, kind: 'text', props: { text: 'x' } }),
+    ).join('');
+    const doc = new RichAnswerStream().update(
+      head + filler + line(2049, { op: 'append', id: 'card', text: 'two' }),
+      true,
+    );
+    expect(doc.nodes.size).toBe(2048);
+    expect(doc.nodes.get('card-1')?.props.text).toBe('onetwo');
+    expect(doc.issues).toBe(0);
+  });
 });
 describe('inline draft limits', () => {
   it('caps nested inline drafts at the depth limit', () => {
