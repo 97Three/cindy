@@ -53,11 +53,11 @@ export function teammateChatActivity(input: {
   if (input.archived) return { phase: 'idle' };
   if (input.executions.some(row => row.status === 'needs_input')
     || input.plans.some(plan => plan.status === 'proposed' || plan.status === 'waiting')) return { phase: 'needs-interaction' };
-  if (input.planning || input.executions.some(row => ['queued', 'running', 'stopping'].includes(row.status))
-    || input.plans.some(plan => plan.status === 'running')) return { phase: 'running' };
   const recent = input.executions.filter(row => row.updated_at && Number.isFinite(Date.parse(row.updated_at))
     && Date.parse(row.updated_at) >= (input.lastMessageAt ?? 0));
   if (recent.some(row => row.status === 'failed')) return { phase: 'error' };
+  if (input.planning || input.executions.some(row => ['queued', 'running', 'stopping'].includes(row.status))
+    || input.plans.some(plan => plan.status === 'running')) return { phase: 'running' };
   if (recent.some(row => row.status === 'succeeded')) return { phase: 'completed' };
   return { phase: 'idle' };
 }

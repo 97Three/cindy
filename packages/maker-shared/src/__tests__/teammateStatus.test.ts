@@ -43,6 +43,14 @@ it('uses server executions instead of unread messages and ignores stale terminal
   expect(teammateChatActivity(input).phase).toBe('completed');
   expect(teammateChatActivity({ ...input, lastMessageAt: Date.parse('2026-10-29T01:01:00Z') }).phase).toBe('idle');
   expect(teammateChatActivity({ ...input, executions: [{ status: 'failed', updated_at: '2026-10-29T01:00:00Z' }] }).phase).toBe('error');
+  // Unit regression: a concurrent topic must not hide a recent main-chat failure;
+  // the existing single-execution assertions could not exercise this priority.
+  const failedAndRunning = { ...input, executions: [
+    { status: 'failed', updated_at: '2026-10-29T01:00:00Z' }, { status: 'running' },
+  ] };
+  expect(teammateChatActivity(failedAndRunning).phase).toBe('error');
+  expect(teammateChatActivity({ ...failedAndRunning, lastMessageAt: Date.parse('2026-10-29T01:01:00Z') }).phase).toBe('running');
+  expect(teammateChatActivity({ ...failedAndRunning, plans: [{ status: 'waiting' }] }).phase).toBe('needs-interaction');
   expect(teammateChatActivity({ ...input, executions: [{ status: 'needs_input' }, { status: 'running' }] }).phase).toBe('needs-interaction');
   expect(teammateChatActivity({ ...input, plans: [{ status: 'waiting' }] }).phase).toBe('needs-interaction');
 });

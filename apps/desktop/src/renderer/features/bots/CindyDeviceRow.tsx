@@ -99,20 +99,13 @@ export function CindyDeviceRow({
           {subtitle}
         </span>
         <span className="flex min-h-4 items-center justify-end">
-          {current.unread ? (
-            current.unreadCount ? (
-              <span
-                aria-label={t('bots.list.unread', { count: current.unreadCount })}
-                className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--bot-unread-bg)] px-1 text-10 text-[var(--bot-unread-fg)]"
-              >
-                {formatBotUnreadBadge(current.unreadCount)}
-              </span>
-            ) : (
-              <span
-                aria-label={t('bots.devicePicker.unread')}
-                className="size-1.5 rounded-full bg-[var(--bot-unread-bg)]"
-              />
-            )
+          {current.unread && current.unreadCount ? (
+            <span
+              aria-label={t('bots.list.unread', { count: current.unreadCount })}
+              className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--bot-unread-bg)] px-1 text-10 text-[var(--bot-unread-fg)]"
+            >
+              {formatBotUnreadBadge(current.unreadCount)}
+            </span>
           ) : null}
         </span>
       </div>

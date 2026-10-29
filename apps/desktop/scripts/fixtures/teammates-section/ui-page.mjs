@@ -52,6 +52,7 @@ export default {
       id: merged ? 'cindy-default' : 'mate-6', name: merged ? 'Cindy' : 'Reviewer',
       deviceId: 'remote-device', deviceName: 'Studio', online: true, avatar: '', avatarColor: 'violet',
       preview: 'Ready', activityAt: 595, sessionId: 'remote-session',
+      ...(merged ? { lastReplyAt: Date.now(), readAt: 0 } : {}),
     }] : [];
     return [name, {
       about: `Shell-mounted sidebar on ${name} route; selected sixth row and reversible collapse`,

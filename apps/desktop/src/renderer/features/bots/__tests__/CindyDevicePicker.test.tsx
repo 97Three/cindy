@@ -115,6 +115,13 @@ it.each([
       expect(screen.queryByText(en.bots.remote.unknown)).toBeNull();
       expect(screen.queryByText(en.bots.remote.online)).toBeNull();
       if (surface === 'row') {
+        // Unit regression: remote unread without an exact count used to add a second
+        // blue point on the row. Menu unread and accurate row counts must remain.
+        const row = within(screen.getByTestId('cindy-device-row'));
+        expect(row.queryByLabelText(en.bots.devicePicker.unread)).toBeNull();
+        if (unreadCount > 1) {
+          expect(row.getByLabelText(i18n.t('bots.list.unread', { count: unreadCount }))).toBeTruthy();
+        }
         expect(
           view.container.querySelector('[data-teammate-status="error"]') !==
             null,
