@@ -11,16 +11,8 @@ await authorFixture('files', output, fixture => {
   fixture.manifest.id = 'ui-files-demo';
   fixture.manifest.name = '文件交互演示';
   fixture.manifest.command = 'ui-files-demo';
+  fixture.html = fixture.html.replaceAll('acme-ui-showcase', 'ui-files-demo');
   fixture.manifest.network = { hosts: ['p3456-127-0-0-1.lanip.dev'] };
-  fixture.main = fixture.main.replaceAll('https://api.example.com', 'https://p3456-127-0-0-1.lanip.dev');
-  return fixture;
-});
-await authorFixture('files', output, fixture => {
-  fixture.manifest.id = 'xd-page-files';
-  fixture.manifest.name = '企业身份页面演示';
-  fixture.manifest.command = 'xd-page-files';
-  fixture.manifest.network.hosts = ['p3456-127-0-0-1.lanip.dev'];
-  fixture.manifest.network.secrets[0].inject.hosts = ['p3456-127-0-0-1.lanip.dev'];
   fixture.main = fixture.main.replaceAll('https://api.example.com', 'https://p3456-127-0-0-1.lanip.dev');
   return fixture;
 });

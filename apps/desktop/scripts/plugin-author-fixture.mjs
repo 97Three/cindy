@@ -12,20 +12,22 @@ export async function authorFixture(mode, temporary, transform = fixture => fixt
   const manifest = JSON.parse(await readFile(path.join(source, 'ghost.json'), 'utf8'));
   const main = await readFile(path.join(source, 'main.js'), 'utf8');
   let html;
-  if (mode === 'sdk' || mode === 'files') {
+  if (mode === 'sdk') {
     const result = await build({ entryPoints: [path.join(source, 'ui/app.js')], bundle: true, write: false, format: 'esm', minify: true });
     const script = result.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
     html = (await readFile(path.join(source, 'ui/page.template.html'), 'utf8')).replace('<!-- APP_SCRIPT -->', () => `<script type="module">${script}</script>`);
   } else html = await readFile(path.join(source, 'ui/page.html'), 'utf8');
-  const fixture = transform({ manifest, main, html });
+  const assets = mode === 'files' ? Object.fromEntries(await Promise.all(['settings.html', 'settings.js'].map(async name => [name, await readFile(path.join(source, name), 'utf8')]))) : {};
+  const fixture = transform({ manifest, main, html, assets });
   await packAuthorFixture(fixture, temporary);
   return fixture;
 }
-export async function packAuthorFixture({ manifest, main, html }, temporary) {
+export async function packAuthorFixture({ manifest, main, html, assets = {} }, temporary) {
   const dir = path.join(temporary, manifest.id);
   await mkdir(path.join(dir, 'ui'), { recursive: true });
   await writeFile(path.join(dir, 'ghost.json'), JSON.stringify(manifest));
   await writeFile(path.join(dir, 'main.js'), main);
+  for (const [name, content] of Object.entries(assets)) await writeFile(path.join(dir, name), content);
   const htmlPath = path.join(dir, manifest.mcpApps.ui.resources[0].file);
   await mkdir(path.dirname(htmlPath), { recursive: true });
   await writeFile(htmlPath, html);

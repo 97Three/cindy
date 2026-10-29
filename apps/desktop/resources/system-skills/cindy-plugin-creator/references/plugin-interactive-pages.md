@@ -26,6 +26,7 @@
 | 资源 `resources/read` 的 `_meta.ui.csp` / `prefersBorder` | 放在对应资源条目的 `csp` / `prefersBorder` |
 | 资源 HTML 与 `text/html;profile=mcp-app` | `file` 指向包内静态 HTML；Host 读取并设置标准 MIME，`file` 不进入 `_meta.ui` |
 | 资源 `_meta.ui.domain` / `permissions` | 原样校验保留；本期不保证指定源或浏览器权限生效，必须探测能力 |
+| 工具返回的 `_meta` / `structuredContent` | `_meta` 只交给页面；`structuredContent` 同时交给模型。联网响应摘要放 `_meta`，不要塞进模型上下文 |
 | ChatGPT 专用 `window.openai`、`openai/*` 私有字段 | 不直接兼容；移成标准 App SDK/JSON-RPC，文件处理桥接 main.js |
 
 `mcpApps` 的未知扩展原样保留、不授权。资源的四类 CSP origin：`connectDomains`、
@@ -106,15 +107,16 @@ cindy.onHostMessage(handleInteractivePage);
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-:root{color-scheme:light dark}
-body{margin:0;padding:16px;font:14px/1.5 var(--font-sans,system-ui);color:var(--color-text-primary);background:var(--color-background-primary)}
-input,button{font:inherit;color:inherit;background:var(--color-background-secondary);border:1px solid var(--color-border-primary);border-radius:8px;padding:10px;min-height:44px;box-sizing:border-box;max-width:100%}
-label{display:block}input{width:100%;margin:8px 0}button{cursor:pointer}p{overflow-wrap:anywhere}
+:root{color-scheme:light dark;--bg:var(--color-background-primary,Canvas);--fg:var(--color-text-primary,CanvasText);--muted:var(--color-text-secondary,GrayText);--panel:var(--color-background-secondary,color-mix(in srgb,CanvasText 5%,Canvas));--line:var(--color-border-primary,color-mix(in srgb,CanvasText 18%,Canvas));--radius:var(--border-radius-md,12px)}
+*{box-sizing:border-box}body{margin:0;padding:24px;font:14px/1.5 var(--font-sans,system-ui);color:var(--fg);background:var(--bg);overflow-wrap:anywhere}main{max-width:640px;margin:auto;min-width:0}h1{font-size:24px;line-height:1.3;font-weight:550;margin:8px 0}p,label{color:var(--muted)}label{display:block;margin-top:24px}input,button{font:inherit;color:var(--fg);min-height:36px;padding:9px 12px;max-width:100%}input{width:100%;margin:8px 0 12px;background:var(--bg);border:1px solid var(--line);border-radius:8px}button{border:0;border-radius:9999px;background:var(--panel);font-weight:550;cursor:pointer}button:disabled{opacity:.5;cursor:wait}button:focus-visible,input:focus-visible{outline:2px solid var(--color-border-info,var(--fg));outline-offset:2px}#status{padding:12px;background:var(--panel);border-radius:var(--radius);white-space:pre-wrap}@media(max-width:600px){body{padding:16px}h1{font-size:22px}}
 </style>
-<h1>交互计划</h1>
+<!-- 能力全集：references/examples/interactive-pages/files/ui/page.html；按需复制，不需要的块可以删。 -->
+<main><h1>交互计划</h1>
+<p>在页面暂存计划，内容较多时可切换全屏。</p>
 <label>计划标题<input id="title" value="我的计划"></label>
 <button id="save" disabled>暂存计划</button>
 <p id="status" role="status">正在连接…</p>
+</main>
 <script>
 (() => {
   let nextId = 0;
@@ -352,31 +354,7 @@ ResourceLink。宿主弹系统另存为框、净化文件名；不代页面下�
 
 ### 网络和凭证：只在 main.js 发请求
 
-View 不拿密钥、不自行用 Connection JWT，不用 CDN 登录脚本。app-only 工具调用 main.js，
-main.js 把 `msg.callId` 交给 `cindy.fetch`，复用现有 `network.secrets` 域名匹配、注入与 401 规则。
-例如企业插件需要 OIDC（把 acme 换成实际组织前缀，域名换成自己的真实后端）：
-
-```json
-"id": "acme-planner",
-"network": {
-  "hosts": ["api.example.com"],
-  "secrets": [{
-    "key": "identity", "label": "企业身份", "source": "oidc-token",
-    "inject": { "header": "Authorization", "format": "Bearer {value}", "hosts": ["api.example.com"] }
-  }]
-}
-```
-
-```js
-const response = await cindy.fetch({ url: 'https://api.example.com/report', method: 'POST',
-  body: JSON.stringify({ title: msg.args.title }), headers: { 'Content-Type': 'application/json' }, callId: msg.callId });
-```
-
-企业成员通过企业市场的完整受验证安装，或用 `ghost_forge_install` 按企业作者流程安装，
-才具备签发资格；普通手动导入不取得作者资格，audience 由 Host 推导，令牌只到精确声明的主机。
-没有手填令牌的替代卡。OIDC POST 的 401 只作废缓存、不重放；GET/HEAD/OPTIONS 可换令牌重试一次。
-OAuth/exchange 按现有策略刷新并重发一次同一 HTTP 请求。不要在工具层再重试写入。
-完整资格、存量窄例外和错误处理以[network §4.7](plugin-network.md)为准。
+联网和凭证都由 main.js 通过 `cindy.fetch` 发出，凭证由宿主注入，规则见 [§4.7](plugin-network.md)。
 
 ### 安装、升级和多端
 
@@ -400,14 +378,14 @@ OAuth/exchange 按现有策略刷新并重发一次同一 HTTP 请求。不要�
 ### 本地调试清单与常见错误
 
 1. 在已核实版本的执行电脑用 `ghost_forge_pack({dir:源码绝对路径})`，修复结构、HTML 路径、域名和版本报错。
-2. 用 `ghost_forge_install({dir:源码绝对路径})` 自测，按返回的 instance/namespace 精确寻址；OIDC 还要满足企业作者资格。
+2. 用 `ghost_forge_install({dir:源码绝对路径})` 自测，按返回的 instance/namespace 精确寻址。
 3. 在任务里说“请用交互计划示例打开标题为本周安排的计划表单”，模型经 ghost_call 调 open_planner。
 4. 改标题、暂存，核对模型文字和 View 的 structuredContent；确认 app-only 工具不出现在模型清单。
 5. 切 Light/Dark、窄宽度和全屏，检查主题、高度、滚动、离屏重建；等待文件选择时避免页面自身短超时。
 6. 核对拒绝、取消、停用/更新、断链、旧端和手机文件降级，不在日志中打印凭证。
 
 仓库验证：`node apps/desktop/scripts/plugin-ui.verify.mjs` 会打开官方 SDK、手写 JSON-RPC 与
-本节 A/B 示例，并经过生产 `packGhostDir` 校验。文件链由 `plugin-files.verify.mjs` 验证，
+本节 A/B 与能力全集示例，并经过生产 `packGhostDir` 校验。文件链由 `plugin-files.verify.mjs` 验证，
 系统对话框替身只在独立测试进程，原生操作与 30 分钟实机停留需另行测试。
 
 | 现象 / 码 | 排查 |
@@ -420,5 +398,35 @@ OAuth/exchange 按现有策略刷新并重发一次同一 HTTP 请求。不要�
 | `TOO_LARGE` | 读取返回的 limitBytes，减小附件或分片 |
 | CSP 拒绝资源 / 连接 | origin 未在对应 csp 数组或 host 未声明；不要关闭 CSP 绕过 |
 
-能力全集演示见 [文件与后端示例](examples/interactive-pages/files/ghost.json)，按需删除不用的块；
-它比最小示例多申请文件/网络能力，安装前应核对自己的后端和组织前缀。
+### 可裁剪的能力全集（无构建）
+
+复制 [files 目录](examples/interactive-pages/files/ghost.json) 的 ghost.json、main.js、settings.html、
+settings.js 和 ui/page.html，即可用 ghost_forge_pack 打包。页面与最小脚手架共用宿主主题变量、
+基础排版和圆角；四组按钮各有状态、耗时、可展开和复制的结果区，窄屏单列，宽屏两列。
+每块都标了“不需要可以删”：删功能时也删对应工具、页面按钮与未使用的权限声明。
+
+| 分组 | 可直接参考的能力 |
+| --- | --- |
+| 基础 | 表单回写、全屏、主题变量、ui/message、update-model-context、model-only 拒绝、长任务进度 |
+| 文件 | 系统选图/视频/附件、拖放粘贴分片、本卡只读预览、下载到 Library、saveAs、ui/download-file、处理后上传、发图给 AI |
+| 宿主 | 工作目录写入确认、kv、非敏感设置、upload.hashes、uploadDir、经模型展示旧卡片 |
+| 联网 | user 凭证请求、401 对照和返回结果展示；只显示状态码与前 2 KiB 响应，不显示请求头或令牌 |
+
+先将 `api.example.com` 换成自己的后端，并同时修改 main.js、
+network.hosts 和 inject.hosts。user 来源的凭证按精确域名注入，页面不直接联网、不读取凭证。
+示例不带本机测试服务、假凭证或故障切换开关。后端需提供：
+
+- GET `/files/report`：返回非敏感业务 JSON；不得回显 Authorization、API key 或 cookie。
+- GET `/files/unauthorized`：固定返回 401 和非敏感错误正文，供页面作失败对照（调试用，可删）。
+- GET `/files/download`：附件正文；POST `/files/upload`：接收 multipart，仅返回安全的文件摘要。
+
+main.js 将响应摘要放在 `_meta.showcase`，联网工具仅供 app 调用；不会自动交给模型。
+通用正文仍需作者按业务做字段白名单，示例的 Bearer/JWT 遮盖不能代替后端不泄漏密钥。
+只有用户明确点击发消息/发图时发送所选内容，更新上下文只发送表单标题。
+401 的处理沿用 §4.7，示例不在工具层另实现重试。
+
+调用 open_showcase 打开页面。首次联网前在插件详情配置自己的 user 凭证；settings.html 仅存显示名称。
+
+文件上传单件 64 MiB、合计 128 MiB；拖放示例主动限制 16 MiB、每片 1 MiB，超过用系统选择框。
+三个进度分别用于长任务、导入/下载实际字节、上传的读取/发送阶段；发送阶段没有虚构字节百分比。
+本地验证只替换测试进程的系统对话框；真实文件选择和作者自己的后端仍需在执行电脑自测。

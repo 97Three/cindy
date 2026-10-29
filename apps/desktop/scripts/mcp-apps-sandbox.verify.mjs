@@ -68,7 +68,7 @@ try {
     const controller = new McpAppController((_id,input)=>window.testHost.invoke(input),'task','card',
       message=>frame?.contentWindow?.postMessage(message,'*'),message=>{
         if(message.method==='ui/notifications/initialized')window.testState.initialized=true;
-        if(message.method==='ui/notifications/size-changed'){window.testState.size=message.params;if(frame)frame.style.height=Math.min(1200,message.params.height)+'px';}
+        if(message.method==='ui/notifications/size-changed'){window.testState.size=message.params;if(frame)frame.style.height=(${authorMode === 'files'}?message.params.height:Math.min(1200,message.params.height))+'px';}
         if(message.method==='ui/notifications/host-context-changed'&&message.params.displayMode)window.testState.mode=message.params.displayMode;
       },error=>{window.testState.error=String(error);});
     window.testController=controller;
@@ -114,7 +114,7 @@ try {
       resolveDir: scriptDir,
       contents: `
     import assert from 'node:assert/strict';
-    import { readFileSync } from 'node:fs';
+    import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
     import { open as openFile } from 'node:fs/promises';
     import { saveAppDownload } from '../src/main/mcp-apps/downloadFile.ts';
     import { buildRangedFileResponse } from '../src/main/cindy-media/rangeResponse.ts';
@@ -122,7 +122,7 @@ try {
     import { GhostPipeDispatcher } from '../src/main/cindy-brain/pipeDispatcher.ts';
     import { createPluginAppTransport } from '../src/main/mcp-apps/pluginServer.ts';
     import http from 'node:http';
-    import { app, BrowserWindow, protocol, ipcMain, net } from 'electron';
+    import { app, BrowserWindow, protocol, ipcMain, net, nativeImage } from 'electron';
     import { McpAppsHost, appServerRevision } from '../src/main/mcp-apps/host.ts';
     import { AppConnection } from '../src/main/mcp-apps/connection.ts';
     import { createAppServerProxy } from '../src/main/mcp-apps/serverProxy.ts';
@@ -161,7 +161,7 @@ try {
             call:(grant,args)=>executePlugin(grant.tool,args,grant.onProgress)})}};
       }
       connection=new AppConnection(config);const client=await connection.getClient();
-      const tool=(await connection.tools()).find(tool=>tool.name===(authorMode?'open_planner':independent?'open_metrics':'draft_form'));
+      const tool=(await connection.tools()).find(tool=>tool.name===(authorMode==='files'?'open_showcase':authorMode?'open_planner':independent?'open_metrics':'draft_form'));
       const args=independent?{threshold:75}:{title:'AI draft',body:'Review before creating'};
       const result=pluginMode?await executePlugin(tool.name,args):await client.callTool({name:tool.name,arguments:args});
       let record={version:1,serverId:'example',serverRevision:appServerRevision(config),resourceUri:tool._meta.ui.resourceUri,tool,arguments:args,result};
@@ -231,6 +231,42 @@ try {
       const inner=()=>window.webContents.mainFrame.framesInSubtree.find(frame=>frame.url.includes('-view/resource'));
       assert.equal(await window.webContents.executeJavaScript(
         "window.testHost.invoke({op:'message',viewId:window.testController.document.viewId,message:{jsonrpc:'2.0',id:'forged',method:'tools/list'}}).then(()=>false,()=>true)"),true);
+      if(authorMode==='files'){
+        // Integration: the shipped capability example used to have no real View coverage.
+        // Minimal input: open_showcase then save_form via its page; assert private results
+        // render, model-only is rejected, and both themes fit narrow and wide viewports.
+        stage='author capability example';
+        await wait(()=>inner()?.executeJavaScript("document.querySelector('#connection').textContent==='已连接'"));
+        stage='author form';
+        await inner().executeJavaScript("document.querySelector('#title-input').value='已核对的计划';document.querySelector('#form button[data-action]').click()");
+        await wait(()=>inner().executeJavaScript("document.querySelector('#form pre').textContent.includes('已核对的计划')"));
+        await inner().executeJavaScript("document.querySelector('#denied button[data-action]').click()");
+        stage='author visibility result';
+        await wait(()=>inner().executeJavaScript("document.querySelector('#denied pre').textContent.includes('MCP_APP_TOOL_NOT_VISIBLE')"));
+        assert.equal(await inner().executeJavaScript('typeof window.cindy'),'undefined');
+        await window.webContents.executeJavaScript('document.body.style.margin="0";document.querySelector("iframe").style.width="100%";document.querySelector("iframe").style.border="0";document.querySelector("iframe").style.display="block"');
+        for(const theme of ['light','dark'])for(const width of [360,800]){
+          const variables=theme==='light'?{'--color-background-primary':'rgb(248,248,246)','--color-background-secondary':'rgb(238,238,235)','--color-text-primary':'rgb(38,38,38)','--color-text-secondary':'rgb(102,102,100)','--color-border-primary':'rgb(215,215,212)'}:{'--color-background-primary':'rgb(31,31,30)','--color-background-secondary':'rgb(44,44,42)','--color-text-primary':'rgb(235,235,232)','--color-text-secondary':'rgb(165,165,160)','--color-border-primary':'rgb(60,60,58)'};
+          if(!window.webContents.debugger.isAttached())window.webContents.debugger.attach('1.3');
+          await window.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+          await window.webContents.executeJavaScript('window.testController.context('+JSON.stringify({theme,styles:{variables},containerDimensions:{width,maxHeight:5000}})+')');
+          await wait(()=>inner().executeJavaScript('document.documentElement.style.colorScheme==='+JSON.stringify(theme)));
+          await wait(()=>inner().executeJavaScript('window.innerWidth==='+width));
+          const size=await inner().executeJavaScript('({height:Math.ceil(document.body.getBoundingClientRect().height),scroll:document.documentElement.scrollWidth,width:innerWidth})');
+          assert.ok(size.scroll<=width,JSON.stringify(size));
+          await window.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',{width,height:size.height+2,deviceScaleFactor:1,mobile:false});
+          await window.webContents.executeJavaScript('document.querySelector("iframe").style.height='+JSON.stringify((size.height+2)+'px'));
+          await inner().executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+          await wait(()=>inner().executeJavaScript('innerHeight>='+size.height));
+          let png;stage='screenshot painted '+theme+' '+width;
+          await wait(async()=>{window.webContents.invalidate();png=await window.webContents.debugger.sendCommand('Page.captureScreenshot',{format:'png',captureBeyondViewport:true,fromSurface:true});const bitmap=nativeImage.createFromBuffer(Buffer.from(png.data,'base64')).toBitmap();const pixels=new Set();for(let i=0;i<Math.min(bitmap.length,width*400*4);i+=4)pixels.add(bitmap.readUInt32LE(i));return pixels.size>8;});
+          if(process.env.CINDY_AUTHOR_SCREENSHOTS){const file=process.env.CINDY_AUTHOR_SCREENSHOTS+'/files-'+theme+'-'+width+'.png';mkdirSync(process.env.CINDY_AUTHOR_SCREENSHOTS,{recursive:true});writeFileSync(file,Buffer.from(png.data,'base64'));}
+          console.log('AUTHOR_LAYOUT='+theme+' width='+width+' height='+size.height+' overflow=false');
+        }
+        window.webContents.debugger.detach();
+        console.log('AUTHOR_APP_VERDICT=passed (files; real pack, Electron, dispatcher, private result, visibility, Light/Dark)');
+        return;
+      }
       if(authorMode){
         // Integration: shipped raw/SDK author examples must actually initialize and
         // invoke main.js through the production dispatcher, ticket and App host.
