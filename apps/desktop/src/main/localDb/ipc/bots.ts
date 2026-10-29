@@ -106,7 +106,7 @@ import { createMessage } from './messages.js';
 import { syncBotLanePermission, syncBotLinkedLanePermissions, syncBotPermissionsByBotId } from '../../maker-ipc/botPermissionSync.js';
 import { withSessionPermissionChange } from '../../maker-ipc/sessionPermissionChange.js';
 import { withBotPermissionChangeForBot } from '../../maker-ipc/botPermissionDispatch.js';
-import { broadcastSessionPatched } from './sessions.js';
+import { broadcastSessionPatched, restoreArchivedSessionForSend } from './sessions.js';
 import { BOT_DELEGATION_CLIENT_ID } from '../../../shared/botCollaboration.js';
 
 import { generateBotCreationDraft, readBotCreationDraft, generateBotCreationAvatar } from '../../maker-ipc/botCreationDraft.js';
@@ -449,7 +449,12 @@ export async function findBotChannelLaneSession(botId: string, routeKey: string)
   return findBotOwnedLaneSession(botId, routeKey, 'channel');
 }
 
-async function findBotOwnedLaneSession(botId: string, routeKey: string, role: 'channel' | 'routine'): Promise<string | null> {
+async function findBotOwnedLaneSession(
+  botId: string,
+  routeKey: string,
+  role: 'channel' | 'routine',
+  status: 'active' | 'archived' = 'active',
+): Promise<string | null> {
   const [existing] = await getDbClient()
     .drizzle.select({ sessionId: botSessionLinks.sessionId })
     .from(botSessionLinks)
@@ -460,10 +465,32 @@ async function findBotOwnedLaneSession(botId: string, routeKey: string, role: 'c
       eq(botSessionLinks.routeKey, routeKey),
       isNull(botSessionLinks.archivedAt),
       eq(sessions.source, 'bot'),
-      eq(sessions.status, 'active'),
+      eq(sessions.status, status),
     ))
+    .orderBy(desc(sessions.updatedAt))
     .limit(1);
   return existing?.sessionId ?? null;
+}
+
+/**
+ * The owner can archive these lanes from the task list. Like an archived automation
+ * target, the next trigger resumes the same Session (and its context) instead of
+ * starting another one; a lane deleted meanwhile falls through to a new Session.
+ */
+async function resumeArchivedBotOwnedLaneSession(
+  botId: string,
+  routeKey: string,
+  role: 'channel' | 'routine',
+): Promise<string | null> {
+  const archived = await findBotOwnedLaneSession(botId, routeKey, role, 'archived');
+  if (!archived) return null;
+  try {
+    await restoreArchivedSessionForSend(archived);
+  } catch (error) {
+    log.warn('archived bot lane could not be resumed; starting a new one', { sessionId: archived, error: String(error) });
+    return null;
+  }
+  return archived;
 }
 
 /**
@@ -490,7 +517,8 @@ async function ensureBotOwnedLaneSession(input: { botId: string; routeKey: strin
   const owner = captureBotOperationOwner();
   const client = getDbClient();
   const db = client.drizzle;
-  const existing = await findBotOwnedLaneSession(input.botId, input.routeKey, role);
+  const existing = await findBotOwnedLaneSession(input.botId, input.routeKey, role)
+    ?? await resumeArchivedBotOwnedLaneSession(input.botId, input.routeKey, role);
   if (existing) {
     await syncBotLanePermission(existing);
     owner.assertCurrent();

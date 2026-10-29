@@ -2059,6 +2059,11 @@ describe('Bot canonical Session lifecycle', () => {
     if (!first.ok) throw new Error(first.message);
     await expect(ensureBotChannelLaneSession({ botId: 'bot-1', routeKey, title: 'ignored' }))
       .resolves.toEqual({ ok: true, sessionId: first.sessionId, created: false });
+    // The owner archived the lane from the task list: the next message resumes it, not a second lane.
+    h.sqlite!.prepare("UPDATE sessions SET status = 'archived' WHERE id = ?").run(first.sessionId);
+    await expect(ensureBotChannelLaneSession({ botId: 'bot-1', routeKey, title: 'ignored' }))
+      .resolves.toEqual({ ok: true, sessionId: first.sessionId, created: false });
+    expect(h.sqlite!.prepare('SELECT status FROM sessions WHERE id = ?').get(first.sessionId)).toEqual({ status: 'active' });
     expect(emitSessionCreated).toHaveBeenCalledExactlyOnceWith(first.sessionId);
     await expect(findBotChannelLaneSession('bot-1', routeKey)).resolves.toBe(first.sessionId);
     const canonical = h.sqlite!.prepare(

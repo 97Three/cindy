@@ -1952,6 +1952,34 @@ describe('db worker tx handlers', () => {
     },
   );
 
+  it.each([false, true])(
+    'sessions.setTerminalStatus archives listed teammate lanes but not private Bot chats (inline=%s)',
+    async (useInlineWorker) => {
+      await withClient(
+        async (client) => {
+          await client.exec(
+            'CREATE TABLE IF NOT EXISTS bot_session_links (id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, session_id TEXT NOT NULL, role TEXT NOT NULL, route_key TEXT, created_at INTEGER NOT NULL, archived_at INTEGER)',
+          );
+          for (const [id, role] of [['routine-lane', 'routine'], ['bot-chat', 'canonical']] as const) {
+            await seedSession(client, id, { source: 'bot' });
+            await client.exec(
+              'INSERT INTO bot_session_links (id, bot_id, session_id, role, created_at) VALUES (?, ?, ?, ?, ?)',
+              [`link-${id}`, 'bot-1', id, role, Date.now()],
+            );
+          }
+          await expect(client.tx('sessions.setTerminalStatus', { sessionId: 'routine-lane', status: 'archived' }))
+            .resolves.toEqual(expect.objectContaining({ sessionId: 'routine-lane', status: 'archived' }));
+          await expect(client.tx('sessions.setTerminalStatus', { sessionId: 'bot-chat', status: 'archived' }))
+            .rejects.toThrow('Bot sessions must use Bot lifecycle');
+          await expect(client.query('SELECT id, status FROM sessions ORDER BY id')).resolves.toEqual([
+            { id: 'bot-chat', status: 'active' }, { id: 'routine-lane', status: 'archived' },
+          ]);
+        },
+        { useInlineWorker },
+      );
+    },
+  );
+
   // DB tier, #6529: terminal-status writes must delete hidden children in the
   // same commit. Existing closure-fence coverage only seeded a single task.
   // A child UPDATE failure must preserve the parent and all child statuses.
