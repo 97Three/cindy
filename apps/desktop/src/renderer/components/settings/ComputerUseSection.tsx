@@ -459,8 +459,11 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
   );
   const navigate = useNavigate();
   const userBrowserPlugin =
-    useInstalledGhosts().find((ghost) => ghost.manifest.id === RECOMMENDED_PAGE_CONTROL_PLUGIN_ID) ??
-    null;
+    // Only the root instance can provide My browser (an organization copy with the same id cannot),
+    // so that is the one the setup steps install, enable and open.
+    useInstalledGhosts().find(
+      (ghost) => ghost.manifest.id === RECOMMENDED_PAGE_CONTROL_PLUGIN_ID && ghost.namespace == null,
+    ) ?? null;
   const [userBrowserSetupBusy, setUserBrowserSetupBusy] = useState(false);
   // Health can include an automatic embedded-browser recovery and therefore
   // take several seconds. Track the latest health owner so a late initial

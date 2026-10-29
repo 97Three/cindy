@@ -713,6 +713,10 @@ describe('UserBrowserBackend · 读取与动作', () => {
       ok: false,
       message: expect.stringContaining('匹配多个'),
     });
+    expect(await call(b, { action: 'tabs', profile: 'client-aaa' })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining('匹配多个'),
+    });
     expect(await call(b, { action: 'open', url: 'https://b.test/', profile: 'client-aaaa' })).toMatchObject({
       ok: true,
       data: { browser: 'client-aaaa' },

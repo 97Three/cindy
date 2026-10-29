@@ -132,6 +132,12 @@ export function userBrowserCapabilities(
     : USER_BROWSER_CAPABILITIES;
 }
 
+/** Connections a profile names: the exact id if there is one, else every id it is a prefix of. */
+function matchProfile<T extends { id: string }>(clients: T[], profile: string): T[] {
+  const exact = clients.filter((c) => c.id === profile);
+  return exact.length ? exact : clients.filter((c) => c.id.startsWith(profile));
+}
+
 function actionFailed(
   action: BackendRequest['action'],
   message: string,
@@ -414,8 +420,7 @@ export class UserBrowserBackend implements BrowserBackend {
     if (profile) {
       // An exact id wins; an abbreviation must match exactly one connection, or the action could land in
       // another signed-in browser.
-      const exact = clients.filter((c) => c.id === profile);
-      const matches = exact.length ? exact : clients.filter((c) => c.id.startsWith(profile));
+      const matches = matchProfile(clients, profile);
       if (matches.length > 1)
         return {
           ok: false,
@@ -728,9 +733,15 @@ export class UserBrowserBackend implements BrowserBackend {
   private async handleTabs(req: BackendRequest): Promise<BackendResult> {
     const gate = this.control(req.action);
     if (!gate.ok) return gate.result;
-    const clients = this.connectedClients(gate.control).filter(
-      (c) => !req.profile || c.id === req.profile || c.id.startsWith(req.profile),
-    );
+    const connected = this.connectedClients(gate.control);
+    // Same matching as every other action: an exact id wins, an abbreviation must be unique.
+    const clients = req.profile ? matchProfile(connected, req.profile) : connected;
+    if (req.profile && clients.length > 1)
+      return actionFailed(
+        req.action,
+        `浏览器连接 ${req.profile} 匹配多个连接,请写得更完整;用 profiles 查看当前连接`,
+        'BROWSER_RUNTIME_INVALID_REQUEST',
+      );
     if (clients.length === 0)
       return actionFailed(req.action, DISCONNECTED_MESSAGE, 'BROWSER_RUNTIME_UNAVAILABLE');
     const tabs: Array<Record<string, unknown>> = [];
