@@ -5522,6 +5522,9 @@ interface ElectronAPI {
     recover: () => Promise<BrowserBackendRecoveryResult>;
     setUseRealProfile: (enabled: boolean) => Promise<{ ok: true; enabled: boolean }>;
     probeSourceRead: () => Promise<BrowserBackendSourceReadAccess>;
+    openExtensionStore?: () => Promise<
+      import('../shared/browserBackend').BrowserExtensionStoreOpenResult
+    >;
   };
 
   // ── Dialog（v0.6 新增） ────────────────────────────────────────────────────

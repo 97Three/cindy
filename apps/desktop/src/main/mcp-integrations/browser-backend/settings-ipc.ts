@@ -1,4 +1,5 @@
 import type {
+  BrowserExtensionStoreOpenResult,
   BrowserBackendHealth,
   BrowserBackendRecoveryResult,
   BrowserBackendSourceReadAccess,
@@ -34,6 +35,7 @@ interface BrowserBackendIpcDeps<Event> {
   getHealth(): Promise<BrowserBackendHealth>;
   recover(): Promise<BrowserBackendRecoveryResult>;
   probeSourceRead(): BrowserBackendSourceReadAccess;
+  openExtensionStore(): Promise<BrowserExtensionStoreOpenResult>;
 }
 
 /** Pure handler factory so trust gates and response contracts stay testable. */
@@ -78,6 +80,10 @@ export function createBrowserBackendIpcHandlers<Event>(deps: BrowserBackendIpcDe
     probeSourceRead(event: Event) {
       deps.assertTrusted(event);
       return deps.probeSourceRead();
+    },
+    openExtensionStore(event: Event) {
+      deps.assertTrusted(event);
+      return deps.openExtensionStore();
     },
   };
 }

@@ -6331,6 +6331,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     /** Open-only FDA probe. Returns `{ readable }` — never paths or cookie bytes. */
     probeSourceRead: (): Promise<{ readable: boolean }> =>
       ipcRenderer.invoke('browser-backend:probe-source-read'),
+    /** Open the official Cindy extension's store page in the user's own browser. */
+    openExtensionStore: (): Promise<
+      import('../shared/browserBackend').BrowserExtensionStoreOpenResult
+    > => ipcRenderer.invoke('browser-backend:open-extension-store'),
   },
 
   // electronAPI.codex.* 已退役 —— auth / agent status / usage 全部走 electronAPI.maker.*(agentKind),

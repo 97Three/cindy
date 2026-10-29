@@ -72,6 +72,7 @@ import {
   isRealProfileError,
   probeOsSourceProfileReadAccess,
   readCopiedLoginsCdpPort,
+  resolveSourceBrowserFromOs,
   wrapRuntimeWithRealProfile,
   wrapRuntimeWithProfileLifecycleQueue,
   activeManagedProfileName,
@@ -79,6 +80,7 @@ import {
 import { assertTrustedAppRendererEvent } from '../security/trustedAppRenderer.js';
 import { createBrowserBackendIpcHandlers } from './browser-backend/settings-ipc.js';
 import { readCdpBrowserCommandLine } from './browser-backend/proxy-auth.js';
+import { openExtensionStoreInUserBrowser } from './browser-backend/open-extension-store.js';
 import { resolveBrowserScreenshot } from './browserScreenshotResolver.js';
 import { compressInlineImage } from './inlineImageCompressor.js';
 import { raiseAgentBrowserWindow } from './raise-agent-browser-window.js';
@@ -697,6 +699,8 @@ export function registerBrowserBackendIpc(): void {
     getHealth: getBrowserBackendHealth,
     recover: recoverActiveBrowserBackend,
     probeSourceRead: () => probeOsSourceProfileReadAccess(),
+    openExtensionStore: () =>
+      openExtensionStoreInUserBrowser({ resolveBrowser: () => resolveSourceBrowserFromOs() }),
   });
   ipcMain.handle('browser-backend:get-state', handlers.getState);
   ipcMain.handle('browser-backend:set-kind', handlers.setKind);
@@ -705,6 +709,7 @@ export function registerBrowserBackendIpc(): void {
   ipcMain.handle('browser-backend:get-health', handlers.getHealth);
   ipcMain.handle('browser-backend:recover', handlers.recover);
   ipcMain.handle('browser-backend:probe-source-read', handlers.probeSourceRead);
+  ipcMain.handle('browser-backend:open-extension-store', handlers.openExtensionStore);
 
   ipcMain.handle('rsb-browser-bridge:set-active-session', (_e, payload: unknown) => {
     const obj = requireObject(payload, 'set-active-session payload');

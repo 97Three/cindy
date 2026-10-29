@@ -92,6 +92,14 @@ export type BrowserBackendHealthReason =
  */
 export const RECOMMENDED_PAGE_CONTROL_PLUGIN_ID = 'my-browser';
 
+/** 官方 Cindy 浏览器扩展的 Chrome 网上应用店页面;设置页直接在用户浏览器里打开它安装扩展。 */
+export const RECOMMENDED_PAGE_CONTROL_EXTENSION_STORE_URL =
+  'https://chromewebstore.google.com/detail/cindy/dmbhhhdijpeaibfeocdcjhfefkgpkeef';
+
+export type BrowserExtensionStoreOpenResult =
+  | { ok: true }
+  | { ok: false; error: 'NO_CHROMIUM' | 'OPEN_FAILED' };
+
 export interface BrowserBackendHealth {
   active: BrowserBackendKind;
   status: 'ready' | 'error';

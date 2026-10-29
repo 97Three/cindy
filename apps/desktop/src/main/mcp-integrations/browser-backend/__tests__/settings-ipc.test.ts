@@ -33,6 +33,7 @@ function buildHandlers() {
       },
     })),
     probeSourceRead: vi.fn(() => ({ readable: true })),
+    openExtensionStore: vi.fn(async () => ({ ok: true as const })),
   };
   return {
     trustedEvent,

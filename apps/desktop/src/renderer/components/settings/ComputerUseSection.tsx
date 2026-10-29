@@ -477,6 +477,18 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
           ? `/plugins?ghost=${encodeURIComponent(installedGhostStoragePart(userBrowserPlugin))}`
           : '/plugins',
       );
+    if (browserBackendHealth?.reason === 'extension-disconnected') {
+      // Open the store page in the user's own browser; the page polls and turns connected once the
+      // extension is added. Without a Chromium browser, the plugin page explains the other routes.
+      setUserBrowserSetupBusy(true);
+      const opened = await window.electronAPI.browserBackend
+        .openExtensionStore?.()
+        .catch(() => null);
+      setUserBrowserSetupBusy(false);
+      if (opened?.ok) toast.success(t('settings.computerUse.browserBackend.userBrowserSetup.storeOpened'));
+      else openPluginPage();
+      return;
+    }
     if (browserBackendHealth?.reason !== 'plugin-missing' || userBrowserPlugin?.enabled) {
       openPluginPage();
       return;

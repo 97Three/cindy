@@ -5310,17 +5310,18 @@
           "description": "Works in the Chrome or Edge you are using, with your existing sign-ins. New pages open in a background window and stay out of your way."
         },
         "userBrowserSetup": {
-          "installPluginTitle": "Step 1: Install the Cindy Chrome plugin",
-          "enablePluginTitle": "Step 1: Turn on the Cindy Chrome plugin",
-          "installExtensionTitle": "Step 2: Add the Cindy extension to your browser",
+          "installPluginTitle": "Install the Cindy Chrome plugin",
+          "enablePluginTitle": "Turn on the Cindy Chrome plugin",
+          "installExtensionTitle": "Add the Cindy extension to your browser",
           "pluginBody": "My browser reaches your Chrome or Edge through the Cindy Chrome plugin and its browser extension. Install the plugin in Cindy first, then follow its prompt to add the extension.",
-          "extensionBody": "Add the Cindy extension in Chrome or Edge; this turns to connected on its own once it is in. Already added? Turn it on in the browser’s extension settings, or reload it.",
+          "extensionBody": "Add browser extension opens the Cindy extension’s store page in your browser; choose Add and this turns to connected on its own. Already added? Turn it on in the browser’s extension settings.",
           "installPlugin": "Install plugin",
           "enablePlugin": "Turn on",
           "installExtension": "Add browser extension",
-          "updatePluginTitle": "Step 1: Update the Cindy Chrome plugin",
+          "updatePluginTitle": "Update the Cindy Chrome plugin",
           "updatePluginBody": "The installed Cindy Chrome plugin is too old for My browser. Update it to the latest version, then follow its prompt to add the extension.",
-          "updatePlugin": "Update"
+          "updatePlugin": "Update",
+          "storeOpened": "Opened the Cindy extension page in your browser. Choose Add to Chrome and it connects on its own."
         }
       },
       "android": {

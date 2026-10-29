@@ -585,4 +585,30 @@ describe('ComputerUseSection browser backend health loading', () => {
       await screen.findByRole('switch', { name: 'settings.computerUse.realProfile.toggleAria' }),
     ).toBeTruthy();
   });
+
+  // The extension step finishes in Settings: the store page opens in the user's browser rather
+  // than routing through the plugin page.
+  it('opens the extension store from Settings when only the extension is missing', async () => {
+    const openExtensionStore = vi.fn().mockResolvedValue({ ok: true });
+    Object.assign(window.electronAPI.browserBackend, { openExtensionStore });
+    api.getBackendState.mockResolvedValue({ active: 'user-browser' });
+    api.getBackendHealth.mockResolvedValue({
+      active: 'user-browser',
+      status: 'error',
+      reason: 'extension-disconnected',
+      canRecover: false,
+    });
+
+    render(<ComputerUseSection workingDir="/tmp/project" />);
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'settings.computerUse.browserBackend.userBrowserSetup.installExtension',
+      }),
+    );
+
+    await waitFor(() => expect(openExtensionStore).toHaveBeenCalledTimes(1));
+    expect(api.successToast).toHaveBeenCalledWith(
+      'settings.computerUse.browserBackend.userBrowserSetup.storeOpened',
+    );
+  });
 });
