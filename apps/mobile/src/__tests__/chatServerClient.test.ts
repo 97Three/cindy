@@ -455,6 +455,17 @@ describe('direct Chat Server client', () => {
     expect(request.mock.calls.at(-1)).toEqual(posted);
     expect(request.mock.calls.filter(([, method]) => method !== 'POST')).toHaveLength(2);
   });
+  it.each(['', 'with files'])('sends sealed attachment IDs with text=%s and preserves the retry body', async text => {
+    const request = vi.fn().mockResolvedValue({ id: id(9) });
+    const client = createChatServerClient(request);
+    const input = { text, clientId: 'same-media-message', mentions: { all: false, botIds: [] },
+      attachments: [{ id: id(2), name: 'report.pdf', category: 'file' as const, path: '', ext: 'pdf', mimeType: 'application/pdf', size: 42 }] };
+    await client.send(id(1), input); await client.send(id(1), input);
+    expect(request.mock.calls[0][2]).toEqual({ operationId: 'same-media-message', mentions: [],
+      content: [...(text ? [{ type: 'text', text }] : []), { type: 'media', mediaId: id(2), caption: 'report.pdf' }] });
+    expect(request.mock.calls[0]).toEqual(request.mock.calls[1]);
+    expect(chatGroupView({ snapshot: snapshot(), messages: [], before: null }, id(10)).supportsAttachments).toBe(true);
+  });
   it('reauthorizes and replaces loaded older history on refresh instead of retaining deleted text', async () => {
     const recent = Array.from({ length: 100 }, (_, n) => message(200 - n));
     const request = vi.fn().mockResolvedValueOnce(snapshot()).mockResolvedValueOnce(recent)

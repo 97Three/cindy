@@ -5570,10 +5570,7 @@
     "remoteControl": {
       "relay": {
         "summary": {
-          "official": "Cindy 官方中转",
-          "owner": "这台电脑当中转",
-          "member": "已加入 {{name}}",
-          "server": "服务器中转「{{name}}」"
+          "official": "Cindy 官方中转"
         },
         "description": "设备之间的远程控制默认经 Cindy 官方中转。你也可以把中转部署到自己的服务器、让这台电脑当中转，或加入你自己另一台电脑上的中转。登录、模型等其他服务不受影响。",
         "current": "当前使用",
@@ -5581,12 +5578,10 @@
         "unavailable": "登录 Cindy 账号，并且系统钥匙串可用时，才能使用自己的中转。",
         "limits": "使用自己的中转时，手机系统推送、供应商分享和共享任务暂不可用。",
         "actions": {
-          "host": "在这台电脑上开启",
           "join": "加入别的中转",
           "useOfficial": "切回官方中转",
           "editHost": "修改设置",
-          "deploy": "部署到我的服务器",
-          "useDeployment": "改用这个中转"
+          "deploy": "部署到我的服务器"
         },
         "host": {
           "title": "在这台电脑上开启中转",
@@ -5667,13 +5662,16 @@
           "START_FAILED": "中转没能启动，可以换一个端口再试。",
           "EXTERNAL_URL_REQUIRED": "请先填写其他设备访问的地址，或把「允许谁连接」改为所有网络。",
           "SSH_FAILED": "连不上服务器。请在「远程」里检查这台服务器的 SSH 设置。",
+          "SHELL_UNAVAILABLE": "这个 SSH 账号不能执行命令（例如 Git 服务的 git 账号），不能用来部署。请选择一台能登录命令行的服务器。",
           "NEEDS_ROOT": "需要 root 账号，或这个账号能免密码使用 sudo。Cindy 不会索要服务器密码。",
           "UNSUPPORTED_SYSTEM": "目前只支持带 systemd 的 64 位 Linux（x64 / arm64），并且需要 curl 或 wget。",
-          "PORT_BUSY": "服务器的 80 或 443 端口被其他服务占用，暂时无法自动接入。已有 Nginx 会自动配置，请检查占用端口的其他服务。",
+          "PORT_BUSY": "服务器的 80/443 端口正被 {{detail}} 使用。Cindy 不会停掉其他程序，可以换一台服务器，或停掉它后重新检查。",
+          "PORT_BUSY_CONTAINER": "服务器的 80/443 端口由 Docker 容器 {{detail}} 使用。Cindy 只能自动配置直接装在系统里的 Nginx，改不了容器里的配置，可以换一台服务器。",
           "NGINX_FAILED": "未能完成 Nginx 配置，部署已停止。请查看详细原因。",
           "DOWNLOAD_FAILED": "服务器下载运行环境失败（官方源和国内镜像都没成功）。请检查服务器能否访问外网。",
-          "RELAY_MISMATCH": "这台服务器上已有一个不是这台电脑部署的中转。可以清除它后重新部署。",
+          "RELAY_MISMATCH": "这台服务器上的中转不是这台电脑部署的，Cindy 不会改动它。",
           "CERTIFICATE_FAILED": "申请 HTTPS 证书失败。通常是云服务器安全组没有放行 80 端口，或域名还没解析到这台服务器。处理后点重试。",
+          "CA_UNREACHABLE": "服务器连不上证书机构 Let's Encrypt，自动重试了几分钟仍没成功。请检查服务器能否访问外网，稍后再试。",
           "NOT_REACHABLE": "服务器上的中转已经运行，但这台电脑连不上它。请在云服务器安全组里放行 443 端口。",
           "BUNDLE_MISSING": "这个版本的 Cindy 没有带中转程序，请更新 Cindy。",
           "DEPLOY_FAILED": "部署没有完成。",
@@ -5686,10 +5684,10 @@
         },
         "deploy": {
           "title": "部署到我的服务器",
-          "hint": "把中转装到你自己的 Linux 服务器上，手机和不在同一网络的设备都能连。Cindy 通过「远程」里配置的 SSH 连接安装，并自动申请 HTTPS 证书、到期前自动续期。",
-          "requirements": "需要：64 位 Linux（带 systemd）、root 或免密 sudo，并在云服务器安全组或防火墙里放行 TCP 80 和 443。Cindy 会自动检查并配置已有的 Nginx。",
+          "hint": "把中转装到你自己的 Linux 服务器上，手机和外网设备都能连。Cindy 通过「远程」里的 SSH 连接安装，自动申请并续期 HTTPS 证书。云服务器需要在安全组里放行 TCP 80 和 443。",
           "noHosts": "还没有可用的服务器。先在「远程」里添加 SSH 主机，再回来部署。",
           "server": "服务器",
+          "serverPlaceholder": "选择服务器",
           "address": "访问地址",
           "addressPlaceholder": "公网 IP 或域名，例如 203.0.113.10",
           "addressHint": "其他设备连接中转用的地址。填公网 IP 会申请 6 天有效、自动续期的 IP 证书；填域名需要先把域名解析到这台服务器。",
@@ -5697,22 +5695,60 @@
           "defaultName": "我的中转",
           "submit": "开始部署",
           "cancel": "取消",
-          "detail": "详细原因：{{detail}}",
           "retry": "重试",
-          "replace": "清除旧中转并重新部署",
+          "submitReplace": "清除并部署",
+          "edit": "修改设置",
+          "abandon": "放弃部署",
+          "abandonTitle": "放弃这次部署？",
+          "abandonDescription": "会清理服务器上已经装好的部分，并删除这台电脑上的部署记录。",
+          "replaceTitle": "清除服务器上的中转？",
+          "replaceDescription": "这台服务器上的中转不是这台电脑部署的。继续部署会删除它和它的设备档案，已加入它的设备需要重新加入。",
+          "incompleteHint": "上次部署没有完成。可以重试，或修改设置后重新部署。",
+          "showDetails": "查看详情",
+          "check": {
+            "checking": "正在检查服务器…",
+            "ready": "可以部署",
+            "blocked": "不能自动部署",
+            "recheck": "重新检查",
+            "direct": "80 和 443 端口空闲，中转会直接使用它们。",
+            "nginx": "会接入服务器上已有的 Nginx，并保留原有网站。",
+            "mine": "服务器上已有这台电脑部署的中转，会原地更新，已加入的设备不受影响。",
+            "other": "服务器上已有不是这台电脑部署的中转，继续部署会清除它，已加入它的设备需要重新加入。",
+            "cleanup": "会先清理 {{server}} 上没完成的部署。"
+          },
           "running": {
             "deploy": "正在部署到服务器…",
             "upgrade": "正在升级服务器上的中转…",
-            "uninstall": "正在从服务器卸载…"
+            "uninstall": "正在从服务器移除…"
           },
           "done": {
             "deploy": "部署完成，这台电脑已改用服务器上的中转。用「添加设备」让手机和其他电脑加入。",
             "upgrade": "服务器上的中转已升级到 {{version}}。",
-            "uninstall": "已从服务器卸载中转。"
+            "uninstall": "已从服务器移除中转"
+          },
+          "failed": {
+            "deploy": "部署未完成",
+            "upgrade": "升级未完成",
+            "uninstall": "移除未完成"
+          },
+          "elapsed": "用时 {{time}}",
+          "logs": "部署日志",
+          "progress": {
+            "runtime-cached": "运行环境已就绪，无需重新下载。",
+            "runtime-download": "正在下载运行环境，下载速度取决于服务器网络…",
+            "runtime-fallback": "当前下载源不可用，正在尝试备用源…",
+            "runtime-checksum": "下载完成，正在校验文件…",
+            "runtime-extract": "校验通过，正在解压并安装运行环境…",
+            "nginx-prepare": "已检测到 Nginx，正在配置中转接入…",
+            "certificate-wait": "正在等待证书签发，可能需要几分钟…",
+            "certificate-retry": "暂时连不上证书机构，正在自动重试…",
+            "verify-retry": "暂时还连不上中转，正在重新检查…",
+            "nginx-rollback": "部署未完成，正在恢复原来的 Nginx 配置…"
           },
           "steps": {
+            "cleanup": "清理原服务器 {{server}}",
             "connect": "连接服务器",
-            "check": "检查系统和端口",
+            "check": "检查服务器",
             "runtime": "安装运行环境",
             "upload": "上传中转程序",
             "configure": "配置并启动服务",
@@ -5723,16 +5759,68 @@
           }
         },
         "server": {
-          "title": "我的服务器中转",
-          "version": "中转版本 {{version}}",
-          "incomplete": "上次部署没有完成，可以重试或卸载。",
+          "inUse": "正在使用",
           "upgrade": "升级到 {{version}}",
-          "uninstall": "从服务器卸载",
-          "uninstallTitle": "从服务器卸载中转？",
-          "uninstallDescription": "服务器上的中转程序和设备档案都会被删除，正在用它的设备会断开。之后重新部署，所有设备都需要重新加入。",
+          "remove": "移除",
+          "removeTitle": "移除服务器中转？",
+          "removeDescription": "会停止并删除服务器上的中转程序和设备档案，正在用它的设备会断开。之后重新部署，所有设备都需要重新加入。",
           "forget": "只在本机移除",
           "forgetTitle": "只在这台电脑上移除？",
           "forgetDescription": "服务器上的中转不会被删除，但这台电脑不再管理它，也不能再为它添加设备。确定不再使用那台服务器时再这样做。"
+        },
+        "route": {
+          "title": "连接线路",
+          "hint": "设备之间的远程控制经由这条线路转发",
+          "kindServer": "我的服务器",
+          "kindJoined": "已加入",
+          "hostTitle": "这台电脑当中转",
+          "hostHint": "其它设备需要能直接访问到这台电脑；电脑休眠或退出 Cindy 时都会断开",
+          "officialHint": "无需设置，所有功能可用",
+          "defaultTag": "默认",
+          "useNamed": "切换到「{{name}}」",
+          "deployingStep": "{{step}}…",
+          "viewProgress": "查看进度",
+          "resume": "继续部署",
+          "statusChecking": "正在检查…",
+          "statusOnline": "在线",
+          "statusOffline": "连不上",
+          "switchTitle": "切换到「{{name}}」？",
+          "switchFromHost": "这台电脑上的中转会停用，已加入它的设备会断开。",
+          "switchFromMember": "这台电脑会退出「{{name}}」，之后要再加入，需要对方重新生成加入链接。",
+          "switchConfirm": "切换",
+          "switchFromOfficial": "设备之间的远程控制会改经「{{name}}」转发。使用自己的中转时，手机系统推送、供应商分享和共享任务暂不可用。"
+        },
+        "dialog": {
+          "steps": {
+            "label": "部署步骤",
+            "form": "选择服务器",
+            "deploy": "部署",
+            "done": "添加设备"
+          },
+          "running": "正在部署到 {{server}}…",
+          "backgroundHint": "关掉窗口不会中断部署",
+          "background": "在后台继续",
+          "doneTitle": "「{{name}}」已部署好",
+          "doneHint": "这台电脑已改用它。用手机扫码，或把链接发给另一台电脑加入。",
+          "doneLater": "之后也可以在「连接线路」里添加设备",
+          "finish": "完成"
+        },
+        "manage": {
+          "check": "检查连接",
+          "offline": "这台电脑现在连不上这个中转。服务器关机、网络变化或安全组改动都会这样，处理后点「检查连接」。",
+          "devices": "已加入设备",
+          "deviceCount_one": "{{count}} 台",
+          "deviceCount_other": "{{count}} 台",
+          "onlineCount_one": "{{count}} 台在线",
+          "onlineCount_other": "{{count}} 台在线",
+          "certificate": "HTTPS 证书",
+          "certificateDays_one": "{{count}} 天后到期",
+          "certificateDays_other": "{{count}} 天后到期",
+          "certificateRenew": "会自动续期",
+          "certificateSite": "沿用网站证书",
+          "version": "中转版本",
+          "latest": "已是最新",
+          "remove": "移除这个中转"
         }
       },
       "title": "远程连接",
@@ -5754,7 +5842,6 @@
         "restoreFailed": "恢复失败"
       },
       "sections": {
-        "relay": "中转服务",
         "myDevices": "我的设备",
         "ssh": "SSH 远程主机",
         "hook": "Cindy IM 机器人"
