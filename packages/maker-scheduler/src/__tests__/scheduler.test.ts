@@ -219,6 +219,55 @@ it('waits for manual continuation after restart, then restores the same run and 
   await h.scheduler.stop();
 });
 
+// Recovery completes the original trigger: automatic Once expires and automatic
+// intervals start at completion; runNow retains its independent schedule slot.
+it.each([
+  ['automatic', false], ['automatic', true],
+  ['manual', false], ['manual', true],
+] as const)('preserves %s completion scheduling after restart (recurring=%s)', async (source, recurring) => {
+  const storage = new InMemoryStorage();
+  const clock = new FakeClock();
+  let reject!: (error: Error) => void;
+  const original = makeHarness({ storage, clock, runnerImpl: async (_schedule, ctx) => {
+    await ctx.onSessionBound?.('original-task');
+    ctx.onTurnActive?.('original-task');
+    return new Promise<FireResult>((_resolve, fail) => { reject = fail; });
+  } });
+  await original.scheduler.start();
+  const schedule = await original.scheduler.create({ ...baseInput, recurring, intervalMs: 120_000 });
+  clock.setTo(schedule.nextFireAt!);
+  const pending = source === 'automatic'
+    ? original.scheduler.tick() : original.scheduler.runNow(schedule.id);
+  await vi.waitFor(() => expect(reject).toBeTypeOf('function'));
+  const interrupted = original.fireCalls[0]!.ctx;
+  await original.scheduler.stop({ interrupted: true });
+  reject(new Error('provider closed'));
+  await pending;
+  storage.claimInterruptedRun = vi.fn(async () =>
+    storage.updateRun(interrupted.runId, { status: 'running', errorMsg: undefined }));
+  const restarted = makeHarness({ storage, clock });
+  await restarted.scheduler.start();
+  const nextBefore = (await storage.get(schedule.id))!.nextFireAt;
+  clock.advance(30_000);
+  const resumed = await restarted.scheduler.resumeInterruptedRun('original-task');
+  await resumed!.completion;
+  const completed = (await storage.get(schedule.id))!;
+  expect(completed.lastFiredAt).toBe(interrupted.firedAt);
+  expect(completed.lastFinishedAt).toBe(clock.now());
+  expect(completed.status).toBe(source === 'automatic' && !recurring ? 'expired' : 'active');
+  expect(completed.nextFireAt).toBe(source === 'automatic'
+    ? recurring ? clock.now() + 120_000 : undefined
+    : nextBefore);
+  if (!recurring) {
+    clock.advance(600_000);
+    await restarted.scheduler.tick();
+    expect(restarted.fireCalls).toHaveLength(1);
+  }
+  expect(storage.runs.size).toBe(1);
+  expect(storage.runs.get(interrupted.runId)?.status).toBe('success');
+  await restarted.scheduler.stop();
+});
+
 class FakeClock {
   current = Date.UTC(2026, 0, 1, 0, 0, 30); // start at 2026-01-01 00:00:30 UTC
   now(): number {

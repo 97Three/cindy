@@ -1006,6 +1006,11 @@ export class Scheduler extends EventEmitter {
       return;
     }
 
+    await this.finishAutomaticRun(schedule, firedAt, finishedAt);
+    this.emitEvent({ type: 'changed', scheduleId: schedule.id });
+  }
+
+  private async finishAutomaticRun(schedule: Schedule, firedAt: number, finishedAt: number): Promise<void> {
     // Update the schedule row (schedules table — different from schedule_runs above).
     // lastFinishedAt 跟随终态写入：success/failed 都算"跑完了一次"，UI 列表
     // "Last X ago" 用本字段，避免显示出 fired vs finished 间的间隙感。
@@ -1047,9 +1052,8 @@ export class Scheduler extends EventEmitter {
           nextFireAt: undefined,
         });
       }
-      // Do not re-add to activeSchedules.
+      this.activeSchedules.delete(schedule.id);
     }
-    this.emitEvent({ type: 'changed', scheduleId: schedule.id });
   }
 
   // Force-fire a schedule now.
@@ -1329,7 +1333,14 @@ export class Scheduler extends EventEmitter {
     // Aborted 路径同 fireOne:schedule 大概率已被 delete/pause,不要重写 lastFinishedAt
     // (避免污染已删除/已暂停 schedule 的字段)。守卫 abort 例外:schedule 仍在,
     // "跑完了一次(以失败收场)"该如实反映到列表。
-    if (!wasAborted || stallAborted) {
+    // runNow records lastFiredAt before dispatch; automatic fire records it only
+    // on completion. An unrecorded recovered trigger still owes automatic
+    // scheduling. A newer recorded trigger must keep its existing schedule.
+    const unfinishedAutomaticFire = recovery && !schedule.manual &&
+      (schedule.lastFiredAt === undefined || schedule.lastFiredAt < firedAt);
+    if ((!wasAborted || stallAborted) && unfinishedAutomaticFire) {
+      await this.finishAutomaticRun(schedule, firedAt, finishedAt);
+    } else if (!wasAborted || stallAborted) {
       // runNow 跟 cron 路径一致：把 lastFinishedAt 写到 schedule row，让 UI 列表
       // 立刻反映"刚跑完了一次"。nextFireAt 不动（manual 触发不该改 cron 排定时间）。
       await this.storage.update(schedule.id, { lastFinishedAt: finishedAt });
@@ -1338,8 +1349,7 @@ export class Scheduler extends EventEmitter {
         this.activeSchedules.set(schedule.id, { ...cachedAfter, lastFinishedAt: finishedAt });
       }
     }
-    // 'changed' tells UI to revalidate the run-history view (a new ScheduleRun row exists,
-    // even though the schedule's nextFireAt/lastFiredAt are intentionally untouched).
+    // Revalidate history for either a new run or the recovered original row.
     this.emitEvent({ type: 'changed', scheduleId: schedule.id });
     return { runId };
   }
