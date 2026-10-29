@@ -9,6 +9,7 @@ const { useCodexRuntimeRouteMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('react-i18next', () => ({
+  initReactI18next: { type: '3rdParty', init: () => undefined },
   useTranslation: () => ({
     i18n: { exists: () => true },
     // 插值参数拼进返回值，让进度类文案能断言实际传入的 attempt/maxAttempts。
@@ -33,6 +34,7 @@ vi.mock('@/hooks/useCodexSessionExpiredPrompt', () => ({
 }));
 
 import { ErrorBanner } from '@/components/chat/ErrorBanner';
+import { ErrorMessageCard } from '@/components/chat/ErrorMessageCard';
 
 afterEach(() => {
   cleanup();
@@ -76,6 +78,33 @@ describe('ErrorBanner Codex xAI auth classification', () => {
 });
 
 describe('ErrorBanner context-overflow retry', () => {
+  it('corrects a persisted legacy compact error without rewriting history', () => {
+    render(createElement(ErrorMessageCard, {
+      message: 'Error running remote compact task: invalid_encrypted_content',
+      reason: 'context-overflow',
+    }));
+    expect(screen.getByText('chat.errorBanner.remoteCompactEncryptedContent')).toBeTruthy();
+    expect(screen.queryByText('chat.errorBanner.contextOverflow')).toBeNull();
+  });
+  // The same compact failure used to show either oversized-input or switch-provider advice.
+  it.each([['context-overflow', false], ['remote-compact-encrypted-content', true]])(
+    'shows compact recovery guidance for %s (remote=%s)',
+    (errorReason, remote) => {
+      const onRetry = vi.fn();
+      render(createElement(ErrorBanner, {
+        error: 'Error running remote compact task: invalid_encrypted_content',
+        errorReason,
+        agentKind: 'codex',
+        deviceLinkDeviceId: remote ? 'other-computer' : null,
+        retryText: 'retry-token',
+        onRetry,
+      }));
+      expect(screen.getByText('chat.errorBanner.remoteCompactEncryptedContent')).toBeTruthy();
+      expect(screen.queryByText('chat.errorBanner.contextOverflow')).toBeNull();
+      fireEvent.click(screen.getByTitle('chat.errorBanner.retryTitle'));
+      expect(onRetry).toHaveBeenCalledWith('retry-token');
+    },
+  );
   it('keeps Retry when automatic rollover failed and recovery is still available', () => {
     const onRetry = vi.fn();
     render(

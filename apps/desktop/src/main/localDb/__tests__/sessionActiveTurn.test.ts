@@ -57,6 +57,8 @@ describe('sessionActiveTurn', () => {
         list_preview TEXT,
         list_preview_role TEXT,
         list_message_count INTEGER,
+        context_tokens INTEGER DEFAULT 0,
+        context_window INTEGER DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -674,6 +676,31 @@ describe('sessionActiveTurn', () => {
     expect(await hasAssistantProgressAfterMessage('s-interaction', 'c-user3')).toBe(false);
     await insert('m-ask', 'ask_user', base + 100);
     expect(await hasAssistantProgressAfterMessage('s-interaction', 'c-user3')).toBe(true);
+  });
+
+  // Regression: model dividers must neither force continuation nor displace real
+  // progress from the bounded checkpoint. Exercise both production DB readers.
+  it('excludes empty model dividers from retry progress and checkpoint counts', async () => {
+    const { hasAssistantProgressAfterMessage, getRecoveryContextSnapshot } = await import('../sessionActiveTurn.js');
+    const client = createTestDbClient();
+    await seedSession(client, 's-markers');
+    const insert = (id: string, role: string, content: string, meta: string | null) => client.exec(
+      'INSERT INTO messages (id, client_id, session_id, role, content, agent_meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [id, id, 's-markers', role, JSON.stringify(content), meta, 1000],
+    );
+    const meta = JSON.stringify({ modelChange: { fromModel: 'gpt-6-sol', toModel: 'gpt-6-astra' } });
+    await insert('user', 'user', 'Continue', null);
+    await insert('switch', 'assistant', '', meta);
+    expect(await hasAssistantProgressAfterMessage('s-markers', 'user')).toBe(false);
+    expect(await getRecoveryContextSnapshot('s-markers', 'user')).toMatchObject({ progressCount: 0, recentProgress: [] });
+    await insert('real', 'assistant', 'Saved the file', meta);
+    for (let i = 0; i < 7; i += 1) await insert('switch-' + i, 'assistant', '', meta);
+    expect(await hasAssistantProgressAfterMessage('s-markers', 'user')).toBe(true);
+    expect(await getRecoveryContextSnapshot('s-markers', 'user')).toMatchObject({
+      progressCount: 1, recentProgress: [{ role: 'assistant', summary: 'Saved the file' }],
+    });
+    await insert('unknown', 'assistant', '', '{broken');
+    expect((await getRecoveryContextSnapshot('s-markers', 'user')).progressCount).toBe(2);
   });
 
   it('hasAssistantProgressAfterMessage uses rowid ordering for same-millisecond neighbors', async () => {

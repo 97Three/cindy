@@ -27,6 +27,8 @@ import {
   canOfferCodexHistoryRecovery,
   isCindyGatewayProxyTokenInvalidError,
   isResponsesLiteParallelToolCallsError,
+  isRemoteCompactEncryptedContentError,
+  REMOTE_COMPACT_ENCRYPTED_CONTENT_REASON,
   parseAgentErrorCode,
   requiresAgentErrorConfigurationChange,
 } from '@cindy/maker-shared/error-redaction';
@@ -56,7 +58,7 @@ import {
 import { isQuotaExhaustedErrorMessage } from '@/utils/quotaError';
 import { parseTerminalRateLimitRetryProgress } from '@/utils/rateLimitRetry';
 import type { UsageLimitRecoveryHint } from '@/lib/usageLimitRecovery';
-import { ERROR_REASON_I18N_KEYS } from './errorReasonI18n';
+import { errorReasonI18nKey as resolveErrorReasonI18nKey } from './errorReasonI18n';
 import { getToolLoopI18nKey } from './toolLoopI18n';
 import {
   CLAUDE_GATEWAY_OPUS_PLAN_MISMATCH_REASON,
@@ -252,6 +254,8 @@ export function ErrorBanner({
   // 仅本地 Codex 会话:远端会话 rollout 在远端机器, 本地 fork 剥离做不到, 不给入口。
   const showInvalidEncryptedContentRecovery =
     agentKind === 'codex' &&
+    errorReason !== REMOTE_COMPACT_ENCRYPTED_CONTENT_REASON &&
+    !isRemoteCompactEncryptedContentError(error) &&
     !isAnyRemoteSession &&
     !silentEncryptedRetryEnabled &&
     isInvalidEncryptedContentError(error);
@@ -354,7 +358,7 @@ export function ErrorBanner({
   const isOverloadError = isOverloadErrorMessage(error, undefined, errorReason);
   const isStreamInterrupted = isStreamInterruptedErrorMessage(error, errorReason);
   const overloadRetryProgress = parseOverloadRetryProgress(error);
-  const errorReasonI18nKey = errorReason ? ERROR_REASON_I18N_KEYS[errorReason] : undefined;
+  const errorReasonI18nKey = resolveErrorReasonI18nKey(errorReason, error);
   const toolLoopI18nKey =
     errorReason === 'tool_use_loop_detected' ? getToolLoopI18nKey(toolLoop) : undefined;
   const localizedReasonError =

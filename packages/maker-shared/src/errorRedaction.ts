@@ -1,3 +1,11 @@
+export const REMOTE_COMPACT_ENCRYPTED_CONTENT_REASON = 'remote-compact-encrypted-content';
+
+/** Compact ciphertext rejection is recoverable by rebuilding, not proof of oversized input. */
+export function isRemoteCompactEncryptedContentError(message: string): boolean {
+  if (/\bCINDY_ENCRYPTED_COMPACTION_INCOMPATIBLE\b/.test(message)) return true;
+  return /invalid_encrypted_content/i.test(message) && /remote compact/i.test(message);
+}
+
 /**
  * Remove credentials and credential-like values from user-visible or persisted
  * error text while keeping the surrounding diagnostic context.

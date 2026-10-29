@@ -8,14 +8,7 @@
  *
  * 必须同时命中 compact 入口文案和密文错误码，避免把供应商切换时的推理密文 400 误当成换窗。
  */
-export function isRemoteCompactEncryptedContentError(message: string): boolean {
-  if (!message) return false;
-  // Proxy evidence: upstream rejected a body whose only opaque payload is the
-  // retained compaction block, after reasoning cleanup. A provider change alone
-  // (or a bare invalid_encrypted_content) is insufficient to infer this failure.
-  if (/\bCINDY_ENCRYPTED_COMPACTION_INCOMPATIBLE\b/.test(message)) return true;
-  return (
-    /invalid_encrypted_content/i.test(message) &&
-    /remote compact/i.test(message)
-  );
-}
+export {
+  REMOTE_COMPACT_ENCRYPTED_CONTENT_REASON,
+  isRemoteCompactEncryptedContentError,
+} from '@cindy/maker-shared/error-redaction';
