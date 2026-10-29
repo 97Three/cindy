@@ -607,6 +607,7 @@ import { initAnalyticsSettingsService, noteAuthColdStartState } from './analytic
 import { initLogUploadService, scheduleStartupBackfill } from './log-upload';
 import { createOpenLogsMenuItem, openLogsDirectory } from './logSupport';
 import { WindowManualDragController } from './windowManualDrag';
+import { loadWindowsTaskbarNative } from './windowsTaskbarNative';
 import { issueWritableDirectoryPickerGrant } from './maker-ipc/writableDirectoryPickerGrant.js';
 // 设备互联(跨设备远程控制): relay 连接 host + 开关/设备列表 IPC
 import {
@@ -1648,6 +1649,7 @@ const rendererConsoleLog = createLogger('renderer-console');
 const updatePresentationLog = createLogger('update-presentation');
 const voicePowerBroadcastLog = createLogger('voice-input-power');
 const sessionDragPreviewLog = createLogger('session-drag-preview');
+const windowDragLog = createLogger('window-drag');
 const piSubagentLog = createLogger('pi-subagent');
 let rendererBootGuard: RendererBootGuard | null = null;
 
@@ -5555,7 +5557,23 @@ const registerIpcHandlers = () => {
   // 手动窗口拖拽:no-drag 元素(会话标题文字等,需要同时响应双击)按住移动
   // 时由 renderer 发起,main 用光标位置驱动窗口跟随;pointerup 后 stop。
   // 详见 windowManualDrag.ts 头注释。
-  const windowManualDrag = new WindowManualDragController(screen);
+  let nativeWindowDrag: Awaited<ReturnType<typeof loadWindowsTaskbarNative>> | null = null;
+  if (process.platform === 'win32') {
+    void loadWindowsTaskbarNative().then((native) => {
+      nativeWindowDrag = native;
+    }).catch((error: unknown) => {
+      windowDragLog.warn('Windows native window drag unavailable; using DIP bounds fallback', error);
+    });
+  }
+  const windowManualDrag = new WindowManualDragController(screen, undefined, undefined,
+    process.platform === 'win32' ? (win) => {
+      const native = nativeWindowDrag;
+      const handle = win.getNativeWindowHandle?.();
+      if (!native || !handle) return null;
+      const offset = native.windowDragOffset(handle);
+      return () => native.moveWindowAtCursor(handle, offset.x, offset.y);
+    } : undefined);
+
   // start / stop 都严格绑定 sender 窗口,解析不到(窗口销毁中)直接忽略,
   // 不 fallback 主窗:多窗口下副窗的延迟消息若落到主窗上,start 会让主窗
   // 意外粘附光标并误停他窗的合法拖拽,stop 会误停主窗拖拽。已销毁窗口的
