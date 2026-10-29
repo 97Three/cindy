@@ -103,7 +103,7 @@ describe('task action dispatch authorization', () => {
     await h.coordinator.ensureQueueRestored(sid);
     h.setRunning(true);
     const queued = makeItem('automatic', 'Continue');
-    bindTaskActionInput(sid, queued, async () => { if (!current) throw new Error('revoked'); });
+    bindTaskActionInput(sid, queued, async () => { if (!current) throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED'); });
     h.coordinator.enqueue(sid, mode === 'restored' ? JSON.parse(JSON.stringify(queued)) : queued);
     h.coordinator.enqueue(sid, makeItem('owner', 'Owner message'));
     await flush();
@@ -118,6 +118,33 @@ describe('task action dispatch authorization', () => {
     expect(h.onDiscardedQueuedMessage).toHaveBeenCalledWith(sid, expect.objectContaining({ clientId: 'automatic' }));
     expect(h.onUndispatchedUserTurn).not.toHaveBeenCalled();
     expect(h.coordinator.getProjection(sid)).toMatchObject({ error: null, pendingQueue: [] });
+  });
+
+  // Review on #7969: a failed check (group transport, database not ready) is not a
+  // revocation. The message must stay as a retryable queue head, not be destroyed.
+  it('keeps the message as a retryable queue head when the delivery check itself fails', async () => {
+    const h = createHarness(), sid = 'task-action-check-failed';
+    h.sendToAgent.mockImplementation(async (_id, _message, _opts, sendOpts) => {
+      await sendOpts[MCP_APP_MESSAGE_GUARD]?.();
+      return sendSuccess();
+    });
+    await h.coordinator.ensureQueueRestored(sid);
+    h.setRunning(true);
+    const queued = makeItem('automatic', 'Continue');
+    bindTaskActionInput(sid, queued, async () => {
+      throw Object.assign(new Error('verification unavailable'), { code: 'GROUP_AUTHORIZATION_UNAVAILABLE' });
+    });
+    h.coordinator.enqueue(sid, queued);
+    await flush();
+    h.setRunning(false);
+    h.coordinator.wakeSession(sid, 'idle');
+    await flush();
+    expect(h.sendToAgent).not.toHaveBeenCalled();
+    expect(h.onDiscardedQueuedMessage).not.toHaveBeenCalled();
+    expect(h.coordinator.getProjection(sid)).toMatchObject({
+      recovery: { kind: 'queue-head', clientId: 'automatic' },
+      pendingQueue: [expect.objectContaining({ clientId: 'automatic' })],
+    });
   });
 });
 

@@ -351,6 +351,25 @@ export class TaskActionAuthorizationError extends Error {
   }
 }
 
+const REVOKED_MESSAGES: ReadonlySet<string> = new Set([
+  'TASK_ACTION_AUTHORIZATION_EXPIRED',
+  'TASK_ACTION_AUTHORIZATION_REQUIRED',
+  'OWNER_SCOPE_CHANGED',
+]);
+
+/**
+ * Whether a delivery-guard rejection proves the grant is gone. A check that merely failed
+ * (group transport outage, database not ready, anything unknown) is not a revocation: its
+ * message stays queued for retry instead of being destroyed. Group errors are matched by
+ * code (`GROUP_AUTHORIZATION_UNAVAILABLE` is the temporary one) to avoid importing the group module.
+ */
+export function isTaskActionRevoked(error: unknown): boolean {
+  if (error instanceof TaskActionAuthorizationError) return true;
+  if (typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'GROUP_AUTHORIZATION_REQUIRED')
+    return true;
+  return error instanceof Error && REVOKED_MESSAGES.has(error.message);
+}
+
 /** Capture once; late callbacks must not pick up another invocation's authority. */
 export function captureTaskActionSyncGuard(): (() => void) | undefined {
   const current = actionContext.getStore();

@@ -28,6 +28,7 @@ import {
   captureTaskActionSyncGuard,
   captureTaskActionGuard,
   captureTaskActionDeliveryGuard,
+  isTaskActionRevoked,
 } from '../taskActionAuthorization.js';
 
 function fixture(ownerInput = false, delegated = false) {
@@ -284,6 +285,7 @@ function desktopFixture(kind: 'private' | 'group' | 'automatic' = 'group') {
     ownerContinuation: false,
     automatic: kind !== 'private',
     boundary: 'runtime-1',
+    clearBoundaryMs: null as number | null,
   };
   const confirm = vi.fn(async () => true);
   const runtime = {
@@ -456,6 +458,35 @@ describe('Owner-delegated scheduled task actions', () => {
     const delivery = expect(taskActionInputGuard('target', queued)!());
     if (changed === 'account') await delivery.rejects.toThrow('AUTHORIZATION_EXPIRED');
     else await delivery.resolves.toBeUndefined();
+  });
+
+  // Review on #7969: /clear moves the coordinator's boundary before cleared_at is persisted,
+  // and persisting may fail, so delivery reads that boundary too. A persisted boundary the
+  // coordinator merely loads late (restart) is older than the admission, not a new clear.
+  it.each([
+    { name: 'cleared in memory after admission', dbClearedAt: null, memoryAfter: 2_000, expired: true },
+    { name: 'older persisted boundary loaded late', dbClearedAt: 1_000, memoryAfter: 1_000, expired: false },
+  ])('queued delivery when $name (expired=$expired)', async ({ dbClearedAt, memoryAfter, expired }) => {
+    const h = scheduledFixture();
+    Object.assign(h.caller, { clearedAt: dbClearedAt });
+    const queued = input();
+    await withToolCallAuthority(h.authorize, scheduledSend(), async () => bindTaskActionInput('target', queued));
+    h.activeInput.clearBoundaryMs = memoryAfter;
+    const delivery = expect(taskActionInputGuard('target', queued)!());
+    if (expired) await delivery.rejects.toThrow('AUTHORIZATION_EXPIRED');
+    else await delivery.resolves.toBeUndefined();
+  });
+
+  // Only a proven revocation may destroy a queued message; a failed check keeps it for retry.
+  it.each([
+    [new Error('TASK_ACTION_AUTHORIZATION_EXPIRED'), true],
+    [new Error('TASK_ACTION_AUTHORIZATION_REQUIRED'), true],
+    [new Error('OWNER_SCOPE_CHANGED'), true],
+    [Object.assign(new Error('revoked'), { code: 'GROUP_AUTHORIZATION_REQUIRED' }), true],
+    [Object.assign(new Error('transport'), { code: 'GROUP_AUTHORIZATION_UNAVAILABLE' }), false],
+    [new Error('DbClient not ready'), false],
+  ])('classifies %s as revoked=%s', (error, revoked) => {
+    expect(isTaskActionRevoked(error)).toBe(revoked);
   });
 
   it.each(['permission', 'account', 'turn'] as const)('does not act or prompt if %s changes during review', async changed => {

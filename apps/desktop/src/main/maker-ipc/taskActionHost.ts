@@ -110,6 +110,8 @@ export function createDesktopTaskActionAuthorizer(deps: {
       isCurrent?: () => boolean;
     } | null;
     boundary: string;
+    /** The coordinator's in-memory /clear fence; it can be ahead of `sessions.cleared_at`. */
+    clearBoundaryMs?: number | null;
   };
   getSession(sessionId: string): TaskActionSession | undefined;
   confirm(sessionId: string, tool: string, args: unknown, context?: TaskActionConfirmation): Promise<boolean>;
@@ -332,6 +334,12 @@ export function createDesktopTaskActionAuthorizer(deps: {
             fresh.clearedAt !== caller.clearedAt ||
             (caller.botId && (fresh.botStatus !== 'active' || fresh.archivedAt !== null))
           )
+            throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
+          // /clear moves the coordinator's fence before persisting cleared_at, and persisting may
+          // fail, so the sender's clear is also read from memory. A persisted boundary loaded late
+          // (restart) is no newer than what admission already saw in the database.
+          const clearedInMemory = deps.input(sessionId).clearBoundaryMs;
+          if (clearedInMemory != null && clearedInMemory > Math.max(input.clearBoundaryMs ?? 0, caller.clearedAt ?? 0))
             throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
           if (delegation) {
             const current = await readDelegation(true);

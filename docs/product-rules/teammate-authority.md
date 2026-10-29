@@ -50,7 +50,10 @@
   发起轮结束、发起方 Session 重建、换新输入，或发起方的权限档、计划模式变化，都不撤销这条消息；
   它由接收任务按自己的权限执行，主人可以在接收任务的队列里编辑或撤回。只有切换账号、发起任务被
   清空或删除、伙伴被暂停或归档、委派执行代次或 Orca 团队变化、群授权失效时才不再投递；这类消息在
-  落库前移出队列，不在接收任务里留下失败回复。实现见 `taskActionHost.ts` 的 `assertDeliveryCurrent`
+  落库前移出队列，不在接收任务里留下失败回复。清空以协调器的内存边界和数据库 `cleared_at` 中较新者
+  为准（`/clear` 先改内存、后写库，写库可能失败）；重启后晚加载的旧边界不算新的清空。校验本身失败
+  （群授权传输中断、数据库未就绪等）不算撤权：消息保留为可重试的队首，不被销毁。实现见
+  `taskActionHost.ts` 的 `assertDeliveryCurrent`、`taskActionAuthorization.ts` 的 `isTaskActionRevoked`
   与 `agent-input-coordinator.ts` 的派发前复核；回归见 `taskActionAuthorization.test.ts` 与
   `agent-input-coordinator.test.ts`。
 - 来源判定与操作决定分别保留。获准自主操作不会给后续转达生成主人原话凭证。
