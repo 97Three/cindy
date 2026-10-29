@@ -16,6 +16,35 @@ import { Button } from '@/components/ui/button';
 import { createLogger } from '@/lib/logger';
 import { Spinner } from '@/components/ui/spinner';
 
+// Local diagnostics only: renderer logs remain excluded from log uploads. Never
+// log the original exception; it may contain HTML, tool data or credential URLs.
+const appFailureCodes = new Set([
+  'MCP_APP_FILES_LOCAL_ONLY', 'MCP_APP_REQUEST_FAILED', 'MCP_APP_SANDBOX_FAILED',
+  'MCP_APP_INITIALIZATION_FAILED', 'MCP_APP_INITIALIZE_FAILED', 'MCP_APP_INITIALIZATION_TIMEOUT',
+  'MCP_APP_OPEN_TIMEOUT', 'MCP_APP_OPEN_CANCELLED', 'MCP_APP_CARD_UNAVAILABLE',
+  'MCP_APP_CARD_TOO_LARGE', 'MCP_APP_DOCUMENT_TOO_LARGE', 'MCP_APP_INVALID_DOCUMENT',
+  'MCP_APP_INVALID_RESOURCE', 'MCP_APP_RESOURCE_MISSING', 'MCP_APP_RESOURCE_NOT_FOUND',
+  'MCP_APP_RESOURCE_TOO_LARGE', 'MCP_APP_SERVER_CHANGED', 'MCP_APP_VIEW_UNAVAILABLE',
+  'MCP_APP_VIEW_LIMIT', 'MCP_APP_SESSION_UNAVAILABLE', 'MCP_APP_OWNER_CHANGED',
+  'MCP_APP_OWNER_ONLY', 'MCP_APP_OWNER_UNAVAILABLE', 'MCP_APP_CONNECTION_CLOSED',
+  'MCP_APP_CONNECTION_LIMIT', 'MCP_APP_INVALID_POLL', 'MCP_APP_CHANNEL_NOT_ALLOWED',
+  'MCP_PLUGIN_UNAVAILABLE', 'MCP_PLUGIN_CSP_DOMAIN_NOT_DECLARED',
+  'CHANNEL_NOT_ALLOWED', 'CHANNEL_NOT_FOUND', 'UNKNOWN_CHANNEL', 'NOT_FOUND',
+]);
+function logAppFailure(error: unknown, phase: 'open' | 'sandbox' | 'initialize' | 'active', sessionId: string, clientId: string): void {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  const code = message.match(/\b[A-Z][A-Z_]+\b/g)?.find(value => appFailureCodes.has(value)) ?? 'UNKNOWN';
+  const stage = code.endsWith('_TIMEOUT') ? 'timeout' : code === 'MCP_APP_SANDBOX_FAILED' ? 'sandbox' : phase;
+  const write = (card: string) => createLogger('mcp-apps').warn('App View failed', { code, stage, card });
+  // A stable digest supports correlation without writing task/card identifiers.
+  void (async () => {
+    try {
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([sessionId, clientId])));
+      write(Array.from(new Uint8Array(digest).slice(0, 6), byte => byte.toString(16).padStart(2, '0')).join(''));
+    } catch { write('unavailable'); }
+  })();
+}
+
 function hostContext(locale: string, element: HTMLElement): Record<string, unknown> {
   const style = getComputedStyle(document.documentElement);
   const variable = (name: string) => style.getPropertyValue(name).trim();
@@ -124,6 +153,7 @@ function InteractiveMcpAppCard({ sessionId, clientId, title, fallbackText, devic
     const element = root.current;
     if (!element || !visible) return;
     let disposed = false;
+    let phase: 'open' | 'sandbox' | 'initialize' | 'active' = 'open';
     const heightGuard = new McpAppHeightGuard(() => createLogger('mcp-apps').warn('App height feedback loop bounded'));
     heightGuard.resize(element.clientWidth);
     let frame: HTMLIFrameElement | undefined;
@@ -133,6 +163,7 @@ function InteractiveMcpAppCard({ sessionId, clientId, title, fallbackText, devic
     const post = (message: AppRpc) => frame?.contentWindow?.postMessage(message, '*');
     const fail = (error: unknown) => {
       if (!disposed) {
+        logAppFailure(error, phase, sessionId, clientId);
         setLoading(false);
         setError(/MCP_APP_FILES_LOCAL_ONLY/.test(String(error)) ? 'mcpApps.filesOnExecutionComputer' : /MCP_PLUGIN_CSP_DOMAIN_NOT_DECLARED/.test(String(error)) ? 'mcpApps.pluginCspRejected' : plugin && /MCP_PLUGIN_UNAVAILABLE|MCP_APP_SERVER_CHANGED|MCP_APP_VIEW_UNAVAILABLE/.test(String(error)) ? 'mcpApps.pluginRevoked' : mcpAppFailureKey(error));
         setMode('inline');
@@ -146,7 +177,7 @@ function InteractiveMcpAppCard({ sessionId, clientId, title, fallbackText, devic
       post,
       (message) => {
         if (disposed) return;
-        if (message.method === 'ui/notifications/initialized') setLoading(false);
+        if (message.method === 'ui/notifications/initialized') { phase = 'active'; setLoading(false); }
         if (message.method === 'ui/notifications/size-changed') {
           const value = message.params?.height;
           if (typeof value === 'number' && Number.isFinite(value))
@@ -175,10 +206,12 @@ function InteractiveMcpAppCard({ sessionId, clientId, title, fallbackText, devic
       .open(hostContext(localeRef.current, element))
       .then(async (document) => {
         if (!document || disposed) return;
+        phase = 'sandbox';
         localViewId = document.viewId;
         setBorder(document.prefersBorder);
         frame = window.document.createElement('iframe');
         frame.title = appTitle;
+        frame.addEventListener('load', () => { if (!disposed && phase === 'sandbox') phase = 'initialize'; }, { once: true });
         frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');
         frame.setAttribute(
           'allow',

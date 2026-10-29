@@ -418,3 +418,53 @@ it.each(['light', 'dark'])('shows the remote local-files placeholder in %s mode'
     expect(container.querySelector('iframe')).toBeNull();
   } finally { await act(async () => root.unmount()); container.remove(); document.documentElement.classList.remove('dark'); }
 });
+
+// Unit regression: demo 5 showed only “load failed”, with no diagnostic in Main.
+// Existing card tests check UI/cleanup, not the real renderer→Main log boundary.
+// Minimum failure: a lifecycle error containing a code plus HTML, arguments, result
+// and a credential-bearing URL. Only a fixed code/stage and hashed card may cross IPC.
+it.each([
+  ['open', 'MCP_APP_FILES_LOCAL_ONLY'],
+  ['sandbox', 'MCP_APP_SANDBOX_FAILED'],
+  ['initialize', 'MCP_APP_INITIALIZATION_FAILED'],
+  ['timeout', 'MCP_APP_INITIALIZATION_TIMEOUT'],
+  ['open', 'UNKNOWN'],
+] as const)('logs a content-free %s failure (%s) through the renderer logger', async (stage, code) => {
+  const { webcrypto } = await import('node:crypto');
+  vi.stubGlobal('crypto', webcrypto);
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  vi.stubGlobal('matchMedia', () => ({ matches: false }));
+  vi.stubGlobal('IntersectionObserver', class {
+    constructor(private callback: (entries: Array<{ isIntersecting: boolean }>) => void) {}
+    observe(element: Element) { state.intersections.set(element, this.callback); }
+    disconnect() {}
+  });
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const logToMain = vi.fn();
+  vi.stubGlobal('electronAPI', { logToMain });
+  const error = new Error(`[PRECONDITION_FAILED] ${code === 'UNKNOWN' ? 'MCP_APP_PRIVATE_PAYLOAD' : code} <html>PRIVATE_HTML</html> args=PRIVATE_INPUT result=PRIVATE_RESULT https://private.invalid/?token=PRIVATE_TOKEN`);
+  if (stage === 'open') state.openError = error;
+  const container = document.createElement('div'); document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<McpAppCard sessionId="PRIVATE_SESSION" clientId="PRIVATE_CARD" title="PRIVATE_TITLE" />));
+    await act(async () => [...state.intersections.values()][0]([{ isIntersecting: true }]));
+    if (stage !== 'open') await act(async () => {
+      if (stage === 'initialize') container.querySelector('iframe')!.dispatchEvent(new Event('load'));
+      state.controllers[0].fail(error);
+      state.controllers[0].fail(error); // Cleanup must prevent duplicate logging.
+    });
+    await vi.waitFor(() => expect(logToMain).toHaveBeenCalledOnce());
+    const [level, scope, text] = logToMain.mock.calls[0];
+    expect([level, scope]).toEqual(['warn', 'mcp-apps']);
+    expect(text).toContain('App View failed');
+    expect(text).toContain(`"code":"${code}"`);
+    expect(text).toContain(`"stage":"${stage}"`);
+    expect(text).toMatch(/"card":"[a-f0-9]{12}"/);
+    expect(text).not.toMatch(/PRIVATE|https:|<html>|args=|result=|Error:|stack/i);
+    expect(container.textContent).toContain(code === 'MCP_APP_FILES_LOCAL_ONLY' ? 'mcpApps.filesOnExecutionComputer' : 'mcpApps.loadFailed');
+  } finally {
+    await act(async () => root.unmount()); container.remove();
+  }
+});
