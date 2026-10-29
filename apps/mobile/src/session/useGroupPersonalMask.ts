@@ -15,7 +15,8 @@ export function useGroupPersonalMask(groupId: string, deviceId: string, enabled:
   const active = useRef(key); active.current = key;
   const mounted = useRef(true), busy = useRef(false), pending = useRef(false), version = useRef(0), authority = useRef(0);
   const deps = useRef({ act, enabled }); deps.current = { act, enabled };
-  const queue = useRef(Promise.resolve()), failed = useRef<(() => Promise<void>) | null>(null);
+  const queue = useRef(Promise.resolve()), failed = useRef(new Map<string, () => Promise<void>>());
+  const operations = useRef(new Map<string, () => Promise<void>>());
   const [data, setData] = useState<{ key: string; state: ChatMaskState | null; mentions: ChatMaskMention[] }>({ key, state: null, mentions: [] });
   const state = data.key === key ? data.state : null, mentions = data.key === key ? data.mentions : [];
   const stateRef = useRef(state); stateRef.current = state;
@@ -51,11 +52,11 @@ export function useGroupPersonalMask(groupId: string, deviceId: string, enabled:
         if (before && BigInt(next) >= BigInt(before)) throw new Error('INVALID_MASK_CURSOR');
         before = next;
       } while (valid());
-      if (valid()) { stateRef.current = response.state; setData({ key, state: response.state, mentions: all }); setError(!!failed.current); setConnectionLost(false); }
+      if (valid()) { stateRef.current = response.state; setData({ key, state: response.state, mentions: all }); setError(failed.current.size > 0); setConnectionLost(false); }
     } catch (e) {
       if (valid()) {
         if (e && typeof e === 'object' && 'status' in e && (e.status === 403 || e.status === 404)) {
-          authority.current++; failed.current = null;
+          authority.current++; failed.current.clear(); operations.current.clear();
           stateRef.current = null; setData({ key, state: null, mentions: [] });
         }
         setError(true); setConnectionLost(true);
@@ -64,7 +65,7 @@ export function useGroupPersonalMask(groupId: string, deviceId: string, enabled:
   }, [call, current, key]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; version.current++; }; }, []);
   useEffect(() => {
-    failed.current = null; version.current++; authority.current++;
+    failed.current.clear(); operations.current.clear(); version.current++; authority.current++;
     setError(false); setSaving(false); setConnectionLost(false);
     if (!enabled) { stateRef.current = null; setData({ key, state: null, mentions: [] }); }
   }, [key, enabled]);
@@ -76,21 +77,28 @@ export function useGroupPersonalMask(groupId: string, deviceId: string, enabled:
     return () => { clearInterval(timer); subscription.remove(); };
   }, [enabled, focused, reload]);
   useEffect(() => { if (focused) void reload(); }, [change, focused, reload]);
-  const run = useCallback((work: (valid: () => boolean) => Promise<void>) => {
+  const run = useCallback((retryKey: string, work: (valid: () => boolean) => Promise<void>) => {
     const generation = authority.current;
     const valid = () => current() && generation === authority.current;
     const send = async () => {
-      if (!valid()) return;
-      version.current++; setSaving(true); setError(false);
-      try { await work(valid); if (valid()) failed.current = null; }
-      catch { if (valid()) { failed.current = send; setError(true); } }
-      finally { if (valid()) { setSaving(false); void reload(); } }
+      if (!valid() || operations.current.get(retryKey) !== send) return;
+      version.current++; setSaving(true); setError(failed.current.size > 0);
+      try { await work(valid); if (valid()) {
+        if (operations.current.get(retryKey) === send) failed.current.delete(retryKey);
+        setError(failed.current.size > 0);
+      } }
+      catch { if (valid() && operations.current.get(retryKey) === send) { failed.current.set(retryKey, send); setError(true); } }
+      finally { if (valid()) { setSaving(false); void reload();
+        if (operations.current.get(retryKey) === send && !failed.current.has(retryKey)) operations.current.delete(retryKey);
+      } }
     };
+    // New intent supersedes only the same operation, never another setting/read.
+    failed.current.delete(retryKey); operations.current.set(retryKey, send);
     queue.current = queue.current.then(send, send);
   }, [current, reload]);
-  const action = useCallback((make: (state: ChatMaskState) => ChatMaskAction) => {
+  const action = useCallback((retryKey: string, make: (state: ChatMaskState) => ChatMaskAction) => {
     let operationId = randomUUID(), value: ChatMaskAction | undefined;
-    run(async valid => {
+    run(retryKey, async valid => {
       if (!stateRef.current || !valid()) return;
       value ??= make(stateRef.current);
       try {
@@ -109,7 +117,7 @@ export function useGroupPersonalMask(groupId: string, deviceId: string, enabled:
   }, [call, current, key, run]);
   const markRead = useCallback((ids: string[]) => {
     const batches = Array.from({ length: Math.ceil(ids.length / 100) }, (_, index) => ({ readIds: ids.slice(index * 100, index * 100 + 100), operationId: randomUUID() }));
-    run(async valid => {
+    run(`read:${[...ids].sort().join(',')}`, async valid => {
       for (const batch of batches) { if (!valid()) return; await call('mask-mentions', batch); }
       if (valid()) setData(old => ({ ...old, mentions: old.mentions.filter(m => !ids.includes(m.messageId)) }));
     });
@@ -117,12 +125,12 @@ export function useGroupPersonalMask(groupId: string, deviceId: string, enabled:
   const lastParticipation = useRef(0);
   const homeOffline = !!state?.homeDeviceId && getPresenceAvailability(state.homeDeviceId) === false;
   return { state: state ? { ...state, status: (connectionLost || homeOffline) && state.status === 'enabled' ? 'offline' as const : state.status, settings: { ...state.settings, companionId: state.settings.companionId ?? state.defaultCompanionId ?? null } } : null, mentions, saving, error, reload, markRead,
-    update: (patch: Partial<ChatMaskSettings>) => action(s => ({ type: 'save', expectedRevision: s.revision,
+    update: (patch: Partial<ChatMaskSettings>) => action(`save:${Object.keys(patch).sort().join(',')}`, s => ({ type: 'save', expectedRevision: s.revision,
       settings: { ...s.settings, companionId: s.settings.companionId ?? s.defaultCompanionId ?? null, ...patch, timeZone: s.revision ? s.settings.timeZone : Intl.DateTimeFormat().resolvedOptions().timeZone } })),
-    perform: (type: 'resume' | 'stop' | 'digest' | 'participate') => action(() => ({ type })),
+    perform: (type: 'resume' | 'stop' | 'digest' | 'participate') => action(type, () => ({ type })),
     participate: () => { if (!stateRef.current?.settings.enabled || Date.now() - lastParticipation.current < 2000) return;
-      lastParticipation.current = Date.now(); action(() => ({ type: 'participate' })); },
-    retry: () => { if (failed.current) queue.current = queue.current.then(failed.current, failed.current); else void reload(); },
+      lastParticipation.current = Date.now(); action('participate', () => ({ type: 'participate' })); },
+    retry: () => { if (failed.current.size) for (const send of failed.current.values()) queue.current = queue.current.then(send, send); else void reload(); },
   };
 }
 export type GroupPersonalMask = ReturnType<typeof useGroupPersonalMask>;

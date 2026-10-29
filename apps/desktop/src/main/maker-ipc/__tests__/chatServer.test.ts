@@ -197,6 +197,7 @@ describe('Chat Server result delivery and refresh', () => {
       return response(route);
     });
     await start();
+    expect((await service.chatServer!.status()).personalMask).toBe(true);
     expect(deps.dispatch).toHaveBeenCalledWith(expect.objectContaining({ toolsDisabled: false }));
     // Owner decision: the actual model input must identify AI reply mode and its represented member.
     // The existing tool-boundary assertions below ensure this identity does not elevate the peer.
@@ -215,6 +216,7 @@ describe('Chat Server result delivery and refresh', () => {
 
   // Regression: the paired reply is a content projection, not a full Message with author.kind.
   it('does not call mask endpoints on a server without the capability',async()=>{
+    expect((await service.chatServer!.status()).personalMask).not.toBe(true);
     expect(await service.chatServer!.mask!({groupId:roomId})).toMatchObject({ok:false,errorCode:'UNSUPPORTED_OPERATION'});
     expect(await service.chatServer!.mentions!({groupId:roomId})).toMatchObject({ok:false,errorCode:'UNSUPPORTED_OPERATION'});
     expect(fixture.urls.some(url=>url.includes('/mask') || url.includes('/mentions'))).toBe(false);

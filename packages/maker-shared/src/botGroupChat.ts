@@ -859,7 +859,7 @@ export interface ChatServerApi {
   /** `botId` is the local teammate id behind each Chat Server actor. */
   ownedBots(): Promise<ChatServerResult<{ bots: Array<{ actorId: string; botId?: string; name: string }> }>>;
   refreshProfile(): Promise<ChatServerResult<Record<never, never>>>;
-  status(): Promise<{ enabled: boolean; connected: boolean }>;
+  status(): Promise<{ enabled: boolean; connected: boolean; personalMask?: boolean }>;
   /**
    * `markRead` (latest page only): the reader is looking at the Thread, so its server read state
    * moves to the newest reply read here; `readBefore` is where it stood before this read.

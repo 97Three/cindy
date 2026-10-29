@@ -2830,7 +2830,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       }, actorId);
       changed(target); return {};
     }),
-    status: async () => ({ enabled: true, connected: current() && connected }),
+    status: async () => ({ enabled: true, connected: current() && connected, ...(current() && personalMask ? { personalMask: true } : {}) }),
     thread: input => result(() => threadDetail(input)),
     followThread: input => result(async () => {
       const i = z.object({ groupId: id, rootId: id, following: z.boolean() }).strict().parse(input);

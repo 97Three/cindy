@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { StrictMode, type ReactNode } from 'react';
+import { StrictMode, useState, type ReactNode } from 'react';
 import { act, cleanup, createEvent, fireEvent, render as renderUI, screen, waitFor, within } from '@testing-library/react';
 import { Tooltip } from '@/components/ui/tooltip';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -7,18 +7,19 @@ import { ChatInviteButton, ChatMessageActions } from '../ChatServerControls';
 import { ChatInviteDialog } from '../ChatInviteDialog';
 import { ChatThreadPanel } from '../ChatThreadPanel';
 import { BotGroupThreadHint } from '../BotGroupThreadHint';
-import { GroupMaskContext, useReadLocatedMention, type GroupMaskPresentation } from '../groupMaskPresentation';
+import { GroupMaskProvider } from '../GroupMaskProvider';
+import { GroupMaskContext, useGroupMask, useReadLocatedMention, type GroupMaskPresentation } from '../groupMaskPresentation';
 import { botGroupThreadDraftKey } from '../botGroupAttachments';
 import { clearDraft } from '@/lib/composerDraftStore';
 import { flashThreadTarget } from '../BotGroupThreadViews';
 import { chatErrorKey } from '../chatError';
-import type { BotGroupDetail, BotGroupMessageView, BotGroupThreadSummary } from '../../../../shared/botGroupChat';
+import type { BotGroupDetail, BotGroupMessageView, BotGroupThreadSummary, ChatMaskState } from '../../../../shared/botGroupChat';
 import { shareSelectionStore } from '@/components/chat/shareSelectionStore';
 import { queryShareableMessageIds, stripInteractiveElements } from '@/lib/shareConversationImage';
 
 const mocks = vi.hoisted(() => ({
   status: vi.fn(), react: vi.fn(), reactors: vi.fn(), thread: vi.fn(), followThread: vi.fn(), reply: vi.fn(), createInvite: vi.fn(), previewInvite: vi.fn(), acceptInvite: vi.fn(),
-  refresh: vi.fn(), shareToMain: vi.fn(), ownerCurrent: true,
+  mask: vi.fn(), mentions: vi.fn(), refresh: vi.fn(), shareToMain: vi.fn(), ownerCurrent: true,
 }));
 // Partial: the 话题 reply box shares the group composer, whose attachment pieces pull in the app i18n instance.
 vi.mock('react-i18next', async (original) => ({
@@ -43,6 +44,8 @@ beforeEach(() => {
   clearDraft(botGroupThreadDraftKey(group.id, 'root'));
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
   mocks.status.mockResolvedValue({ enabled: true, connected: true });
+  mocks.mask.mockResolvedValue({ ok: false, errorCode: 'UNSUPPORTED_OPERATION' });
+  mocks.mentions.mockResolvedValue({ ok: true, mentions: [{ messageId: 'question', sequence: '1' }], hasMore: false });
   mocks.react.mockResolvedValue({ ok: true });
   mocks.reactors.mockResolvedValue({ ok: true, reactors: [] });
   mocks.thread.mockResolvedValue({ ok: true, root: message, replies: [], hasMore: false });
@@ -56,6 +59,68 @@ beforeEach(() => {
 afterEach(() => { cleanup(); shareSelectionStore.reset(); vi.unstubAllGlobals(); });
 
 describe('chat interaction controls', () => {
+  // Review regressions: a delayed personal config must preserve chat-local state;
+  // an independent successful operation must preserve an unsaved setting and its retry.
+  // Unit tier at the real Provider boundary; existing thread tests supplied a fixed context.
+  const maskState = (): ChatMaskState => ({ revision: 1, status: 'enabled', manualRunning: false,
+    self: { id: 'human', name: 'Alex', avatarUrl: null }, companions: [],
+    settings: { companionId: 'bot', enabled: true, trigger: 'always', start: '09:00', end: '18:00',
+      timeZone: 'UTC', resumeMinutes: 15, collectTodos: true, digest: 'manual' } });
+  function MaskProbe() {
+    const mask = useGroupMask('room'), [draft, setDraft] = useState('');
+    return <><input aria-label="Chat draft" value={draft} onChange={e => setDraft(e.target.value)} />
+      <span>{mask ? 'Config ready' : 'No config'}</span>
+      {mask && <><button onClick={() => mask.update({ enabled: false })}>Disable reply</button>
+        <button onClick={mask.participate}>Participate</button><button onClick={() => mask.markMentionsRead(['question'])}>Read original</button>
+        <button onClick={mask.retry}>Retry mask</button>{mask.error && <span role="alert">Save failed</span>}</>}
+    </>;
+  }
+  it('preserves chat-local state when personal config arrives or authority disappears', async () => {
+    let finish!: (value: unknown) => void, changed = () => {};
+    mocks.mask.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    window.electronAPI.maker.onBotGroupChanged = callback => { changed = () => callback({ groupId: 'room', change: 'messages' }, undefined); return () => {}; };
+    render(<GroupMaskProvider groupId="room"><MaskProbe /></GroupMaskProvider>);
+    fireEvent.change(screen.getByLabelText('Chat draft'), { target: { value: 'My unfinished message' } });
+    await act(async () => finish({ ok: true, state: maskState() }));
+    await screen.findByText('Config ready');
+    expect((screen.getByLabelText('Chat draft') as HTMLInputElement).value).toBe('My unfinished message');
+    await act(async () => changed());
+    await screen.findByText('No config');
+    expect((screen.getByLabelText('Chat draft') as HTMLInputElement).value).toBe('My unfinished message');
+  });
+  it.each(['Participate', 'Read original'])('retains a failed save after successful %s and retries that save', async operation => {
+    let state = maskState(), fail = true;
+    mocks.mask.mockImplementation(async ({ action }) => {
+      if (action?.type === 'save') {
+        if (fail) return { ok: false, errorCode: 'NETWORK_ERROR' };
+        state = { ...state, revision: 2, settings: action.settings };
+      }
+      return { ok: true, state };
+    });
+    render(<GroupMaskProvider groupId="room"><MaskProbe /></GroupMaskProvider>);
+    fireEvent.click(await screen.findByText('Disable reply'));
+    await screen.findByRole('alert');
+    await act(async () => fireEvent.click(screen.getByText(operation)));
+    expect(screen.getByRole('alert').textContent).toBe('Save failed');
+    fail = false;
+    await act(async () => fireEvent.click(screen.getByText('Retry mask')));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    const saves = mocks.mask.mock.calls.filter(([input]) => input.action?.type === 'save');
+    expect(saves).toHaveLength(2);
+    expect(saves[1]![0]).toMatchObject({ action: { settings: { enabled: false } }, operationId: saves[0]![0].operationId });
+  });
+  it.each([true, false])('offers post-join setup only with confirmed personal capability (%s)', async supported => {
+    mocks.status.mockResolvedValue({ enabled: true, connected: true, ...(supported ? { personalMask: true } : {}) });
+    const joined = vi.fn();
+    render(<ChatInviteDialog initialLink="cindy://chat-invite/test" onClose={vi.fn()} onJoined={joined} />);
+    await screen.findByText('Invited group');
+    const toggle = screen.queryByRole('switch', { name: 'bots.groupChat.mask.joinSetup' });
+    expect(!!toggle).toBe(supported);
+    if (toggle) fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole('button', { name: k('accept') }));
+    await waitFor(() => expect(joined).toHaveBeenCalledWith(...(supported ? ['room', true] : ['room'])));
+  });
+
   // Unit regression for the human-read contract: prior inbox tests covered opening/dismissal,
   // but not a located original becoming visible while the window is in the background.
   // The production hook must acknowledge exactly that message, once, after foreground viewing.

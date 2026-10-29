@@ -24,6 +24,7 @@ export function ChatInviteDialog({ groupId, initialLink = '', malformedLink = fa
 }) {
   const { t, i18n } = useTranslation();
   const [configureMask, setConfigureMask] = useState(false);
+  const [maskSupported, setMaskSupported] = useState(false);
   const fromLink = !groupId && (Boolean(initialLink) || malformedLink);
   const [link, setLink] = useState(initialLink);
   const [expiresAt, setExpiresAt] = useState<string | null | undefined>();
@@ -104,6 +105,9 @@ export function ChatInviteDialog({ groupId, initialLink = '', malformedLink = fa
         }
         // Already a member: the invitation's only remaining purpose is to open the group.
         if (result.joined) { onJoined?.(result.groupId); onClose(); return; }
+        const status = await api().status().catch(() => undefined);
+        if (!current()) return;
+        setMaskSupported(status?.personalMask === true);
         setPreview(result); setNow(Date.now());
       } else {
         if (expired || (typeof expiry === 'string' && Date.parse(expiry) <= Date.now())) return;
@@ -114,7 +118,7 @@ export function ChatInviteDialog({ groupId, initialLink = '', malformedLink = fa
           setError(t(chatErrorKey(result.errorCode))); return;
         }
         refreshBotGroups();
-        if (configureMask) onJoined?.(result.groupId, true); else onJoined?.(result.groupId);
+        if (configureMask && maskSupported) onJoined?.(result.groupId, true); else onJoined?.(result.groupId);
         onClose();
       }
     } catch {
@@ -144,7 +148,7 @@ export function ChatInviteDialog({ groupId, initialLink = '', malformedLink = fa
         <Dialog.Description className="text-13 leading-normal text-[var(--confirm-desc)]">{t(key(groupId ? 'inviteDescription' : fromLink ? 'linkDescription' : 'joinDescription'))}</Dialog.Description>
         {!fromLink && (!groupId || link) && <Input aria-label={t(key('inviteLink'))} value={link} readOnly={!!groupId} disabled={busy || revoked}
           placeholder={t(key('pasteLink'))} onChange={value => { setLink(value); setPreview(null); setError(''); operation.current = crypto.randomUUID(); }} />}
-        {!groupId && preview && <label className="flex min-h-10 items-center justify-between gap-4 text-13">
+        {!groupId && preview && maskSupported && <label className="flex min-h-10 items-center justify-between gap-4 text-13">
           <span>{t('bots.groupChat.mask.joinSetup')}</span><Switch checked={configureMask} disabled={busy} onCheckedChange={setConfigureMask} aria-label={t('bots.groupChat.mask.joinSetup')} />
         </label>}
         {fromLink && !preview && !error && <p role="status" className="text-13 leading-normal text-[var(--text-secondary)]">{t(key('loadingInvite'))}</p>}

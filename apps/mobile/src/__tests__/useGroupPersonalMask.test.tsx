@@ -60,3 +60,44 @@ it('discards late receipts and queued grants after access disappears, even when 
   await act(async () => { result.retry(); });
   expect(h.client.mask.mock.calls.filter(call => call[1])).toHaveLength(1);
 });
+
+// Independent mutations used to clear the shared failure ref. Exercise the real
+// hook with a failed save followed by successful presence/read, then retry it.
+it.each(['participate', 'read'] as const)('retains a failed save after %s succeeds', async operation => {
+  let fail = true;
+  h.client.mask.mockImplementation(async (_room, action) => {
+    if (action?.type === 'save') {
+      if (fail) throw new Error('NETWORK_ERROR');
+      server = { ...server, revision: 2, settings: action.settings };
+    }
+    return server;
+  });
+  await render();
+  await act(async () => result.update({ enabled: false }));
+  expect(result.error).toBe(true);
+  await act(async () => operation === 'read' ? result.markRead(['question']) : result.participate());
+  expect(result.error).toBe(true);
+  fail = false;
+  await act(async () => result.retry());
+  expect(result.error).toBe(false);
+  expect(result.state?.settings.enabled).toBe(false);
+  const saves = h.client.mask.mock.calls.filter(call => call[1]?.type === 'save');
+  expect(saves).toHaveLength(2);
+  expect(saves[1]![2]).toBe(saves[0]![2]);
+});
+
+it('replaces a failed setting with a newer explicit intent without replaying the obsolete value', async () => {
+  h.client.mask.mockImplementation(async (_room, action) => {
+    if (action?.type === 'save' && !action.settings.enabled) throw new Error('NETWORK_ERROR');
+    if (action?.type === 'save') server = { ...server, revision: 2, settings: action.settings };
+    return server;
+  });
+  await render();
+  await act(async () => result.update({ enabled: false }));
+  expect(result.error).toBe(true);
+  await act(async () => result.update({ enabled: true }));
+  expect(result.error).toBe(false);
+  await act(async () => result.retry());
+  expect(result.state?.settings.enabled).toBe(true);
+  expect(h.client.mask.mock.calls.filter(call => call[1]?.type === 'save')).toHaveLength(2);
+});
