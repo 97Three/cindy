@@ -5739,14 +5739,15 @@
           "showDetails": "Show Details",
           "check": {
             "checking": "Checking the server…",
+            "checkingHint": "Connecting to the server to check its system, ports and existing services.",
+            "idle": "After you choose a server, Cindy checks whether it can be deployed to.",
             "ready": "Ready to deploy",
             "blocked": "Can't deploy automatically",
             "recheck": "Check Again",
             "direct": "Ports 80 and 443 are free, so the relay uses them directly.",
             "nginx": "The relay connects through the server's existing Nginx and keeps your current sites.",
             "mine": "This server already runs a relay deployed from this computer. It is updated in place, and joined devices are not affected.",
-            "other": "This server runs a relay that wasn't deployed from this computer. Deploying removes it, and devices that joined it need to join again.",
-            "cleanup": "The unfinished deployment on {{server}} is cleaned up first."
+            "other": "This server runs a relay that wasn't deployed from this computer. Deploying removes it, and devices that joined it need to join again."
           },
           "running": {
             "deploy": "Deploying to your server…",
@@ -5754,7 +5755,7 @@
             "uninstall": "Removing the relay from your server…"
           },
           "done": {
-            "deploy": "Deployed. This computer now uses the relay on your server. Use Add device to bring in your phone and other computers.",
+            "deploy": "Deployed. Switch to it under Connection Route, then you can add devices.",
             "upgrade": "The relay on your server is now version {{version}}.",
             "uninstall": "Relay removed from your server"
           },
@@ -5778,7 +5779,6 @@
             "nginx-rollback": "Deployment did not complete. Restoring the previous Nginx configuration…"
           },
           "steps": {
-            "cleanup": "Clean up {{server}}",
             "connect": "Connect to the server",
             "check": "Check the server",
             "runtime": "Install the runtime",
@@ -5813,6 +5813,10 @@
           "deployingStep": "{{step}}…",
           "viewProgress": "View Progress",
           "resume": "Resume Deployment",
+          "rename": "Rename",
+          "renameHint": "Only changes the name shown on this computer. The server and joined devices keep the original name.",
+          "renameSave": "Save",
+          "renameCancel": "Cancel",
           "statusChecking": "Checking…",
           "statusOnline": "Online",
           "statusOffline": "Unreachable",
@@ -5827,14 +5831,15 @@
             "label": "Deployment steps",
             "form": "Choose Server",
             "deploy": "Deploy",
-            "done": "Add Devices"
+            "done": "Done"
           },
           "running": "Deploying to {{server}}…",
           "backgroundHint": "Closing this window doesn't stop the deployment",
           "background": "Continue in Background",
           "doneTitle": "{{name}} is ready",
-          "doneHint": "This computer now uses it. Scan with your phone, or send the link to another computer to join.",
-          "doneLater": "You can also add devices later under Connection Route",
+          "doneHint": "This computer is still on its current route. Choose Use This Route to switch, then add your phone and other computers.",
+          "doneLater": "You can also switch later under Connection Route",
+          "use": "Use This Route",
           "finish": "Done"
         },
         "manage": {
