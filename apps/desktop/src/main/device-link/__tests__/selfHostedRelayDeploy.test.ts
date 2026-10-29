@@ -29,7 +29,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('electron', () => ({ app: { getAppPath: () => appPath } }));
-vi.mock('../../logger.js', () => ({ createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
+vi.mock('../../logger.js', () => ({
+  createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
+}));
 vi.mock('../../remote-ssh/index.js', () => ({
   ensureRemoteHostReady: mocks.ensureReady,
   getRemoteSshPool: () => ({
@@ -38,7 +40,11 @@ vi.mock('../../remote-ssh/index.js', () => ({
         mocks.commands.push({ label: options.label, command });
         if (options.label === 'relay-deploy-upload') {
           const { createHash } = await import('node:crypto');
-          return { stdout: `SHA ${createHash('sha256').update(options.input!).digest('hex')}\n`, stderr: '', exitCode: 0 };
+          return {
+            stdout: `SHA ${createHash('sha256').update(options.input!).digest('hex')}\n`,
+            stderr: '',
+            exitCode: 0,
+          };
         }
         const respond = mocks.responses[options.label];
         return respond ? respond(command) : { stdout: '', stderr: '', exitCode: 0 };
@@ -91,8 +97,7 @@ describe('deployRelayToServer', () => {
       'relay-deploy-probe': () => ok(PROBE_SUDO),
       'relay-deploy-runtime': () => ok('NODE_READY v24.22.1\n'),
       'relay-deploy-configure': () => ok('INITIALIZED\nCONFIGURED\n'),
-      'relay-deploy-status': () =>
-        ok(`ACTIVE active\nSTATUS {"certificate":{"state":"ready","identifier":"203.0.113.10"}}\n`),
+      'relay-deploy-status': () => ok(`ACTIVE active\nSTATUS {"certificate":{"state":"ready","identifier":"203.0.113.10"}}\n`),
     };
     vi.stubGlobal(
       'fetch',
@@ -117,8 +122,13 @@ describe('deployRelayToServer', () => {
   });
 
   it.each([
-    ['no root or passwordless sudo', { 'relay-deploy-probe': () => ok(PROBE_SUDO.replace('ROOT sudo', 'ROOT none')) }, 'NEEDS_ROOT', undefined],
-    ['port 80 used by another program', { 'relay-deploy-inspect': () => ok('BUSY 80 nginx\n') }, 'PORT_BUSY', '80 nginx'],
+    [
+      'no root or passwordless sudo',
+      { 'relay-deploy-probe': () => ok(PROBE_SUDO.replace('ROOT sudo', 'ROOT none')) },
+      'NEEDS_ROOT',
+      undefined,
+    ],
+    ['port 80 used by another program', { 'relay-deploy-inspect': () => ok('BUSY 80 apache2\n') }, 'PORT_BUSY', '80 apache2'],
     [
       'a relay owned by someone else',
       { 'relay-deploy-inspect': () => ok(`STATE 2 ${init.relayId} ${'R'.repeat(43)}\n`) },
@@ -144,6 +154,39 @@ describe('deployRelayToServer', () => {
     expect(configured).toBe(code === 'CERTIFICATE_FAILED');
   });
 
+  // 2026-10-29: 用户要求已有 Nginx 时自动部署，而不是让用户停网站或复制配置。
+  // 缺口：旧入口对 BUSY 80 nginx 一律返回 PORT_BUSY。最小输入：两个端口均为 Nginx。
+  // tier: unit；检查生产入口的结果、自动选择和失败后的恢复请求。
+  it('automatically deploys behind the existing Nginx and restores it if verification fails', async () => {
+    mocks.responses['relay-deploy-inspect'] = () => ok('BUSY 80 nginx\nBUSY 443 nginx\nBUSY 443 nginx\n');
+    mocks.responses['relay-deploy-nginx-prepare'] = () =>
+      ok('{"event":"nginx","port":47822,"challengePort":47823,"existingCertificate":false}\n');
+    const success = await run();
+    expect(success.error).toBeNull();
+    expect(mocks.commands.some((c) => c.label === 'relay-deploy-nginx-activate')).toBe(true);
+    expect(mocks.commands.some((c) => c.label === 'relay-deploy-nginx-commit')).toBe(true);
+    const configure = mocks.commands.find((c) => c.label === 'relay-deploy-configure')!;
+    // 远端命令的参数协议：复用 Nginx 后只允许中转监听回环地址及探测出的空闲端口。
+    expect(configure.command).toContain("'203.0.113.10' '127.0.0.1' 'https://203.0.113.10'");
+    expect(configure.command).toContain("'nginx-acme' '47822' '47823'");
+    mocks.commands = [];
+    vi.mocked(fetch).mockResolvedValue(new Response('{}', { status: 502 }));
+    const failed = await run();
+    expect(failed.error).toMatchObject({ code: 'NOT_REACHABLE' });
+    expect(mocks.commands.some((c) => c.label === 'relay-deploy-nginx-rollback')).toBe(true);
+    expect(mocks.commands.some((c) => c.label === 'relay-deploy-nginx-commit')).toBe(false);
+  });
+
+  it('uses the existing trusted HTTPS certificate without waiting for a new certificate', async () => {
+    mocks.responses['relay-deploy-inspect'] = () => ok('BUSY 80 nginx\nBUSY 443 nginx\n');
+    mocks.responses['relay-deploy-nginx-prepare'] = () =>
+      ok('{"event":"nginx","port":47820,"challengePort":47821,"existingCertificate":true}\n');
+    const { error } = await run();
+    expect(error).toBeNull();
+    expect(mocks.commands.some(c => c.label === 'relay-deploy-status')).toBe(false);
+    expect(mocks.commands.find(c => c.label === 'relay-deploy-configure')!.command).toContain("'nginx-existing' '47820' '47821'");
+  });
+
   it('replaces a foreign relay only when asked to', async () => {
     mocks.responses['relay-deploy-inspect'] = () => ok(`STATE 2 other-relay ${'R'.repeat(43)}\n`);
     const { error } = await run({ replaceExisting: true });
@@ -161,21 +204,26 @@ describe('deployRelayToServer', () => {
     ['unknown', false],
   ])('rechecks retained data after restoring Node: %s', async (state, matches) => {
     let inspections = 0;
-    mocks.responses['relay-deploy-inspect'] = () =>
-      ok(`STATE ${++inspections === 1 ? 'unknown' : state}\n`);
+    mocks.responses['relay-deploy-inspect'] = () => ok(`STATE ${++inspections === 1 ? 'unknown' : state}\n`);
     const { error } = await run();
-    expect(mocks.commands.some(c => c.label === 'relay-deploy-runtime')).toBe(true);
+    expect(mocks.commands.some((c) => c.label === 'relay-deploy-runtime')).toBe(true);
     expect(inspections).toBe(2);
     if (matches) expect(error).toBeNull();
     else expect(error).toMatchObject({ code: 'RELAY_MISMATCH' });
-    expect(mocks.commands.some(c => c.label === 'relay-deploy-upload')).toBe(matches);
-    expect(mocks.commands.some(c => c.label === 'relay-deploy-configure')).toBe(matches);
+    expect(mocks.commands.some((c) => c.label === 'relay-deploy-upload')).toBe(matches);
+    expect(mocks.commands.some((c) => c.label === 'relay-deploy-configure')).toBe(matches);
   });
 
   it('does not access another account’s SSH connection after the owner changes while connecting', async () => {
     let current = true;
-    mocks.ensureReady.mockImplementationOnce(async () => { current = false; });
-    const { error } = await run({ assertCurrent: () => { if (!current) throw new Error('owner changed'); } });
+    mocks.ensureReady.mockImplementationOnce(async () => {
+      current = false;
+    });
+    const { error } = await run({
+      assertCurrent: () => {
+        if (!current) throw new Error('owner changed');
+      },
+    });
     expect(error).toMatchObject({ message: 'owner changed' });
     expect(mocks.commands).toEqual([]);
   });
@@ -184,14 +232,22 @@ describe('deployRelayToServer', () => {
   // 最小输入：同一 SSH 主机的 STATE 属于另一主人；tier: unit，观察没有卸载写操作。
   it('refuses uninstall when the server belongs to another relay owner', async () => {
     mocks.responses['relay-deploy-inspect'] = () => ok(`STATE 2 ${init.relayId} ${'R'.repeat(43)}\n`);
-    await expect(uninstallRelayFromServer('my-vps', init, true, () => {})).rejects.toMatchObject({ code: 'RELAY_MISMATCH' });
-    expect(mocks.commands.some(c => c.label === 'relay-deploy-uninstall')).toBe(false);
+    await expect(uninstallRelayFromServer('my-vps', init, true, () => {})).rejects.toMatchObject({
+      code: 'RELAY_MISMATCH',
+    });
+    expect(mocks.commands.some((c) => c.label === 'relay-deploy-uninstall')).toBe(false);
   });
 
   it('uninstalls a matching relay and rejects an identity changed before deletion', async () => {
     mocks.responses['relay-deploy-inspect'] = () => ok(`STATE 2 ${init.relayId} ${init.ownerPublicKey}\n`);
     await expect(uninstallRelayFromServer('my-vps', init, true, () => {})).resolves.toBeUndefined();
-    mocks.responses['relay-deploy-uninstall'] = () => ({ stdout: 'RELAY_MISMATCH\n', stderr: '', exitCode: 22 });
-    await expect(uninstallRelayFromServer('my-vps', init, true, () => {})).rejects.toMatchObject({ code: 'RELAY_MISMATCH' });
+    mocks.responses['relay-deploy-uninstall'] = () => ({
+      stdout: 'RELAY_MISMATCH\n',
+      stderr: '',
+      exitCode: 22,
+    });
+    await expect(uninstallRelayFromServer('my-vps', init, true, () => {})).rejects.toMatchObject({
+      code: 'RELAY_MISMATCH',
+    });
   });
 });
