@@ -606,6 +606,12 @@ export function registerBrowserTools(registry: BrowserToolRegistry, deps: Browse
   const elementQuery = elementQuerySchema(deps);
   registry.register({
     name: 'browser',
+    // Agents of every backend often write extract's fields/from/multiple next to it instead of inside it.
+    normalizeArgs: (raw) => {
+      if (raw.action !== 'extract' || raw.extract !== undefined || raw.fields === undefined) return raw;
+      const { fields, from, multiple, ...rest } = raw;
+      return { ...rest, extract: { fields, ...(from !== undefined ? { from } : {}), ...(multiple !== undefined ? { multiple } : {}) } };
+    },
     category: 'browser',
     description:
       '浏览器自动化统一入口。通过 action 选择 status/start/tabs/navigate/snapshot/screenshot/act 等操作; ' +
@@ -656,6 +662,7 @@ export function registerBrowserTools(registry: BrowserToolRegistry, deps: Browse
         interactive: z.boolean().optional(),
         depth: z.number().int().nonnegative().optional(),
         maxChars: z.number().int().min(1).max(20_000).optional(),
+        urls: z.boolean().optional(),
       }).optional().describe('动作成功后读取精简快照，正文默认最多 4000 字符；只读失败不改变动作的成功状态，不要重复动作'),
       labels: z.boolean().optional(),
       urls: z.boolean().optional(),

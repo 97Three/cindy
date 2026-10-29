@@ -45,6 +45,8 @@ export interface UserBrowserBackendOptions {
     warn(message: string, meta?: unknown): void;
   };
   now?(): number;
+  /** status 时扩展未连接,先等它重连这么久(扩展刷新或更新后会断开几秒);默认 8 秒。 */
+  reconnectWaitMs?: number;
 }
 
 interface TargetRecord {
@@ -545,7 +547,14 @@ export class UserBrowserBackend implements BrowserBackend {
         capabilities: userBrowserCapabilities(null),
       });
     }
-    const status = await control.bridge.status();
+    let status = await control.bridge.status();
+    // Right after an extension reload or update it reconnects within seconds: wait briefly before
+    // reporting "not connected", so the agent does not give up on a browser that is coming back.
+    const deadline = (this.opts.now ?? Date.now)() + (this.opts.reconnectWaitMs ?? 8000);
+    while (status.ok && !status.clients.some((c) => c.connected) && (this.opts.now ?? Date.now)() < deadline) {
+      await sleep(500);
+      status = await control.bridge.status();
+    }
     if (!status.ok) {
       return actionOk(req.action, {
         ready: false,

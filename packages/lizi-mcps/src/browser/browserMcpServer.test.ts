@@ -1765,6 +1765,18 @@ describe('browser · backend capability gating (user browser via extension)', ()
     } finally { await h.cleanup(); }
   });
 
+  it('accepts extract fields written next to extract, and urls in afterSnapshot, for any backend', async () => {
+    const h = await makeHarness();
+    try {
+      const extracted = await h.client.callTool({ name: 'call_tool', arguments: { name: 'browser', args: { action: 'extract', targetId: 't1', fields: { title: 'h1' }, from: 'main', multiple: true } } });
+      expect(extracted.isError).toBeFalsy();
+      expect(h.calls[0]).toMatchObject({ action: 'act', request: { kind: 'evaluate', domRead: { kind: 'extract', extract: { fields: { title: 'h1' }, from: 'main', multiple: true } } } });
+      const clicked = await h.client.callTool({ name: 'call_tool', arguments: { name: 'browser', args: { action: 'act', targetId: 't1', request: { kind: 'click', ref: 'e1' }, afterSnapshot: { urls: true } } } });
+      expect(clicked.isError).toBeFalsy();
+      expect(h.calls.find((c) => (c as { action?: string }).action === 'snapshot')).toMatchObject({ action: 'snapshot', urls: true });
+    } finally { await h.cleanup(); }
+  });
+
   it('ignores a browser name passed as target instead of failing schema validation', async () => {
     const h = await makeHarness({ backendCapabilities: () => ({ ...caps(), pointer: true }) });
     try {

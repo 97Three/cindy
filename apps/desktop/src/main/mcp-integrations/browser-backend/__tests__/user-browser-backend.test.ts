@@ -85,6 +85,7 @@ function backend(
   return new UserBrowserBackend({
     getPageControl: () => control,
     ...(resolveUploadRoots ? { resolveUploadRoots } : {}),
+    reconnectWaitMs: 0,
     logger: { info: vi.fn(), warn: vi.fn() },
   });
 }
@@ -732,5 +733,18 @@ describe('UserBrowserBackend · 读取与动作', () => {
       ok: true,
       data: { note: expect.stringContaining('不抢焦点') },
     });
+  });
+
+  it('status 先等扩展重连几秒,不在刷新后的空档里报未连接', async () => {
+    const fake = fakeControl({ version: '0.4.46' });
+    let calls = 0;
+    const realStatus = (fake.control.bridge as unknown as { status: () => Promise<{ ok: boolean; clients: Array<{ connected: boolean }> }> }).status;
+    (fake.control.bridge as unknown as { status: () => Promise<unknown> }).status = async () => {
+      const s = await realStatus();
+      return ++calls < 3 ? { ...s, clients: [] } : s;
+    };
+    const b = new UserBrowserBackend({ getPageControl: () => fake.control, reconnectWaitMs: 5000, logger: { info: vi.fn(), warn: vi.fn() } });
+    expect(await call(b, { action: 'status' })).toMatchObject({ ok: true, data: { connected: true } });
+    expect(calls).toBe(3);
   });
 });
