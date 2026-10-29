@@ -7540,7 +7540,7 @@ function MessagePayloadModal({
             testID="message.payloadMermaidDiagram"
             zoomable
           />
-          <View style={[styles.payloadFloatingActions, { top: modalSafeArea.paddingTop }]}>
+          <View style={[styles.payloadFloatingActions, { top: modalSafeArea.paddingTop, right: safeAreaInsets.right + spacing.lg }]}>
             {imageAnnotation ? (
               <PayloadHeaderActionButton
                 accessibilityLabel={t('message.renderer.annotateSendToChat')}
@@ -7594,6 +7594,9 @@ function MessagePayloadModal({
           styles.payloadModal,
           {
             paddingBottom: modalSafeArea.paddingBottom,
+            // Landscape side insets hold the notch or a vertical system bar (Duo).
+            paddingLeft: safeAreaInsets.left,
+            paddingRight: safeAreaInsets.right,
             paddingTop: modalSafeArea.paddingTop,
           },
         ]}
@@ -9824,7 +9827,6 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
     position: 'absolute',
-    right: spacing.lg,
   },
   // 浮动按钮需要实底色,否则悬在图表线条上看不清。
   payloadFloatingButton: {
