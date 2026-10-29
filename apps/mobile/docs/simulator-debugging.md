@@ -101,6 +101,9 @@ UDID、方向、主题及未验证项。布局问题按本次要求覆盖横竖�
 配置、Git 源码身份、设备、原生指纹、Metro 还是查看器。Expo config 的单次检查上限 30s，
 simctl/安装信息查询 15s，Git 子命令 30s，Metro 的主要进程查询 5s，原生指纹 120s；
 这些是单步上限，不是总运行时间承诺。失败后按阶段排查，不降低原生/源码身份要求。
+已找到监听 PID 后，命令、cwd、源码环境或 Windows 进程快照查询失败也会写入
+`probeErrors`（`METRO_PROCESS_TIMEOUT` / `METRO_PROCESS_UNAVAILABLE`，附端口与阶段）；
+身份检查未完成时不提示“没发现 Metro”或建议另启一个 Metro。
 
 ## Current Source Verification Contract
 

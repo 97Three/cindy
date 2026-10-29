@@ -1,7 +1,9 @@
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 import { metroEnvironmentFingerprint, probeMetroOwnership, windowsProcessSnapshot } from '../../scripts/sim-metro.mjs';
-import { classifySimMetroListener, resolveSimMetroHandoff } from '../../scripts/lib/sim-whoami.mjs';
+import { classifySimMetroListener, resolveSimMetroHandoff, validateSimMetroIdentity } from '../../scripts/lib/sim-whoami.mjs';
 
 const worktreeRoot = join('/worktrees', 'metro-owner');
 const owner = { pid: 100, launcherPid: 100, worktreeRoot, source: 'branch@commit', recordedAtMs: 1500,
@@ -10,6 +12,43 @@ type ProcessEntry = { pid: number; parentPid: number; startedAtMs: number };
 const launcher = { pid: 100, parentPid: 1, startedAtMs: 1000 };
 const wrapper = { pid: 200, parentPid: 100, startedAtMs: 1100 };
 const listener = { pid: 300, parentPid: 200, startedAtMs: 1200 };
+
+// PR #7814 discussion_r4409775119: listener discovery coverage did not reach
+// command/cwd/source timeouts. Run the actual whoami Metro section with injected
+// process I/O (unit): errors must reach its receipt and suppress the start hint.
+const whoamiSource = readFileSync(new URL('../../scripts/sim-whoami.mjs', import.meta.url), 'utf8');
+const whoamiMetro = whoamiSource.slice(whoamiSource.indexOf('if (!jsonOutput) console.log("\\n==== Metro'),
+  whoamiSource.indexOf('// Devices outside the system set'));
+
+describe('whoami Metro identity probe failures', () => {
+  it.each(['command', 'cwd', 'source', 'process-snapshot'])('reports %s timeout without suggesting another Metro', (failedStage) => {
+    const log = vi.fn();
+    const errors: object[] = [];
+    const result = runInNewContext(`${whoamiMetro}; ({ healthy, metros });`, {
+      jsonOutput: false, console: { log, error: vi.fn() }, ports: [8081], expectedPort: 8081,
+      worktreeRoot, expectedSource: owner.source, region: 'global', envFingerprint: 'env-1',
+      healthy: true, probeErrors: errors, classifySimMetroListener, validateSimMetroIdentity,
+      timedCheck: (_stage: string, run: () => unknown) => run(),
+      inspectMetroListeners: () => ({ healthy: true, pids: { 8081: '300' } }),
+      probeMetroOwnership: (port: number, options: object) => probeMetroOwnership(port, {
+        ...options, platform: failedStage === 'process-snapshot' ? 'win32' : 'darwin', readOwner: () => owner,
+        execFile: (command: string, args: string[]) => {
+          const stage = command === 'powershell.exe' ? 'process-snapshot'
+            : command === 'lsof' ? 'cwd' : args.includes('-E') ? 'source' : 'command';
+          if (stage === failedStage) throw Object.assign(new Error('private child output'), { code: 'ETIMEDOUT', stderr: 'private environment' });
+          if (stage === 'command') return 'node expo start';
+          if (stage === 'cwd') return `p300\nn${join(worktreeRoot, 'apps/mobile')}\n`;
+          return `EXPO_PUBLIC_XDT_GIT_SOURCE=${owner.source}`;
+        },
+      }),
+    });
+    expect(result.healthy).toBe(false);
+    expect(errors).toEqual([expect.objectContaining({ port: 8081, stage: failedStage, code: 'METRO_PROCESS_TIMEOUT' })]);
+    expect(result.metros[0].identity.healthy).toBe(false);
+    expect(log.mock.calls.flat().join('\n')).not.toMatch(/没发现 Metro|启一个/);
+    expect(JSON.stringify({ result, errors })).not.toContain('private');
+  });
+});
 
 function probe(processes: ProcessEntry[], metadata: object | null = owner, listenerPid = '300') {
   return probeMetroOwnership(8081, {

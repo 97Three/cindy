@@ -205,13 +205,21 @@ let anyMetro = false;
 let currentSourceOnExpectedPort = false;
 const metros = [];
 const listeners = timedCheck('metro-listeners', () => inspectMetroListeners(ports));
+let metroProbeFailed = !listeners.healthy;
 if (!listeners.healthy) {
   probeErrors.push({ stage: 'metro-listeners', code: listeners.code });
   console.error(`[whoami] ${listeners.code}；端口归属尚未确认，不能当作没有 Metro。`);
 }
 for (const port of ports) {
   if (!listeners.pids[port]) continue;
-  const ownership = timedCheck(`metro-${port}`, () => probeMetroOwnership(port, { listenerPid: () => listeners.pids[port] }));
+  const ownership = timedCheck(`metro-${port}`, () => probeMetroOwnership(port, {
+    listenerPid: () => listeners.pids[port],
+    onProbeError: (error) => {
+      metroProbeFailed = true;
+      probeErrors.push({ port, ...error });
+      console.error(`[whoami] :${port} ${error.stage}: ${error.code}；进程身份检查未完成，请先排查该查询。`);
+    },
+  }));
   if (!ownership) continue;
   const listener = classifySimMetroListener({
     cwd: ownership.cwd, source: ownership.source, targetWorktree: worktreeRoot,
@@ -228,7 +236,7 @@ for (const port of ports) {
   if (port === expectedPort) currentSourceOnExpectedPort = verdict.healthy;
 }
 
-if (listeners.healthy && !anyMetro && !jsonOutput)
+if (!metroProbeFailed && !anyMetro && !jsonOutput)
   console.log(
     `  (检查的端口上没发现 Metro;用 \`pnpm mobile:sim:start -- --port ${expectedPort}\` 启一个)`,
   );
