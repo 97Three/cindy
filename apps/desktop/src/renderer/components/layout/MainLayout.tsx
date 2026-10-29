@@ -732,6 +732,7 @@ export function MainLayout() {
         | { type: 'chat-invite-malformed' }
         | { type: 'provider-share-join'; link: string }
         | { type: 'plugin'; pluginId: string }
+        | { type: 'local-plugin-share'; snapshotId: string }
         | { type: 'settings'; tab: 'voice-input' | 'providers' | 'billing' | 'remote-control'; connect?: string; intent?: 'topup' },
     ) => {
       if (payload.type === 'chat-message') {
@@ -755,6 +756,10 @@ export function MainLayout() {
       }
       if (payload.type === 'shared-task-join') {
         setSharedTaskInvitation({ link: buildSharedTaskInvitationLink(payload.invitation, payload.server), id: ++invitationSequence.current });
+        return;
+      }
+      if (payload.type === 'local-plugin-share') {
+        navigate(`/plugins?share=${encodeURIComponent(payload.snapshotId)}`);
         return;
       }
       if (payload.type === 'plugin') {
@@ -821,7 +826,7 @@ export function MainLayout() {
         void pullChatInvitations();
         return;
       }
-      if (payload.type !== 'provider-import' && payload.type !== 'shared-task-join' && payload.type !== 'provider-share-join' && payload.type !== 'plugin') {
+      if (payload.type !== 'provider-import' && payload.type !== 'shared-task-join' && payload.type !== 'provider-share-join' && payload.type !== 'plugin' && payload.type !== 'local-plugin-share') {
         handleDeepLinkPayload(payload);
         return;
       }

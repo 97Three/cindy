@@ -216,10 +216,31 @@ export async function crossRegionOfIntent(intent: ProviderShareInvitationIntent,
   return region;
 }
 
+/** 服务端确认已是成员时，恢复本机尚未加载的分享；提示仍沿用「已在使用」。 */
+async function recoverExistingMembership(rt: Runtime | null, region: Region, error: unknown): Promise<void> {
+  if (!rt || !current(rt) || !error || typeof error !== 'object'
+    || !('code' in error) || error.code !== 'PROVIDER_SHARE_ALREADY_MEMBER') return;
+  const state = rt.regions.get(region);
+  if (state) {
+    // 成员确认比在途旧名单更新；旧空名单不能撤销本次恢复。
+    state.requestRevision += 1;
+    if (state.shares.length === 0) state.loaded = false;
+  }
+  // 已确认的往来先落盘：暂时断网或重启后仍可沿原退避路径恢复。
+  await writeMarker(rt.account, region, true, false, () => current(rt)).catch((error) =>
+    log.warn('cross-region marker write failed', { error: String(error) }));
+  if (current(rt)) await refreshRegion(rt, region);
+}
+
 export async function crossRegionPreview(region: Region, invitation: string): Promise<ProviderShareLinkPreview> {
+  const rt = runtime;
   const base = await peerApiBase(region);
   const identityCard = await fetchIdentityCard('share-request', sha256Hex(invitation));
-  return providerShareParsers.preview(await peerRequest(base, '/preview', { invitation, identityCard }));
+  const value = await peerRequest(base, '/preview', { invitation, identityCard }).catch(async (error: unknown) => {
+    await recoverExistingMembership(rt, region, error);
+    throw error;
+  });
+  return providerShareParsers.preview(value);
 }
 
 export interface CrossRegionRequest {
@@ -230,11 +251,14 @@ export interface CrossRegionRequest {
 export async function crossRegionSendRequest(region: Region, invitation: string): Promise<CrossRegionRequest> {
   const account = accountKey();
   if (!account) throwIpcError('DEVICE_LINK_NOT_CONNECTED', 'Not signed in');
+  const rt = runtime;
   const base = await peerApiBase(region);
   const identityCard = await fetchIdentityCard('share-request', sha256Hex(invitation));
-  const value = await peerRequest(base, '/requests', { invitation, identityCard });
+  const value = await peerRequest(base, '/requests', { invitation, identityCard }).catch(async (error: unknown) => {
+    await recoverExistingMembership(rt, region, error);
+    throw error;
+  });
   const result = { state: providerShareParsers.requestState(value), requestToken: providerShareParsers.secret(value.requestToken) };
-  const rt = runtime;
   if (rt && current(rt) && rt.account === account) {
     const state = rt.regions.get(region);
     if (state) {
