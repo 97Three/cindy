@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{color-scheme:light dark}
+body{margin:0;padding:16px;font:14px/1.5 var(--font-sans,system-ui);color:var(--color-text-primary);background:var(--color-background-primary)}
+input,button{font:inherit;color:inherit;background:var(--color-background-secondary);border:1px solid var(--color-border-primary);border-radius:8px;padding:10px;min-height:44px;box-sizing:border-box;max-width:100%}
+label{display:block}input{width:100%;margin:8px 0}button{cursor:pointer}p{overflow-wrap:anywhere}
+</style>
+<h1>交互计划</h1>
+<label>计划标题<input id="title" value="我的计划"></label>
+<button id="save" disabled>暂存计划</button>
+<p id="status" role="status">正在连接…</p>
+<script>
+(() => {
+  let nextId = 0;
+  const pending = new Map();
+  const post = message => parent.postMessage({ jsonrpc: '2.0', ...message }, '*');
+  const notify = (method, params = {}) => post({ method, params });
+  function request(method, params) {
+    return new Promise((resolve, reject) => {
+      const id = ++nextId;
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        notify('notifications/cancelled', { requestId: id, reason: '页面等待超时' });
+        reject(new Error('等待超时，请核对操作结果，勿自动重试写入。'));
+      }, 30 * 60 * 1000);
+      pending.set(id, { resolve, reject, timer });
+      post({ id, method, params });
+    });
+  }
+  const status = document.querySelector('#status');
+  function theme(context) {
+    if (context.theme) document.documentElement.style.colorScheme = context.theme;
+    for (const [key, value] of Object.entries(context.styles?.variables ?? {}))
+      document.documentElement.style.setProperty(key, value);
+  }
+  function render(result) {
+    const data = result.structuredContent;
+    if (data) document.querySelector('#title').value = data.title;
+    status.textContent = (result.content ?? []).filter(x => x.type === 'text').map(x => x.text).join('\n');
+  }
+  addEventListener('message', event => {
+    if (event.source !== parent || event.data?.jsonrpc !== '2.0') return;
+    const message = event.data;
+    if (pending.has(message.id)) {
+      const call = pending.get(message.id); pending.delete(message.id); clearTimeout(call.timer);
+      if (message.error) call.reject(new Error(message.error.message)); else call.resolve(message.result);
+    } else if (message.method === 'ui/notifications/tool-result') render(message.params);
+    else if (message.method === 'ui/notifications/host-context-changed') theme(message.params);
+    else if (message.method === 'ui/notifications/tool-cancelled') status.textContent = '调用已取消';
+    else if (message.method === 'ui/resource-teardown') post({ id: message.id, result: {} });
+  });
+  document.querySelector('#save').onclick = async () => {
+    const button = document.querySelector('#save'); button.disabled = true;
+    try { render(await request('tools/call', { name: 'save_plan', arguments: { title: document.querySelector('#title').value } })); }
+    catch (error) { status.textContent = error.message; }
+    finally { button.disabled = false; }
+  };
+  request('ui/initialize', { protocolVersion: '2026-01-26', appInfo: { name: '计划示例', version: '1.0.0' }, appCapabilities: {} })
+    .then(result => {
+      theme(result.hostContext ?? {});
+      notify('ui/notifications/initialized');
+      document.querySelector('#save').disabled = false;
+      new ResizeObserver(() => notify('ui/notifications/size-changed', { height: document.body.getBoundingClientRect().height }))
+        .observe(document.body);
+    }).catch(error => { status.textContent = error.message; });
+})();
+</script>
+</html>

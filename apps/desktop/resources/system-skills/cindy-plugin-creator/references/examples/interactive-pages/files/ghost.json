@@ -1,0 +1,167 @@
+{
+  "schemaVersion": 3,
+  "id": "acme-page-files",
+  "name": "页面文件与后端示例",
+  "version": "1.0.0",
+  "minCindyVersion": "0.1.121-beta",
+  "kind": "chip",
+  "entry": "main.js",
+  "whenToUse": "演示插件交互页面里的选图、附件、导出和把图片发给 AI",
+  "pick": true,
+  "library": true,
+  "cindy": {
+    "media": [
+      "deposit"
+    ]
+  },
+  "network": {
+    "hosts": [
+      "api.example.com"
+    ],
+    "secrets": [
+      {
+        "key": "identity",
+        "label": "企业身份",
+        "source": "oidc-token",
+        "inject": {
+          "header": "Authorization",
+          "format": "Bearer {value}",
+          "hosts": [
+            "api.example.com"
+          ]
+        }
+      }
+    ]
+  },
+  "tools": [
+    {
+      "name": "open_files",
+      "description": "open_files",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    {
+      "name": "pick_files",
+      "description": "pick_files",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    {
+      "name": "begin_file",
+      "description": "begin_file",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    {
+      "name": "write_file",
+      "description": "write_file",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    {
+      "name": "abort_file",
+      "description": "abort_file",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    {
+      "name": "commit_file",
+      "description": "commit_file",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    {
+      "name": "download_attachment",
+      "description": "download_attachment",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    {
+      "name": "process_and_upload",
+      "description": "process_and_upload",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    {
+      "name": "check_identity",
+      "description": "调用企业后端，只返回状态，不显示令牌。",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ],
+  "mcpApps": {
+    "ui": {
+      "resources": [
+        {
+          "uri": "ui://files/v1",
+          "file": "ui/page.html",
+          "prefersBorder": true
+        }
+      ],
+      "tools": {
+        "open_files": {
+          "resourceUri": "ui://files/v1"
+        },
+        "pick_files": {
+          "visibility": [
+            "app"
+          ]
+        },
+        "begin_file": {
+          "visibility": [
+            "app"
+          ]
+        },
+        "write_file": {
+          "visibility": [
+            "app"
+          ]
+        },
+        "abort_file": {
+          "visibility": [
+            "app"
+          ]
+        },
+        "commit_file": {
+          "visibility": [
+            "app"
+          ]
+        },
+        "download_attachment": {
+          "visibility": [
+            "app"
+          ]
+        },
+        "process_and_upload": {
+          "visibility": [
+            "app"
+          ]
+        },
+        "check_identity": {
+          "visibility": [
+            "app"
+          ]
+        }
+      }
+    }
+  },
+  "command": "page-files"
+}

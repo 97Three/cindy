@@ -12,12 +12,14 @@ import { setTimeout, clearTimeout } from 'node:timers';
 import { build } from 'esbuild';
 import { startMockAppServer, createMockAppServer } from './mcp-apps-mock.mjs';
 import { pluginUiFixture } from './plugin-ui-fixture.mjs';
+import { authorFixture } from './plugin-author-fixture.mjs';
 import { createRawAppServer } from './mcp-apps-raw-fixture.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'cindy-mcp-app-sandbox-'));
 const independent = process.argv.includes('--raw');
-const pluginView = process.argv.includes('--plugin');
+const authorMode = process.argv.find(arg => arg.startsWith('--author='))?.split('=')[1];
+const pluginView = process.argv.includes('--plugin') || !!authorMode;
 const remoteView = process.argv.includes('--remote');
 const measureMetrics = process.argv.includes('--metrics');
 const assets = http.createServer((req, res) => {
@@ -47,7 +49,7 @@ const endpoint = await startMockAppServer({
 });
 try {
   if (pluginView) await writeFile(path.join(temporary, 'fixture.txt'), 'host-only-file');
-  if (pluginView) await writeFile(path.join(temporary, 'plugin.json'), JSON.stringify(await pluginUiFixture(independent, independent ? allowed : undefined, true)));
+  if (pluginView) await writeFile(path.join(temporary, 'plugin.json'), JSON.stringify(authorMode ? await authorFixture(authorMode, temporary) : await pluginUiFixture(independent, independent ? allowed : undefined, true)));
   await writeFile(
     path.join(temporary, 'preload.cjs'),
     "require('electron').contextBridge.exposeInMainWorld('testHost', {invoke: input => require('electron').ipcRenderer.invoke('test:mcp-app', input)});",
@@ -142,6 +144,7 @@ try {
       await new Promise(resolve=>forbidden.listen(0,'127.0.0.1',resolve));
       const denied='http://127.0.0.1:'+forbidden.address().port+'/exfil';
       const independent=process.env.CINDY_MCP_APP_TEST_RAW==='1';
+      const authorMode=process.env.CINDY_MCP_APP_TEST_AUTHOR;
       const allowed=process.env.CINDY_MCP_APP_TEST_ALLOWED;
       let config={id:'example',url:process.env.CINDY_MCP_APP_TEST_URL,transport:'http'};
       const pluginMode=process.env.CINDY_MCP_APP_TEST_PLUGIN==='1';let executePlugin;
@@ -158,7 +161,7 @@ try {
             call:(grant,args)=>executePlugin(grant.tool,args,grant.onProgress)})}};
       }
       connection=new AppConnection(config);const client=await connection.getClient();
-      const tool=(await connection.tools()).find(tool=>tool.name===(independent?'open_metrics':'draft_form'));
+      const tool=(await connection.tools()).find(tool=>tool.name===(authorMode?'open_planner':independent?'open_metrics':'draft_form'));
       const args=independent?{threshold:75}:{title:'AI draft',body:'Review before creating'};
       const result=pluginMode?await executePlugin(tool.name,args):await client.callTool({name:tool.name,arguments:args});
       let record={version:1,serverId:'example',serverRevision:appServerRevision(config),resourceUri:tool._meta.ui.resourceUri,tool,arguments:args,result};
@@ -228,6 +231,24 @@ try {
       const inner=()=>window.webContents.mainFrame.framesInSubtree.find(frame=>frame.url.includes('-view/resource'));
       assert.equal(await window.webContents.executeJavaScript(
         "window.testHost.invoke({op:'message',viewId:window.testController.document.viewId,message:{jsonrpc:'2.0',id:'forged',method:'tools/list'}}).then(()=>false,()=>true)"),true);
+      if(authorMode){
+        // Integration: shipped raw/SDK author examples must actually initialize and
+        // invoke main.js through the production dispatcher, ticket and App host.
+        // Minimum failure is a copied example with a wrong resource URI or RPC method.
+        stage='author example initial result';
+        await wait(()=>inner()?.executeJavaScript("document.querySelector('#title').value==='AI draft'"));
+        await wait(()=>window.webContents.executeJavaScript('window.testState.size?.height>0'));
+        for(const theme of ['light','dark']){
+          await window.webContents.executeJavaScript('window.testController.context('+JSON.stringify({theme})+')');
+          await wait(()=>inner().executeJavaScript('document.documentElement.style.colorScheme==='+JSON.stringify(theme)));
+        }
+        await inner().executeJavaScript("document.querySelector('#title').value='已核对的计划';document.querySelector('#save').click()");
+        await wait(()=>inner().executeJavaScript("document.querySelector('#status').textContent.includes('已暂存 1 次')"));
+        assert.equal(await inner().executeJavaScript("document.querySelector('#title').value"),'已核对的计划');
+        assert.equal(await inner().executeJavaScript('typeof window.cindy'),'undefined');
+        console.log('AUTHOR_APP_VERDICT=passed ('+authorMode+'; real Electron, standard RPC, main.js, size, Light/Dark)');
+        return;
+      }
       stage='tool input and result';
       await wait(()=>inner()?.executeJavaScript(independent?"document.querySelector('#status').textContent==='Metrics ready'":"document.querySelector('#status').textContent.includes('核对')"));
       if(independent){
@@ -356,6 +377,7 @@ try {
     CINDY_MCP_APP_TEST_REMOTE: remoteView ? '1' : '0',
     CINDY_MCP_APP_TEST_METRICS: measureMetrics ? '1' : '0',
     CINDY_MCP_APP_TEST_ALLOWED: allowed,
+    CINDY_MCP_APP_TEST_AUTHOR: authorMode ?? "",
   };
   delete environment.ELECTRON_RUN_AS_NODE;
   const electron = createRequire(import.meta.url)('electron');
