@@ -46,8 +46,14 @@ mountPage({
       if (request.actionId === 'management:snapshot') return { effects: [], result: { version: 1, ghosts: [],
         market: { items: [], customSourceNames: [], unavailableCustomSourceNames: [] }, ...(ctx.case === 'remote-unsupported' ? {} : { localShares: true }) } };
       return { effects: [], result: { operationId: request.input.operationId, phase: 'confirmation', consent: {
-        requestId: 'fixture-consent', initiator: 'user', origin: 'local-file', facts: { kind: 'install', name: snapshot.name, version: snapshot.version,
-          permissions: [{ key: 'network:host:api.example.test', kind: 'network', labelKey: 'networkHost', labelArgs: { host: 'api.example.test' } }] },
+        requestId: 'fixture-consent', initiator: 'user', origin: 'local-file',
+        ...(ctx.case === 'remote-replace' ? { purpose: 'share-replace' as const,
+          target: { namespace: null, sourceChanged: false, otherCopies: 0 } } : {}),
+        facts: ctx.case === 'remote-replace'
+          ? { kind: 'update', ghostId: snapshot.ghostId, name: snapshot.name, version: snapshot.version, previousVersion: snapshot.version,
+            added: [], removed: [], unchangedCount: 1, builtinOauthClientChanged: false }
+          : { kind: 'install', name: snapshot.name, version: snapshot.version,
+            permissions: [{ key: 'network:host:api.example.test', kind: 'network', labelKey: 'networkHost', labelArgs: { host: 'api.example.test' } }] },
       } } };
     } },
     pluginMarket: {

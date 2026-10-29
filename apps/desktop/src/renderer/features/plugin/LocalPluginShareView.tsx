@@ -153,13 +153,15 @@ function RemoteShareInstall({ snapshot, device, online, onBusy, onError, onInsta
     const abort = new AbortController(); dialog.current = abort;
     try {
       const consent = next.consent;
+      const replacement = consent.purpose === 'share-replace' && consent.facts.kind === 'update';
       const confirmed = await confirm({
         title: t('settings.ghosts.remote.confirmOn', { device: device.name, name: consent.facts.name }),
         description: `${device.name} · ${consent.facts.kind === 'install'
           ? t('settings.ghosts.installConsent.installMeta', { version: consent.facts.version, source: ghostInstallConsentSourceLabel(t, consent) })
           : t('settings.ghosts.installConsent.updateMeta', { from: consent.facts.previousVersion, to: consent.facts.version, source: ghostInstallConsentSourceLabel(t, consent) })}`,
-        content: <GhostInstallConsentContent facts={consent.facts} />,
-        confirmText: t(consent.facts.kind === 'install' ? 'settings.ghosts.installConsent.confirmInstall' : 'settings.ghosts.installConsent.confirmUpdate'),
+        content: <GhostInstallConsentContent facts={consent.facts} replacement={replacement} sourceChanged={consent.target?.sourceChanged} />,
+        confirmText: t(replacement ? 'sharing.localReplaceButton' : consent.facts.kind === 'install'
+          ? 'settings.ghosts.installConsent.confirmInstall' : 'settings.ghosts.installConsent.confirmUpdate'),
         cancelText: t('settings.ghosts.installConsent.cancel'), maxWidth: 460, contentSelectable: true,
       }, abort.signal);
       if (writable() && !abort.signal.aborted && operation.current === next.operationId)

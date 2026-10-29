@@ -30,8 +30,10 @@ export default {
     changed: { about: 'Changed content requires reopening to check and confirm the new package', viewport: { width: 360, height: 740 } },
     recipient: { about: 'Exact shared version, explicit installation and real permission confirmation' },
     'recipient-narrow': { about: 'Exact shared package at narrow width', viewport: { width: 360, height: 740 } },
+    'recipient-replace': { about: 'Explicit same-ID replacement and existing account/data notice', viewport: { width: 320, height: 740 } },
     'remote-select': { about: 'Choose another computer and confirm that computer’s permissions', viewport: { width: 900, height: 850 } },
     'remote-narrow': { about: 'Remote package and permission confirmation at minimum width', viewport: { width: 320, height: 740 } },
+    'remote-replace': { about: 'Same replacement action and data notice on the selected computer', viewport: { width: 320, height: 740 } },
     'remote-offline': { about: 'Keep the offline target selected and disable installation', viewport: { width: 320, height: 740 } },
     'remote-unsupported': { about: 'Explain the required target update without local fallback', viewport: { width: 320, height: 740 } },
     login: { about: 'No package read until login', viewport: { width: 360, height: 740 } },
@@ -80,6 +82,10 @@ export default {
       await ui.capture('target-device');
       await button.click();
       await page.getByRole('alertdialog').waitFor();
+      if (ui.case === 'remote-replace') {
+        await page.getByRole('button', { name: await ui.t('sharing.localReplaceButton'), exact: true }).waitFor();
+        await page.getByText(await ui.t('sharing.localReplaceRetainsState'), { exact: true }).waitFor();
+      }
       await ui.capture('target-permissions');
       return;
     }
@@ -89,11 +95,19 @@ export default {
       await page.getByRole('button', { name: await ui.t('sharing.localInstallButton', { version: '1.0.0' }) }).click();
       await ui.emit('consent', {
         requestId: 'local-share-fixture', initiator: 'user', origin: 'local-file',
+        ...(ui.case === 'recipient-replace' ? { purpose: 'share-replace' } : {}),
         target: { namespace: null, sourceChanged: false, otherCopies: 0 },
-        facts: { kind: 'install', ghostId: 'local-share-example', name: '我的本地插件', version: '1.0.0',
-          permissions: [{ key: 'network:host:api.example.test', kind: 'network', labelKey: 'networkHost', labelArgs: { host: 'api.example.test' } }] },
+        facts: ui.case === 'recipient-replace'
+          ? { kind: 'update', ghostId: 'local-share-example', name: '我的本地插件', version: '1.0.0', previousVersion: '1.0.0',
+            added: [], removed: [], unchangedCount: 1, builtinOauthClientChanged: false }
+          : { kind: 'install', ghostId: 'local-share-example', name: '我的本地插件', version: '1.0.0',
+            permissions: [{ key: 'network:host:api.example.test', kind: 'network', labelKey: 'networkHost', labelArgs: { host: 'api.example.test' } }] },
       });
       await page.getByRole('alertdialog').waitFor();
+      if (ui.case === 'recipient-replace') {
+        await page.getByRole('button', { name: await ui.t('sharing.localReplaceButton'), exact: true }).waitFor();
+        await page.getByText(await ui.t('sharing.localReplaceRetainsState'), { exact: true }).waitFor();
+      }
       await ui.capture('permissions');
       return;
     }

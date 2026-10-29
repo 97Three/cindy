@@ -11,6 +11,7 @@ import { ghostInstallApprovalToken } from '../../../shared/ghost.js';
 import { createGhostProductionCallbacks } from './ghostProductionCallbacksFixture.js';
 import { GhostManager } from '../GhostManager.js';
 import { effectiveInstallOrigin } from '../ghostInstallReceipt.js';
+import { classifyGhostLocalUpdateSource } from '../ghostLocalUpdateSource.js';
 import { runGhostSnapshotWorkerRequest } from '../ghostSnapshotWorkerProcess.js';
 import { writeTestCindyPackage } from './cindyPackageFixture.js';
 
@@ -121,17 +122,21 @@ const sharedPackageCallbacks = createGhostProductionCallbacks<{
   installLocalPluginSharePackage: (file: string, options: Record<string, unknown>) => Promise<InstalledGhost>;
 }>({ functions: ['installLocalPluginSharePackage'] });
 
-it.each(['new', 'update', 'cancel', 'different-bytes', 'owner-changed'] as const)('shared local package consent: %s', async mode => {
+// Same-ID unsigned shares previously skipped consent when permissions were unchanged.
+// Exercise the production entry and source classifier, including a declined replacement.
+it.each(['new', 'update', 'cancel', 'cancel-update', 'different-bytes', 'owner-changed'] as const)('shared local package consent: %s', async mode => {
   const manifest: InstalledGhost['manifest'] = { schemaVersion: 3, minCindyVersion: '99.0.0', id: 'helper', name: 'Helper', version: '1.0.0', kind: 'chip', entry: 'main.js' };
   const root: InstalledGhost = { manifest, namespace: null, instanceKey: '_root__helper', dir: '/plugins/_root/helper', enabled: true,
     approval: { state: 'approved', revision: '11111111-1111-4111-8111-111111111111' } };
   const digest = 'a'.repeat(64);
   let current = true;
-  const prompt = vi.fn<(request: Omit<GhostInstallConsentRequest, 'requestId'>) => Promise<boolean>>(async () => mode !== 'cancel');
+  const replacing = mode === 'update' || mode === 'cancel-update';
+  const trust = { level: 'unverified' as const, publisherSigned: false, publisherVerified: false, reviewed: false };
+  const prompt = vi.fn<(request: Omit<GhostInstallConsentRequest, 'requestId'>) => Promise<boolean>>(async () => !mode.startsWith('cancel'));
   const install = vi.fn<(...args: unknown[]) => Promise<InstalledGhost>>(async () => root),
     update = vi.fn<(...args: unknown[]) => Promise<InstalledGhost>>(async () => root), release = vi.fn();
   const entry = sharedPackageCallbacks({
-    getGhostManager: () => ({ list: () => mode === 'update' ? [root] : [],
+    getGhostManager: () => ({ list: () => replacing ? [root] : [],
       inspect: async () => { if (mode === 'owner-changed') current = false;
         return { manifest, canonicalManifest: manifest, packageSha256: mode === 'different-bytes' ? 'b'.repeat(64) : digest }; } }),
     captureGhostMutationOwner: () => 'owner', beginGhostMutation: () => release,
@@ -139,13 +144,17 @@ it.each(['new', 'update', 'cancel', 'different-bytes', 'owner-changed'] as const
     throwInstallError: () => { throw new Error('invalid package'); },
     throwIpcError: (code: string) => { throw new Error(code); },
     findInstalledGhostForDeliveryTarget, ghostInstallApprovalToken, installedGhostStoragePart,
-    readLocalGhostUpdateSource: () => ({ sourceChanged: true, authorizationOverrides: {} }),
+    readLocalGhostUpdateSource: () => ({ ...classifyGhostLocalUpdateSource({
+      existingSourceChanged: false,
+      previousApprovedReceipt: { id: manifest.id, namespace: null, packageSha256: 'b'.repeat(64), trust },
+      inspectedPackage: { ghostId: manifest.id, namespace: null, packageSha256: digest, trust },
+    }), authorizationOverrides: {} }),
     obtainGhostInstallConsent, withGhostInstallLock: async (_id: string, run: () => unknown) => run(),
     installAndDock: install, updateLocalGhostPackageLocked: update,
   }).installLocalPluginSharePackage;
   const result = entry('/tmp/shared.cindy', { ghostId: 'helper', version: '1.0.0', sha256: digest, prompt,
     assertCurrent() { if (!current) throw new Error('OWNER_CHANGED'); } });
-  if (mode === 'cancel' || mode === 'different-bytes' || mode === 'owner-changed') {
+  if (mode.startsWith('cancel') || mode === 'different-bytes' || mode === 'owner-changed') {
     await expect(result).rejects.toThrow();
     expect(install).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled();
     if (mode === 'owner-changed') expect(prompt).not.toHaveBeenCalled();
@@ -155,10 +164,16 @@ it.each(['new', 'update', 'cancel', 'different-bytes', 'owner-changed'] as const
     if (mode === 'update') {
       expect(install).not.toHaveBeenCalled();
       expect(update.mock.calls[0]?.[5]).toBe('_root__helper');
-      expect(prompt.mock.calls[0]?.[0]).toMatchObject({ target: { namespace: null, sourceChanged: true } });
+      expect(update.mock.calls[0]?.[6]).toMatchObject({ mode: 'confirmed', forced: true });
+      expect(update.mock.calls[0]?.[9]).toBe(false);
     } else {
       expect(install.mock.calls[0]?.[2]).toMatchObject({ namespace: null, enable: true, registrySource: 'manual', expectedPackageSha256: digest });
     }
+  }
+  if (replacing) {
+    expect(prompt).toHaveBeenCalledOnce();
+    expect(prompt.mock.calls[0]?.[0]).toMatchObject({ purpose: 'share-replace',
+      facts: { kind: 'update', added: [] }, target: { namespace: null, sourceChanged: false } });
   }
 });
 

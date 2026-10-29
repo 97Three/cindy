@@ -90,16 +90,22 @@ it.each([false, true])('installs on this computer without requiring a device cho
   expect(io.invoke).not.toHaveBeenCalled();
 });
 
-function remoteHost(supported = true) {
+function remoteHost(supported = true, replacing = false) {
+  let outcome: 'succeeded' | 'cancelled' = 'succeeded';
   io.invoke.mockImplementation(async (_device, channel, [request]) => {
     if (String(channel).includes('manifest')) return { collections: [{ id: 'plugins', actions: [{ id: 'management:snapshot' }] }] };
     if (request.actionId === 'management:snapshot') return { effects: [], result: { version: 1, ghosts: [],
       market: { items: [], customSourceNames: [], unavailableCustomSourceNames: [] }, ...(supported ? { localShares: true } : {}) } };
     const operationId = request.input.operationId;
     if (request.actionId === 'management:begin') return { effects: [], result: { operationId, phase: 'confirmation', consent: {
-      requestId: 'consent-request', initiator: 'user', origin: 'local-file', facts: { kind: 'install', name: snapshot.name, version: snapshot.version, permissions: [] },
+      requestId: 'consent-request', initiator: 'user', origin: 'local-file',
+      ...(replacing ? { purpose: 'share-replace', target: { namespace: null, sourceChanged: false, otherCopies: 0 } } : {}),
+      facts: replacing ? { kind: 'update', name: snapshot.name, version: snapshot.version, previousVersion: snapshot.version,
+        added: [], removed: [], unchangedCount: 1, builtinOauthClientChanged: false }
+        : { kind: 'install', name: snapshot.name, version: snapshot.version, permissions: [] },
     } } };
-    return { effects: [], result: { operationId, phase: 'succeeded' } };
+    if (request.actionId === 'management:answer') outcome = request.input.confirmed ? 'succeeded' : 'cancelled';
+    return { effects: [], result: { operationId, phase: outcome } };
   });
 }
 it('installs on the chosen device with its consent receipt and never invokes local installation', async () => {
@@ -117,6 +123,31 @@ it('installs on the chosen device with its consent receipt and never invokes loc
   expect(io.invoke.mock.calls.find(([, , [r]]) => r.actionId === 'management:begin')?.[2][0].input)
     .toMatchObject({ kind: 'install-share', expectedSnapshot: snapshot });
   expect(io.confirm).toHaveBeenCalledOnce();
+});
+
+// A remote replacement with unchanged permissions must show state inheritance
+// and send the explicit choice to the selected Host, including cancellation.
+it.each([false, true])('confirms replacement on the selected computer (allow=%s)', async allow => {
+  remoteHost(true, true); io.confirm.mockResolvedValue(allow);
+  const installed = vi.fn(); render(view(installed, control()));
+  const button = await screen.findByRole<HTMLButtonElement>('button', { name: 'sharing.localInstallButton' });
+  await waitFor(() => expect(button.disabled).toBe(false));
+  vi.useFakeTimers();
+  try {
+    await act(async () => { fireEvent.click(button); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(650); });
+  } finally { vi.useRealTimers(); }
+  expect(button.disabled).toBe(false);
+  const options = io.confirm.mock.calls[0][0];
+  expect(options.confirmText).toBe('sharing.localReplaceButton');
+  render(<>{options.content}</>);
+  expect(screen.getByText('sharing.localReplaceNotice')).toBeTruthy();
+  expect(screen.getByText('sharing.localReplaceRetainsState')).toBeTruthy();
+  const answer = io.invoke.mock.calls.find(([, , [r]]) => r.actionId === 'management:answer');
+  expect(answer?.[0]).toBe(target.deviceId);
+  expect(answer?.[2][0].input).toMatchObject({ requestId: 'consent-request', confirmed: allow });
+  expect(installed).toHaveBeenCalledTimes(allow ? 1 : 0);
+  expect(io.install).not.toHaveBeenCalled();
 });
 
 // The fixed snapshot may carry a valid 512 KiB icon, while device-link actions
