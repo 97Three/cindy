@@ -47,9 +47,15 @@ pnpm mobile:sim:start:cn
 
 修改原生依赖、Expo 原生配置，或切换到尚未安装对应开发包的区域时，重新构建：
 
+这里的 `rebuild` 是“准备兼容原生包”的入口：先复用匹配缓存，未命中才完整编译。
+未安装 App 不等于必须编译；纯 JS/TS 改动且 `native-matched` 时直接复用已安装包。
+截图和交付测试的完整流程见 [截图与当前版本测试](../../apps/mobile/docs/simulator-debugging.md#截图与当前版本测试)，
+缺少工具时见 [iOS 工具链](environment-setup.md#macosios-模拟器构建工具链)。
+
 `whoami` 还会比较已安装 `.app/EXUpdates.bundle/fingerprint` 与当前 worktree 的
 Expo Updates 开发指纹。`native-mismatch` 或 `native-unknown` 不能作为可测试状态，
-即使版本号、Metro 和页面都正常也要先普通重建。重建入口同样检查缓存、构建产物和安装后
+即使版本号、Metro 和页面都正常也不能交付。若未知源于工具探测或指纹计算失败，先修复检查；
+确认包缺失、不匹配或缺少兼容性证据时走普通重建。重建入口同样检查缓存、构建产物和安装后
 的真实指纹，避免跨 worktree 复用不兼容的原生包；不匹配的缓存会跳过。不要通过临时修改
 JS 参数协议来适配另一版本原生依赖。此检查不修改 App 配置或发布指纹。
 
@@ -85,6 +91,15 @@ JSON 已包含 `worktree` / `expectedSource`、`region` / `bundleId`、目标设
 `healthy: false` 表示身份链未通过；`healthy: true` 仍不证明 App 已加载新 bundle，
 `pageVerified: false` 明确保留这个边界。页面／bundle 验证与截图按模拟器调试手册另外完成，
 证据放在同一任务目录。
+
+### 仓库与个人配置的边界
+
+- 仓库维护工具要求、脚本参数、缓存与身份校验、mock 场景和验收合同；个人 Skill 调用这些入口，
+  不再实现第二套指纹、bundle ID 或缓存解析。
+- 默认区域、设备偏好、模拟器后端、接管时机与工具管理方式属于开发者的本地 profile/工作流。
+  本次明确指定的设备或区域高于个人默认；本次覆盖不自动写回 profile。
+- 自定义 bundle ID、签名团队与私有端点留在本地配置；仓库提供模板和校验，凭证进入凭证存储。
+- 设备在线状态、已安装包、Metro 占用、工具位置和缓存命中是现场事实，每次探测，不作为长期偏好。
 
 不要用临时 Metro、端口探测或手工修改 `.env` 代替这些脚本。多 worktree、原生构建、
 登录态和日志排查见 `apps/mobile/docs/simulator-debugging.md`。

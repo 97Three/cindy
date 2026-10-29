@@ -394,9 +394,14 @@ export function resolveMobileSimulatorBundleId(region, options = {}) {
         env: { ...(options.env ?? process.env), ...buildEnv },
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+        killSignal: "SIGKILL",
       },
     );
   } catch (error) {
+    if (error?.code === "ETIMEDOUT") {
+      throw Object.assign(new Error(`Expo config 解析 ${region} Simulator bundle id 超时（30s）；检查当前 worktree 依赖和 Expo 配置后重试。`), { code: "EXPO_CONFIG_TIMEOUT" });
+    }
     const detail = String(error?.stderr ?? error?.message ?? error).trim();
     throw new Error(
       `无法解析 ${region} Simulator bundle id${detail ? `: ${detail}` : ""}`,

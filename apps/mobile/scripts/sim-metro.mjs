@@ -31,22 +31,48 @@ export function parseWindowsNetstatListener(output, port) {
   return null;
 }
 
-export function listenerPid(port) {
-  if (process.platform === 'win32') {
-    try {
-      const output = execFileSync('netstat', ['-ano', '-p', 'tcp'], { encoding: 'utf8' });
-      return parseWindowsNetstatListener(output, port);
-    } catch {
-      // Fall through to the platform-neutral unknown-owner result.
-    }
-    return null;
-  }
+/**
+ * One bounded socket snapshot for whoami; a failed probe is not an empty port.
+ * @param {number[]} ports
+ * @param {{ platform?: NodeJS.Platform, run?: (command: string, args: string[], options: import('node:child_process').ExecFileSyncOptionsWithStringEncoding) => string }} options
+ */
+export function inspectMetroListeners(ports, { platform = process.platform, run = execFileSync } = {}) {
+  const pids = {};
   try {
-    return execFileSync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], { encoding: 'utf8' })
-      .trim().split('\n')[0] || null;
-  } catch {
-    return null;
+    // Socket names do not need filesystem stat/readlink. -b avoids blocked mounts;
+    // -w suppresses the expected filesystem warnings from that mode.
+    const output = String(run(platform === 'win32' ? 'netstat' : 'lsof',
+      platform === 'win32' ? ['-ano', '-p', 'tcp']
+        : ['-b', '-w', '-nP', `-iTCP:${ports.join(',')}`, '-sTCP:LISTEN', '-Fpn'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, killSignal: 'SIGKILL' }));
+    if (platform === 'win32') {
+      for (const port of ports) {
+        const pid = parseWindowsNetstatListener(output, port);
+        if (pid) pids[port] = pid;
+      }
+    } else {
+      let pid = null;
+      for (const line of output.split(/\r?\n/)) {
+        if (/^p\d+$/.test(line)) pid = line.slice(1);
+        const match = line.match(/^n.*:(\d+)$/);
+        const port = match ? Number(match[1]) : null;
+        if (pid && ports.includes(port) && !pids[port]) pids[port] = pid;
+      }
+    }
+    return { healthy: true, code: 'ready', pids };
+  } catch (error) {
+    // lsof exits 1 when the requested ports have no listeners.
+    if (platform !== 'win32' && error.status === 1 && !error.signal && !error.code
+      && !String(error.stderr ?? '').trim() && !String(error.stdout ?? '').trim()) {
+      return { healthy: true, code: 'ready', pids };
+    }
+    return { healthy: false, code: error.code === 'ETIMEDOUT'
+      ? 'METRO_LISTENERS_TIMEOUT' : 'METRO_LISTENERS_UNAVAILABLE', pids };
   }
+}
+
+export function listenerPid(port) {
+  return inspectMetroListeners([port]).pids[port] ?? null;
 }
 
 const metroOwnerDir = join(tmpdir(), 'cindy-metro-owners');
@@ -201,7 +227,7 @@ export function probeMetroOwnership(port, options = {}) {
 // worktree,且各 checkout 目录名不同)。macOS:lsof -a -p <pid> -d cwd -Fn。
 export function cwdOfPid(pid) {
   try {
-    const out = execFileSync('lsof', ['-a', '-p', pid, '-d', 'cwd', '-Fn'], { encoding: 'utf8' });
+    const out = execFileSync('lsof', ['-b', '-w', '-a', '-p', pid, '-d', 'cwd', '-Fn'], { encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL' });
     const line = out.split('\n').find((l) => l.startsWith('n'));
     return line ? line.slice(1) : null;
   } catch {
@@ -211,7 +237,7 @@ export function cwdOfPid(pid) {
 
 export function commandOfPid(pid) {
   try {
-    return execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).trim();
+    return execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL' }).trim();
   } catch {
     return '';
   }
@@ -330,7 +356,7 @@ export async function terminateMetro(pid, options = {}) {
 /** Read the exact source token injected by sim:start from a running Metro. */
 export function gitSourceOfPid(pid) {
   try {
-    const out = execFileSync('ps', ['-ww', '-E', '-p', pid], { encoding: 'utf8' });
+    const out = execFileSync('ps', ['-ww', '-E', '-p', pid], { encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL' });
     const match = out.match(/EXPO_PUBLIC_XDT_GIT_SOURCE=(\S*)/);
     return match ? match[1] : null;
   } catch {
@@ -349,6 +375,8 @@ export function gitSourceIdentity(worktreeRoot, options = {}) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 64 * 1024 * 1024,
+    timeout: 30_000,
+    killSignal: 'SIGKILL',
     ...extra,
   })).trim();
 
