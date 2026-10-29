@@ -660,6 +660,18 @@ describe('ClaudeCodeAgent runtime settings during rewind window', () => {
     await handle.close();
   });
 
+  it('surfaces a file restore failure instead of reporting a files-only rewind as done', async () => {
+    const { handle, firstQuery } = await startRewindableSession();
+    firstQuery.rewindFiles.mockRejectedValueOnce(new Error('EACCES: cannot restore'));
+
+    await expect(
+      handle.commitRewindFiles?.('user-uuid-1', '', { rewindsToNativeThreadStart: true }),
+    ).rejects.toThrow('EACCES');
+    expect(firstQuery.close).not.toHaveBeenCalled();
+
+    await handle.close();
+  });
+
   it('uses the session provider route when the same model id has different windows', async () => {
     const configDir = await makeTempDir();
     process.env.CLAUDE_CONFIG_DIR = configDir;

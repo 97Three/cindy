@@ -182,6 +182,11 @@ interface RewindContext {
    * Pi 同一套)，对话只在那台截断。本机 Claude Code 任务不设。
    */
   savepointRewind?: true;
+  /**
+   * Claude 任务当前没有活动会话也没有原生会话 id(上一次无续接点的回退已关闭会话,下次发送
+   * 才会开新会话)。此时没有文件检查点可用,只裁剪对话。
+   */
+  detached?: true;
 }
 
 /** target 及其之后仍可见的 user 消息(按时间线)；不含 target 时说明它已不在当前时间线。 */
@@ -222,19 +227,30 @@ async function loadRewindContext(
   // 1. session live 校验 + running 守卫 (改走 maker.getSession, 重构前是 agentManager.getLiveSession)
   const maker = getMaker();
   const makerSession = maker.getSession(sessionId);
+  let detached = false;
   if (!makerSession) {
     // session 不在内存中:app 刚启动 / 这条 session 还没在新链路激活过。
-    throw rewindError(
-      'NO_LIVE_QUERY',
-      '会话未激活——请先发送任意一条消息（即使是 "ok"），让 SDK 起来后再 rewind',
-    );
+    // 例外:Claude 任务上一次回退没有续接点,已关闭会话并清掉原生会话 id——没有原生
+    // 会话可回滚,继续回退只需要裁剪对话,不必先发一条无关消息把会话叫起来。
+    const [row] = await db
+      .select({ agentKind: sessions.agentKind, sdkSessionId: sessions.sdkSessionId })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId))
+      .limit(1);
+    if (row?.agentKind !== 'cc' || activeSdkSessionId(row.sdkSessionId ?? undefined)) {
+      throw rewindError(
+        'NO_LIVE_QUERY',
+        '会话未激活——请先发送任意一条消息（即使是 "ok"），让 SDK 起来后再 rewind',
+      );
+    }
+    detached = true;
   }
-  if (makerSession.isTurnRunning()) {
+  if (makerSession?.isTurnRunning()) {
     throw rewindError('SESSION_RUNNING', '会话进行中，无法回滚');
   }
-  const agentKind = makerSession.agentKind === 'codex'
+  const agentKind = makerSession?.agentKind === 'codex'
     ? 'codex'
-    : makerSession.agentKind === 'pi'
+    : makerSession?.agentKind === 'pi'
       ? 'pi'
       : 'claude-code';
 
@@ -333,11 +349,12 @@ async function loadRewindContext(
   // 锚点会让 resumeSessionAt 指向一条逻辑上已不存在的 assistant，CLI 找不到。
   const targetMeta = parseClaudeAgentMeta(target.agentMeta);
   const currentSessionMeta = await maker.getSessionMeta(sessionId);
-  const sdkSessionId =
-    activeSdkSessionId(makerSession.sdkSessionId) ??
-    activeSdkSessionId(currentSessionMeta?.sdkSessionId) ??
-    targetMeta.sdkSessionId;
-  const anchorIndex = sdkSessionId
+  const sdkSessionId = detached
+    ? undefined
+    : activeSdkSessionId(makerSession?.sdkSessionId) ??
+      activeSdkSessionId(currentSessionMeta?.sdkSessionId) ??
+      targetMeta.sdkSessionId;
+  const anchorIndex = sdkSessionId && makerSession
     ? await loadClaudeTranscriptAnchorIndex({
         sdkSessionId,
         workingDir: makerSession.workDir,
@@ -346,17 +363,28 @@ async function loadRewindContext(
   const assistantAnchor = resolveClaudeRewindAssistantEntry(targetMeta.uuid, anchorIndex);
   let assistantUuid = assistantAnchor?.uuid;
 
-  const visibleAssistants = await db
-    .select()
-    .from(messages)
-    .where(
-      and(
-        eq(messages.sessionId, sessionId),
-        eq(messages.role, 'assistant'),
-        isNull(messages.rewindAt),
-      ),
-    )
-    .orderBy(asc(messages.createdAt));
+  // 只有当前原生会话里的回复才能当续接点:上下文重建(溢出、删除消息、上次无续接点的回退)
+  // 与 /clear 都会放弃旧原生会话,而旧回复仍留在可见历史里。context_rebuild 行的
+  // rewind_at 恒非空,所以这里不能带可见性过滤。
+  const latestRebuild = await getDbClient().queryOne<{ created_at: number | null }>(
+    "SELECT MAX(created_at) AS created_at FROM messages WHERE session_id = ? AND role = 'context_rebuild'",
+    [sessionId],
+  );
+  const clearedAt = await rereadSessionClearedAt(sessionId);
+  const nativeSessionStartedAt = Math.max(latestRebuild?.created_at ?? 0, clearedAt ?? 0);
+  const visibleAssistants = (
+    await db
+      .select()
+      .from(messages)
+      .where(
+        and(
+          eq(messages.sessionId, sessionId),
+          eq(messages.role, 'assistant'),
+          isNull(messages.rewindAt),
+        ),
+      )
+      .orderBy(asc(messages.createdAt))
+  ).filter((row) => row.createdAt > nativeSessionStartedAt);
   let preserveMessageUuid = findDbPreserveMessageUuidForClaudeAnchor(visibleAssistants, assistantAnchor);
   if (!assistantUuid && targetMeta.transcriptParentUuid) {
     for (let i = visibleAssistants.length - 1; i >= 0; i--) {
@@ -405,10 +433,11 @@ async function loadRewindContext(
     targetMessageId: target.id,
     targetClientId: target.clientId,
     agentKind,
-    assistantUuid,
+    assistantUuid: detached ? undefined : assistantUuid,
     userUuid,
     preserveMessageUuid: preserveMessageUuid ?? assistantUuid,
     ...savepointTimeline,
+    ...(detached ? { detached: true as const } : {}),
   };
 }
 
@@ -429,6 +458,10 @@ export async function previewRewindAtMessage(
 
   const makerSession = getMaker().getSession(sessionId);
   if (!makerSession) {
+    if (ctx.detached) {
+      // 没有原生会话也就没有文件检查点:只裁剪对话。
+      return { canRewind: true, conversationOnly: true, filesChanged: [], insertions: 0, deletions: 0 };
+    }
     throw rewindError('NO_LIVE_QUERY', '会话未激活');
   }
   if (ctx.agentKind === 'codex' || ctx.agentKind === 'pi' || ctx.savepointRewind) {
@@ -802,18 +835,23 @@ export async function commitRewindAtMessage(
 
   // makerSession 必有 (loadRewindContext 已 guard); 这里只为类型收紧。
   const makerSession = getMaker().getSession(sessionId);
-  if (!makerSession) {
+  if (!makerSession && !ctx.detached) {
     throw rewindError('NO_LIVE_QUERY', '会话未激活');
   }
 
   // ── 段 1: SDK 副作用全部委托给 maker-core ──
   // userUuid 缺失 (老消息) 时跳 SDK 文件回滚, 直接进 DB 段; ctx.assistantUuid 设进
   // pendingRewindTo, 下次 send 仍走三件套 (forkSession=true CLI 端兜底回滚)。
-  let rewindResult: Awaited<ReturnType<typeof makerSession.commitRewindFiles>> | undefined;
+  let rewindResult: Awaited<ReturnType<NonNullable<typeof makerSession>['commitRewindFiles']>> | undefined;
   let nativeForkAnchorSessionMap: Array<[string, string]> | undefined;
   let nativeContextReset: RewindCommitArgs['nativeContextReset'];
   let expectedClearedAt: number | null = null;
-  if (ctx.agentKind === 'codex' || ctx.agentKind === 'pi') {
+  if (!makerSession) {
+    // 脱离会话(见 RewindContext.detached):没有原生会话和文件检查点,只裁剪对话并留下交接。
+    expectedClearedAt = await rereadSessionClearedAt(sessionId);
+    await assertClearGenerationUnchanged(sessionId, expectedClearedAt, ctx.targetCreatedAt);
+    nativeContextReset = await buildNativeContextReset(sessionId, ctx.targetClientId);
+  } else if (ctx.agentKind === 'codex' || ctx.agentKind === 'pi') {
     // thread/rollback 不可用(分页线程 #4421、0.156.0 起已移除 #4994):把 target 之前的
     // 原生 turn 边界(持久化锚点、事件时间戳或线程第一轮标记)一并交给 maker-core,
     // 由它改走 thread/fork 或换空线程。

@@ -178,7 +178,7 @@ const txMock = vi.fn((name: string, args: unknown) => {
   txCalls.push({ name, args });
   return Promise.resolve({});
 });
-const queryOneMock = vi.fn(async () => ({ cleared_at: null as number | null }));
+const queryOneMock = vi.fn(async (_sql?: string, _params?: unknown[]) => ({ cleared_at: null as number | null, created_at: null as number | null }));
 
 vi.mock('../localDb/client/current', () => ({
   getDbClient: () => ({ drizzle: fakeDb, tx: txMock, queryOne: queryOneMock }),
@@ -197,7 +197,7 @@ beforeEach(async () => {
   txCalls.length = 0;
   txMock.mockClear();
   queryOneMock.mockReset();
-  queryOneMock.mockResolvedValue({ cleared_at: null });
+  queryOneMock.mockResolvedValue({ cleared_at: null, created_at: null });
   setLastAssistantTranscriptUuidMock.mockClear();
   previewRewindFilesMock.mockReset();
   commitRewindFilesMock.mockReset();
@@ -926,6 +926,40 @@ describe('commitRewindAtMessage', () => {
     expect(setLastAssistantTranscriptUuidMock).toHaveBeenCalledWith('sess-1', undefined);
   });
 
+  it('ignores assistant replies from a native session abandoned by a context rebuild', async () => {
+    // 重建后的第一条消息：重建前的 assistant 仍可见，但它的 uuid 不在当前原生会话里。
+    selectQueue.push([makeUserMessageRow({
+      agentMeta: JSON.stringify({ uuid: 'sdk-msg-uuid-target', sdkSessionId: 'sdk-uuid-old' }),
+    })]);
+    selectQueue.push([]); // agent_switch 边界守卫:无边界
+    selectQueue.push([makeAssistantMessageRow({ createdAt: 2500 })]); // 重建前的 assistant
+    selectQueue.push([makeSessionRow({ sdkSessionId: null })]);
+    queryOneMock.mockImplementation(async (sql?: string) => ({
+      cleared_at: null,
+      created_at: sql?.includes('context_rebuild') ? 2800 : null,
+    }));
+
+    await commitRewindAtMessage('sess-1', 'client-id');
+
+    expect(commitRewindFilesMock).toHaveBeenCalledWith('sdk-msg-uuid-target', '', { rewindsToNativeThreadStart: true });
+    expect(closeSessionMock).toHaveBeenCalledWith('sess-1');
+  });
+
+  it('keeps rewinding after the session was closed by a previous restart (no live session, no native id)', async () => {
+    fakeSession = undefined;
+    selectQueue.push([{ agentKind: 'cc', sdkSessionId: null }]); // 脱离会话判定
+    selectQueue.push([makeUserMessageRow()]);
+    selectQueue.push([]); // agent_switch 边界守卫:无边界
+    selectQueue.push([]); // prior assistants
+    selectQueue.push([makeSessionRow({ sdkSessionId: null })]);
+
+    await commitRewindAtMessage('sess-1', 'client-id');
+
+    expect(commitRewindFilesMock).not.toHaveBeenCalled();
+    const txCall = txCalls.find((c) => c.name === 'rewind.commit');
+    expect(txCall?.args).toMatchObject({ nativeContextReset: expect.any(Object) });
+  });
+
   it('first message: restarts the native session with an empty handoff', async () => {
     selectQueue.push([makeUserMessageRow({
       agentMeta: JSON.stringify({ uuid: 'sdk-msg-uuid-target', sdkSessionId: 'sdk-uuid-old' }),
@@ -1151,7 +1185,7 @@ describe('commitRewindAtMessage', () => {
     enqueueCodexClearGeneration();
     selectQueue.push([]); // target 之前没有任何行
     selectQueue.push([]); // 时间线上也没有属于当前线程的 user 行
-    queryOneMock.mockResolvedValueOnce({ cleared_at: 4000 });
+    queryOneMock.mockResolvedValueOnce({ cleared_at: 4000, created_at: null });
 
     await expect(commitRewindAtMessage('sess-1', 'client-id')).rejects.toMatchObject({
       code: 'REWIND_UNSUPPORTED_HISTORY',
