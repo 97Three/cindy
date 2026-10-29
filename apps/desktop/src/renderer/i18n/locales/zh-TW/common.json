@@ -5669,7 +5669,8 @@
           "SSH_FAILED": "連不上伺服器。請在「遠端」裡檢查這台伺服器的 SSH 設定。",
           "NEEDS_ROOT": "需要 root 帳號，或這個帳號能免密碼使用 sudo。Cindy 不會索取伺服器密碼。",
           "UNSUPPORTED_SYSTEM": "目前只支援含 systemd 的 64 位元 Linux（x64 / arm64），並且需要 curl 或 wget。",
-          "PORT_BUSY": "伺服器的 80 或 443 連接埠已被其他程式佔用（例如網站服務）。請先停用它，或換一台伺服器。",
+          "PORT_BUSY": "伺服器的 80 或 443 連接埠被其他服務佔用，暫時無法自動接入。現有 Nginx 會自動設定，請檢查佔用連接埠的其他服務。",
+          "NGINX_FAILED": "未能完成 Nginx 設定，部署已停止。請查看詳細原因。",
           "DOWNLOAD_FAILED": "伺服器下載執行環境失敗（官方來源和鏡像都沒成功）。請檢查伺服器能否連上外網。",
           "RELAY_MISMATCH": "這台伺服器上已有一個不是這台電腦部署的中繼。可以清除它後重新部署。",
           "CERTIFICATE_FAILED": "申請 HTTPS 憑證失敗。通常是雲端主機安全群組沒有放行 80 連接埠，或網域還沒解析到這台伺服器。處理後點重試。",
@@ -5686,7 +5687,7 @@
         "deploy": {
           "title": "部署到我的伺服器",
           "hint": "把中繼裝到你自己的 Linux 伺服器上，手機和不在同一網路的裝置都能連。Cindy 透過「遠端」裡設定的 SSH 連線安裝，並自動申請 HTTPS 憑證、到期前自動續期。",
-          "requirements": "需要：64 位元 Linux（含 systemd）、root 或免密碼 sudo，伺服器的 80 和 443 連接埠沒被其他程式佔用，並在雲端主機控制台的安全群組或防火牆裡放行 TCP 80 和 443。",
+          "requirements": "需要：64 位元 Linux（含 systemd）、root 或免密碼 sudo，並在雲端伺服器安全群組或防火牆裡開放 TCP 80 和 443。Cindy 會自動檢查並設定現有的 Nginx。",
           "noHosts": "還沒有可用的伺服器。先在「遠端」裡新增 SSH 主機，再回來部署。",
           "server": "伺服器",
           "address": "存取位址",

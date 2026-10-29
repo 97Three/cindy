@@ -7,7 +7,7 @@
  *   /opt/cindy-relay/relay.mjs   与 Cindy 内运行的同一个中转内核(单文件)
  *   /var/lib/cindy-relay         中转数据(设备档案、证书),属 cindy-relay 系统用户,0700
  *   cindy-relay.service          systemd 服务,只放行绑定 80/443 的权限
- * 证书由中转自己向 Let's Encrypt 申请并续期(IP 用 6 天短期证书,域名用常规证书)。
+ * 自动复用正在使用 80/443 的 Nginx；已有可信证书时沿用，否则由中转申请并续期后同步给 Nginx。
  *
  * 主人身份(中转 ID、主人凭证、主人密钥)只在这台电脑生成与保存;交给服务器的只有凭证哈希、
  * 主人公钥与主人证书。命令里不出现任何秘密,也不把服务器输出写进日志。
@@ -171,6 +171,7 @@ if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then echo
 const INSPECT_SCRIPT = `
 NODE=${INSTALL_DIR}/node/bin/node
 STATE=${DATA_DIR}/relay-state.json
+if [ -f /etc/cindy-relay/nginx/state.json ]; then echo "NGINX_MANAGED yes"; fi
 if [ -x "$NODE" ]; then echo "NODE $("$NODE" --version 2>/dev/null)"; fi
 if [ -f "$STATE" ]; then
   if [ -x "$NODE" ]; then
@@ -226,7 +227,7 @@ echo "SHA $(sha256sum ${INSTALL_DIR}/relay.mjs.new | cut -d' ' -f1)"
 
 const CONFIGURE_SCRIPT = `
 set -e
-ADDRESS="$1"; LISTEN="$2"; PUBLIC_URL="$3"; REPLACE="$4"; ACME_DIRECTORY="$5"; shift 5
+ADDRESS="$1"; LISTEN="$2"; PUBLIC_URL="$3"; REPLACE="$4"; ACME_DIRECTORY="$5"; MODE="$6"; PORT="$7"; CHALLENGE_PORT="$8"; shift 8
 NODE=${INSTALL_DIR}/node/bin/node
 if ! id cindy-relay >/dev/null 2>&1; then
   useradd --system --home-dir ${DATA_DIR} --no-create-home --shell /usr/sbin/nologin cindy-relay 2>/dev/null \\
@@ -243,8 +244,14 @@ fi
 chown -R cindy-relay:cindy-relay ${DATA_DIR}
 rm -f ${DATA_DIR}/status.json
 EXTRA=""
-if [ -n "$ACME_DIRECTORY" ]; then EXTRA=" --acme-directory $ACME_DIRECTORY"; fi
-cat > /etc/systemd/system/cindy-relay.service <<UNIT
+CAPS=""
+if [ "$MODE" != nginx-existing ]; then
+  EXTRA=" --acme-identifier $ADDRESS --acme-http-port $CHALLENGE_PORT"
+  if [ -n "$ACME_DIRECTORY" ]; then EXTRA="$EXTRA --acme-directory $ACME_DIRECTORY"; fi
+fi
+if [ "$MODE" != direct ]; then EXTRA="$EXTRA --trust-proxy"; fi
+if [ "$MODE" = direct ]; then CAPS=CAP_NET_BIND_SERVICE; fi
+cat > /etc/systemd/system/cindy-relay.service.new <<UNIT
 [Unit]
 Description=Cindy self-hosted relay
 After=network-online.target
@@ -254,11 +261,11 @@ Wants=network-online.target
 Type=simple
 User=cindy-relay
 Group=cindy-relay
-ExecStart=$NODE ${INSTALL_DIR}/relay.mjs serve --data ${DATA_DIR} --host $LISTEN --port 443 --public-url $PUBLIC_URL --acme-identifier $ADDRESS --acme-http-port 80$EXTRA
+ExecStart=$NODE ${INSTALL_DIR}/relay.mjs serve --data ${DATA_DIR} --host $LISTEN --port $PORT --public-url $PUBLIC_URL$EXTRA
 Restart=always
 RestartSec=5
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=$CAPS
+CapabilityBoundingSet=$CAPS
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
@@ -269,6 +276,12 @@ LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
 UNIT
+if [ "$MODE" = direct ]; then
+  mv -f /etc/systemd/system/cindy-relay.service.new /etc/systemd/system/cindy-relay.service
+else
+  "$NODE" ${INSTALL_DIR}/relay.mjs nginx --action configure-service >/dev/null
+  rm -f /etc/systemd/system/cindy-relay.service.new
+fi
 systemctl daemon-reload
 systemctl enable cindy-relay >/dev/null 2>&1
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
@@ -279,6 +292,47 @@ if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>
 fi
 systemctl restart cindy-relay
 echo "CONFIGURED"
+`;
+
+const NGINX_SCRIPT = `
+set -e
+ACTION="$1"; shift
+NODE=${INSTALL_DIR}/node/bin/node
+BUNDLE=${INSTALL_DIR}/relay.mjs
+if [ -f ${INSTALL_DIR}/relay.mjs.new ]; then BUNDLE=${INSTALL_DIR}/relay.mjs.new; fi
+if [ "$ACTION" != commit ]; then "$NODE" "$BUNDLE" nginx --action "$ACTION" "$@"; fi
+if [ "$ACTION" = rollback ]; then
+  rm -f /etc/systemd/system/cindy-relay.service.new
+  systemctl daemon-reload
+  if [ -f /etc/systemd/system/cindy-relay.service ]; then systemctl restart cindy-relay
+  else systemctl stop cindy-relay >/dev/null 2>&1 || true; fi
+  if [ ! -f /etc/cindy-relay/nginx/state.json ]; then
+    systemctl disable --now cindy-relay-nginx.timer >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/cindy-relay-nginx.timer /etc/systemd/system/cindy-relay-nginx.service
+  fi
+fi
+if [ "$ACTION" = commit ]; then
+  cat > /etc/systemd/system/cindy-relay-nginx.service <<UNIT
+[Unit]
+Description=Apply renewed Cindy relay certificate to Nginx
+[Service]
+Type=oneshot
+ExecStart=$NODE ${INSTALL_DIR}/relay.mjs nginx --action renew
+UMask=0077
+UNIT
+  cat > /etc/systemd/system/cindy-relay-nginx.timer <<UNIT
+[Unit]
+Description=Check Cindy relay Nginx certificate
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+[Install]
+WantedBy=timers.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable --now cindy-relay-nginx.timer >/dev/null 2>&1
+  "$NODE" "$BUNDLE" nginx --action commit
+fi
 `;
 
 const STATUS_SCRIPT = `
@@ -294,8 +348,14 @@ NODE=${INSTALL_DIR}/node/bin/node
 STATE=${DATA_DIR}/relay-state.json
 if [ ! -x "$NODE" ] || [ ! -f "$STATE" ]; then echo "RELAY_MISMATCH"; exit 22; fi
 "$NODE" -e 'try{const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));if(s.relayId!==process.argv[2]||s.ownerPublicKey!==process.argv[3])process.exit(22)}catch{process.exit(22)}' "$STATE" "$2" "$3" || { echo "RELAY_MISMATCH"; exit 22; }
+if [ -f /etc/cindy-relay/nginx/state.json ]; then
+  systemctl stop cindy-relay-nginx.timer cindy-relay-nginx.service >/dev/null 2>&1 || true
+  "$NODE" ${INSTALL_DIR}/relay.mjs nginx --action remove
+  systemctl disable cindy-relay-nginx.timer >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/cindy-relay-nginx.timer /etc/systemd/system/cindy-relay-nginx.service
+fi
 systemctl disable --now cindy-relay >/dev/null 2>&1 || true
-rm -f /etc/systemd/system/cindy-relay.service
+rm -f /etc/systemd/system/cindy-relay.service /etc/systemd/system/cindy-relay.service.new
 systemctl daemon-reload >/dev/null 2>&1 || true
 rm -rf ${INSTALL_DIR}
 if [ "$1" = 1 ]; then
@@ -344,7 +404,11 @@ async function waitForCertificate(remote: Remote): Promise<void> {
     const active = first(lines, 'ACTIVE');
     let certificate: { state?: string; error?: string } | undefined;
     try {
-      certificate = (JSON.parse(first(lines, 'STATUS') ?? '{}') as { certificate?: { state?: string; error?: string } }).certificate;
+      certificate = (
+        JSON.parse(first(lines, 'STATUS') ?? '{}') as {
+          certificate?: { state?: string; error?: string };
+        }
+      ).certificate;
     } catch {
       certificate = undefined;
     }
@@ -366,7 +430,9 @@ async function verifyReachable(baseUrl: string, relayId: string): Promise<void> 
   let lastError = '';
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      const res = await fetch(`${baseUrl}/api/device-link/relay/info`, { signal: AbortSignal.timeout(10_000) });
+      const res = await fetch(`${baseUrl}/api/device-link/relay/info`, {
+        signal: AbortSignal.timeout(10_000),
+      });
       const body = (await res.json()) as { relayId?: string };
       if (res.ok && body.relayId === relayId) return;
       lastError = `unexpected response (${res.status})`;
@@ -376,6 +442,43 @@ async function verifyReachable(baseUrl: string, relayId: string): Promise<void> 
     await new Promise((resolve) => setTimeout(resolve, 3_000));
   }
   throw new RelayDeployError('NOT_REACHABLE', lastError.slice(0, 300));
+}
+
+async function existingHttpsCertificate(baseUrl: string): Promise<boolean> {
+  try {
+    // 只验证 HTTPS 信任、地址与有效期；站点的 404/403 同样可以证明 TLS 可用。
+    const response = await fetch(baseUrl, {
+      method: 'HEAD',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(10_000),
+    });
+    await response.body?.cancel();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function nginxAction(remote: Remote, action: string, args: string[] = []): Promise<Record<string, unknown>> {
+  const result = await remote.root(NGINX_SCRIPT, [action, ...args], {
+    label: `relay-deploy-nginx-${action}`,
+    timeoutMs: 120_000,
+  });
+  const event = result.stdout
+    .trim()
+    .split('\n')
+    .reverse()
+    .find((line) => line.startsWith('{'));
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(event ?? '{}') as Record<string, unknown>;
+  } catch {
+    /* handled below */
+  }
+  if (result.exitCode !== 0 || parsed.event === 'error') {
+    throw new RelayDeployError('NGINX_FAILED', typeof parsed.message === 'string' ? parsed.message.slice(0, 300) : undefined);
+  }
+  return parsed;
 }
 
 /** 部署或升级:服务器上已有本机主人的中转时保留数据,只换程序与配置。 */
@@ -389,8 +492,9 @@ export async function deployRelayToServer(params: DeployParams): Promise<{ relay
 
   params.onStep('check');
   const inspected = parseLines((await remote.root(INSPECT_SCRIPT, [], { label: 'relay-deploy-inspect' })).stdout);
-  const busy = inspected.get('BUSY') ?? [];
-  if (busy.length > 0) throw new RelayDeployError('PORT_BUSY', busy.join(', '));
+  const busy = [...new Set(inspected.get('BUSY') ?? [])];
+  if (busy.some((line) => !/^(80|443) nginx$/.test(line))) throw new RelayDeployError('PORT_BUSY', busy.join(', '));
+  const useNginx = busy.length > 0 || first(inspected, 'NGINX_MANAGED') === 'yes';
   const state = first(inspected, 'STATE');
   const assertExistingIdentity = (existingState: string) => {
     const [, relayId, ownerPublicKey] = existingState.split(' ');
@@ -420,7 +524,11 @@ export async function deployRelayToServer(params: DeployParams): Promise<{ relay
 
   params.onStep('upload');
   const uploaded = expectOk(
-    await remote.root(UPLOAD_SCRIPT, [], { input: bundle, timeoutMs: 120_000, label: 'relay-deploy-upload' }),
+    await remote.root(UPLOAD_SCRIPT, [], {
+      input: bundle,
+      timeoutMs: 120_000,
+      label: 'relay-deploy-upload',
+    }),
     'DEPLOY_FAILED',
   );
   if (first(uploaded, 'SHA') !== createHash('sha256').update(bundle).digest('hex')) {
@@ -430,33 +538,79 @@ export async function deployRelayToServer(params: DeployParams): Promise<{ relay
   params.onStep('configure');
   const init = params.init;
   const initArgs = [
-    '--name', init.name,
-    '--owner-user', init.ownerUserId,
-    '--owner-device', init.ownerDeviceId,
-    '--owner-device-name', init.ownerDeviceName,
-    '--owner-credential-hash', init.ownerCredentialHash,
-    '--relay-id', init.relayId,
-    '--owner-public-key', init.ownerPublicKey,
-    '--owner-cert', Buffer.from(JSON.stringify(init.ownerCert)).toString('base64url'),
+    '--name',
+    init.name,
+    '--owner-user',
+    init.ownerUserId,
+    '--owner-device',
+    init.ownerDeviceId,
+    '--owner-device-name',
+    init.ownerDeviceName,
+    '--owner-credential-hash',
+    init.ownerCredentialHash,
+    '--relay-id',
+    init.relayId,
+    '--owner-public-key',
+    init.ownerPublicKey,
+    '--owner-cert',
+    Buffer.from(JSON.stringify(init.ownerCert)).toString('base64url'),
   ];
   const acmeDirectory = process.env.CINDY_RELAY_ACME_DIRECTORY ?? '';
-  const configured = await remote.root(
-    CONFIGURE_SCRIPT,
-    [params.address, ipv6 ? '::' : '0.0.0.0', params.baseUrl, params.replaceExisting ? '1' : '0', acmeDirectory, ...initArgs],
-    { timeoutMs: 180_000, label: 'relay-deploy-configure' },
-  );
-  const configureLines = expectOk(configured, 'DEPLOY_FAILED');
-  log.info('relay configured on server', {
-    initialized: configureLines.has('INITIALIZED'),
-    firewall: (configureLines.get('FIREWALL') ?? []).join(',') || 'none',
-  });
+  let mode = 'direct';
+  let port = 443;
+  let challengePort = 80;
+  let nginxPrepared = false;
+  try {
+    if (useNginx) {
+      const args = ['--address', params.address];
+      if (ipv6) args.push('--ipv6');
+      if (await existingHttpsCertificate(params.baseUrl)) args.push('--existing-certificate');
+      const prepared = await nginxAction(remote, 'prepare', args);
+      nginxPrepared = true;
+      if (!Number.isInteger(prepared.port) || !Number.isInteger(prepared.challengePort)) throw new RelayDeployError('NGINX_FAILED');
+      mode = prepared.existingCertificate ? 'nginx-existing' : 'nginx-acme';
+      port = prepared.port as number;
+      challengePort = prepared.challengePort as number;
+    }
+    const configured = await remote.root(
+      CONFIGURE_SCRIPT,
+      [
+        params.address,
+        useNginx ? '127.0.0.1' : ipv6 ? '::' : '0.0.0.0',
+        params.baseUrl,
+        params.replaceExisting ? '1' : '0',
+        acmeDirectory,
+        mode,
+        String(port),
+        String(challengePort),
+        ...initArgs,
+      ],
+      { timeoutMs: 180_000, label: 'relay-deploy-configure' },
+    );
+    const configureLines = expectOk(configured, 'DEPLOY_FAILED');
+    log.info('relay configured on server', {
+      initialized: configureLines.has('INITIALIZED'),
+      firewall: (configureLines.get('FIREWALL') ?? []).join(',') || 'none',
+    });
 
-  params.onStep('certificate');
-  await waitForCertificate(remote);
+    params.onStep('certificate');
+    if (mode !== 'nginx-existing') await waitForCertificate(remote);
+    if (useNginx) await nginxAction(remote, 'activate');
 
-  params.onStep('verify');
-  await verifyReachable(params.baseUrl, init.relayId);
-  return { relayVersion: RELAY_VERSION };
+    params.onStep('verify');
+    await verifyReachable(params.baseUrl, init.relayId);
+    if (useNginx) await nginxAction(remote, 'commit');
+    return { relayVersion: RELAY_VERSION };
+  } catch (error) {
+    if (nginxPrepared) {
+      try {
+        await nginxAction(remote, 'rollback');
+      } catch {
+        throw new RelayDeployError('NGINX_FAILED', 'Nginx rollback could not be completed; server configuration backup retained');
+      }
+    }
+    throw error;
+  }
 }
 
 export async function uninstallRelayFromServer(
@@ -472,7 +626,9 @@ export async function uninstallRelayFromServer(
   const [, relayId, ownerPublicKey] = (first(inspected, 'STATE') ?? '').split(' ');
   if (relayId !== identity.relayId || ownerPublicKey !== identity.ownerPublicKey) throw new RelayDeployError('RELAY_MISMATCH');
   onStep('configure');
-  const result = await remote.root(UNINSTALL_SCRIPT, [removeData ? '1' : '0', identity.relayId, identity.ownerPublicKey], { label: 'relay-deploy-uninstall' });
+  const result = await remote.root(UNINSTALL_SCRIPT, [removeData ? '1' : '0', identity.relayId, identity.ownerPublicKey], {
+    label: 'relay-deploy-uninstall',
+  });
   if (parseLines(result.stdout).has('RELAY_MISMATCH')) throw new RelayDeployError('RELAY_MISMATCH');
   expectOk(result, 'DEPLOY_FAILED');
 }
