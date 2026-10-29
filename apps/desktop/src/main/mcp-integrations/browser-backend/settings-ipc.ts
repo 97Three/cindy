@@ -3,7 +3,14 @@ import type {
   BrowserBackendRecoveryResult,
   BrowserBackendSourceReadAccess,
 } from '../../../shared/browserBackend.js';
-import { requireBoolean, requireEnum, requireObject } from '../../utils/ipcValidate.js';
+import { isBrowserOpenForLoginErrorCode } from '../../../shared/browserBackend.js';
+import {
+  requireBoolean,
+  requireEnum,
+  requireObject,
+  throwIpcError,
+} from '../../utils/ipcValidate.js';
+import { isRealProfileError } from '../browser-real-profile/types.js';
 import type { BackendKind } from './types.js';
 
 export interface BrowserBackendSettingsState {
@@ -46,7 +53,15 @@ export function createBrowserBackendIpcHandlers<Event>(deps: BrowserBackendIpcDe
       deps.assertTrusted(event);
       const obj = requireObject(payload, 'set-use-real-profile payload');
       const enabled = requireBoolean(obj.enabled, 'enabled');
-      return { ok: true as const, enabled: await deps.setUseRealProfile(enabled) };
+      try {
+        return { ok: true as const, enabled: await deps.setUseRealProfile(enabled) };
+      } catch (err) {
+        // Known login-copy failures keep their code so Settings can say what went wrong.
+        if (isRealProfileError(err) && isBrowserOpenForLoginErrorCode(err.code)) {
+          throwIpcError(err.code, err.message);
+        }
+        throw err;
+      }
     },
     async reset(event: Event) {
       deps.assertTrusted(event);

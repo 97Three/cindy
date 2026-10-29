@@ -69,6 +69,7 @@ import {
   createBrowserProfileLifecycleQueue,
   managedConfigPatchBeforeStop,
   FOREIGN_AGENT_BROWSER_ERROR,
+  isRealProfileError,
   probeOsSourceProfileReadAccess,
   readCopiedLoginsCdpPort,
   wrapRuntimeWithRealProfile,
@@ -77,6 +78,7 @@ import {
 } from './browser-real-profile/index.js';
 import { assertTrustedAppRendererEvent } from '../security/trustedAppRenderer.js';
 import { createBrowserBackendIpcHandlers } from './browser-backend/settings-ipc.js';
+import { readCdpBrowserCommandLine } from './browser-backend/proxy-auth.js';
 import { resolveBrowserScreenshot } from './browserScreenshotResolver.js';
 import { compressInlineImage } from './inlineImageCompressor.js';
 import { raiseAgentBrowserWindow } from './raise-agent-browser-window.js';
@@ -434,6 +436,20 @@ export async function setActiveBrowserBackendKind(kind: BackendKind): Promise<vo
   await backendController.setKind(kind);
 }
 
+/**
+ * Whether the Chrome on the managed CDP port was started with a profile outside this Cindy's
+ * browser runtime, i.e. another Cindy (another edition or a dev build) shares the port. Only
+ * used to explain a failed stop; it never decides whether a browser may be closed.
+ */
+async function managedPortHeldByAnotherCindy(): Promise<boolean> {
+  const runtimeDir = realProfileRuntimeDir();
+  if (!runtimeDir) return false;
+  const commandLine = await readCdpBrowserCommandLine(currentGuardIdentity().cdpHttpUrl).catch(
+    () => null,
+  );
+  return commandLine !== null && !commandLine.includes(`--user-data-dir=${runtimeDir}${nodePath.sep}`);
+}
+
 async function stopExternalRuntimeIfUsed(): Promise<void> {
   const useRealProfile = readBrowserBackendSettings().useRealProfile;
   const patch = managedConfigPatchBeforeStop({
@@ -454,7 +470,17 @@ async function stopExternalRuntimeIfUsed(): Promise<void> {
   // into the now-unlinked files. The backend's stop is idempotent and proves
   // absence itself, so always issue it and require it to succeed.
   const stop = await externalChromeBackend.call({ action: 'stop' });
-  assertManagedBrowserStopped({ status, stop });
+  try {
+    assertManagedBrowserStopped({ status, stop });
+  } catch (err) {
+    if (isRealProfileError(err) && err.code === 'STOP_FAILED' && (await managedPortHeldByAnotherCindy())) {
+      throw new RealProfileError(
+        'FOREIGN_AGENT_BROWSER',
+        'Another Cindy is using the agent browser port, so copied logins cannot be changed now.',
+      );
+    }
+    throw err;
+  }
   if (!stop.ok) {
     throw new RealProfileError(
       'STOP_FAILED',

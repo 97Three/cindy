@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { extractIpcError } from '../../../../shared/ipcError.js';
+import { RealProfileError } from '../../browser-real-profile/types.js';
 import { createBrowserBackendIpcHandlers } from '../settings-ipc.js';
 
 function buildHandlers() {
@@ -94,5 +96,16 @@ describe('browser backend Settings IPC handlers', () => {
     expect(deps.probeSourceRead).toHaveBeenCalledTimes(1);
 
     await expect(handlers.setKind(trustedEvent, { kind: 'unknown' })).rejects.toThrow();
+  });
+
+  // The login-copy switch failed with only a generic toast; a known cause such as another Cindy
+  // holding the agent browser must reach Settings as its code so the toast can name it.
+  it('keeps the code of a known login-copy failure for Settings', async () => {
+    const { trustedEvent, deps, handlers } = buildHandlers();
+    deps.setUseRealProfile.mockRejectedValueOnce(
+      new RealProfileError('FOREIGN_AGENT_BROWSER', 'Another Cindy is using the agent browser port.'),
+    );
+    const err = await handlers.setUseRealProfile(trustedEvent, { enabled: true }).catch((e) => e);
+    expect(extractIpcError(err)?.code).toBe('FOREIGN_AGENT_BROWSER');
   });
 });

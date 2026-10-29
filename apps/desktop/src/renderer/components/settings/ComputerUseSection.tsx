@@ -717,7 +717,14 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
         );
       } catch (err) {
         log.error('browserBackend.setUseRealProfile failed', err);
-        toast.error(t('settings.computerUse.realProfile.toast.failed'));
+        const errorCode = browserOpenForLoginErrorCode(err);
+        toast.error(
+          t(
+            errorCode
+              ? browserOpenForLoginToastKey(errorCode, 'settings.computerUse.realProfile.toast.failed')
+              : 'settings.computerUse.realProfile.toast.failed',
+          ),
+        );
       } finally {
         setUseRealProfilePending(false);
       }
