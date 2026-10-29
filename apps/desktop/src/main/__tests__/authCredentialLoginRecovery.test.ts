@@ -25,6 +25,7 @@ function setup({
   code = 'CREDENTIAL_STORE_UNAVAILABLE',
   retryAt = undefined as number | undefined,
   initialError = false,
+  passwordStoreSwitchPresent = false,
 } = {}) {
   class AuthApiError extends Error {
     statusCode = 503;
@@ -37,6 +38,7 @@ function setup({
   const backend = { available: !backendUnavailable };
   const verifyCode = vi.fn(async () => ({ status: 'ok' }));
   const requestCode = vi.fn(async () => undefined);
+  const log = { warn: vi.fn() };
   const deps = {
     AuthApiError,
     loginPreparingErrorState,
@@ -45,10 +47,17 @@ function setup({
     acceptLoginOutcome: vi.fn(async () => {
       throw new AuthApiError(code);
     }),
-    log: { warn: vi.fn() },
+    log,
+    process: { platform: 'linux', argv: [], env: {}, versions: { electron: 'test' } },
     credentialEncryptionUnavailable: false,
     safeStorage: { isEncryptionAvailable: () => backend.available },
-    app: { isReady: () => true },
+    app: {
+      isReady: () => true,
+      commandLine: {
+        hasSwitch: () => passwordStoreSwitchPresent,
+        getSwitchValue: () => '',
+      },
+    },
     powerMonitor: { getSystemIdleState: () => 'active' },
     code,
     credentialStoreHealth: { unavailable: false },
@@ -97,10 +106,30 @@ function setup({
     backend,
     verifyCode,
     requestCode,
+    log,
   };
 }
 
 describe('credential failure during fresh sign-in', () => {
+  // 测试价值：真实凭证失败诊断入口应区分未传开关与显式空值；原有 helper 测试
+  // 只覆盖脱敏函数，未覆盖 Electron getSwitchValue 在两种情形都返回空串的接线。
+  // 最小输入为不可用的凭证后端 + 空 getSwitchValue；unit 不读真实凭证。
+  // 本文件单独运行实测 0.573s。
+  it.each([
+    { passwordStoreSwitchPresent: false, expected: 'unset' },
+    { passwordStoreSwitchPresent: true, expected: 'empty' },
+  ])('logs password-store as $expected when switch presence is $passwordStoreSwitchPresent', ({
+    passwordStoreSwitchPresent,
+    expected,
+  }) => {
+    const harness = setup({ passwordStoreSwitchPresent });
+    harness.observeBackend();
+    expect(harness.log.warn).toHaveBeenCalledWith(
+      'credential encryption backend unavailable',
+      expect.objectContaining({ passwordStore: expected }),
+    );
+  });
+
   it('retains an observed backend failure across reset and clears it on backend recovery', async () => {
     const harness = setup();
     expect(harness.needsRecovery()).toBe(false);

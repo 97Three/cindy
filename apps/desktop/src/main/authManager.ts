@@ -565,10 +565,16 @@ function isCredentialEncryptionAvailable(): boolean {
     }
     let passwordStoreSwitch: string | undefined;
     try {
-      const commandLine = (app as { commandLine?: { getSwitchValue?: (name: string) => string } })
-        .commandLine;
-      const fromCommandLine = commandLine?.getSwitchValue?.('password-store');
-      if (typeof fromCommandLine === 'string') passwordStoreSwitch = fromCommandLine;
+      const commandLine = (app as {
+        commandLine?: {
+          hasSwitch?: (name: string) => boolean;
+          getSwitchValue?: (name: string) => string;
+        };
+      }).commandLine;
+      if (commandLine?.hasSwitch?.('password-store')) {
+        const fromCommandLine = commandLine.getSwitchValue?.('password-store');
+        if (typeof fromCommandLine === 'string') passwordStoreSwitch = fromCommandLine;
+      }
     } catch {
       passwordStoreSwitch = undefined;
     }
