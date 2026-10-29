@@ -4017,16 +4017,7 @@ Slack 复用既有 user-token 工具网关，在 `listTools` 增加 `cindy_get_m
 
 X 属于公开帖子接入，本轮不新增付费历史抓取；其已有推文上下文自动带图路径不变。
 
-## 插件页面 Node 授权（未发布）
-
-可选 node.secretBindings.settingsMethod 必须是 saveMethods 子项；旧声明无变化。
-新本机协议 /node-authorization/<key> 返回 NDJSON authorize/saved/failed，只有授权 URL
-和已存身份可投影；无 Secret、Token、Node 原始响应。Main webRequest 绑定发起 frame
-并在导航/销毁时撤销，复用 owner/安装守卫。旧 Host 忽略新声明，调用方须检查响应 MIME
-及状态；手机/远程 relay 未加入此接口，不宣称跨端已支持，不新增 invoke 白名单。
-
-
-## 插件伙伴委派协议与回执（未发布，执行尚未接线）
+## 插件伙伴委派协议与回执（未发布）
 
 agent.delegation 为可选独立能力，依赖 tasks + targets，只有 Host 确认的
 delegationCapabilityApproved 才授予；历史未知字段、旧 tasks/targets 批准不推断新授权。
@@ -4034,9 +4025,12 @@ delegationCapabilityApproved 才授予；历史未知字段、旧 tasks/targets 
 新包严格校验声明，旧 receipt 缺少新可选字段照常读取。无需 schema migration。
 
 targets.capabilities 新增只读协议发现；delegation.version=1 与 execution 就绪状态分开。
-当前没有审核接线，execution=false，显式 delegation 请求在预留/投递前返回
+执行端接入现有 Auto 审核后才报告 execution=true；未就绪时显式 delegation 请求在预留/投递前返回
 UNSUPPORTED_CAPABILITY；不得降级为普通消息或另建任务。旧 Host 无入口时不发送。
-后续委派只允许 bot + queue，scope 最多 8000 字符并参与请求摘要，持久回执保存版本、
+委派只允许 bot + queue，scope 最多 8000 字符并参与请求摘要，持久回执保存版本、
 执行范围及原目标/批准事实。取消、撤权、换批准版本和恢复排队沿原接口复核。
-现阶段不改输入协调器、伙伴权限、自动审核器、maker-core 或业务插件。
+执行保持真实来源并使用既有 Auto 审核；不提升伙伴权限，不包含业务插件。
 作者契约见 cindy-plugin-creator/references/plugin-agent-tasks.md §4.11.7。
+
+Node 私有上传只接受 POST + uploadDir，短期 Bearer 不进入页面管道。旧 Host 无入口则不上传；不保存新凭据，不新增设置页授权协议。
+targets.get 按本插件 requestKey 查询原收据；settled 自然终态由原 inputClientId 的运行事件持久记录，取消另须确认原队列/执行结束。不开放伙伴历史。

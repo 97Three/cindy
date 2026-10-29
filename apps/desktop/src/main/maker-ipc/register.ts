@@ -6144,8 +6144,19 @@ function cleanupClosedSessionRuntime(session: WiredSession): void {
 // operation. Capturing these services when wiring a Session would freeze the
 // pre-initialization or previous runtime value for later events.
 const sessionEventDependencies: SessionEventDependencies = {
-  onPluginTaskTerminal: (sessionId, execution, outcome, outputMessageId) => {
+  onPluginTaskTerminal: (sessionId, execution, outcome, outputMessageId, inputClientIds) => {
     notePluginTaskLifecycle(service => service.settle(sessionId, execution, outcome, outputMessageId));
+    for (const inputClientId of inputClientIds ?? []) {
+      const snapshot = getCurrentDbClientSnapshot();
+      if (snapshot) {
+        const store = createPluginTargetStore(snapshot.client, () => {
+          if (getCurrentDbClientSnapshot() !== snapshot) throw new Error('PERMISSION_DENIED');
+        });
+        void store.settle(inputClientId, sessionId, { ...execution, outcome, outputMessageId })
+          .catch(() => log.warn('Plugin target terminal receipt could not be saved'));
+      }
+    }
+
   },
   onSuccessfulProductTurn: finishProductTurn,
   onUnsuccessfulProductTurn: interruptProductTurn,

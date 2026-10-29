@@ -9,8 +9,6 @@ import {
   changedBuiltinOauthClientSecretKeys,
   deriveGhostSessionContext,
   diffGhostPermissionItems,
-  diffInstalledGhostPermissionItems,
-  validateInstalledGhostManifest,
   ghostAppContextLocale,
   ghostContentKeys,
   ghostExternalLinkUrls,
@@ -4976,63 +4974,5 @@ describe('ghostPermissionProjectionFingerprint', () => {
     expect(ghostPermissionProjectionFingerprint(a.manifest)).toBe(
       ghostPermissionProjectionFingerprint(b.manifest),
     );
-  });
-});
-
-// New write privilege must not inherit a legacy read-secret approval; omitted
-// saveMethods must preserve existing manifests/projections (standard unit).
-describe('Node authorization credential capture permission', () => {
-  const raw = (extra: Record<string, unknown> = {}) => ({
-    ...goodChipManifest(), settingsHtml: 'settings.html', slots: ['panel', 'node'],
-    node: { entry: 'node/worker.cjs', protocol: 'json-rpc-stdio',
-      secretBindings: [{ key: 'account', label: 'Account', methods: ['authorize', 'read'], ...extra }] },
-  });
-  it('keeps legacy permissions unchanged and requires separate approval for saving', () => {
-    const legacy = validateGhostManifest(raw());
-    const capture = validateGhostManifest(raw({ saveMethods: ['authorize'] }));
-    expect(legacy.ok && capture.ok).toBe(true);
-    if (!legacy.ok || !capture.ok) return;
-    expect(legacy.manifest.node!.secretBindings![0]).not.toHaveProperty('saveMethods');
-    const before = ghostPermissionItems(legacy.manifest);
-    const after = ghostPermissionItems(capture.manifest);
-    const added = after.filter(a => !before.some(b => a.key === b.key));
-    expect(added).toHaveLength(1);
-    expect(added[0].key).toMatch(/^node:credential-save:/);
-    expect(after.filter(a => a.labelKey !== 'nodeCredentialSave')).toEqual(before);
-  });
-  it.each([[], ['missing'], ['authorize', 'authorize'], ['initialize']].map(saveMethods => ({ saveMethods })))('rejects invalid save methods $saveMethods', ({ saveMethods }) => {
-    expect(validateGhostManifest(raw({ saveMethods })).ok).toBe(false);
-  });
-  it('requires explicit settings capture and preserves old capability keys', () => {
-    const old = validateGhostManifest(raw({saveMethods:['authorize']}));
-    const next = validateGhostManifest(raw({saveMethods:['authorize'],settingsMethod:'authorize'}));
-    expect(old.ok && next.ok).toBe(true); if(!old.ok || !next.ok)return;
-    expect(ghostPermissionItems(next.manifest).filter(x=>!x.key.startsWith('node:settings-authorization:'))).toEqual(ghostPermissionItems(old.manifest));
-    expect(next.manifest.node!.secretBindings![0].settingsMethod).toBe('authorize');
-    expect(validateGhostManifest(raw({saveMethods:['authorize'],settingsMethod:'read'})).ok).toBe(false);
-    expect(validateGhostManifest(raw({settingsMethod:'authorize'})).ok).toBe(false);
-  });
-  // Legacy unknown fields must survive loading without granting new privileges.
-  it.each([{ saveMethods: 'future' }, { settingsMethod: 'future' }, { saveMethods: 42 }])(
-    'preserves historical unknown binding fields without projecting a permission: %j', extra => {
-      const result = validateInstalledGhostManifest(raw(extra));
-      expect(result.ok).toBe(true);
-      expect(validateGhostManifest(raw(extra)).ok).toBe(false);
-      if (!result.ok) throw new Error('legacy fixture rejected');
-      expect(result.manifest.node!.secretBindings![0]).toMatchObject(extra);
-      expect(ghostPermissionItems(result.manifest).filter(item => item.key.startsWith('node:credential-save:') || item.key.startsWith('node:settings-authorization:'))).toEqual([]);
-    },
-  );
-  it('treats historical valid fields as new permissions until Host approval is recorded', () => {
-    const result = validateGhostManifest(raw({ saveMethods: ['authorize'], settingsMethod: 'authorize' }));
-    if (!result.ok) throw new Error('invalid fixture');
-    const installed = { manifest: result.manifest, dir: '/synthetic/plugin', enabled: true,
-      approval: { state: 'approved' as const, revision: 'legacy' } };
-    expect(diffInstalledGhostPermissionItems(installed, result.manifest).added.map(item => item.key.split(':')[1]))
-      .toEqual(['credential-save', 'settings-authorization']);
-    expect(diffInstalledGhostPermissionItems({ ...installed, nodeCredentialCapabilityApproved: true }, result.manifest).added).toEqual([]);
-  });
-  it('does not let an OAuth binding capture new credentials', () => {
-    expect(validateGhostManifest(raw({ saveMethods: ['authorize'], oauthSecret: 'other' })).ok).toBe(false);
   });
 });

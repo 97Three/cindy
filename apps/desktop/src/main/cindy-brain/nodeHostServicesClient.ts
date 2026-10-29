@@ -1,6 +1,6 @@
 import type { NodeRequestScopes } from './nodeRequestScope.js';
 
-/** Bootstrap-private credential/upload channel. No secret travels through stdout. */
+/** Bootstrap-private upload channel. No secret travels through stdout. */
 export class NodeHostServicesClient {
   private nextId = 1;
   private readonly pending = new Map<
@@ -37,8 +37,6 @@ export class NodeHostServicesClient {
     };
     return Object.freeze({
       signal: bound.signal,
-      saveCredential: (key: string, value: string, identity: string) =>
-        request('credential-save', { key, value, identity }),
       authenticatedFetch: (input: Record<string, unknown>, authorization: string) =>
         request('authenticated-fetch', { request: input, authorization }),
     });

@@ -7261,8 +7261,6 @@
         "nodeMcp": "可在本機執行隨插件附帶的 stdio MCP",
         "nodeRuntimeDetail": "高風險：它和你本人一樣，可以讀取或修改你帳號能訪問的本機檔案、訪問網路並啟動其它程式。Cindy 不能用瀏覽器沙箱限制它。",
         "nodeSecret": "可將已儲存憑證「{{name}}」提供給本機 Node 程式",
-        "nodeCredentialSave": "儲存「{{name}}」的授權憑證",
-        "nodeCredentialSaveDetail": "僅在目前授權流程內儲存至此外掛的保險庫，不經過頁面或聊天。",
         "nodeSecretDetail": "Cindy 加密保管，僅在下列已宣告 Worker 方法執行時臨時注入。Node 程式會收到明文，也可以將其回傳、記錄、儲存或暴露給瀏覽器側插件程式碼及 Agent 引數；請只安裝可信插件。",
         "nodeResident": "Node 程式可常駐後臺",
         "nodeResidentDetail": "插件啟用期間會一直執行；停用、更新、解除安裝或退出 Cindy 時關閉。",

@@ -3,7 +3,7 @@ import { NodeHostServicesClient } from '../nodeHostServicesClient.js';
 import { NodeRequestScopes } from '../nodeRequestScope.js';
 
 // Standard unit: private-channel binding and cancellation had no coverage.
-// A stale async continuation must never write credentials after its RPC ends.
+// A stale async continuation must never upload files after its RPC ends.
 it('binds only within the exact live RPC and rejects pending work on completion', async () => {
   const scopes = new NodeRequestScopes();
   const sent: any[] = [];
@@ -13,12 +13,11 @@ it('binds only within the exact live RPC and rejects pending work on completion'
   scopes.feed(JSON.stringify({ id: '1', cindy: { cancelWithCall: true } }), () => {
     bound = client.bind()!;
   });
-  const saved = bound.saveCredential('account', 'synthetic-value', 'app-test');
+  const saved = bound.authenticatedFetch({ url: 'https://example.test', method: 'POST', uploadDir: { token: 'ticket' } }, 'Bearer synthetic');
   expect(sent[0]).toMatchObject({
-    type: 'credential-save',
+    type: 'authenticated-fetch',
     rpcId: '1',
-    key: 'account',
-    identity: 'app-test',
+    authorization: 'Bearer synthetic',
   });
   client.reply({ reqId: sent[0].reqId, ok: true, result: { saved: true, identity: 'app-test' } });
   expect(await saved).toEqual({ saved: true, identity: 'app-test' });
@@ -28,7 +27,7 @@ it('binds only within the exact live RPC and rejects pending work on completion'
   client.finish('1');
   expect(bound.signal.aborted).toBe(true);
   await rejected;
-  expect(() => bound.saveCredential('account', 'x', 'app')).toThrow();
+  expect(() => bound.authenticatedFetch({ url: 'https://example.test' }, 'Bearer synthetic')).toThrow();
   expect(sent).toHaveLength(2);
 });
 it('releases bounded pending requests on timeout', async () => {
@@ -42,12 +41,12 @@ it('releases bounded pending requests on timeout', async () => {
       bound = client.bind()!;
     });
     const pending = Array.from({ length: 8 }, () =>
-      bound.saveCredential('account', 'x', 'app').catch((e) => e.message),
+      bound.authenticatedFetch({ url: 'https://example.test' }, 'Bearer synthetic').catch((e) => e.message),
     );
-    await expect(bound.saveCredential('account', 'x', 'app')).rejects.toThrow('NODE_HOST_BUSY');
+    await expect(bound.authenticatedFetch({ url: 'https://example.test' }, 'Bearer synthetic')).rejects.toThrow('NODE_HOST_BUSY');
     await vi.advanceTimersByTimeAsync(120000);
     expect(await Promise.all(pending)).toEqual(Array(8).fill('NODE_HOST_OPERATION_FAILED'));
-    const retry = bound.saveCredential('account', 'x', 'app');
+    const retry = bound.authenticatedFetch({ url: 'https://example.test' }, 'Bearer synthetic');
     client.reply({ reqId: sent.at(-1).reqId, ok: true, result: { saved: true } });
     await expect(retry).resolves.toEqual({ saved: true });
   } finally {

@@ -41,9 +41,6 @@ import type {
 } from '../../shared/ghost.js';
 import { installedGhostStoragePart } from '../../shared/pluginIdentity.js';
 import {
-  approvedNodeCredentialManifest,
-  nodeCredentialSaveMethods,
-  nodeCredentialSettingsMethod,
   GHOST_NODE_CHILD_MODE_FLAG,
   GHOST_NODE_MAX_CHILDREN_PER_GHOST,
   GHOST_NODE_REQUEST_MAX_TOTAL_MS,
@@ -165,7 +162,6 @@ export interface GhostNodeRuntimeBrokerDeps {
    * 未保存或保险库不可用。调用方不得记录返回值。
    */
   readSecret?: (ghostId: string, secretKey: string) => string | null;
-  saveSecret?: (ghostId: string, key: string, value: string) => boolean;
   authenticatedFetch?: (ghostId: string, request: Record<string, unknown>, authorization: string,
     assertCurrent: () => void, signal: AbortSignal) => Promise<unknown>;
   secretSaved?: (ghostId: string, secretKey: string) => boolean;
@@ -287,23 +283,10 @@ function readDiagnosticAdapterKilled(child: NodeWorkerProcess): boolean | 'unkno
   }
 }
 
-/** Main-only page transaction; never accepted from a plugin pipe payload. */
-export interface NodePageAuthorization {
-  key: string;
-  signal: AbortSignal;
-  assertCurrent(): void;
-  ready(request: { url: string; expiresAt?: number }): void;
-  saved(identity: string): void;
-}
-
 interface PendingRpc {
-  pageAuthorization?: NodePageAuthorization;
-  method: string;
   manifestSnapshot: string;
   approvalRevision?: string;
   hostAbort: AbortController;
-  authorizationOpened?: boolean;
-  savedKeys?: Set<string>;
   hostRequests?: number;
   resolve(value: unknown): void;
   reject(error: Error): void;
@@ -847,7 +830,7 @@ export class GhostNodeRuntimeBroker {
   }
 
   /** main.js 的 node-request 入口。 */
-  async handleRequest(ghostId: string, payload: unknown, pageAuthorization?: NodePageAuthorization): Promise<GhostPipeNodeResult> {
+  async handleRequest(ghostId: string, payload: unknown): Promise<GhostPipeNodeResult> {
     const ghost = this.deps.getGhost(ghostId);
     if (!ghost?.enabled || !ghost.manifest.node) {
       return errorResult('PERMISSION_DENIED', '插件未申请本地 Node 权限，或当前未启用');
@@ -886,17 +869,6 @@ export class GhostNodeRuntimeBroker {
       return errorResult('INVALID_REQUEST', '请求类型必须是 node-request');
     }
     let signal: AbortSignal | undefined;
-    if (pageAuthorization) {
-      try { pageAuthorization.assertCurrent(); } catch { return errorResult('CANCELLED', 'Settings page closed'); }
-      const binding = approvedNodeCredentialManifest(ghost).node?.secretBindings?.find(b => b.key === pageAuthorization.key);
-      if (!binding || nodeCredentialSettingsMethod(binding) !== request.method ||
-          !nodeCredentialSettingsMethod(binding) || binding.oauthSecret ||
-          request.callId !== undefined || request.cancelWithCall !== undefined || request.promptSecrets !== undefined ||
-          (request.entry ?? ghost.manifest.node.entry) !== (binding.entry ?? ghost.manifest.node.entry)) {
-        return errorResult('PERMISSION_DENIED', 'Settings authorization method is not declared');
-      }
-      signal = pageAuthorization.signal;
-    }
     // callId alone was ignored by older Hosts. Only the new explicit contract
     // changes a legacy RPC's lifetime or grants access to authorization cards.
     if (request.cancelWithCall === true) {
@@ -961,9 +933,8 @@ export class GhostNodeRuntimeBroker {
       }
       entryRel = request.entry;
     }
-    const secretBindings = (approvedNodeCredentialManifest(ghost).node?.secretBindings ?? []).filter(
+    const secretBindings = (ghost.manifest.node.secretBindings ?? []).filter(
       (binding) =>
-        (!pageAuthorization || binding.key === pageAuthorization.key) &&
         binding.methods.includes(request.method as string) &&
         (binding.entry ?? ghost.manifest.node!.entry) === entryRel,
     );
@@ -984,7 +955,7 @@ export class GhostNodeRuntimeBroker {
 
     let hostSecrets: Record<string, string> | undefined;
     let secretInputCompleted = false;
-    const manualBindings = secretBindings.filter(binding => !binding.oauthSecret && !nodeCredentialSaveMethods(binding));
+    const manualBindings = secretBindings.filter(binding => !binding.oauthSecret);
     if (request.promptSecrets === true && manualBindings.length === 0) {
       return errorResult('INVALID_REQUEST', 'This Node method has no manual credential binding');
     }
@@ -1063,21 +1034,12 @@ export class GhostNodeRuntimeBroker {
           } else {
             value = this.deps.readSecret?.(ghostId, binding.key) ?? null;
           }
-          if (value === null && nodeCredentialSaveMethods(binding)) continue;
           if (value === null) {
             clearHostSecrets(hostSecrets);
             return errorResult(
               'PERMISSION_DENIED',
               `Node 请求需要先配置凭证「${binding.label}」`,
             );
-          }
-          if (nodeCredentialSaveMethods(binding)) {
-            try {
-              const envelope = JSON.parse(value);
-              if (envelope.nodeCredentialVersion !== 1 || typeof envelope.value !== 'string'
-                || typeof envelope.identity !== 'string' || typeof envelope.revision !== 'string') throw new Error();
-              // The worker's response guard must also recognize a plain secret, not only its JSON envelope.
-            } catch { clearHostSecrets(hostSecrets); return errorResult('PERMISSION_DENIED', 'Stored Node credential is invalid'); }
           }
           hostSecrets[binding.key] = value;
         }
@@ -1128,12 +1090,8 @@ export class GhostNodeRuntimeBroker {
       }
       if (hostSecrets) {
         if (!requestStillCurrent()) return errorResult('PERMISSION_DENIED', '插件已停止或更新，请重新发起调用');
-        for (const [key, value] of Object.entries(hostSecrets)) {
-          if (!value) continue;
-          entry.exposedSecretValues.add(value);
-          if (secretBindings.some(binding => binding.key === key && nodeCredentialSaveMethods(binding))) {
-            this.rememberPrivateSecret(entry, JSON.parse(value).value);
-          }
+        for (const v of Object.values(hostSecrets)) {
+          if (v) entry.exposedSecretValues.add(v);
         }
       }
       const pendingResult = this.sendRpc(
@@ -1147,7 +1105,6 @@ export class GhostNodeRuntimeBroker {
         signal,
         signal ? request.callId as string : undefined,
         secretInputCompleted,
-        pageAuthorization,
       );
       // writeLine/JSON.stringify 在 sendRpc 内同步完成；随即抹掉本次临时对象，
       // 不让凭证明文跟随 Promise 生命周期常驻在 broker 闭包里。
@@ -1182,7 +1139,7 @@ export class GhostNodeRuntimeBroker {
       this.authorizePlugin(entry, message);
       return;
     }
-    if (message.type === 'credential-save' || message.type === 'authenticated-fetch') {
+    if (message.type === 'authenticated-fetch') {
       void this.handlePrivateHostRequest(entry, message); return;
     }
     if (message.type === 'spawn-child') {
@@ -1201,16 +1158,15 @@ export class GhostNodeRuntimeBroker {
   }
 
   private async handlePrivateHostRequest(entry: WorkerEntry,
-    message: Extract<GhostNodeChildToHostMessage, { type: 'credential-save' | 'authenticated-fetch' }>) {
+    message: Extract<GhostNodeChildToHostMessage, { type: 'authenticated-fetch' }>) {
     const ghostId = GhostNodeRuntimeBroker.instanceId(entry.ghost);
     const pending = entry.pending.get(message.rpcId);
     const reply = (ok: boolean, result?: unknown) => this.replyToWorker(entry,
       { type: 'node-host-result', reqId: message.reqId, ok, ...(ok ? { result } : {}) });
     const assertCurrent = () => {
       const current = this.deps.getGhost(ghostId);
-      pending?.pageAuthorization?.assertCurrent();
       if (!pending?.signal || pending.signal.aborted
-        || (!pending.pageAuthorization && (!pending.callId || this.deps.getCallSignal?.(ghostId, pending.callId) !== pending.signal))
+        || (!pending.callId || this.deps.getCallSignal?.(ghostId, pending.callId) !== pending.signal)
         || entry.pending.get(message.rpcId) !== pending
         || this.workers.get(GhostNodeRuntimeBroker.keyOf(ghostId, entry.entryRel)) !== entry
         || !current?.enabled || current.dir !== entry.ghost.dir
@@ -1224,29 +1180,11 @@ export class GhostNodeRuntimeBroker {
       if ((pending!.hostRequests ?? 0) >= 4) throw new Error('NODE_HOST_BUSY');
       pending!.hostRequests = (pending!.hostRequests ?? 0) + 1;
       acquired = true;
-      if (message.type === 'credential-save') {
-        const binding = approvedNodeCredentialManifest(entry.ghost).node?.secretBindings?.find(b => b.key === message.key
-          && (b.entry ?? entry.ghost.manifest.node!.entry) === entry.entryRel
-          && nodeCredentialSaveMethods(b)?.includes(pending!.method) && !b.oauthSecret);
-        if (this.deps.getGhost(ghostId)?.nodeCredentialCapabilityApproved !== true || (pending!.pageAuthorization && pending!.pageAuthorization.key !== message.key) || !binding || !pending!.authorizationOpened || pending!.savedKeys?.has(message.key)
-          || !this.deps.saveSecret) throw new Error('CREDENTIAL_SAVE_DENIED');
-        this.rememberPrivateSecret(entry, message.value);
-        pending!.savedKeys ??= new Set(); pending!.savedKeys.add(message.key);
-        assertCurrent();
-        const revision = randomUUID();
-        const stored = JSON.stringify({ nodeCredentialVersion: 1, identity: message.identity, value: message.value, revision });
-        entry.exposedSecretValues.add(stored);
-        if (!this.deps.saveSecret(ghostId, message.key, stored)) throw new Error('CREDENTIAL_SAVE_FAILED');
-        assertCurrent(); pending!.pageAuthorization?.saved(message.identity);
-        reply(true, { saved: true, key: message.key, identity: message.identity, revision });
-      } else {
-        if (pending!.pageAuthorization) throw new Error('NODE_FETCH_UNAVAILABLE');
         this.rememberPrivateSecret(entry, message.authorization.slice(7));
         if (!this.deps.authenticatedFetch) throw new Error('NODE_FETCH_UNAVAILABLE');
         const result = await this.deps.authenticatedFetch(ghostId,
           { ...message.request, callId: pending!.callId }, message.authorization, assertCurrent, pending!.hostAbort.signal);
         assertCurrent(); reply(true, result);
-      }
     } catch { reply(false); }
     finally { if (acquired && pending) pending.hostRequests = Math.max(0, (pending.hostRequests ?? 1) - 1); }
   }
@@ -1261,34 +1199,6 @@ export class GhostNodeRuntimeBroker {
       this.replyToWorker(entry, message.type === 'device-authorize'
         ? { type: 'device-authorize-result', reqId: message.reqId, ok }
         : { type: 'plugin-authorize-result', reqId: message.reqId, ok, ...(result ? { result } : {}) });
-    if (pending?.pageAuthorization) {
-      try {
-        const page = pending.pageAuthorization;
-        page.assertCurrent();
-        if (pending.authorizationStarted || !this.isLiveBoundRpc(entry, message.rpcId)) throw new Error();
-        const request = message.type === 'device-authorize'
-          ? { kind: 'device' as const, url: parseDeviceAuthorizationUrl(message.url) } : message.request;
-        if (request.kind !== 'device') throw new Error();
-        const checkTarget = bindPluginAuthorizationTarget(entry.ghost.manifest, request);
-        const current = this.deps.getGhost(ghostId);
-        if (!current?.enabled || current.dir !== entry.ghost.dir ||
-            JSON.stringify(current.manifest) !== pending.manifestSnapshot ||
-            !this.ownerScopeUsable(ghostId, pending.ownerScopeSnapshot) ||
-            this.workers.get(GhostNodeRuntimeBroker.keyOf(ghostId, entry.entryRel)) !== entry) throw new Error();
-        checkTarget(current.manifest);
-        page.assertCurrent();
-        pending.authorizationStarted = true;
-        page.ready({ url: request.url, ...('expiresAt' in request && request.expiresAt ? { expiresAt: request.expiresAt } : {}) });
-        // The page transaction owns a five-minute absolute deadline. SDK polling
-        // need not print activity just to keep its authorization request alive.
-        pending.timeoutMs = Math.min(300_000, 'expiresAt' in request && request.expiresAt ? Math.max(1, request.expiresAt - this.now()) : 300_000);
-        this.clearTimer(pending.timer);
-        this.armPendingTimer(pending);
-        pending.authorizationOpened = true;
-        reply(true, { kind: 'opened' });
-      } catch { reply(false); pending.cancel(); }
-      return;
-    }
     const sessionId = pending?.signal && pending.callId
       ? this.deps.getCallSessionId?.(ghostId, pending.callId)
       : null;
@@ -1346,7 +1256,6 @@ export class GhostNodeRuntimeBroker {
         .then(
           value => {
             assertCurrent();
-            pending.authorizationOpened = true;
             reply(true, value);
           },
           () => {
@@ -2240,7 +2149,6 @@ export class GhostNodeRuntimeBroker {
     signal?: AbortSignal,
     callId?: string,
     secretInputCompleted = false,
-    pageAuthorization?: NodePageAuthorization,
   ): Promise<unknown> {
     this.assertOwnerScopeUsable(GhostNodeRuntimeBroker.instanceId(entry.ghost), ownerScopeSnapshot);
     if (signal?.aborted) return Promise.reject(new NodeRpcError('cancelled', 'The tool call was cancelled'));
@@ -2248,8 +2156,6 @@ export class GhostNodeRuntimeBroker {
     const id = String(entry.nextId++);
     return new Promise((resolve, reject) => {
       const pending: PendingRpc = {
-        pageAuthorization,
-        method,
         manifestSnapshot: JSON.stringify(entry.ghost.manifest),
         approvalRevision: entry.ghost.approval?.state === 'approved' ? entry.ghost.approval.revision : undefined,
         hostAbort: new AbortController(),
@@ -2395,7 +2301,7 @@ export class GhostNodeRuntimeBroker {
       return;
     }
     let msg = message as Record<string, unknown>;
-    // Only the opt-in private credential API adds this result boundary; legacy
+    // Only the private authenticated upload API adds this result boundary; legacy
     // Node replies retain their existing behavior. Reject rather than mutate data.
     const serialized = JSON.stringify(message);
     if ([...entry.privateSecretValues].some(value => serialized.includes(JSON.stringify(value).slice(1, -1)))) {

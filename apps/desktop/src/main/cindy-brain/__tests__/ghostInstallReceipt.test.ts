@@ -307,22 +307,6 @@ describe('GhostInstallReceiptStore cleanup', () => {
     expect(approved).toMatchObject({ state: 'approved', receipt: { taskCapabilityApproved: true, targetCapabilityApproved: true, revision: receipt.revision } });
   });
 
-  it('round trips delegation approval without expanding legacy target consent', async () => {
-    const receipt = createSetupReceipt();
-    receipt.manifest.agent = { tasks: true, targets: true, delegation: true };
-    receipt.taskCapabilityApproved = true; receipt.targetCapabilityApproved = true;
-    await store.write(receipt);
-    const old = store.read('hello');
-    if (old.state !== 'approved') throw new Error('fixture not approved');
-    expect(old.receipt.delegationCapabilityApproved).toBeUndefined();
-    expect(old.receipt.nodeCredentialCapabilityApproved).toBeUndefined();
-    await store.write({ ...old.receipt, delegationCapabilityApproved: true, nodeCredentialCapabilityApproved: true });
-    expect(store.read('hello')).toMatchObject({ state: 'approved', receipt: {
-      enabled: true, revision: receipt.revision, taskCapabilityApproved: true,
-      targetCapabilityApproved: true, delegationCapabilityApproved: true, nodeCredentialCapabilityApproved: true,
-    } });
-  });
-
   it('writes setup in the author format accepted by the v0.1.48 receipt reader', async () => {
     const receipt = createSetupReceipt();
     await store.write(receipt);

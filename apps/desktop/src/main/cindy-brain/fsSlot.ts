@@ -420,10 +420,9 @@ export class GhostFsSlot {
       let realBase: string;
       try {
         realBase = await fs.promises.realpath(base);
-      } catch (error) {
+      } catch {
         if (op === 'delete') return { ok: true, op: 'delete', path: relPath, existed: false };
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        return { ok: false, errorCode: 'NOT_FOUND', message: `文件不存在:${relPath}` };
+        return fail(`文件不存在:${relPath}`);
       }
       if (!(await deepestExistingAncestorInside(realBase, target))) return fail('path 越界');
     }
@@ -432,9 +431,8 @@ export class GhostFsSlot {
       let stat: fs.Stats;
       try {
         stat = await fs.promises.lstat(target);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        return { ok: false, errorCode: 'NOT_FOUND', message: `文件不存在:${relPath}` };
+      } catch {
+        return fail(`文件不存在:${relPath}`);
       }
       if (!stat.isFile()) return fail(`不是文件:${relPath}`);
       if (stat.size > GHOST_FS_READ_MAX_BYTES) {

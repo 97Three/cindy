@@ -37,7 +37,7 @@ import type {
   GhostSetupStatus,
   GhostSetupStatusItem,
 } from '../../shared/ghost.js';
-import { nodeCredentialSaveMethods, GHOST_SECRET_VALUE_MAX_CHARS } from '../../shared/ghost.js';
+import { GHOST_SECRET_VALUE_MAX_CHARS } from '../../shared/ghost.js';
 import { isGhostInstanceId } from '../../shared/pluginIdentity.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
 
@@ -108,7 +108,7 @@ function deriveRequirementGroups(manifest: GhostManifest): GhostSetupRequirement
     implicit.push({ kind: 'secret', key: s.key });
   }
   for (const s of manifest.node?.secretBindings ?? []) {
-    if (s.oauthSecret || nodeCredentialSaveMethods(s)) continue;
+    if (s.oauthSecret) continue;
     implicit.push({ kind: 'secret', key: s.key });
   }
   for (const c of manifest.network?.connections ?? []) {

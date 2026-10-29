@@ -1,6 +1,6 @@
 import { BrowserWindow, session, webContents, type CustomScheme } from 'electron';
 import fs from 'node:fs/promises';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import * as nodeFs from 'node:fs';
 import { Readable } from 'node:stream';
 import path from 'node:path';
@@ -31,7 +31,6 @@ import {
 } from '../../cindy-media/ledger.js';
 import type { SandboxHandle, SandboxHostAdapter } from './GhostRuntime.js';
 import { mobilePageRelayScript, type MobileRelayOperation } from './mobilePageRelay.js';
-import { classifyGhostPanelNavigation } from '../previewGate.js';
 
 /**
  * Electron 沙箱宿主(docs/dev-rules/plugin-security-and-authoring.md):
@@ -331,10 +330,6 @@ type GhostOauthProtocolHandler = (args: {
 }) => Promise<{ status: number; body?: string }>;
 
 let ghostOauthHandler: GhostOauthProtocolHandler | null = null;
-let ghostNodeAuthorizationHandler: ((id: string, request: Request, current: () => boolean, dispose: () => void) => Promise<Response>) | null = null;
-export function setGhostNodeAuthorizationHandler(handler: NonNullable<typeof ghostNodeAuthorizationHandler>): void {
-  ghostNodeAuthorizationHandler = handler;
-}
 
 export function setGhostOauthHandler(handler: GhostOauthProtocolHandler): void {
   ghostOauthHandler = handler;
@@ -521,39 +516,6 @@ function registerGhostProtocol(
     }
     callback({ cancel: !allowed });
   });
-  // The header is replaced by Main, never trusted from the plugin. It binds the
-  // custom-protocol request to its actual initiating top-level UI document.
-  const authorizationSources = new Map<string, { signal: AbortSignal; current(): boolean; dispose(): void }>();
-  ses.webRequest.onBeforeSendHeaders((details, callback) => {
-    const headers = { ...details.requestHeaders };
-    for (const name of Object.keys(headers)) if (name.toLowerCase() === 'x-cindy-authorization-source') delete headers[name];
-    if (details.url.startsWith(selfPrefix + 'node-authorization/')) {
-      const frame = details.frame;
-      const allowedPages = [ghost.manifest.settingsHtml, ghost.manifest.mainView?.html].filter(Boolean).map(p => selfPrefix + p);
-      const wc = details.webContentsId ? webContents.fromId(details.webContentsId) : undefined;
-      if (!frame || frame.parent || !wc || wc.session !== ses || !allowedPages.includes(frame.url) || !isRegistrationCurrent() || authorizationSources.size >= 16) {
-        callback({ cancel: true }); return;
-      }
-      const token = randomUUID(), control = new AbortController(), originalUrl = frame.url;
-      const dispose = () => { clearTimeout(timer); authorizationSources.delete(token); wc.removeListener('did-start-navigation', navigate); wc.removeListener('did-navigate', abort); wc.removeListener('destroyed', abort); };
-      const abort = () => { control.abort(); dispose(); };
-      // External/preview/blocked links are intercepted by the guest navigation
-      // gate and leave this document alive. Real internal navigation (including
-      // same-URL reload) still revokes immediately; any committed navigation
-      // revokes defensively even if it did not pass through that gate.
-      const navigate = (_event: unknown, url: string, _inPlace: boolean, mainFrame: boolean) => {
-        if (mainFrame && classifyGhostPanelNavigation(url, ghostId) === 'allow') abort();
-      };
-      const timer = setTimeout(abort, 300_000); timer.unref?.();
-      wc.on('did-start-navigation', navigate); wc.on('did-navigate', abort); wc.once('destroyed', abort);
-      authorizationSources.set(token, { signal: control.signal, dispose, current: () => {
-        try { return !control.signal.aborted && !wc.isDestroyed() && !frame.detached && frame.url === originalUrl && isRegistrationCurrent(); }
-        catch { return false; }
-      } });
-      headers['x-cindy-authorization-source'] = token;
-    }
-    callback({ requestHeaders: headers });
-  });
   const handleRequest = async (request: Request): Promise<Response> => {
     try {
       // owner B 提交后，owner A 的旧 guest 仍可能短暂存活并新发请求。
@@ -732,19 +694,6 @@ function registerGhostProtocol(
             'Cache-Control': 'no-cache',
           },
         });
-      }
-      if (url.pathname.startsWith('/node-authorization/')) {
-        const token = request.headers.get('x-cindy-authorization-source');
-        const source = token ? authorizationSources.get(token) : undefined;
-        if (!source || !source.current()) return new Response(null, { status: 403 });
-        if (token) authorizationSources.delete(token); // single-use Main receipt
-        if (!ghostNodeAuthorizationHandler) { source.dispose(); return new Response(null, { status: 503 }); }
-        const boundRequest = new Request(request, { signal: AbortSignal.any([request.signal, source.signal]) });
-        try {
-          const response = await ghostNodeAuthorizationHandler(storagePart, boundRequest, source.current, source.dispose);
-          if (request.method !== 'POST' || response.status !== 200) source.dispose();
-          return response;
-        } catch { source.dispose(); return new Response(null, { status: 503 }); }
       }
       // /oauth:source:'oauth' 凭证的设置页通道(FORGE_GUIDE §4.7)。client
       // 凭证只写入库,连接/断开/默认账号由主机代办;授权令牌无任何读回

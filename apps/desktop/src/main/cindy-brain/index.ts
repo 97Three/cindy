@@ -1,5 +1,4 @@
 import { checkGhostSecret } from './runtime/ghostSecretCheck.js';
-import { nodeSettingsAuthorization } from './runtime/nodeSettingsAuthorization.js';
 import { PluginDeviceSync } from './deviceSyncSlot.js';
 import { contactsSyncKeyStore } from '../contacts-sync/keyStore.js';
 import { RemotePluginPreferences } from './remotePluginPreferences.js';
@@ -177,7 +176,6 @@ import {
   isGhostInstallApprovalToken,
   ghostAppContextLocale,
   unreviewedGhostPermissionItems,
-  approvedNodeCredentialManifest,
   ghostWebviewEntryPaths,
   isCindyAccountGhostId,
   isUserInstallReservedGhostId,
@@ -295,7 +293,6 @@ import {
   setGhostAgentModelsProvider,
   setGhostModelPickerProvider,
   setGhostOauthHandler,
-  setGhostNodeAuthorizationHandler,
   setGhostSandboxDevToolsDisabled,
   setGhostSecretsHandler,
   setGhostWakeHandler,
@@ -451,7 +448,6 @@ import {
   abortAllGhostInstallConsentPrompts,
   assertGhostInstallConsent,
   confirmedTaskCapability,
-  confirmedNodeCredentialCapability,
   obtainGhostInstallConsent,
   type GhostInstallConsentDecision,
   type GhostInstallConsentPrompt,
@@ -1140,7 +1136,7 @@ function availableGhosts(): InstalledGhost[] {
 
 function projectGhostForRenderer(ghost: InstalledGhost): InstalledGhost {
   try {
-    const runtimeManifest = approvedNodeCredentialManifest(ghost);
+    const runtimeManifest = ghost.manifest;
     const storeId = installedGhostStoragePart(ghost);
     const oauthManager = getGhostOauthAccountManager();
     const expiredAccountCount = (runtimeManifest.network?.secrets ?? []).reduce(
@@ -2389,7 +2385,6 @@ export function getGhostNodeRuntimeBroker(): GhostNodeRuntimeBroker {
       ownerScope: ghostOwnerScope,
       readSecret: (ghostId, secretKey) => readGhostSecret(ghostId, secretKey),
       secretSaved: ghostSecretSaved,
-      saveSecret: storeGhostSecret,
       authenticatedFetch: (ghostId, request, authorization, assertCurrent, signal) =>
         getGhostNetworkSlot().handleAuthenticatedNodeFetch(ghostId, request, authorization, assertCurrent, signal),
       resolveOauthSecret: async (ghostId, secretKey, accountId) => {
@@ -5823,7 +5818,7 @@ export function getGhostSetupAssessment(ghostId: string): GhostSetupAssessment {
     throw new Error('ghost setup unavailable: ' + ghostId);
   }
   const storeId = installedGhostStoragePart(ghost);
-  const runtimeManifest = approvedNodeCredentialManifest(ghost);
+  const runtimeManifest = ghost.manifest;
   const assessment = evaluateGhostSetupAssessment(
     runtimeManifest,
     getGhostSetupProbes(storeId, runtimeManifest),
@@ -5871,7 +5866,7 @@ export async function executeGhostSetupAction(args: {
     if (!secretKey) {
       return { ok: false, errorCode: 'ACTION_STALE', message: '授权动作已失效' };
     }
-    const runtimeManifest = approvedNodeCredentialManifest(ghost);
+    const runtimeManifest = ghost.manifest;
     const decl = runtimeManifest.network?.secrets?.find(
       (secret) => secret.key === secretKey && secret.source === 'oauth',
     )?.oauth;
@@ -5957,7 +5952,7 @@ export async function executeGhostSetupInlineAction(
       getAssessment: getGhostSetupAssessment,
       getManifest: (ghostId) => {
         const ghost = findGhostForInstanceId(ghostId);
-        return ghost ? approvedNodeCredentialManifest(ghost) : null;
+        return ghost ? ghost.manifest : null;
       },
       storeSecret: (ghostId, secretKey, value) => {
         const ghost = findGhostForInstanceId(ghostId);
@@ -6107,7 +6102,7 @@ export function getGhostNetworkSlot(): GhostNetworkSlot {
       },
       // 目录上传:凭 ghost_call 目录过户发放的一次性票据取货(dirDeposit
       // 票据库单例,与过户端同一本账)。
-      takeDirDeposit: (ghostId, token) => getDirDepositVault().take(ghostId, token),
+      takeDirDeposit: (ghostId, token, callId) => getDirDepositVault().take(ghostId, token, callId),
       // 下行落盘(as:'file'):凭 save 票据把响应字节写进主 agent 过户的
       // workdir 目录(saveDeposit 票据库单例,与过户端同一本账)。
       writeSaveDeposit: (ghostId, token, fileName, bytes) =>
@@ -7103,7 +7098,6 @@ async function installAndDockLocked(
   // 则走 manager.update 延续既有状态。保留 false 缺省以兼容内部受控调用方。
   const result = await manager.install(lizFilePath, {
     taskCapabilityApproved: confirmedTaskCapability(opts.consent.decision, installedBefore, opts.consent.manifest),
-    nodeCredentialCapabilityApproved: confirmedNodeCredentialCapability(opts.consent.decision, installedBefore, opts.consent.manifest),
     targetCapabilityApproved: confirmedTaskCapability(opts.consent.decision, installedBefore, opts.consent.manifest, 'targets'),
     delegationCapabilityApproved: confirmedTaskCapability(opts.consent.decision, installedBefore, opts.consent.manifest, 'delegation'),
     initiallyEnabled: opts.enable ?? false,
@@ -7287,7 +7281,6 @@ async function updateLocalGhostPackageLocked(
         () =>
           manager.update(cindyFilePath, {
           taskCapabilityApproved: confirmedTaskCapability(consent, previousGhost, inspected.manifest),
-          nodeCredentialCapabilityApproved: confirmedNodeCredentialCapability(consent, previousGhost, inspected.manifest),
           targetCapabilityApproved: confirmedTaskCapability(consent, previousGhost, inspected.manifest, 'targets'),
           delegationCapabilityApproved: confirmedTaskCapability(consent, previousGhost, inspected.manifest, 'delegation'),
           expectedPackageSha256,
@@ -7782,7 +7775,6 @@ async function installOrUpdateMarketGhostPackageLocked(
       result = await withActiveOwnerGhostOauthMutationLock(installedGhostStoragePart(installed), () =>
         manager.update(cindyFilePath, {
           taskCapabilityApproved: confirmedTaskCapability(expected.consent, installed, inspected.manifest),
-          nodeCredentialCapabilityApproved: confirmedNodeCredentialCapability(expected.consent, installed, inspected.manifest),
           targetCapabilityApproved: confirmedTaskCapability(expected.consent, installed, inspected.manifest, 'targets'),
           delegationCapabilityApproved: confirmedTaskCapability(expected.consent, installed, inspected.manifest, 'delegation'),
           expectedPackageSha256: inspected.packageSha256,
@@ -8447,9 +8439,6 @@ export function registerGhostIpc(): void {
   // 面板唤醒电子脑(cindy-ghost://<id>/wake 供片分支):面板零桥,唤醒经它
   // 自己的协议通道进来。只对"已装且唤醒"的意识放行;熔断态不清账(重载 /
   // 重新唤醒才 resetFuse),spawn 幂等所以重复唤醒零成本。
-  setGhostNodeAuthorizationHandler((id, request, current, dispose) => nodeSettingsAuthorization(
-    { ghost: findGhostForInstanceId, broker: getGhostNodeRuntimeBroker }, id, request, current, dispose,
-  ));
   setGhostWakeHandler(async (ghostId) => {
     const ghost = findGhostForInstanceId(ghostId);
     if (!ghost || !ghost.enabled) return { state: 'off' };
@@ -8581,7 +8570,7 @@ export function registerGhostIpc(): void {
   setGhostOauthHandler(async ({ ghostId, method, pathname, readBodyText, isCurrent }) => {
     const ghost = findGhostForInstanceId(ghostId);
     if (!ghost) return { status: 404 };
-    const runtimeManifest = approvedNodeCredentialManifest(ghost);
+    const runtimeManifest = ghost.manifest;
     const oauthSecrets = new Map<string, GhostOauthDecl>();
     for (const s of runtimeManifest.network?.secrets ?? []) {
       if (s.source === 'oauth' && s.oauth) oauthSecrets.set(s.key, s.oauth);
@@ -9041,7 +9030,7 @@ export function registerGhostIpc(): void {
       try { return { ok: true, data: await pluginTargetSlot.handle(id, payload, assertAuthorized) }; }
       catch (error) {
         const rawCode = (error as { code?: unknown })?.code ?? (error instanceof Error ? error.message : '');
-        const code = ['PERMISSION_DENIED', 'HOST_NOT_READY', 'UNSUPPORTED_CAPABILITY', 'INVALID_PARAMS', 'INVALID_ATTACHMENTS', 'INVALID_INVOCATION', 'TASK_BUSY', 'TARGET_UNAVAILABLE', 'SUPERSEDED', 'REQUEST_KEY_CONFLICT', 'DELIVERY_UNCERTAIN', 'DELIVERY_REJECTED', 'STALE_REVISION', 'ROUTE_UNAVAILABLE'].includes(String(rawCode)) ? String(rawCode) : 'HOST_NOT_READY';
+        const code = ['PERMISSION_DENIED', 'HOST_NOT_READY', 'INVALID_PARAMS', 'INVALID_ATTACHMENTS', 'INVALID_INVOCATION', 'TASK_BUSY', 'TARGET_UNAVAILABLE', 'SUPERSEDED', 'REQUEST_KEY_CONFLICT', 'DELIVERY_UNCERTAIN', 'DELIVERY_REJECTED', 'STALE_REVISION', 'ROUTE_UNAVAILABLE'].includes(String(rawCode)) ? String(rawCode) : 'HOST_NOT_READY';
         return { ok: false, error: { code, message: code, retryable: code === 'TASK_BUSY' } };
       }
     }
@@ -9450,7 +9439,7 @@ export function registerGhostIpc(): void {
       id,
       getRuntimeManifest: (ghostId) => {
         const ghost = findGhostForInstanceId(ghostId);
-        return ghost ? approvedNodeCredentialManifest(ghost) : null;
+        return ghost ? ghost.manifest : null;
       },
       probesFor: (runtimeManifest) => {
         const ghost = findGhostForInstanceId(typeof id === 'string' ? id : runtimeManifest.id);

@@ -83,6 +83,20 @@ describe('plugin target queries and delivery', () => {
     else expect(result).not.toHaveProperty('settled');
     await expect(f.call(f.request)).rejects.toMatchObject({ code: 'SUPERSEDED' });
   });
+  // Unit: read-only queries must survive a runtime restart without dispatching again.
+  it('queries only its own durable receipt and requires an exact terminal for natural settlement', async () => {
+    const f = delegatedFixture();
+    const sent = await f.call(f.request);
+    expect(sent).toMatchObject({ executionId: expect.stringMatching(/^plugin-target:/), requestKey: 'send', target: f.request.target });
+    const receipt = [...receipts.values()][0]!;
+    const restarted = new PluginTargetSlot(); restarted.adapter = f.slot.adapter;
+    const query = () => restarted.handle('plugin', { kind: 'get', requestKey: 'send' }, f.guard);
+    expect(await query()).toMatchObject({ found:true, executionId:receipt.id, status:'accepted', settled:false });
+    expect(await restarted.handle('other', {kind:'get',requestKey:'send'}, f.guard)).toEqual({found:false});
+    receipt.terminal = { instanceId:'native',generation:2,outcome:'completed',outputMessageId:'reply' };
+    expect(await query()).toMatchObject({ settled:true,result:{outcome:'completed',outputMessageId:'reply'} });
+    expect(f.send).toHaveBeenCalledOnce();
+  });
   it('never declares settled while the delivery transaction is still in flight', async () => {
     const f = fixture(); const wait = deferred<void>(); const entered = deferred<void>();
     f.send.mockImplementation(async () => { entered.resolve(); await wait.promise; return 'queue'; });

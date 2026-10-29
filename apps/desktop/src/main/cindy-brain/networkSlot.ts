@@ -132,7 +132,7 @@ export interface NetworkSlotDeps {
    * instanceKey 绑定 + TTL + 单次消费;无效原因不分类统一 null,不给探测空间)。
    * 文件字节经 read() 闭包按需读盘,networkSlot 保持零 fs 依赖。
    */
-  takeDirDeposit(instanceKey: string, token: string): {
+  takeDirDeposit(instanceKey: string, token: string, callId?: string): {
     files: Array<{ relPath: string; size: number; read(): Promise<Uint8Array> }>;
     totalBytes: number;
   } | null;
@@ -780,6 +780,8 @@ export class GhostNetworkSlot {
     authorization: string, assertCurrent: () => void, signal: AbortSignal): Promise<GhostPipeFetchResult> {
     if (!/^Bearer [A-Za-z0-9._~+\/=-]{1,8192}$/.test(authorization))
       return { ok: false, message: 'NODE_AUTH_INVALID' };
+    if (payload.method !== 'POST' || !payload.uploadDir || payload.upload !== undefined || payload.body !== undefined)
+      return { ok: false, message: 'NODE_AUTH_UPLOAD_REQUIRED' };
     return this.handleFetchRequest(instanceKey, payload, { authorization, assertCurrent, signal });
   }
 
@@ -1170,7 +1172,7 @@ export class GhostNetworkSlot {
         }
         this.mediaReadsInflight += 1;
         holdingMediaGate = true;
-        const built = await this.buildDirUploadBody(instanceKey, uploadDir);
+        const built = await this.buildDirUploadBody(instanceKey, uploadDir, nodeAuth ? requestCallId : undefined);
         if ('error' in built) return { ok: false, message: built.error };
         body = built.body;
         deleteHeaderVariants(requestHeaders, 'Content-Type');
@@ -1988,8 +1990,11 @@ export class GhostNetworkSlot {
       fileFieldPrefix: string;
       fileField?: string;
     },
+    callId?: string,
   ): Promise<{ body: Uint8Array; boundary: string } | { error: string }> {
-    const deposit = this.deps.takeDirDeposit(instanceKey, uploadDir.token);
+    const deposit = callId === undefined
+      ? this.deps.takeDirDeposit(instanceKey, uploadDir.token)
+      : this.deps.takeDirDeposit(instanceKey, uploadDir.token, callId);
     if (!deposit) {
       return { error: '目录过户票据无效(不存在 / 已使用 / 已过期)——请让主 agent 重新经 ghost_call 的 dir 参数过户目录' };
     }

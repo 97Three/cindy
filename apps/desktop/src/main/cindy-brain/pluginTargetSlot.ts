@@ -13,7 +13,14 @@ import { pluginMessageText, validPluginMessageContext } from '../../shared/plugi
 import { getActiveDataOwnerPushStamp, activeOwnerScopeKey } from '../appSessionState.js';
 import { withParsedPluginMessageAttachments, type PluginMessageImage } from '../cindy-media/pluginMessageAttachments.js';
 
+export interface PluginTargetTerminal {
+  instanceId: string;
+  generation: number;
+  outcome: 'completed' | 'failed' | 'cancelled' | 'interrupted';
+  outputMessageId?: string;
+}
 export interface PluginTargetReceipt {
+  terminal?: PluginTargetTerminal;
   id: string;
   pluginId: string;
   requestKey: string;
@@ -119,9 +126,9 @@ export class PluginTargetSlot {
     if (!this.adapter) return fail('HOST_NOT_READY');
     const adapter = this.adapter;
     const request = raw as PluginTargetRequest;
-    if (!request || !['capabilities', 'list', 'resolve', 'send', 'cancel'].includes(request.kind))
+    if (!request || !['capabilities', 'list', 'resolve', 'send', 'get', 'cancel'].includes(request.kind))
       return fail('INVALID_PARAMS');
-    if (request.kind === 'capabilities') return { delegation: { version: 1, execution: this.supportsDelegationExecution(), targetKinds: ['bot'], delivery: ['queue'] } };
+    if (request.kind === 'capabilities') return { delegation: { version: 1, execution: this.supportsDelegationExecution(), targetKinds: ['bot'], delivery: ['queue'], receiptQuery: true, settled: true } };
     const resolve = async (target: PluginTargetRef): Promise<PluginTargetView> => {
       const candidates = await adapter.candidates(target.kind);
       authorized();
@@ -144,6 +151,17 @@ export class PluginTargetSlot {
     const runtimeKey = JSON.stringify([
       activeOwnerScopeKey(), getActiveDataOwnerPushStamp().ownerGeneration, pluginId, request.requestKey,
     ]);
+    if (request.kind === 'get') {
+      const receipt = await store.get(pluginId, request.requestKey);
+      authorized();
+      if (!receipt) return { found: false };
+      const settled = !!receipt.terminal || (receipt.status === 'cancelled' && !this.inFlight.has(runtimeKey) &&
+        (!receipt.taskId || await adapter.deliverySettled?.(receipt.taskId, receipt.id, authorized) === true));
+      authorized();
+      return { found: true, executionId: receipt.id, requestKey: receipt.requestKey,
+        target: receipt.target, taskId: receipt.taskId, status: receipt.status,
+        delivery: receipt.delivery, settled, ...(receipt.terminal ? { result: receipt.terminal } : {}) };
+    }
     if (request.kind === 'cancel') {
       const pending = this.inFlight.get(runtimeKey);
       if (pending) pending.cancelled = true;
@@ -225,7 +243,8 @@ export class PluginTargetSlot {
         if (previous.status === 'cancelled') return fail('SUPERSEDED');
         if (previous.hash !== hash) return fail('REQUEST_KEY_CONFLICT');
         if (previous.status === 'accepted')
-          return { taskId: previous.taskId, accepted: true, delivery: previous.delivery };
+          return { taskId: previous.taskId, accepted: true, delivery: previous.delivery,
+            ...(previous.delegation ? { executionId: previous.id, requestKey: previous.requestKey, target: previous.target } : {}) };
         return fail('DELIVERY_UNCERTAIN');
       };
       const deliver = async () => {
@@ -288,7 +307,8 @@ export class PluginTargetSlot {
           try { adapter.scheduleAutoTitle?.(pluginId, taskId, pluginMessageText(request.text, request.context), request.text); }
           catch { /* Naming failure never retries an accepted message. */ }
         }
-        return { taskId, accepted: true, delivery: actualDelivery };
+        return { taskId, accepted: true, delivery: actualDelivery,
+          ...(receipt.delegation ? { executionId: receipt.id, requestKey: receipt.requestKey, target: receipt.target } : {}) };
       };
       operation.result = deliver().finally(() => this.inFlight.delete(runtimeKey));
       this.inFlight.set(runtimeKey, operation);

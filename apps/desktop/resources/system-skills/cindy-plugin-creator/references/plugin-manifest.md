@@ -365,10 +365,3 @@ UI 保留。检查、字段绑定、保存状态和恢复都在主机
   (写 `"setup": { "requires": [] }` 显式声明无前置需求,主机不再用启发式拦你)。
 - 检查只管**存在性**(配没配),不管有效性(key 对不对)——填错 key 仍会在真正调用时
   由主机网络层报错,你的工具逻辑照常处理失败即可。
-
-
-伙伴范围委派（未发布增量）可声明 `"agent": { "tasks": true, "targets": true, "delegation": true }`。
-`delegation` 必须是布尔值，true 依赖 tasks:true 和 targets:true；单列 `agent:delegation` 权限，
-使用 Host 的独立批准事实。旧安装缺少批准不扩权，其余能力保持可用。
-支持协议不代表执行就绪；调用前检查 `targets.capabilities().delegation.execution`。
-完整协议与阶段限制见 plugin-agent-tasks.md §4.11.7。

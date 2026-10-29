@@ -110,6 +110,13 @@ it.each([undefined, { version: 1 as const, task: 'Make a report' }])('retains ta
     expect(await restarted.get('p', 'key')).toEqual({ ...receipt, status: 'cancelled' });
     expect(await restarted.getById(other.id)).toMatchObject({ ...other, status: 'accepted', delivery: 'queue' });
     expect(sqlite.prepare('SELECT * FROM plugin_task_requests WHERE id = ?').get(other.id)).toEqual(before);
+    // Exact original input + task association survives restart; a later turn cannot replace it.
+    const terminal = { instanceId: 'native', generation: 3, outcome: 'completed' as const, outputMessageId: 'reply' };
+    await restarted.settle(receipt.id, 'other-task', terminal);
+    expect((await restarted.get('p','key'))?.terminal).toBeUndefined();
+    await restarted.settle(receipt.id, 'task', terminal);
+    await restarted.settle(receipt.id, 'task', { ...terminal, generation:4, outcome:'failed' });
+    expect((await createPluginTargetStore(db, () => {}).get('p','key'))?.terminal).toEqual(terminal);
     // Cancel-before-send stays cancelled, and repeated cancellation retains the original identity.
     const cancelled = await restarted.cancel('p', 'early');
     expect(await restarted.cancel('p', 'early')).toEqual(cancelled);

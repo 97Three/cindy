@@ -42,4 +42,5 @@ export type PluginTargetRequest =
       /** Reference an already confirmed Host tool invocation; never grants execution authority. */
       invocationId?: string;
     }
+  | { kind: 'get'; requestKey: string }
   | { kind: 'cancel'; requestKey: string };

@@ -381,3 +381,14 @@ Auto 使用回执的任务范围并保留主人的限制；Ask、Full Access 沿
 `targets.cancel` 仍不停止伙伴。仅当 Host 已撤回原输入、当前无运行工作且无残留队列时，可额外返回
 `{settled:true,requestKey,clientId}`。缺少 settled 或请求不匹配时不得解除未确认的执行占位；旧 Host 的回执行为不变。
 执行能力声明及单元测试通过不代表某个业务插件已通过真实端到端验收。
+
+### 委派收据查询（未发布）
+
+先检查 targets.capabilities().delegation 的 execution、receiptQuery 和 settled 均为 true。
+显式 delegation 的 send 成功响应新增 executionId、requestKey、target；同键同内容仍返回原收据。
+targets.get({requestKey}) 只读本插件原收据，未知键返回 {found:false}；已知键返回
+{found:true,executionId,requestKey,target,taskId,status,delivery,settled,result?}。
+status 是 pending/accepted/cancelled 投递状态，不能当作任务完成；result 含原输入的
+instanceId、generation、outcome（completed/failed/cancelled/interrupted）及可选 outputMessageId。
+自然终态持久记录，重启后仍可查询；崩溃而没有终态证据时 settled=false，不自动重发。
+取消只撤回该插件输入，只有原队列和执行确已结束时 settled=true。不读取伙伴历史。

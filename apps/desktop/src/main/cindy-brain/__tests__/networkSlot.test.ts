@@ -2368,18 +2368,27 @@ describe('private Node authenticated uploads', () => {
     expect((h.fetchImpl.mock.calls[1]![1] as RequestInit).headers).not.toHaveProperty('Authorization');
   });
   it('rejects unknown hosts and missing tickets; never forwards the bearer through redirects', async () => {
-    const h = makeSlot({ getGhost: () => fakeGhost({ network: { hosts: ['api.search.brave.com'] } }) });
+    const h = makeSlot({ getGhost: () => fakeGhost({ network: { hosts: ['api.search.brave.com'] } }),
+      takeDirDeposit: (_id, ticket) => ticket === token ? { totalBytes: 2, files: [{relPath:'proof.txt',size:2,read:async()=>new TextEncoder().encode('ok')}] } : null });
     const signal = new AbortController().signal;
-    expect((await h.slot.handleAuthenticatedNodeFetch('web-search', { url: 'https://other.example/u' }, 'Bearer synthetic', () => {}, signal)).ok).toBe(false);
-    expect((await h.slot.handleAuthenticatedNodeFetch('web-search', { url, method: 'POST', uploadDir: { token } }, 'Bearer synthetic', () => {}, signal)).ok).toBe(false);
+    expect((await h.slot.handleAuthenticatedNodeFetch('web-search', { url: 'https://other.example/u', method: 'POST', uploadDir: { token } }, 'Bearer synthetic', () => {}, signal)).ok).toBe(false);
+    expect((await h.slot.handleAuthenticatedNodeFetch('web-search', { url, method: 'POST', uploadDir: { token: '00000000-2222-4333-8444-555555555555' } }, 'Bearer synthetic', () => {}, signal)).ok).toBe(false);
     expect(h.fetchImpl).not.toHaveBeenCalled();
+    expect(await h.slot.handleAuthenticatedNodeFetch('web-search', { url }, 'Bearer synthetic', () => {}, signal)).toMatchObject({ ok:false, message:'NODE_AUTH_UPLOAD_REQUIRED' });
     h.fetchImpl.mockResolvedValueOnce(fakeResponse({ status: 302, headers: { location: 'https://other.example/u' } }));
-    expect(await h.slot.handleAuthenticatedNodeFetch('web-search', { url }, 'Bearer synthetic', () => {}, signal)).toMatchObject({ ok: false, message: 'NODE_AUTH_REDIRECT_BLOCKED' });
+    expect(await h.slot.handleAuthenticatedNodeFetch('web-search', { url, method: 'POST', uploadDir: { token } }, 'Bearer synthetic', () => {}, signal)).toMatchObject({ ok: false, message: 'NODE_AUTH_REDIRECT_BLOCKED' });
+    expect(h.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+  it('does not replay an authenticated upload after 401', async () => {
+    const h=makeSlot({getGhost:()=>fakeGhost({network:{hosts:['api.search.brave.com']}}),
+      takeDirDeposit:()=>({totalBytes:2,files:[{relPath:'proof.txt',size:2,read:async()=>new TextEncoder().encode('ok')}]})});
+    h.fetchImpl.mockResolvedValueOnce(fakeResponse({status:401}));
+    await h.slot.handleAuthenticatedNodeFetch('web-search',{url,method:'POST',uploadDir:{token}},'Bearer synthetic',()=>{},new AbortController().signal);
     expect(h.fetchImpl).toHaveBeenCalledTimes(1);
   });
   it('does not send after the call or installation guard is revoked', async () => {
     const h = makeSlot();
-    const result = await h.slot.handleAuthenticatedNodeFetch('web-search', { url }, 'Bearer synthetic', () => { throw Error('revoked'); }, new AbortController().signal);
+    const result = await h.slot.handleAuthenticatedNodeFetch('web-search', { url, method: 'POST', uploadDir: { token } }, 'Bearer synthetic', () => { throw Error('revoked'); }, new AbortController().signal);
     expect(result.ok).toBe(false); expect(h.fetchImpl).not.toHaveBeenCalled();
   });
 });
