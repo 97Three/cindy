@@ -914,6 +914,13 @@ describe('被控端控制链路生命周期', () => {
       .not.toHaveProperty('logoKind');
   });
 
+  // Unit: host membership must survive the real projection; controllers cannot infer it.
+  it.each(['xd', 'cindy'] as const)('preserves the host Cindy AI identity: %s', async (logoKind) => {
+    registry.register('maker:provider:list', () => ({ providers: [{ id: 'xd', name: 'Cindy AI', logoKind, routing: {} }] }));
+    const result = await runInvoke('ctrl-list-only', { channel: 'maker:provider:list', args: [{ capabilities: ['provider-logo-kinds-v2'] }] });
+    expect(result).toMatchObject({ ok: true, result: { providers: [{ id: 'xd', logoKind }] } });
+  });
+
   it('listing-only invoke can negotiate new logo kinds without link-open', async () => {
     registry.register('maker:provider:list', () => ({
       providers: [{

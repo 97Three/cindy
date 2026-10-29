@@ -113,7 +113,11 @@
   "taskActionConfirmation": {
     "title": "确认任务操作",
     "once": "请核对下面的目标、动作和完整内容。允许仅对本次操作生效。",
-    "delegation": "请核对独立任务的目标和设置。允许后将启动任务，并可在本次委托结束前发送范围内的消息或停止任务。代答、恢复暂停和切换模型仍需单独确认。"
+    "remove": "这会删除自动化。请核对目标，仅允许这一次。",
+    "permission": "这会代你回答另一个任务的授权请求。请核对操作，仅允许这一次。",
+    "resume": "这会恢复已暂停的执行。请核对目标，仅允许这一次。",
+    "command": "这会在电脑上保存或运行命令，执行时不经过 Agent 的工具审批。请核对命令和工作目录，仅允许这一次。",
+    "authority": "这会创建或改写自动执行的指令，后续执行将沿用这份授权。请核对完整指令，批准仅用于本次保存。"
   },
   "logSupport": {
     "title": "日志与反馈",
@@ -3594,7 +3598,7 @@
           "modelsAutoNote": "登录后自动获取可用模型"
         },
         "advanced": {
-          "label": "高级配置（模型 / 请求头）"
+          "label": "高级连接设置"
         },
         "runtimeFill": {
           "action": "填充其他 runtime",
@@ -3752,16 +3756,16 @@
           "defaultEffort": "默认推理强度",
           "defaultEffortHint": "新任务选中该模型时的初始档位，任务内仍可临时调整。",
           "contextLimit": "上下文上限",
-          "contextLimitHint": "用于此模型的所有可用引擎。以整数 K 编辑（1 K = 1,000 tokens）；未编辑时保留精确值。保存后用于后续运行，正在生成的内容不受影响。实际可用长度仍受模型服务限制。",
+          "contextLimitHint": "可直接输入 token 数，或使用 K、M、万，例如 1000000、1M。应用于此模型的所有可用引擎，后续运行生效。实际可用长度仍受模型服务限制。",
           "contextLimitLocalMillionHint": "原生 256K（262,144 tokens），可选扩展至 1M（1,000,000）。服务运行时需在「管理服务」中重启以应用更改；已停止时，下次使用自动生效。长输入会增加内存占用和等待时间。",
-          "contextLimitAria": "上下文上限（千 tokens）",
+          "contextLimitAria": "上下文上限（tokens、K、M 或万）",
           "compaction": {
             "title": "自动压缩",
             "hint": "占用达到所选比例时整理上下文。比例越低，越早压缩；实际时机仍受引擎限制。",
             "default": "{{pct}}%（默认）",
             "timing": "用于此来源下该模型的所有可用引擎。后续运行生效，不中断正在生成的内容。"
           },
-          "contextLimitRoute": "当前 {{tokens}} tokens · 1 K = 1,000 tokens",
+          "contextLimitRoute": "当前 {{tokens}} tokens",
           "contextLimitOverWindow": "已超过上游声明的长度，可能导致请求失败。",
           "restoreDefault": "恢复默认",
           "engines": "引擎支持",
@@ -3788,7 +3792,7 @@
           "close": "关闭",
           "maxOutput": "最大输出",
           "catalogCapabilities": "目录声明的能力",
-          "contextInvalid": "请输入 {{min}}–100,000 K 的整数。",
+          "contextInvalid": "请输入 {{min}}–{{max}} tokens，也支持 K、M、万。",
           "contextWriteFailed": "未保存，请重试。",
           "contextMixed": "已有引擎配置不同；修改或恢复默认将应用到全部引擎。",
           "inputModalities": "输入类型",

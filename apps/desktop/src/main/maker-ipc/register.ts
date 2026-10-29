@@ -973,7 +973,7 @@ import {
 } from './orcaInterAgentDispatcher.js';
 import { resolveOrcaImageAttachmentInput } from './orcaImageAttachments.js';
 import { OrcaWorkerPermissionConfirmBridge } from './orcaWorkerPermissionConfirmBridge.js';
-import { assertTaskActionCurrent, captureTaskActionGuard, bindTaskActionInput, hasTaskActionAuthorization, taskActionInputGuard, taskActionPrincipal, settleTaskActionInput, TaskActionAuthorizationError, type TaskActionDeliveryGuard } from './taskActionAuthorization.js';
+import { assertTaskActionCurrent, captureTaskActionGuard, bindTaskActionInput, hasTaskActionAuthorization, taskActionInputGuard, taskActionPrincipal, settleTaskActionInput, TaskActionAuthorizationError, type TaskActionDeliveryGuard, type TaskActionConfirmation } from './taskActionAuthorization.js';
 import {
   getOrcaWorkspaceInfoReadOnly,
   getOrcaWorkerDiagnosticStatusReadOnly,
@@ -3366,14 +3366,58 @@ const taskActionConfirmBridge = new OrcaWorkerPermissionConfirmBridge({
   logger: log,
 });
 
-export async function confirmTaskAction(sessionId: string, tool: string, args: unknown): Promise<boolean> {
-  const result = await taskActionConfirmBridge.request(sessionId, {
-    title: t('taskActionConfirmation.title'),
-    description: t(tool === 'start_session_task' ? 'taskActionConfirmation.delegation' : 'taskActionConfirmation.once'),
-    action: { toolName: `mcp__cindy_helper__${tool}`,
-      input: args as Record<string, unknown>, confirmation: 'task_action' },
+export async function confirmTaskAction(
+  sessionId: string, tool: string, args: unknown, context?: TaskActionConfirmation,
+): Promise<boolean> {
+  const session = getMakerIfReady()?.getSession(sessionId);
+  if (!session) return false;
+  const controller = new AbortController();
+  const unsubscribe = session.onStatusChange(status => {
+    if (status !== 'active') controller.abort();
   });
-  return result.confirmed;
+  const input = structuredClone(context?.details ? { action: args, ...context.details } : args) as Record<string, unknown>;
+  const description = t(context?.risk ? `taskActionConfirmation.${context.risk}` : 'taskActionConfirmation.once');
+  const request: Extract<InteractionRequest, { kind: 'permission' }> = {
+    kind: 'permission', requestId: randomUUID(),
+    title: t('taskActionConfirmation.title'),
+    // Generic tool previews are shortened. The owner must see the complete
+    // command, child request or standing instructions here, including on remote cards.
+    description: context?.risk
+      ? `${description}\n\n${JSON.stringify(input, null, 2)}` : description,
+    toolName: `mcp__${context?.server ?? 'cindy_helper'}__${tool}`,
+    input,
+    metadata: { hostOwnedConfirmation: 'task_action' },
+  };
+  try {
+    // Publish the ordinary waiting/permission lifecycle before awaiting a decision.
+    // Desktop, remote phone and IM resolve the same pending request, never a retry.
+    const result = await session.runHostInteraction(request,
+      () => requestHostInteraction(session, request, controller.signal));
+    return result.kind === 'permission' && result.behavior === 'allow';
+  } finally {
+    unsubscribe();
+  }
+}
+
+/** Snapshot the actual child request after the delegation service checks its owner. */
+export async function captureTaskActionPermissionRequest(sessionId: string, taskId: string) {
+  const task = await botDelegationServiceHolder?.getSessionTask(sessionId, taskId);
+  if (!task?.ok || !task.task.session_id || !task.task.pendingInteraction) return null;
+  const childId = task.task.session_id;
+  const requestId = task.task.pendingInteraction.requestId;
+  const pending = getPendingInteractionsForSession(childId).find(entry => entry.request.requestId === requestId);
+  if (!pending || (pending.request.kind !== 'permission' && pending.request.kind !== 'plan_review')) return null;
+  const request = structuredClone(pending.request);
+  const signature = JSON.stringify(request);
+  const child = getMakerIfReady()?.getSession(childId);
+  return {
+    details: { task: { id: taskId, title: task.task.title }, request },
+    assertCurrent() {
+      const current = getPendingInteractionsForSession(childId).find(entry => entry.request.requestId === requestId);
+      if (getMakerIfReady()?.getSession(childId) !== child || !current || JSON.stringify(current.request) !== signature)
+        throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
+    },
+  };
 }
 
 /**

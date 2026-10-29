@@ -41,6 +41,7 @@ import { CodexMark } from '@/components/icons/CodexMark';
 import { PiMark } from '@/components/icons/PiMark';
 import { useModelContextLimit } from '@/hooks/useModelContextLimit';
 import { useModelImageInputOverride } from '@/hooks/useModelImageInputOverride';
+import { parseContextTokenInput } from '../../../shared/modelContextLimit';
 import { ModelCompactionSettings } from './ModelCompactionSettings';
 import { modelPriceDetailRows, type ModelPricePresentation } from '@/lib/modelPriceFormat';
 import {
@@ -88,12 +89,6 @@ const AGENT_LABEL: Record<AgentKind, string> = {
   codex: 'Codex',
   pi: 'Pi',
 };
-
-// Editing uses whole decimal K, rounded down to avoid suggesting a value above the upstream
-// maximum. Merely opening/blurring the field never writes this display approximation back.
-function editableContextK(tokens: number): string {
-  return String(Math.max(1, Math.floor(tokens / 1000)));
-}
 
 const AGENT_MARK: Record<AgentKind, (size: number) => ReactNode> = {
   'claude-code': (size) => <ClaudeMark size={size} />,
@@ -358,16 +353,28 @@ export function ModelAdvancedDrawer({
 
   const [ctxDraft, setCtxDraft] = useState('');
   const ctxDirtyRef = useRef(false);
-  const defaultWindow = contextAgent === 'codex' && ctx.codexContext
-    ? ctx.codexContext.contextWindow : contextModel?.contextWindow ?? 0;
+  const defaultWindow =
+    contextAgent === 'codex' && ctx.codexContext
+      ? ctx.codexContext.contextWindow
+      : (contextModel?.contextWindow ?? 0);
   // The editor guard is not a native request-capacity limit. Keep small/local
   // model windows selectable and never derive this floor from a saved override.
   // Local runtimes own their loaded window; their catalog maximum cannot set an editor floor.
-  const modelWindows = chatAgents.map((agent) => row?.byAgent[agent]?.contextWindow)
-    .filter((window): window is number => typeof window === 'number' && Number.isFinite(window) && window > 0);
+  const modelWindows = chatAgents
+    .map((agent) => row?.byAgent[agent]?.contextWindow)
+    .filter(
+      (window): window is number =>
+        typeof window === 'number' && Number.isFinite(window) && window > 0,
+    );
   const minimumContextK = isLocalRuntimeBetaProviderId(provider.id)
-    ? 1 : Math.max(1, Math.floor(Math.min(100_000, ...modelWindows) / 1000));
-  const routeWindow = supportsMillionContext ? 1_000_000 : primaryModel?.contextWindowMax ?? primaryModel?.contextWindow ?? 0;
+    ? 1
+    : Math.max(1, Math.floor(Math.min(100_000, ...modelWindows) / 1000));
+  // A working default (including a heuristic fallback) is not a declared capacity.
+  // Codex's native maximum may already contain the user's override, so it
+  // cannot establish the provider's declared capacity.
+  const routeWindow = supportsMillionContext ? 1_000_000
+    : (contextModel ?? primaryModel)?.contextWindowMax
+      ?? (primaryModel?.contextWindowVerified === true ? primaryModel.contextWindow : 0);
   const effectiveLimit = ctx.limit ?? (defaultWindow > 0 ? defaultWindow : null);
   useEffect(() => {
     ctxDirtyRef.current = false;
@@ -376,13 +383,15 @@ export function ModelAdvancedDrawer({
   }, [open, primaryAgent, primaryModel?.id, provider.id]);
   useEffect(() => {
     if (ctx.loading || ctxDirtyRef.current) return;
-    setCtxDraft(effectiveLimit === null ? '' : editableContextK(effectiveLimit));
+    setCtxDraft(effectiveLimit === null ? '' : String(effectiveLimit));
   }, [ctx.loading, effectiveLimit, open]);
-  const parsedK = Number(ctxDraft.trim());
-  const parsedTokens = parsedK * 1000;
+  const parsedTokens = parseContextTokenInput(ctxDraft);
   const ctxInvalid =
-    ctxDirtyRef.current && ctxDraft.trim() !== '' &&
-    (!Number.isSafeInteger(parsedK) || parsedK < minimumContextK || parsedTokens > maximumContext);
+    ctxDirtyRef.current &&
+    ctxDraft.trim() !== '' &&
+    (parsedTokens === null ||
+      parsedTokens < minimumContextK * 1000 ||
+      parsedTokens > maximumContext);
   const commitCtxDraft = useCallback(() => {
     if (!ctxDirtyRef.current || ctxInvalid || ctx.loading || localConfigurationBlocked) return;
     ctxDirtyRef.current = false;
@@ -391,7 +400,7 @@ export function ModelAdvancedDrawer({
   const resetCtx = useCallback(() => {
     if (localConfigurationBlocked) return;
     ctxDirtyRef.current = false;
-    setCtxDraft(defaultWindow > 0 ? editableContextK(defaultWindow) : '');
+    setCtxDraft(defaultWindow > 0 ? String(defaultWindow) : '');
     void ctx.reset();
   }, [ctx, defaultWindow, localConfigurationBlocked]);
 
@@ -458,7 +467,7 @@ export function ModelAdvancedDrawer({
       ? defaultWindow
       : parsedTokens
     : effectiveLimit;
-  const editRouteWindow = contextModel?.contextWindowMax ?? defaultWindow;
+  const editRouteWindow = routeWindow;
   const overRouteWindow =
     editRouteWindow > 0 &&
     displayedLimit !== null &&
@@ -796,7 +805,7 @@ export function ModelAdvancedDrawer({
                                   disabled={paymentRequired || ctx.loading || localConfigurationBlocked}
                                   onClick={() => {
                                     ctxDirtyRef.current = false;
-                                    setCtxDraft(editableContextK(preset.tokens));
+                                    setCtxDraft(String(preset.tokens));
                                     void ctx.setLimit(preset.tokens);
                                   }}
                                 >{preset.label}</Button>
@@ -826,14 +835,15 @@ export function ModelAdvancedDrawer({
                                   }
                                 }}
                                 aria-invalid={ctxInvalid || undefined}
-                                inputMode="numeric"
+                                inputMode="text"
+                                maxLength={32}
                                 disabled={paymentRequired || ctx.loading || localConfigurationBlocked}
                                 aria-label={t(
                                   'settings.providers.models.advanced.contextLimitAria',
                                 )}
-                                className="w-20 bg-transparent text-center text-13 tabular-nums text-[var(--text-primary)] outline-none"
+                                className="w-28 bg-transparent text-center text-13 tabular-nums text-[var(--text-primary)] outline-none"
                               />
-                              <span className="text-11 text-[var(--text-tertiary)]">K</span>
+                              <span className="text-11 text-[var(--text-tertiary)]">tokens</span>
                             </span>
                             <span className="min-w-0 flex-1 text-11 tabular-nums text-[var(--text-tertiary)]">
                               {t('settings.providers.models.advanced.contextLimitRoute', {
@@ -858,7 +868,7 @@ export function ModelAdvancedDrawer({
                             <p role="status" className="mt-1.5 text-12 text-[var(--warning-fg)]">
                               {t(
                                 `settings.providers.models.advanced.${ctxInvalid ? 'contextInvalid' : ctx.error ? 'contextWriteFailed' : 'contextMixed'}`,
-                                { min: minimumContextK },
+                                { min: formatExactTokens(minimumContextK * 1000, locale), max: formatExactTokens(maximumContext, locale) },
                               )}
                             </p>
                           )}
