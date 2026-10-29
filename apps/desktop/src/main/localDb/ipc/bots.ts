@@ -40,6 +40,7 @@ import {
 import { assertTrustedAppRendererEvent } from '../../security/trustedAppRenderer.js';
 import { isDeviceLinkInvoke } from '../../device-link/invoke-context.js';
 import { requireObject, requireString, throwIpcError } from '../../utils/ipcValidate.js';
+import { isIpcError } from '../../../shared/ipc-errors.js';
 import { isBotVisibleRemotely } from './botRemoteVisibility.js';
 import { readRemoteBotSessionAccess, readRemoteBotSessionAccessBatch } from './botRemoteSessionAccess.js';
 import { setRemoteBotSessionLookup } from '../../device-link/remoteBotSessionBoundary.js';
@@ -475,7 +476,8 @@ async function findBotOwnedLaneSession(
 /**
  * The owner can archive these lanes from the task list. Like an archived automation
  * target, the next trigger resumes the same Session (and its context) instead of
- * starting another one; a lane deleted meanwhile falls through to a new Session.
+ * starting another one. Only a lane deleted meanwhile falls through to a new Session;
+ * any other failure propagates so the caller retries rather than losing the context.
  */
 async function resumeArchivedBotOwnedLaneSession(
   botId: string,
@@ -487,7 +489,8 @@ async function resumeArchivedBotOwnedLaneSession(
   try {
     await restoreArchivedSessionForSend(archived);
   } catch (error) {
-    log.warn('archived bot lane could not be resumed; starting a new one', { sessionId: archived, error: String(error) });
+    if (!(isIpcError(error) && error.code === 'NOT_FOUND')) throw error;
+    log.warn('archived bot lane was deleted before it resumed; starting a new one', { sessionId: archived });
     return null;
   }
   return archived;
