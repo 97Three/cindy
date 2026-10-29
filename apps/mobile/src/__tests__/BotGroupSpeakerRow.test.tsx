@@ -19,6 +19,7 @@ vi.mock('react-native', () => ({
   View: ({ children, testID, accessibilityLabel }: any) => el('div', { 'data-testid': testID, 'aria-label': accessibilityLabel }, children),
   StyleSheet: { create: (value: unknown) => value },
 }));
+vi.mock('@/auth/AuthContext', () => ({ useAuth: () => ({ accountGeneration: 1 }) }));
 vi.mock('@/components/MobilePrimitives', () => ({ MainWindowActionButton: ({ action }: any) => el('button', { onClick: action.onPress }, action.label) }));
 vi.mock('expo-router', () => ({ useRouter: () => ({ push: h.push }), useFocusEffect: (effect: () => void) => useEffect(effect, [effect]) }));
 vi.mock('lucide-react-native', () => ({ CircleAlert: () => null, Sparkles: () => null }));
@@ -38,6 +39,8 @@ vi.mock('@/session/remoteSessionStore', () => ({
 vi.mock('@/session/useCompanionGenerationCopy', () => ({
   useCompanionGenerationCopy: (input: { phase: string | null; active: boolean }) => { h.copy(input); return input.active ? `copy:${input.phase}` : null; },
 }));
+vi.mock('@/session/TeammateProcess', () => ({ useTeammateElapsedTitle: () => 'Working', TeammateWorkSegment: ({ title, children }: any) => el('div', null, title, children), TeammateProcessLink: ({ title, onPress }: any) => el('button', { onClick: onPress }, title), TeammateProcess: ({ title, children }: any) => el('section', null, el('span', { 'data-testid': 'status' }, title), children) }));
+vi.mock('@/session/BotGroupMessageText', () => ({ BotGroupMarkdownText: ({ content }: any) => el('p', null, content) }));
 vi.mock('@/session/WorkingStatusText', () => ({ WorkingStatusText: ({ text }: any) => el('span', { 'data-testid': 'status' }, text) }));
 
 vi.mock('@/hooks/useReduceMotion', () => ({ useReduceMotionEnabled: () => true }));
@@ -67,7 +70,7 @@ it('follows the speaking lane while focused and seeds its pending prompts', asyn
   expect(h.invoke).toHaveBeenCalledWith('mac', 'maker:get-pending-interactions', ['s1']);
   expect(h.setPending).toHaveBeenCalledWith('s1', [{ request: { requestId: 'r1' } }], { deviceId: 'mac' });
   // No observed phase must not falsely claim thinking.
-  expect(node.textContent).toContain('copy:processing');
+  expect(node.textContent).toContain('Working');
   await act(async () => root.unmount());
   expect(h.unsubscribe).toHaveBeenCalledWith(expect.stringMatching(/^bot-group-speaker:s1:focus:/), 'mac', ['session:s1']);
   root = createRoot(node);
@@ -76,12 +79,12 @@ it('follows the speaking lane while focused and seeds its pending prompts', asyn
 it('uses the live phase, and plain copy while planning or before a step reports one', async () => {
   h.live.s1 = { sessionId: 's1', phase: 'running', compactDetail: '', workingPhase: 'reading-file' };
   await render({});
-  expect(node.textContent).toContain('copy:reading-file');
+  expect(node.textContent).toContain('Working');
   await render({ activity: 'planning', sessionId: null });
   expect(node.textContent).toContain(i18n.t('groupChat.speaking.planning'));
-  expect(h.copy).toHaveBeenLastCalledWith(expect.objectContaining({ active: false }));
+  expect(h.copy).not.toHaveBeenCalled();
   await render({ activity: 'step', sessionId: 's2' });
-  expect(node.textContent).toContain(i18n.t('groupChat.speaking.step'));
+  expect(node.textContent).toContain('Working');
 });
 
 it('shows the teammate’s pending prompt inline instead of the working line', async () => {
@@ -89,13 +92,13 @@ it('shows the teammate’s pending prompt inline instead of the working line', a
   await render({});
   expect(h.panel).toMatchObject({ companion: true, embedded: true, deviceId: 'mac', sessionId: 's1', interactions: h.pending.s1 });
   expect(h.panel.companionIdentity.name).toBe('阿布');
-  expect(node.querySelector('[data-testid="status"]')).toBeNull();
+  expect(node.querySelector('[data-testid="panel"]')).not.toBeNull();
 });
 
 it('says it is waiting when the host reports a prompt the phone cannot show yet', async () => {
   h.live.s1 = { sessionId: 's1', phase: 'needs-interaction', compactDetail: '' };
   await render({});
-  expect(node.querySelector('[data-testid="botGroup.speaking.waiting"]')?.textContent).toBe(i18n.t('groupChat.waitingConfirm', { name: identity.name }));
+  expect(node.querySelector('[data-testid="status"]')?.textContent).toBe(i18n.t('groupChat.waitingConfirm', { name: identity.name }));
   expect(h.panel).toBeNull();
 });
 

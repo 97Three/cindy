@@ -1,12 +1,13 @@
+import { TeammateProcessStatus } from '@/features/bots/TeammateProcessStatus';
 import { scrollRangeIntoView } from '@/lib/scrollRangeIntoView';
 import { historyAfter } from './historyAfter';
 import { readMailCard } from '@cindy/maker-shared/ghost-card-form';
 import { animateFocusScroll } from './animateFocusScroll';
-import { simplifyBotRenderItems } from '@/features/bots/botConversationPresentation';
+import { botProcessItems } from '@/features/bots/botConversationPresentation';
 import { isVisibleVoiceCallMessage } from '@/features/bots/voice/voiceCallPresentation';
 import { MessageViewport, type MessageViewportApi } from './MessageViewport';
 import { PAGE_TEXT_NAVIGATION_EVENT } from '@/lib/pageTextAccess';
-export { simplifyBotRenderItems } from '@/features/bots/botConversationPresentation';
+export { botProcessItems, simplifyBotRenderItems } from '@/features/bots/botConversationPresentation';
 import { placeBotTaskCardsAfterIntroduction } from '@cindy/maker-shared/botCollaboration';
 import { describeToolUse, sourcePathCandidatesFromDescriptor } from '@cindy/maker-shared/tool-use-descriptor';
 /**
@@ -2957,6 +2958,7 @@ export const WorkGroupRenderItemView = memo(function WorkGroupRenderItemView({
     }
     return {
       kind: 'rendered',
+      prose: child.type === 'message' && child.message.role === 'assistant' && !child.message.systemCardType,
       key: child.key,
       renderNode: () => renderWorkGroupChild(child, context),
     };
@@ -2974,6 +2976,8 @@ export const WorkGroupRenderItemView = memo(function WorkGroupRenderItemView({
       compact={compact}
       deferred={item.deferred}
       fitHeader={Boolean(replyColumnSpacer)}
+      journal={item.teammateJournal}
+      journalTitle={item.isStreaming ? elapsed => <TeammateProcessStatus sessionId={context.sessionId}>{elapsed}</TeammateProcessStatus> : undefined}
     />
   );
   return (
@@ -3389,7 +3393,7 @@ export function MessageStream({
       forkOrigin,
     );
     return simplifiedBotConversation
-      ? simplifyBotRenderItems(grouped, isSessionStreaming, visibleGeneratedFileKeys)
+      ? botProcessItems(grouped, isSessionStreaming)
       : grouped;
   }, [
     ungroupedRenderItems,

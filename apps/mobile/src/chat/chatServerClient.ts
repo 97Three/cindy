@@ -1,3 +1,4 @@
+import { readBotGroupProcessCard } from '@cindy/maker-shared/botGroupChat';
 import { inferBotTemplatePresetId } from '@cindy/maker-shared/bot-template-preset';
 import { createConversationListState } from '@cindy/maker-shared/chatConversationList';
 import type { ChatHistory } from '@cindy/maker-shared/chat-history';
@@ -88,7 +89,7 @@ export function chatRejection(error: unknown, status: number, code: string): Rec
 // A task card is the message's task only on a teammate's own message (bot-group-chat.md §10).
 const taskCardOf = (message: ChatMessage) => message.author.kind === 'bot' ? message.content.map(readBotGroupTaskCard).find(Boolean) ?? null : null;
 const bodyBlocks = (message: ChatMessage) => message.deleted || readImportedBotGroupRuntimeFailureCode(message) ? []
-  : message.content.filter(block => !readBotGroupQuoteCard(block) && !(message.author.kind === 'bot' && readBotGroupTaskCard(block)));
+  : message.content.filter(block => !readBotGroupProcessCard(block) && !readBotGroupQuoteCard(block) && !(message.author.kind === 'bot' && readBotGroupTaskCard(block)));
 // Media blocks are the message's attachments; only the list preview falls back to their names.
 const contentText = (message: ChatMessage) => bodyBlocks(message)
   .flatMap(block => block.type === 'media' ? [] : [block.text ?? block.fallback ?? '']).join('\n');
@@ -224,8 +225,9 @@ export function chatGroupView(page: ChatPage, selfId: string, actors: readonly C
     const joinedName = joinedMemberName(message);
     const quote = message.origin === 'system' ? null : readBotGroupQuote(message.content);
     const task = message.origin === 'system' ? null : taskCardOf(message);
+    const process = !message.deleted && message.origin !== 'system' && message.author.kind === 'bot' ? message.content.map(readBotGroupProcessCard).find(Boolean) : null;
     return { id: message.id, sequence: index + 1, serverSequence: chatCursor(message.seq), kind: message.origin === 'system' ? 'notice' : 'message',
-      ...(task ? { task } : {}), threadRootId: message.threadRootId,
+      ...(task ? { task } : {}), ...(process ? { process } : {}), threadRootId: message.threadRootId,
       authorKind: message.origin === 'system' ? 'system' : message.author.kind === 'human' ? 'user' : 'bot',
       authorBotId: message.authorId, authorName: joinedName !== undefined ? joinedName
         : member ? memberName(member, ownerMembers) : message.author.name,

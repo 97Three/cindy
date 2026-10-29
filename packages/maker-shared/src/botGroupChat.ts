@@ -1,3 +1,5 @@
+import type { BotGroupProcessRef } from './botGroupProcess.js';
+export * from './botGroupProcess.js';
 /**
  * Bot group chat wire contract shared by Desktop main, preload and renderer.
  * Product rules: docs/product-rules/bot-group-chat.md.
@@ -145,6 +147,8 @@ export interface BotGroupMemberView {
 }
 
 export interface BotGroupMessageView {
+  /** Owner-only process reads use the existing task permission; this is only a public locator. */
+  process?: BotGroupProcessRef;
   /** Server tombstone; it cannot anchor a runtime failure notice. */
   deleted?: boolean;
   isSelf?: boolean;

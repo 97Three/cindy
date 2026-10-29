@@ -4024,3 +4024,16 @@ Slack 复用既有 user-token 工具网关，在 `listTools` 增加 `cindy_get_m
 才能直接看图。Slack 权限继续由原绑定用户的 Slack 授权决定，无新增 scope/env。
 
 X 属于公开帖子接入，本轮不新增付费历史抓取；其已有推文上下文自动带图路径不变。
+
+## 伙伴群聊过程关联（2026-10-29）
+
+完成答复在既有 `ChatContentBlock` 列表末尾附可选 `cindy.work-record` v1 card，
+只含 `groupId / executionId / sessionId / clientId`；`fallback` 为空，正文与附件次序不变。
+旧客户端忽略未知 card 或读取空 fallback，仍能阅读原答复；新版遇到旧消息缺少关联时不补猜任务。
+新版 Desktop / Mobile 只在伙伴答复上投影 `process`，群和话题共用组件，并核对群 ID 与伙伴归属。
+关联不授予权限：阶段文字通过既有同账号设备授权的 `local-db:messages:around-client-id` 精确读取，
+遇到下一个用户输入或本轮终态停止，原始思考和工具结果不进入群消息。
+不增加 device-link RPC、relay 帧、权限或数据库 migration；自建中转仍透传既有调用，无服务端代码变更。
+没有真实 Chat Server 或自建中转互通验收时，客户端测试不可表述为服务端已验收。
+
+过程关联可附带非负 `durationMs`，在执行终态固定；上传和回执重试不增加该值。旧记录缺少此值时，展开后由原始时间戳计算；未知时间不编造。

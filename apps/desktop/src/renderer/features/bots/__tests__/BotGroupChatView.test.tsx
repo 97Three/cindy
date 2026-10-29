@@ -71,6 +71,7 @@ vi.mock('react-i18next', async (original) => ({
     i18n: { language: 'en-US', resolvedLanguage: 'en' },
   }),
 }));
+vi.mock('@/features/cc-agent/hooks/useRemoteSessionSync', () => ({ useRemoteSessionSync: () => {} }));
 vi.mock('react-router-dom', () => ({
   useLocation: () => ({ pathname: '/bots/groups/g1', search: '' }),
   useNavigate: () => mocks.navigate,
@@ -1263,9 +1264,9 @@ describe('BotGroupChatView', () => {
       }),
     });
     renderView();
-    const speaking = await screen.findByTestId('bot-group-speaking');
+    const speaking = await screen.findByTestId('bot-group-progress');
     expect(speaking.textContent).toContain('咪咪');
-    expect(speaking.textContent).toContain('phase:processing');
+    expect(speaking.textContent).toContain('chat.teammateProcess.elapsed');
     expect(screen.getByTestId('pending-interaction').textContent).toBe('lane-mimi');
     expect(screen.queryByRole('button', { name: 'bots.groupChat.timeline.continue' })).toBeNull();
 
@@ -1293,8 +1294,8 @@ describe('BotGroupChatView', () => {
       }),
     });
     renderView();
-    await screen.findAllByTestId('bot-group-speaking');
-    const rows = screen.getAllByTestId('bot-group-speaking');
+    await screen.findAllByTestId('bot-group-progress');
+    const rows = screen.getAllByTestId('bot-group-progress');
     expect(rows.map((row) => row.textContent?.includes('咪咪') ? 'mimi' : row.textContent?.includes('小满') ? 'xiaoman' : '?'))
       .toEqual(['mimi', 'xiaoman']);
     expect(screen.getAllByTestId('pending-interaction').map((node) => node.textContent))
@@ -2719,11 +2720,13 @@ describe('BotGroupChatView', () => {
       });
       renderView();
       const rows = await screen.findAllByTestId('bot-group-speaking');
-      expect(rows.map((row) => row.getAttribute('data-activity'))).toEqual(['planning', 'step']);
+      expect(rows.map((row) => row.getAttribute('data-activity'))).toEqual(['planning']);
+      const step = await screen.findByTestId('bot-group-progress');
+      expect(step.textContent).toContain('小满');
       // The row already names the Bot; planning has no Session phase, a step shows its live phase.
       expect(rows[0]!.textContent).toContain('bots.groupChat.speaking.planning');
       expect(rows[0]!.textContent).not.toContain('bots.groupChat.speaking.planning:');
-      expect(rows[1]!.textContent).not.toContain('bots.groupChat.speaking.planning');
+      expect(step.textContent).not.toContain('bots.groupChat.speaking.planning');
       expect(screen.getAllByTestId('pending-interaction').map((node) => node.textContent)).toEqual(['plan-xiaoman']);
     });
 
@@ -3307,11 +3310,11 @@ describe('Telegram / Slack-grade timeline', () => {
     }) });
     renderView();
     const strip = await screen.findByTestId('bot-group-progress');
-    expect(strip.textContent).toContain('phase:processing');
+    expect(strip.textContent).toContain('chat.teammateProcess.elapsed');
     expect(strip.textContent).not.toContain('bots.groupChat.progress.step');
   });
 
-  it('pins a progress strip above the composer while a plan step runs', async () => {
+  it('keeps the running step and its confirmations in the timeline', async () => {
     const running = plan({
       status: 'running',
       currentStep: 0,
@@ -3324,9 +3327,8 @@ describe('Telegram / Slack-grade timeline', () => {
     }) });
     renderView();
     const strip = await screen.findByTestId('bot-group-progress');
-    expect(strip.textContent).toContain('bots.groupChat.progress.step');
+    expect(strip.textContent).toContain('chat.teammateProcess.elapsed');
     expect(strip.textContent).toContain('想清楚这页讲什么');
-    expect(strip.textContent).toContain('bots.groupChat.progress.elapsed');
     // The strip stands in for the step's speaking line; its confirmations stay in the timeline.
     expect(screen.queryByTestId('bot-group-speaking')).toBeNull();
     expect(screen.getByTestId('pending-interaction').textContent).toBe('plan-mimi');

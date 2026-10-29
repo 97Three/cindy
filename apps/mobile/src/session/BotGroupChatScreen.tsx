@@ -1,3 +1,4 @@
+import { BotGroupProcess } from './BotGroupProcess';
 import { deviceDisplayName } from '@/device-link/deviceName';
 import { pendingChatMessage } from '@/chat/chatOutbox';
 import { useDelayedConnectionNotice } from '@/components/ConnectionNoticeOverlay';
@@ -475,6 +476,8 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId, messageId, n
           onPlanAction={(action, planId) => void runPlanAction(action, planId)}
           onEditStep={(planId, step, action, botId) => void editPlanStep(planId, step, action, botId)}
           onInteractionError={(message) => { if (message) Alert.alert(message); }} />
+      <BotGroupWorkArea group={group} deviceId={deviceId} online={chat.online} identityFor={identityFor}
+        onError={message => { if (message) Alert.alert(message); }} />
       </ScrollView>
       </MessageListVisibilityContext.Provider>
       {newMessageCount > 0 ? <View style={styles.newMessages} accessibilityLiveRegion="polite">
@@ -492,8 +495,7 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId, messageId, n
         <View style={styles.flex}><BotGroupQuote display={resolveBotGroupQuote(replyTo, group.messages)} onPress={() => locateMessage(replyTo.messageId)} /></View>
         <MainWindowActionButton density="compact" action={{ label: t('message.quote.remove'), onPress: () => setReplyTo(null), testID: 'botGroup.cancelReply' }} />
       </View> : null}
-      <BotGroupWorkArea group={group} deviceId={deviceId} online={chat.online} identityFor={identityFor}
-        onError={message => { if (message) Alert.alert(message); }} />
+
       <BotGroupComposer members={group.members} identityFor={identityFor} deviceId={deviceId} online={(chat.online || !!chat.canQueue) && !group.archived && !group.dissolvedAt}
         quoteMessageId={replyTo?.messageId} focusRequest={replyFocusRequest}
         running={group.round.status === 'running'} planState={botGroupComposerPlanState(openBotGroupPlan(group), group.replyMode)}
@@ -592,7 +594,7 @@ export function BotGroupTimeline({
         onLayout={event => onMessageLayout?.(message.id, event.nativeEvent.layout.y, event.nativeEvent.layout.height)}>
         {groupTime !== undefined ? <Text style={styles.time}>{formatBotMessageGroupTime(groupTime, i18n.language)}</Text> : null}
         <CompanionEntering id={key} createdAt={message.createdAt} kind={message.authorKind === 'user' ? 'send' : 'reply'}>
-        <BotGroupTimelineItem message={message} continued={continued} member={message.authorBotId ? memberById.get(message.authorBotId) : undefined}
+        <BotGroupTimelineItem groupId={group.id} message={message} continued={continued} member={message.authorBotId ? memberById.get(message.authorBotId) : undefined}
           quoteDisplay={message.quote ? resolveBotGroupQuote(message.quote, messages) : undefined}
           onLocateQuote={message.quote && onLocateMessage ? () => onLocateMessage(message.quote!.messageId) : undefined}
           members={group.members} deviceId={deviceId} online={online} identityFor={identityFor} mentionLabels={mentionLabels}
@@ -630,9 +632,10 @@ export function BotGroupTimeline({
 }
 
 function BotGroupTimelineItem({
-  message, continued = false, quoteDisplay, onLocateQuote, member, members, deviceId, online, identityFor, mentionLabels, resolveMedia, resolveServerMedia, canContinue, continuing, onContinue,
+  groupId, message, continued = false, quoteDisplay, onLocateQuote, member, members, deviceId, online, identityFor, mentionLabels, resolveMedia, resolveServerMedia, canContinue, continuing, onContinue,
   plan, planActionable, planReassignable, planPending, onPlanAction, onEditStep,
 }: {
+  groupId: string;
   message: BotGroupMessageView;
   /** Same teammate as the message just above: no second avatar or name. */
   continued?: boolean;
@@ -715,6 +718,8 @@ function BotGroupTimelineItem({
         <Text numberOfLines={1} style={styles.authorName}>{author.name}</Text>
         {isPlanCard ? <BotGroupOrganizerTag /> : null}
       </View>}
+      {message.process && message.process.groupId === groupId ? <BotGroupProcess process={message.process} owned={member?.isOwned === true}
+        deviceId={member?.homeDeviceId || deviceId || ''} /> : null}
       {isPlanCard
         ? <BotGroupPlanCard plan={plan} members={members} identityFor={identityFor} deviceId={deviceId} online={online}
           actionable={planActionable} reassignable={planReassignable} pending={planPending}

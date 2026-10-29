@@ -1,3 +1,4 @@
+import { BotGroupProcess } from './BotGroupProcess';
 /**
  * 群聊时间线的一行（主时间线与话题面板共用），与伙伴私聊同一套气泡：
  *
@@ -518,6 +519,8 @@ function BotGroupTimelineItemImpl(props: BotGroupTimelineItemProps) {
           ) : null}
           <div className={cn('relative flex min-w-0 flex-col', BUBBLE_COLUMN_CLASS)}>
             <ChatMessageReactions corner groupId={props.reactionGroupId} message={message} members={members} reactionRevision={props.reactionRevision} onChanged={props.onChanged} />
+            {message.process && message.process.groupId === props.reactionGroupId ? <BotGroupProcess process={message.process}
+              member={members.find(member => member.botId === message.authorBotId)} /> : null}
             <div data-testid="bot-group-bubble"
               className={cn('relative flex min-w-0 max-w-full flex-col gap-2 rounded-xl border border-[var(--border-default)] bg-[var(--surface-elevated)] px-3.5 py-2.5 text-[var(--msg-assistant-text)]', CHAT_BODY_CLASS)}>
               {isPlanCard ? (

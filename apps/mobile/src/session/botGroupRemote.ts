@@ -15,6 +15,7 @@ import {
   isBotGroupRuntimeFailureCode,
   parseBotGroupQuoteView,
   parseBotGroupTaskCardView,
+  parseBotGroupProcessRef,
   type BotGroupAttachment,
   type BotGroupAttachmentCategory,
   type BotGroupErrorCode,
@@ -221,6 +222,7 @@ function parseMessage(value: unknown): BotGroupMessageView | null {
   const quote = parseBotGroupQuoteView(record.quote);
   // A task this teammate started from the group (bot-group-chat.md §10); older computers send none.
   const task = authorKind === 'bot' ? parseBotGroupTaskCardView(record.task) : null;
+  const process = authorKind === 'bot' && record.deleted !== true ? parseBotGroupProcessRef(record.process) : null;
   return {
     id: messageId,
     sequence,
@@ -242,6 +244,7 @@ function parseMessage(value: unknown): BotGroupMessageView | null {
     ...(record.deleted === true ? { deleted: true } : {}),
     ...(quote ? { quote } : {}),
     ...(task ? { task } : {}),
+    ...(process ? { process } : {}),
     attachments: Array.isArray(record.attachments)
       ? record.attachments.slice(0, BOT_GROUP_ATTACHMENTS_MAX).flatMap((raw) => {
         const attachment = parseAttachment(raw);
