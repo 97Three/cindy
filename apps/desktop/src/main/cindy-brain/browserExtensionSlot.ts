@@ -423,11 +423,12 @@ export class GhostBrowserExtensionSlot {
   // ── 页面控制:Browser Use 的「我的浏览器」执行端 ─────────────────────────
 
   getPageControl(): UserBrowserPageControl | null {
-    for (const entry of this.entries.values()) {
+    for (const [instanceId, entry] of this.entries) {
       if (entry.ghost.manifest.browserExtension?.pageControl === true) {
         return {
           bridge: entry.bridge,
           ghostId: entry.ghost.manifest.id,
+          instanceId,
           pluginName: entry.ghost.manifest.name,
         };
       }

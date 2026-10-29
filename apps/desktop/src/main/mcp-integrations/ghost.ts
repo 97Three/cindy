@@ -1677,13 +1677,14 @@ const ghostVisibilityDeps = {
  * pageControlReplaces 工具与手册此时对 Agent 隐藏:操作用户浏览器只留 Browser Use
  * 一套。未接线或桥接未运行时返回 null,插件工具照常可用。
  */
+/** 返回承接页面控制的插件实例标识(installedGhostStoragePart)。 */
 let pageControlGhostProvider: () => string | null = () => null;
 export function setPageControlGhostProvider(provider: () => string | null): void {
   pageControlGhostProvider = provider;
 }
 function pageControlHidden(ghost: InstalledGhost): { tools: Set<string>; manual: Set<string> } | null {
   const replaces = ghost.manifest.browserExtension?.pageControlReplaces;
-  if (!replaces || pageControlGhostProvider() !== ghost.manifest.id) return null;
+  if (!replaces || pageControlGhostProvider() !== installedGhostStoragePart(ghost)) return null;
   return { tools: new Set(replaces.tools), manual: new Set(replaces.manual ?? []) };
 }
 const PAGE_CONTROL_TOOL_MESSAGE =

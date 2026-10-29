@@ -73,6 +73,7 @@ function fakeControl(
   const control: UserBrowserPageControl = {
     bridge: bridge as unknown as UserBrowserPageControl['bridge'],
     ghostId: 'my-browser',
+    instanceId: 'my-browser',
     pluginName: 'Cindy Chrome',
   };
   return { control, jobs, responses, tabs };

@@ -2506,7 +2506,7 @@ setIsDetachedForBackend(() => readRsbWindowSettings().detached);
 // 这里倒置依赖,browser.ts 不反向 import 插件基座。
 setUserBrowserPageControlProvider(() => getGhostBrowserExtensionSlot().getPageControl());
 // The plugin providing "My browser" hides its own page tools from agents: one way to drive the user's browser.
-setPageControlGhostProvider(() => getGhostBrowserExtensionSlot().getPageControl()?.ghostId ?? null);
+setPageControlGhostProvider(() => getGhostBrowserExtensionSlot().getPageControl()?.instanceId ?? null);
 setBrowserSessionUploadRootResolver(async (sessionId) => {
   try {
     const meta = await getMakerCore().getSessionMeta(sessionId);

@@ -195,7 +195,7 @@ describe('browserExtensionSlot · 桥接随花名册启停', () => {
     });
     expect(bridges[0].started).toBe(true);
     expect(natives[0].install).toHaveBeenCalledWith(18810, [CHROME_ID]);
-    expect(slot.getPageControl()).toMatchObject({ ghostId: 'my-browser', pluginName: 'Ext Ghost' });
+    expect(slot.getPageControl()).toMatchObject({ ghostId: 'my-browser', instanceId: '_root__my-browser', pluginName: 'Ext Ghost' });
     // 幂等:同一份花名册不重建。
     slot.reconcile(ghosts);
     await settle();

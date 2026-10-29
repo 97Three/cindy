@@ -32,6 +32,8 @@ import type { BackendRequest, BackendResult, BrowserBackend } from './types.js';
 export interface UserBrowserPageControl {
   bridge: BrowserExtensionBridge;
   ghostId: string;
+  /** 已装实例标识(同一插件 ID 可有根实例与组织实例);用来精确匹配被取代工具所属的实例。 */
+  instanceId: string;
   pluginName: string;
 }
 

@@ -26,6 +26,7 @@ import { t } from '../../i18n';
 import { Session } from '@cindy/maker-core';
 import { resolveGhostFsSessionSnapshot } from '../../maker-ipc/ghostFsSessionSnapshot';
 import { createIpcError } from '../../../shared/ipc-errors';
+import { installedGhostStoragePart } from '../../../shared/pluginIdentity';
 import type { CindyGhostsHostDeps } from '../ghost';
 import type { GhostInstallConsentPrompt } from '../../cindy-brain/ghostInstallConsent';
 import type { InstalledGhost, GhostSetupAssessment } from '../../../shared/ghost';
@@ -3715,7 +3716,7 @@ describe('「我的浏览器」取代插件自有页面工具', () => {
 
   it('宿主经该插件提供页面控制时,只隐藏被取代的工具与手册;调用被引导到 browser 工具', async () => {
     listMock.mockReturnValue([pageControlGhost()]);
-    setPageControlGhostProvider(() => 'my-browser');
+    setPageControlGhostProvider(() => installedGhostStoragePart(pageControlGhost() as InstalledGhost));
     const deps = makeDeps();
     const [ghost] = await deps.listAwakeGhosts();
     expect(ghost.tools.map((tool) => tool.name)).toEqual(['browser_policy']);
