@@ -14,8 +14,9 @@ import { BotGroupMarkdownText } from './BotGroupMessageText';
 
 export function BotGroupProcess({ process, owned, deviceId }: { process: BotGroupProcessRef; owned: boolean; deviceId: string }) {
   const { accountGeneration } = useAuth();
-  if (!owned || !deviceId) return null;
-  return <BotGroupProcessHistory key={accountGeneration} process={process} deviceId={deviceId} />;
+  const executionDeviceId = process.deviceId || deviceId;
+  if (!owned || !executionDeviceId) return null;
+  return <BotGroupProcessHistory key={accountGeneration} process={process} deviceId={executionDeviceId} />;
 }
 function BotGroupProcessHistory({ process, deviceId }: { process: BotGroupProcessRef; deviceId: string }) {
   const { t } = useTranslation();

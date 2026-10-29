@@ -821,6 +821,19 @@ describe('Chat Server result delivery and refresh', () => {
     data: { groupId: roomId, executionId: execution.id, sessionId: 'lane', durationMs: expect.any(Number),
       clientId: `bot-group:${roomId}:${execution.id}:local-bot` } };
 
+  // Unit: the historical locator must keep the executing host even if the
+  // companion moves later; the production completion payload is the evidence.
+  it('records the execution computer in the completed process locator', async () => {
+    service.dispose();
+    fixture.handle.mockImplementation(route => route === '/me'
+      ? { body: { actor: { id: selfId }, deviceId: 'execution-mac' } } : response(route));
+    service = withChatServer({ dispose: vi.fn() } as unknown as BotGroupChatService, deps);
+    await start();
+    await service.settleLaneTurn(terminal);
+    expect(deliveries()[0][2].content).toContainEqual({ ...processRecord,
+      data: { ...processRecord.data, deviceId: 'execution-mac' } });
+  });
+
   // #6418: media visibility changes, but the original reply still determines
   // continuation. The helper mock isolates import/ledger tests from settlement.
   const replyImage = { id: 'image', name: 'image.png', category: 'image' as const,

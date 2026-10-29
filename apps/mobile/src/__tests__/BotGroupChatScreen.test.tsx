@@ -1602,15 +1602,17 @@ it('renders component body as readable text without changing the message', async
 
 // Unit: the actual main/thread timeline must retain owner-only historical progress.
 // The remote resource parser and the disclosure state have separate regression coverage.
-it.each([undefined, 'thread-root'])('keeps group process above the final answer in main and replies (thread=%s)', async threadRootId => {
-  const process = { groupId: 'g1', executionId: 'execution', sessionId: 'lane', clientId: 'source' };
+it.each([
+  [undefined, undefined], ['thread-root', undefined], [undefined, 'original-mac'], ['thread-root', 'original-mac'],
+])('keeps group process above the final answer on its execution host (thread=%s, host=%s)', async (threadRootId, deviceId) => {
+  const process = { groupId: 'g1', executionId: 'execution', sessionId: 'lane', clientId: 'source', deviceId };
   const data = group({ plans: [], openPlan: null, members: [{ ...group().members[0], isOwned: true, homeDeviceId: 'owner-mac' }],
     messages: [message('result', 2, { authorBotId: 'mimi', content: 'Final answer', process, threadRootId })] });
   h.processRead.mockResolvedValue([{ clientId: 'source', role: 'user', content: 'Help' },
     { clientId: 'note', role: 'assistant', content: 'Progress note', agentMeta: { assistantPhase: 'commentary' } },
     { clientId: 'seal', role: 'assistant', content: 'Final answer', agentMeta: { turnCompleted: true } }]);
   await render(data, 'ready', threadRootId);
-  expect(h.processRead).toHaveBeenCalledWith('owner-mac', 'local-db:messages:around-client-id', ['lane', 'source', { radius: 80 }]);
+  expect(h.processRead).toHaveBeenCalledWith(deviceId ?? 'owner-mac', 'local-db:messages:around-client-id', ['lane', 'source', { radius: 80 }]);
   expect(node.textContent).toContain('Progress note');
   const record = [...node.querySelectorAll('section')].find(section => section.textContent?.includes('Progress note'))!;
   expect(record.textContent).not.toContain('Final answer');

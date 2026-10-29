@@ -9,6 +9,7 @@ describe('group process record', () => {
   it('posts a locator only; unsupported revisions are left to existing card fallback', () => {
     const card = botGroupProcessCard(ref);
     expect(readBotGroupProcessCard(card)).toEqual(ref);
+    expect(readBotGroupProcessCard(botGroupProcessCard({ ...ref, deviceId: 'execution-mac' }))).toEqual({ ...ref, deviceId: 'execution-mac' });
     expect(readBotGroupProcessCard({ ...card, schemaRevision: 2 })).toBeNull();
     expect(readBotGroupProcessCard({ ...card, data: { ...ref, sessionId: '' } })).toBeNull();
     expect(card.fallback).toBe('');

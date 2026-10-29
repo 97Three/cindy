@@ -16,8 +16,10 @@ export function BotGroupProcess({ process, member }: { process: BotGroupProcessR
   const actor = cloud.actors.find(actor => actor.id === member?.botId || actor.externalId === member?.botId);
   if (!member || member.isOwned === false || (!actor && member.isOwned !== true)) return null;
   const runsHere = companionRunsHere(cloud, profiles.map(bot => bot.id), actor?.externalId ?? member.botId);
-  const deviceId = runsHere ? undefined : actor?.homeDeviceId ?? member.homeDeviceId ?? undefined;
-  if (!runsHere && !deviceId) return null;
+  const deviceId = process.deviceId
+    ? process.deviceId === cloud.selfDeviceId ? undefined : process.deviceId
+    : runsHere ? undefined : actor?.homeDeviceId ?? member.homeDeviceId ?? undefined;
+  if (!process.deviceId && !runsHere && !deviceId) return null;
   return <BotGroupProcessHistory process={process} deviceId={deviceId} />;
 }
 function BotGroupProcessHistory({ process, deviceId }: { process: BotGroupProcessRef; deviceId?: string }) {

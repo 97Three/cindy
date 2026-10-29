@@ -4037,8 +4037,8 @@ X 属于公开帖子接入，本轮不新增付费历史抓取；其已有推文
 
 ## 伙伴群聊过程关联（2026-10-29）
 
-完成答复在既有 `ChatContentBlock` 列表末尾附可选 `cindy.work-record` v1 card，
-只含 `groupId / executionId / sessionId / clientId`；`fallback` 为空，正文与附件次序不变。
+完成答复在既有 `ChatContentBlock` 列表末尾附可选 `cindy.work-record` v1 card，包含可选执行电脑 `deviceId`（与伙伴当前主力电脑无关；缺失时兼容旧记录），
+必需字段仅 `groupId / executionId / sessionId / clientId`；`fallback` 为空，正文与附件次序不变。
 旧客户端忽略未知 card 或读取空 fallback，仍能阅读原答复；新版遇到旧消息缺少关联时不补猜任务。
 新版 Desktop / Mobile 只在伙伴答复上投影 `process`，群和话题共用组件，并核对群 ID 与伙伴归属。
 关联不授予权限：阶段文字通过既有同账号设备授权的 `local-db:messages:around-client-id` 精确读取，

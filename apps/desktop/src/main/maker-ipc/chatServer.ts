@@ -1977,7 +1977,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
             if (failureCodes.size > 1000) failureCodes.delete(failureCodes.keys().next().value!);
           }
           pending.payload = terminal.outcome === 'error' ? { detail: botGroupRuntimeFailureDetail(terminal.failureCode ?? 'RUNTIME_ERROR') }
-            : { ...(isBotGroupNoReplyText(text) && !files.length ? {} : { content: [{ type: 'text', text: contentText.slice(0, 16000) || '已完成' }, ...files, botGroupProcessCard({ groupId: run.execution.conversation_id, executionId: run.execution.id, sessionId: run.sessionId, clientId: run.clientId, durationMs: run.durationMs })] }),
+            : { ...(isBotGroupNoReplyText(text) && !files.length ? {} : { content: [{ type: 'text', text: contentText.slice(0, 16000) || '已完成' }, ...files, botGroupProcessCard({ groupId: run.execution.conversation_id, executionId: run.execution.id, sessionId: run.sessionId, clientId: run.clientId, durationMs: run.durationMs, ...(selfDeviceId ? { deviceId: selfDeviceId } : {}) })] }),
               // A single-speaker server never chains rounds, so there is nothing to continue.
               ...(singleSpeaker ? {} : { continueDiscussion: run.context?.kind !== 'member.joined' && !run.plan && !isBotGroupNoReplyText(text) }) };
         }

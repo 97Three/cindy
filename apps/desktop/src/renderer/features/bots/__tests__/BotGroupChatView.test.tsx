@@ -17,6 +17,7 @@ import { getBotGroupOutbox, getBotGroupOutboxPreviews, resetBotGroupOutboxForTes
 import { resetCompanionCloudStoreForTests } from '../companionCloudStore';
 import { botGroupWorkPreview } from '../BotGroupLivePreview';
 import { BotGroupChatView } from '../BotGroupChatView';
+import { BotGroupProcess } from '../BotGroupProcess';
 import { ControlledBanner, __resetControlledBannerForTests } from '../../remote-device/ControlledBanner';
 import type {
   BotGroupChangedPayload,
@@ -4219,4 +4220,20 @@ it.each([false, true])('keeps the group stop control enabled for another running
     fireEvent.click(buttons[0]!);
     await waitFor(() => expect(mocks.stopBotGroupRound).toHaveBeenCalledWith('g1'));
   }
+});
+
+
+// Unit: a companion home change does not move the group session history.
+// Exercise the actual historical disclosure and its existing device-link reader.
+it('reads historical group process from the execution computer after a home change', async () => {
+  const process = { groupId: 'g1', executionId: 'moved-home', sessionId: 'old-lane', clientId: 'source', deviceId: 'original-mac' };
+  mocks.remoteInvoke.mockResolvedValue([{ clientId: 'source', role: 'user', content: 'Request' },
+    { clientId: 'note', role: 'assistant', content: 'Original computer progress', agentMeta: { assistantPhase: 'commentary' } },
+    { clientId: 'seal', role: 'assistant', content: 'Final answer', agentMeta: { turnCompleted: true } }]);
+  const view = render(<Tooltip.Provider><BotGroupProcess process={process}
+    member={{ ...detail().members[0]!, isOwned: true, homeDeviceId: 'new-mac' }} /></Tooltip.Provider>);
+  fireEvent.click(view.container.querySelector('[data-teammate-process] button')!);
+  await screen.findByText('Original computer progress');
+  expect(mocks.remoteInvoke).toHaveBeenCalledWith('original-mac', 'local-db:messages:around-client-id', ['old-lane', 'source', { radius: 80 }]);
+  expect(mocks.remoteInvoke.mock.calls.every(([device]) => device === 'original-mac')).toBe(true);
 });

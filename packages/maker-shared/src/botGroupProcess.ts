@@ -7,6 +7,8 @@ export interface BotGroupProcessRef {
   executionId: string;
   sessionId: string;
   clientId: string;
+  /** Execution host, independent of the companion's current home. */
+  deviceId?: string;
   durationMs?: number;
 }
 export function botGroupProcessCard(ref: BotGroupProcessRef) {
@@ -26,6 +28,8 @@ export function parseBotGroupProcessRef(value: unknown): BotGroupProcessRef | nu
     && (data[key] as string).length > 0 && (data[key] as string).length <= 500)) return null;
   return { groupId: data.groupId as string, executionId: data.executionId as string,
     sessionId: data.sessionId as string, clientId: data.clientId as string,
+    ...(typeof data.deviceId === 'string' && data.deviceId.length > 0 && data.deviceId.length <= 500
+      ? { deviceId: data.deviceId } : {}),
     ...(typeof data.durationMs === 'number' && Number.isFinite(data.durationMs) && data.durationMs >= 0
       ? { durationMs: data.durationMs } : {}) };
 }
