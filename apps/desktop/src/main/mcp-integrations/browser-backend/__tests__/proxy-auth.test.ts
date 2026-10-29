@@ -229,6 +229,26 @@ describe('commandLineHasArgumentValue', () => {
     )).toBe(false);
   });
 
+  it('rejects a quoted value that carries a suffix after the closing quote', () => {
+    // `"<dir>"-backup` is a different profile that happens to start with the
+    // expected one. Matching it would let a foreign browser be killed.
+    expect(commandLineHasArgumentValue(
+      `chrome --user-data-dir="${dir}"-backup`,
+      '--user-data-dir',
+      dir,
+    )).toBe(false);
+    expect(commandLineHasArgumentValue(
+      `chrome --user-data-dir='${dir}'-backup`,
+      '--user-data-dir',
+      dir,
+    )).toBe(false);
+    expect(commandLineHasArgumentValue(
+      `chrome --remote-debugging-port="18800"0`,
+      '--remote-debugging-port',
+      '18800',
+    )).toBe(false);
+  });
+
   it('rejects a missing option', () => {
     expect(commandLineHasArgumentValue('chrome --headless', '--user-data-dir', dir)).toBe(false);
   });

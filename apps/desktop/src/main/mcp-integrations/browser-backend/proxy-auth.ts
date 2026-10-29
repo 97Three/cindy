@@ -199,9 +199,15 @@ export function commandLineHasArgumentValue(
     const rest = commandLine.slice(offset + marker.length);
     // The value may arrive quoted (Windows) or bare (POSIX, where a path can
     // contain spaces). Both must be followed by a delimiter so a longer value
-    // is not mistaken for the expected one.
-    const quoted = rest.startsWith(`"${value}"`) || rest.startsWith(`'${value}'`);
-    const bare = rest.startsWith(value) && (!rest[value.length] || /[\s"']/.test(rest[value.length]));
+    // is not mistaken for the expected one: `"<dir>"-backup` is a different
+    // profile, and killing it would terminate an unrelated browser.
+    const isDelimited = (end: number): boolean => {
+      const after = rest[end] ?? '';
+      return after === '' || /[\s"']/.test(after);
+    };
+    const quoted = [`"${value}"`, `'${value}'`].some((form) =>
+      rest.startsWith(form) && isDelimited(form.length));
+    const bare = rest.startsWith(value) && isDelimited(value.length);
     if ((!before || /[\s"']/.test(before)) && (quoted || bare)) return true;
     offset = commandLine.indexOf(marker, offset + 1);
   }
