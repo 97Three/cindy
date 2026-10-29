@@ -29,8 +29,9 @@ export default {
     states: {
       about: 'Shared solid-dot states in expanded rows and collapsed overflow',
       data: { profiles: profiles.slice(0, 5).map((bot, index) => ({ ...bot,
+        lastMessageAt: Date.now() - index * 60_000,
         avatar: 'cindy://avatar/preset/cindy', lastMessagePreview: ['Working', 'Waiting', 'Finished', 'New message', 'Error'][index] })),
-        remoteBots: [], route: '/bots', unread: { 'mate-3': 1, 'mate-4': 1 },
+        remoteBots: [], route: '/bots/mate-2', unread: { 'mate-3': 1, 'mate-4': 1 },
         activities: ['running', 'needs-interaction', 'completed', 'idle', 'error'].map((phase, index) =>
           [`chat-${index}`, { sessionId: `chat-${index}`, phase, attention: true, workingPhase: 'processing', startedAtMs: null }]),
       },
@@ -80,6 +81,24 @@ export default {
     },
   },
   async check(page, ui) {
+    // Read the painted selection, including the wrapper used by local/Cindy rows.
+    const selectedRow = page.locator('[data-sidebar-section="teammates"] [aria-current="page"]').first();
+    if (await selectedRow.count()) {
+      const colors = await selectedRow.evaluate(node => {
+        const surface = node.closest('.bg-sidebar-item-active');
+        const probe = document.createElement('span');
+        probe.style.backgroundColor = 'hsl(var(--surface-hover-hsl))';
+        probe.style.color = 'var(--sidebar-nav-text)';
+        node.append(probe);
+        const expected = getComputedStyle(probe);
+        const actual = getComputedStyle(surface);
+        const result = { background: actual.backgroundColor, foreground: actual.color,
+          expectedBackground: expected.backgroundColor, expectedForeground: expected.color };
+        probe.remove(); return result;
+      });
+      assert.equal(colors.background, colors.expectedBackground, 'selection uses the quiet theme surface');
+      assert.equal(colors.foreground, colors.expectedForeground, 'selection keeps normal text contrast');
+    }
     if (ui.case === 'states') {
       for (const state of ['running', 'awaiting', 'done', 'unread', 'error']) {
         const dot = page.locator(`[data-teammate-status="${state}"]`);
@@ -90,6 +109,7 @@ export default {
       await ui.capture('expanded-states');
       await page.getByRole('button', { name: await ui.t('bots.title'), exact: true }).click();
       await page.locator('[data-teammate-status="running"]').first().waitFor();
+      assert.equal(await page.locator('[data-sidebar-section="teammates"]').first().locator('button[aria-current="page"] > [data-teammate-status="awaiting"]').count(), 1, 'selection preserves the pending point');
       await ui.capture('collapsed-states');
       return;
     }

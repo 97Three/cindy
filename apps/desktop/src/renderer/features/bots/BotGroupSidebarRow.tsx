@@ -1,3 +1,4 @@
+import { teammateSelectionStyle } from './teammateSelection';
 import { TeammateStatusDot } from './TeammateStatusDot';
 import { groupTeammateStatus } from './teammateRosterStatus';
 /**
@@ -187,6 +188,7 @@ export function BotGroupSidebarRow({
       key={group.id}
       type="button"
       data-bot-group-id={group.id}
+      style={teammateSelectionStyle}
       aria-current={selected ? 'page' : undefined}
       onClick={() => onOpenGroup(group.id)}
       onContextMenu={onContextMenu}
@@ -200,7 +202,7 @@ export function BotGroupSidebarRow({
       )}
     >
       <span className="relative shrink-0"><BotGroupSidebarAvatar members={group.members} selected={selected} />
-        <TeammateStatusDot status={groupTeammateStatus(group, bots, islandActivity, unread > 0)} selected={selected} />
+        <TeammateStatusDot status={groupTeammateStatus(group, bots, islandActivity, unread > 0)} />
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex min-w-0 items-center gap-1.5">

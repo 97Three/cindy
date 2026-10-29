@@ -54,7 +54,7 @@ export function BotGroupSidebarAvatar({
                 'absolute flex rounded-full',
                 'border-2',
                 selected
-                  ? 'border-sidebar-item-active'
+                  ? 'border-sidebar'
                   : 'border-sidebar group-hover:border-sidebar-item-hover',
               )}
               style={{
@@ -86,7 +86,7 @@ export function BotGroupSidebarAvatar({
           'absolute bottom-0 right-0 flex rounded-full',
           'border-2',
           selected
-            ? 'border-sidebar-item-active'
+            ? 'border-sidebar'
             : 'border-sidebar group-hover:border-sidebar-item-hover',
         )}
       >

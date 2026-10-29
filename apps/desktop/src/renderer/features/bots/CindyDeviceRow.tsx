@@ -1,3 +1,4 @@
+import { teammateSelectionStyle } from './teammateSelection';
 import type { KeyboardEventHandler, MouseEventHandler, ReactNode } from 'react';
 import { Pin } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -43,6 +44,7 @@ export function CindyDeviceRow({
   return (
     <div
       data-testid="cindy-device-row"
+      style={teammateSelectionStyle}
       className={cn(
         'group relative flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 transition-colors',
         selected
@@ -61,7 +63,7 @@ export function CindyDeviceRow({
       />
       <span className="pointer-events-none relative flex shrink-0">
         <BotAvatar bot={bot} size="row" />
-        <TeammateStatusDot status={status} selected={selected} />
+        <TeammateStatusDot status={status} />
       </span>
       <div className="pointer-events-none relative grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2.5 gap-y-0.5">
         <span className="flex min-w-0 items-center gap-2">
