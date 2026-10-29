@@ -1,3 +1,4 @@
+import { getPluginToolUi } from '@cindy/plugin-protocol';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -519,7 +520,7 @@ export function RemotePluginPage({
     );
   const configuration = ghost ? (
     <>
-      {ghost.enabled && ghost.manifest.mcpApps?.ui && ghost.uiCapabilityApproved !== true && (
+      {ghost.enabled && getPluginToolUi(ghost.manifest) && ghost.uiCapabilityApproved !== true && (
         <div className="space-y-2 py-3 text-13 text-[var(--text-secondary)]">
           <p>{t('newChat.pluginUi.title', { name: ghost.manifest.name })}</p>
           {snapshot?.uiCapabilityApproval === true ? <Button size="sm" disabled={busy} onClick={() => void begin('approve-ui', ghost)}>{t('newChat.pluginUi.enable')}</Button> : <p>{t('newChat.pluginUi.updateHost')}</p>}

@@ -114,11 +114,12 @@ try {
       resolveDir: scriptDir,
       contents: `
     import assert from 'node:assert/strict';
-    import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+    import { readFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
     import { open as openFile } from 'node:fs/promises';
     import { saveAppDownload } from '../src/main/mcp-apps/downloadFile.ts';
     import { buildRangedFileResponse } from '../src/main/cindy-media/rangeResponse.ts';
     import { runInNewContext } from 'node:vm';
+    import { LibraryVault } from '../src/main/cindy-brain/libraryVault.ts';
     import { GhostPipeDispatcher } from '../src/main/cindy-brain/pipeDispatcher.ts';
     import { createPluginAppTransport } from '../src/main/mcp-apps/pluginServer.ts';
     import http from 'node:http';
@@ -148,13 +149,16 @@ try {
       const allowed=process.env.CINDY_MCP_APP_TEST_ALLOWED;
       let config={id:'example',url:process.env.CINDY_MCP_APP_TEST_URL,transport:'http'};
       const pluginMode=process.env.CINDY_MCP_APP_TEST_PLUGIN==='1';let executePlugin;
+      let authorVault;
+      const authorLibraryRoot=process.env.CINDY_MCP_APP_TEST_DIR+'/author-library';
       if(pluginMode){
         const fixture=JSON.parse(readFileSync(process.env.CINDY_MCP_APP_TEST_DIR+'/plugin.json','utf8'));
         const ghost={manifest:fixture.manifest,dir:process.env.CINDY_MCP_APP_TEST_DIR,enabled:true,approval:{state:'approved',revision:'fixture'}};
+        if(authorMode==='files'){authorVault=new LibraryVault({rootDir:()=>authorLibraryRoot,ghostId:ghost.manifest.id});await authorVault.open();}
         let handler;
         const dispatcher=new GhostPipeDispatcher({getGhost:()=>ghost,runtimeStateOf:()=>'running',spawn:async()=>({ok:true}),
           sendToGhost:(_id,payload)=>{handler(payload);return true;}});
-        runInNewContext(fixture.main,{setTimeout,cindy:{onHostMessage:fn=>{handler=fn;},send:payload=>payload.type==='tool-progress'?dispatcher.handleToolProgress(ghost.manifest.id,payload):dispatcher.handleToolResult(ghost.manifest.id,payload)}});
+        runInNewContext(fixture.main,{setTimeout,cindy:{library:request=>{assert.ok(authorVault);assert.ok(['writeBegin','writeChunk','writeCommit','writeAbort'].includes(request.op));return authorVault[request.op](request);},onHostMessage:fn=>{handler=fn;},send:payload=>payload.type==='tool-progress'?dispatcher.handleToolProgress(ghost.manifest.id,payload):dispatcher.handleToolResult(ghost.manifest.id,payload)}});
         executePlugin=async(name,args,onProgress)=>{const reply=await dispatcher.callGhostTool({ghostId:ghost.manifest.id,tool:name,args,onProgress});assert.equal(reply.ok,true);return reply.result;};
         config={id:'example',url:'',transport:'in-process',plugin:{instance:ghost.manifest.id,revision:'fixture',packageSha256:'fixture',title:ghost.manifest.name,trust:'unverified',domains:independent?[allowed]:[],assertCurrent(){},
           createTransport:()=>createPluginAppTransport({instance:ghost.manifest.id,revision:'fixture',tools:ghost.manifest.tools,ui:ghost.manifest.mcpApps?.ui,hosts:ghost.manifest.network?.hosts,assertCurrent(){},readHtml:()=>fixture.html,
@@ -167,7 +171,7 @@ try {
       let record={version:1,serverId:'example',serverRevision:appServerRevision(config),resourceUri:tool._meta.ui.resourceUri,tool,arguments:args,result};
       let turns=0, receivedImages=[];
       host=new McpAppsHost({downloadFile:pluginMode?input=>saveAppDownload({...input,showSaveDialog:async name=>process.env.CINDY_MCP_APP_TEST_DIR+'/saved-'+name}):undefined,pluginFiles:pluginMode?{
-        describe:async(_instance,uri)=>uri==='library:fixture.txt'?{mimeType:'text/plain',size:14}:uri==='cindy-media://blobs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png'?{mimeType:'image/png',size:8}:null,
+        describe:async(_instance,uri)=>{if(authorVault&&uri.startsWith('library:')){const file=await authorVault.stat({path:uri.slice('library:'.length)});return file.ok&&file.kind==='file'?{mimeType:'text/plain',size:file.bytes}:null;}return uri==='library:fixture.txt'?{mimeType:'text/plain',size:14}:uri==='cindy-media://blobs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png'?{mimeType:'image/png',size:8}:null;},
         read:async(_instance,uri,request)=>{
           if(uri!=='library:fixture.txt')return new Response(null,{status:404});
           const file=await openFile(process.env.CINDY_MCP_APP_TEST_DIR+'/fixture.txt','r');
@@ -244,6 +248,18 @@ try {
         stage='author visibility result';
         await wait(()=>inner().executeJavaScript("document.querySelector('#denied pre').textContent.includes('MCP_APP_TOOL_NOT_VISIBLE')"));
         assert.equal(await inner().executeJavaScript('typeof window.cindy'),'undefined');
+        // Regression: the shipped page sent seq=0, which the real Library rejects.
+        // Drag a multi-chunk file through the DOM, dispatcher, main.js and real vault.
+        stage='author drag import';
+        await inner().executeJavaScript("(()=>{const transfer=new DataTransfer();transfer.items.add(new File(['x'.repeat(2*1024*1024+3)],'drag-test.txt',{type:'text/plain'}));document.querySelector('#drop .drop').dispatchEvent(new DragEvent('drop',{dataTransfer:transfer,bubbles:true,cancelable:true}));})()");
+        await wait(()=>inner().executeJavaScript("document.querySelector('#drop .drop').getAttribute('aria-busy')==='false'"));
+        const imported=await inner().executeJavaScript("document.querySelector('#drop pre').textContent");
+        assert.ok(imported.includes('sha256') && imported.includes('2097155') && !imported.includes('STREAM_INVALID'),imported);
+        const filename=readdirSync(authorLibraryRoot+'/imports').find(name=>name.endsWith('drag-test.txt'));
+        assert.ok(filename,imported);
+        assert.equal(readFileSync(authorLibraryRoot+'/imports/'+filename,'utf8'),'x'.repeat(2*1024*1024+3));
+        console.log('AUTHOR_DRAG_IMPORT=passed (real page drop, three chunks, committed bytes match)');
+
         await window.webContents.executeJavaScript('document.body.style.margin="0";document.querySelector("iframe").style.width="100%";document.querySelector("iframe").style.border="0";document.querySelector("iframe").style.display="block"');
         for(const theme of ['light','dark'])for(const width of [360,800]){
           const variables=theme==='light'?{'--color-background-primary':'rgb(248,248,246)','--color-background-secondary':'rgb(238,238,235)','--color-text-primary':'rgb(38,38,38)','--color-text-secondary':'rgb(102,102,100)','--color-border-primary':'rgb(215,215,212)'}:{'--color-background-primary':'rgb(31,31,30)','--color-background-secondary':'rgb(44,44,42)','--color-text-primary':'rgb(235,235,232)','--color-text-secondary':'rgb(165,165,160)','--color-border-primary':'rgb(60,60,58)'};

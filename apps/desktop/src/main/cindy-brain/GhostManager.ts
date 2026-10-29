@@ -50,6 +50,7 @@ import {
   ghostManifestToLegacyV2DigestFormat,
   resolveGhostManifestLocale,
   validateGhostManifest,
+  validateStoredGhostManifest,
   validateGhostManifestLocaleResource,
   validateNormalizedGhostManifest,
   withGhostResolvedLocale,
@@ -677,6 +678,7 @@ export class GhostManager {
   private mutationTail: Promise<void> = Promise.resolve();
   /** One small archive, for the inspect → consent → install path only. */
   private parsedPackageCache: {
+    manifestSource?: 'stored-release';
     packageSha256: string;
     locale: string | undefined;
     trustRegistry: string;
@@ -3421,7 +3423,7 @@ export class GhostManager {
    * 零副作用。设置页 / 拖入 / 双击三个装入入口都先 inspect，校验通过后
    * 才 install；能力知情面由安装后的插件详情统一展示。
    */
-  async inspect(lizFilePath: string): Promise<
+  async inspect(lizFilePath: string, manifestSource?: 'stored-release'): Promise<
     | {
         manifest: GhostManifest;
         /** 包内原始清单，仅供 Main 安全比较。 */
@@ -3438,7 +3440,7 @@ export class GhostManager {
       }
     | { rejection: InstallRejection }
   > {
-    const parsed = await this.parse(lizFilePath);
+    const parsed = await this.parse(lizFilePath, manifestSource);
     if ('rejection' in parsed) return parsed;
     return {
       manifest: parsed.manifest,
@@ -3453,7 +3455,7 @@ export class GhostManager {
   }
 
   /** 装入的前半程(读文件 / 解包 / 校验清单),inspect 与 install 共用。 */
-  private async parse(lizFilePath: string): Promise<ParsedGhostPackage | { rejection: InstallRejection }> {
+  private async parse(lizFilePath: string, manifestSource?: 'stored-release'): Promise<ParsedGhostPackage | { rejection: InstallRejection }> {
     // 1) 读源文件(带体积上限)。stat 后再 readFile 是两次独立打开,期间文件
     // 可被换成超大文件绕过上限——单句柄限量读。允许跟随链接:用户拖入的
     // .cindy 本身可以是链接,防篡改由 expectedPackageSha256 对账负责。
@@ -3486,7 +3488,7 @@ export class GhostManager {
     const cached = this.parsedPackageCache;
     if (
       cached && cached.expiresAt > Date.now() &&
-      cached.packageSha256 === packageSha256 && cached.locale === locale &&
+      cached.manifestSource === manifestSource && cached.packageSha256 === packageSha256 && cached.locale === locale &&
       cached.trustRegistry === trustRegistryKey
     ) {
       return cloneParsedGhostPackage(cached.parsed);
@@ -3589,7 +3591,7 @@ export class GhostManager {
     if (hostUnsupportedReason) {
       return { rejection: { code: 'host-unsupported', reason: hostUnsupportedReason } };
     }
-    const v = validateGhostManifest(manifestRaw);
+    const v = manifestSource === 'stored-release' ? validateStoredGhostManifest(manifestRaw) : validateGhostManifest(manifestRaw);
     if (!v.ok) {
       return { rejection: { code: 'file-invalid', reason: `清单不合格:${v.reason}` } };
     }
@@ -3879,6 +3881,7 @@ export class GhostManager {
     // Large bundled CLI archives must not become a long-lived memory cache.
     if (buf.byteLength <= MAX_BASIC_CINDY_FILE_BYTES) {
       this.parsedPackageCache = {
+        manifestSource,
         packageSha256,
         locale,
         trustRegistry: trustRegistryKey,
@@ -3895,6 +3898,8 @@ export class GhostManager {
       taskCapabilityApproved?: true;
       targetCapabilityApproved?: true;
       uiCapabilityApproved?: boolean;
+      /** Main-only provenance: immutable market release, never local package authoring. */
+      manifestSource?: 'stored-release';
       initiallyEnabled?: boolean;
       expectedPackageSha256?: string;
       trustOverride?: GhostHostTrustOverride;
@@ -3921,6 +3926,8 @@ export class GhostManager {
       taskCapabilityApproved?: true;
       targetCapabilityApproved?: true;
       uiCapabilityApproved?: boolean;
+      /** Main-only provenance: immutable market release, never local package authoring. */
+      manifestSource?: 'stored-release';
       initiallyEnabled?: boolean;
       expectedPackageSha256?: string;
       trustOverride?: GhostHostTrustOverride;
@@ -3937,7 +3944,7 @@ export class GhostManager {
     // 装入初始启用态由调用方决定；缺省 true 保持既有调用方语义不变。
     const initiallyEnabled = opts?.initiallyEnabled ?? true;
     // 1–3) 读文件 / 解包 / 校验清单(与 inspect 共用)
-    const parsed = await this.parse(lizFilePath);
+    const parsed = await this.parse(lizFilePath, opts?.manifestSource);
     if ('rejection' in parsed) return parsed;
     if (
       opts?.expectedPackageSha256 !== undefined &&
@@ -4219,6 +4226,8 @@ export class GhostManager {
       taskCapabilityApproved?: true;
       targetCapabilityApproved?: true;
       uiCapabilityApproved?: boolean;
+      /** Main-only provenance: immutable market release, never local package authoring. */
+      manifestSource?: 'stored-release';
       expectedInstalledApproval: string;
       expectedPackageSha256?: string;
       trustOverride?: GhostHostTrustOverride;
@@ -4242,6 +4251,8 @@ export class GhostManager {
       taskCapabilityApproved?: true;
       targetCapabilityApproved?: true;
       uiCapabilityApproved?: boolean;
+      /** Main-only provenance: immutable market release, never local package authoring. */
+      manifestSource?: 'stored-release';
       expectedInstalledApproval: string;
       expectedPackageSha256?: string;
       trustOverride?: GhostHostTrustOverride;
@@ -4256,7 +4267,7 @@ export class GhostManager {
       onPackagePlaced?: () => void;
     },
   ): Promise<{ ghost: InstalledGhost } | { rejection: InstallRejection }> {
-    const parsed = await this.parse(lizFilePath);
+    const parsed = await this.parse(lizFilePath, opts?.manifestSource);
     if ('rejection' in parsed) return parsed;
     if (
       opts?.expectedPackageSha256 !== undefined &&

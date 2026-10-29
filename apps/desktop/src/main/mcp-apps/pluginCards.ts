@@ -1,3 +1,4 @@
+import { getPluginToolUi } from '@cindy/plugin-protocol';
 import { randomUUID } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { pluginAppTool } from './pluginServer.js';
@@ -36,7 +37,7 @@ export async function publishPluginAppResult(
   attachmentHashes: readonly string[] = [],
 ): Promise<void> {
   const declared = ghost.manifest.tools?.find((tool) => tool.name === name);
-  if (!declared || !ghost.manifest.mcpApps?.ui?.tools?.[name]?.resourceUri) return;
+  if (!declared || !getPluginToolUi(ghost.manifest)?.tools[name]?.resourceUri) return;
   if (!hasGhostUiPermission(ghost)) return;
   const config = readAppServer(pluginAppServerId(ghost));
   if (
@@ -48,7 +49,7 @@ export async function publishPluginAppResult(
   config.plugin.assertCurrent(sessionId);
   const host = getMcpAppsHost(),
     owner = host.captureOwner();
-  const tool = pluginAppTool(config.plugin.instance, declared, ghost.manifest.mcpApps?.ui!);
+  const tool = pluginAppTool(config.plugin.instance, declared, getPluginToolUi(ghost.manifest)!);
   tool.title = config.plugin.title;
   tool._meta = {
     ...tool._meta,

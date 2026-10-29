@@ -1,4 +1,4 @@
-import { parseGhostUi, parseGhostMcpApps, type GhostMcpApps } from '@cindy/plugin-protocol';
+import { isSafeGhostRelativePath as isSafePluginUiPath, getPluginToolUi, validateWithStoredMcpApps, parseGhostMcpApps } from '@cindy/plugin-protocol';
 import { pluginHasToolUi, pluginToolVisible, pluginUiDomains, pluginUiPermissionsExpand } from '@cindy/plugin-protocol';
 import { parseGhostSecretCheck, type GhostSecretCheckDecl } from '@cindy/plugin-protocol';
 import { parseGhostRoutineEvents, type GhostRoutineEvents } from '@cindy/plugin-protocol';
@@ -1476,7 +1476,7 @@ export function isGhostSetupErrorCode(value: unknown): value is GhostSetupErrorC
 /** ghost.json 清单(不变量由 validateGhostManifest 保证)。 */
 export interface GhostManifest {
   /** Optional MCP Apps resources and links to existing tools. */
-  mcpApps?: GhostMcpApps;
+  mcpApps?: unknown;
   /** Optional v3 extension, validated only when projecting homepage recommendations. */
   recommendations?: unknown;
   /** 原始清单格式版本；v2 已在解析边界投影成与 v3 相同的直接字段。 */
@@ -2057,7 +2057,7 @@ export function ghostPermissionItems(manifest: GhostManifest): GhostPermissionIt
   const items: GhostPermissionItem[] = [];
   if (pluginHasToolUi(manifest)) items.push({ key: 'ui:pages', kind: 'panel', labelKey: 'mcpUi',
     detailKey: 'uiPageAccess', detailArgs: {
-      pages: (manifest.mcpApps?.ui?.resources ?? []).map(resource => resource.uri).sort().join(', ') || '—',
+      pages: (getPluginToolUi(manifest)?.resources ?? []).map(resource => resource.uri).sort().join(', ') || '—',
       domains: pluginUiDomains(manifest).join(', ') || '—',
       tools: (manifest.tools ?? []).filter(tool => pluginToolVisible(manifest, tool.name, 'app')).map(tool => tool.name).sort().join(', ') || '—',
     } });
@@ -3981,9 +3981,14 @@ export function validateGhostManifest(value: unknown): ManifestValidation {
   return validateGhostManifestInput(value, false);
 }
 
+/** Stored market releases tolerate only historical mcpApps; other fields remain strict. */
+export function validateStoredGhostManifest(value: unknown): ManifestValidation {
+  return validateWithStoredMcpApps(value, validateGhostManifest);
+}
+
 /** Installed snapshots retain historical unknown tasks data without granting it. */
 export function validateInstalledGhostManifest(value: unknown): ManifestValidation {
-  return validateGhostManifestInput(value, true);
+  return validateWithStoredMcpApps(value, raw => validateGhostManifestInput(raw, true));
 }
 
 function validateGhostManifestInput(value: unknown, preserveHistoricalTasks: boolean): ManifestValidation {
@@ -6242,9 +6247,9 @@ function validateGhostManifestInput(value: unknown, preserveHistoricalTasks: boo
   }
 
   if (raw.mcpApps !== undefined && raw.schemaVersion !== 3) return { ok: false, reason: 'mcpApps requires schemaVersion 3' };
-  const parsedMcpApps = raw.mcpApps === undefined ? undefined : parseGhostMcpApps(raw.mcpApps, tools ?? [], network?.hosts ?? [], isSafeGhostRelativePath);
-  if (parsedMcpApps === null && !preserveHistoricalTasks) return { ok: false, reason: 'mcpApps.ui 页面或工具声明无效，页面域名必须在 network.hosts 内' };
-  const mcpApps = parsedMcpApps === null ? raw.mcpApps as GhostMcpApps : parsedMcpApps;
+  const parsedMcpApps = raw.mcpApps === undefined ? undefined : parseGhostMcpApps(raw.mcpApps, tools ?? [], network?.hosts ?? [], isSafePluginUiPath);
+  if (parsedMcpApps === null) return { ok: false, reason: 'mcpApps.ui 页面或工具声明无效，页面域名必须在 network.hosts 内' };
+  const mcpApps = parsedMcpApps;
   return {
     ok: true,
     manifest: {
@@ -9079,5 +9084,5 @@ export type GhostPipeRoutineRequest =
 /** A historical unknown declaration is not authorization. */
 export function hasGhostUiPermission(ghost: InstalledGhost): boolean {
   return ghost.enabled && ghost.approval.state === 'approved' && ghost.uiCapabilityApproved === true
-    && !!parseGhostUi(ghost.manifest.mcpApps?.ui, ghost.manifest.tools ?? [], ghost.manifest.network?.hosts ?? [], isSafeGhostRelativePath);
+    && pluginHasToolUi(ghost.manifest);
 }

@@ -1,3 +1,5 @@
+import { pluginHasToolUi, pluginToolVisible } from '@cindy/plugin-protocol';
+import { hasGhostUiPermission } from '../../../shared/ghost.js';
 import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -9,7 +11,7 @@ import { findInstalledGhostForDeliveryTarget, installedGhostStoragePart } from '
 import { assertGhostInstallConsent, confirmedUiCapability, confirmedTaskCapability, obtainGhostInstallConsent } from '../ghostInstallConsent.js';
 import { ghostInstallApprovalToken } from '../../../shared/ghost.js';
 import { createGhostProductionCallbacks } from './ghostProductionCallbacksFixture.js';
-import { GhostManager } from '../GhostManager.js';
+import { GhostManager, type GhostManagerOptions } from '../GhostManager.js';
 import { effectiveInstallOrigin } from '../ghostInstallReceipt.js';
 import { classifyGhostLocalUpdateSource } from '../ghostLocalUpdateSource.js';
 import { runGhostSnapshotWorkerRequest } from '../ghostSnapshotWorkerProcess.js';
@@ -191,7 +193,7 @@ it('commits a shared archive with its exact digest as an approved manual install
     const factory = createGhostProductionCallbacks<{
       installLocalPluginSharePackage: (file: string, options: Record<string, unknown>) => Promise<InstalledGhost>;
     }>({ functions: ['installLocalPluginSharePackage', 'installAndDock', 'installAndDockLocked'] });
-    const install = factory({ getGhostManager: () => manager, captureGhostMutationOwner: () => 'owner', beginGhostMutation: () => () => {},
+    const install = factory({ confirmedUiCapability, getGhostManager: () => manager, captureGhostMutationOwner: () => 'owner', beginGhostMutation: () => () => {},
       findInstalledGhostForDeliveryTarget, obtainGhostInstallConsent, assertGhostInstallConsent, confirmedTaskCapability,
       withGhostInstallLock: async (_id: string, run: () => unknown) => run(),
       rejectReservedGhostId() {}, rejectBrokerWithoutDeclaredRedirectPort() {}, rejectUnauthorizedTokenBroker() {},
@@ -208,3 +210,33 @@ it('commits a shared archive with its exact digest as an approved manual install
     expect(await fs.readFile(path.join(installed.dir, 'main.js'), 'utf8')).toBe('// ok\n');
   } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
+
+// Unit: real archive placement, approved receipt, and startup reread protect the
+// compatibility redline. Existing local-install cases only cover valid declarations.
+it.each([null, 'legacy', { ui: { resources: [{ uri: 'ui://run', file: '../page.html' }], tools: { run: {} } } }])(
+  'keeps a historical market package usable after restart but rejects local installation: %j', async mcpApps => {
+    const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-historical-ui-')));
+    try {
+      const raw = { schemaVersion: 3, minCindyVersion: '0.1.0', id: 'legacy-ui', name: 'Legacy', version: '1.0.0',
+        entry: 'main.js', tools: [{ name: 'run', description: 'Original tool' }], mcpApps };
+      const file = await writeTestCindyPackage(path.join(directory, 'legacy.cindy'), raw);
+      const options: GhostManagerOptions = { getRootDir: () => path.join(directory, 'plugins'),
+        mutateSnapshot: async ({ parentDir, ...request }) => runGhostSnapshotWorkerRequest(request, parentDir) };
+      const manager = new GhostManager(options);
+      const inspected = await manager.inspect(file, 'stored-release');
+      expect(inspected).not.toHaveProperty('rejection');
+      // Parsing caches must not carry historical tolerance into local new installs.
+      expect(await manager.inspect(file)).toHaveProperty('rejection.code', 'file-invalid');
+      expect(await manager.install(file)).toHaveProperty('rejection.code', 'file-invalid');
+      const result = await manager.install(file, { manifestSource: 'stored-release', registrySource: 'market', namespace: null });
+      if ('rejection' in result) throw new Error(result.rejection.reason);
+      const reloaded = new GhostManager(options).list().find(g => g.manifest.id === raw.id)!;
+      expect(reloaded).toMatchObject({ enabled: true, approval: { state: 'approved' }, manifest: { mcpApps, tools: raw.tools } });
+      expect(manager.readApprovedInstallReceipt(installedGhostStoragePart(reloaded))?.manifest.mcpApps).toEqual(mcpApps);
+      expect(pluginHasToolUi(reloaded.manifest)).toBe(false);
+      expect(hasGhostUiPermission({ ...reloaded, uiCapabilityApproved: true })).toBe(false);
+      expect(pluginToolVisible(reloaded.manifest, 'run', 'model')).toBe(true);
+      expect(pluginToolVisible(reloaded.manifest, 'run', 'app')).toBe(false);
+    } finally { await fs.rm(directory, { recursive: true, force: true }); }
+  },
+);

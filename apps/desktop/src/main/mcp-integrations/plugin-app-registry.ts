@@ -1,3 +1,4 @@
+import { getPluginToolUi } from '@cindy/plugin-protocol';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { activeOwnerScopeKey } from '../appSessionState.js';
@@ -73,7 +74,7 @@ export function refreshPluginApps(
             instance,
             revision,
             tools: ghost.manifest.tools ?? [],
-            ui: ghost.manifest.mcpApps?.ui!,
+            ui: getPluginToolUi(ghost.manifest)!,
             hosts: ghost.manifest.network?.hosts,
             assertCurrent,
             readHtml: (html) => {

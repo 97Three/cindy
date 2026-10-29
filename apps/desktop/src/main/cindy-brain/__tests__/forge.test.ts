@@ -1,3 +1,4 @@
+import { getPluginToolUi } from '@cindy/plugin-protocol';
 import { runInNewContext } from 'node:vm';
 /**
  * forge.test.ts — 意识锻造打包(packGhostDir)单测。
@@ -1466,7 +1467,7 @@ describe('scaffoldGhostDir', () => {
       const mainSource = await fs.promises.readFile(path.join(dir, 'main.js'), 'utf8');
       if (withUi) {
         expect(result.files).toContain('ui/page.html');
-        expect(packed.manifest.mcpApps?.ui?.resources[0].uri).toBe('ui://planner/v1');
+        expect(getPluginToolUi(packed.manifest)?.resources[0].uri).toBe('ui://planner/v1');
         let handler: ((message: unknown) => unknown) | undefined;
         const results: Array<{ result: { structuredContent: unknown } }> = [];
         runInNewContext(mainSource, { cindy: { onHostMessage: (callback: typeof handler) => { handler = callback; }, send: (message: typeof results[number]) => { results.push(message); } } });
@@ -2551,3 +2552,11 @@ it('packs the shared page, defaults its version floor, and rejects missing HTML 
   await fs.promises.unlink(path.join(dir, 'ui/planner.html'));
   await expect(packGhostDir(dir)).resolves.toMatchObject({ ok: false });
 });
+
+// Unit: stored-release tolerance must never relax the real new-package packer.
+it.each([null, 'legacy', [], { ui: { resources: [{ uri: 'ui://bad', file: '../page.html' }], tools: { do_thing: {} } } }])(
+  'refuses new author packages with malformed mcpApps %j', async mcpApps => {
+    const dir = await makeSrcDir({ 'ghost.json': JSON.stringify({ ...GOOD_MANIFEST, schemaVersion: 3, slots: undefined, mcpApps }), 'main.js': '// fixture' });
+    expect(await packGhostDir(dir)).toMatchObject({ ok: false, errorCode: 'MANIFEST_INVALID' });
+  },
+);

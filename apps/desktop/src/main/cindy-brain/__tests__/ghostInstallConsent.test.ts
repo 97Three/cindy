@@ -1,3 +1,4 @@
+import { getPluginToolUi } from '@cindy/plugin-protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -353,7 +354,7 @@ describe('interactive page consent', () => {
   it.each(['uri', 'file', 'uri-and-domain'] as const)('compares resource authority across %s changes', async kind => {
     const base = pages(), next = structuredClone(base);
     const old = { ...installed(base), uiCapabilityApproved: true as const };
-    const ui = next.mcpApps!.ui!;
+    const ui = getPluginToolUi(next)!;
     if (kind === 'file') ui.resources[0].file = 'ui/replaced.html';
     else {
       ui.resources[0].uri = 'ui://renamed/v2';
@@ -366,11 +367,11 @@ describe('interactive page consent', () => {
   });
   it.each(['page', 'domain', 'app-access'] as const)('requires consent when adding %s', async kind => {
     const base = pages(), next = structuredClone(base), old = { ...installed(base), uiCapabilityApproved: true as const };
-    if (kind === 'page') next.mcpApps!.ui!.resources.push({ uri: 'ui://second', file: 'ui/second.html' });
-    if (kind === 'domain') next.mcpApps!.ui!.resources[0].csp = { connectDomains: ['https://api.weather.test'] };
-    if (kind === 'app-access') next.mcpApps!.ui!.tools.save.visibility = ['model', 'app'];
+    if (kind === 'page') getPluginToolUi(next)!.resources.push({ uri: 'ui://second', file: 'ui/second.html' });
+    if (kind === 'domain') getPluginToolUi(next)!.resources[0].csp = { connectDomains: ['https://api.weather.test'] };
+    if (kind === 'app-access') getPluginToolUi(next)!.tools.save.visibility = ['model', 'app'];
     await expect(obtainGhostInstallConsent({ mode: 'automatic' }, old, next, reviewedDigest)).rejects.toThrow();
-    const reduced = structuredClone(base); reduced.mcpApps!.ui!.tools.open.visibility = ['model'];
+    const reduced = structuredClone(base); getPluginToolUi(reduced)!.tools.open.visibility = ['model'];
     await expect(obtainGhostInstallConsent({ mode: 'automatic' }, old, reduced, reviewedDigest)).resolves.toEqual({ mode: 'unprompted' });
   });
 });

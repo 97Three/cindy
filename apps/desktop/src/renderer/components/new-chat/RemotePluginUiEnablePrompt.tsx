@@ -1,3 +1,4 @@
+import { getPluginToolUi } from '@cindy/plugin-protocol';
 import { toast } from '@/lib/toast';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -169,7 +170,7 @@ function OwnerPrompt({ deviceId }: { deviceId: string }) {
     (ghost) =>
       ghost.enabled &&
       ghost.approval.state === 'approved' &&
-      ghost.manifest.mcpApps?.ui &&
+      getPluginToolUi(ghost.manifest) &&
       ghost.uiCapabilityApproved !== true &&
       !ghost.uiPromptSuppressed,
   );

@@ -2602,7 +2602,7 @@ export class PluginMarketService {
     try {
       await downloadVerifiedPlugin(download.url, download, tempPath);
       requireSameMarketOwner(owner);
-      const inspected = await getGhostManager().inspect(tempPath);
+      const inspected = await getGhostManager().inspect(tempPath, 'stored-release');
       if (!('rejection' in inspected)) {
         if (
           inspected.canonicalManifest.id !== plugin.ghostId ||

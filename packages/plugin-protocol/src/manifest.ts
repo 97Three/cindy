@@ -1,4 +1,5 @@
-import { parseGhostMcpApps, type GhostMcpApps } from './toolUi.js';
+import { isSafeGhostRelativePath } from './internal/ghostPath.js';
+import { validateWithStoredMcpApps, parseGhostMcpApps, type GhostMcpApps } from './toolUi.js';
 import { parseGhostSecretCheck, type GhostSecretCheckDecl } from './secretCheck.js';
 import { parseGhostRoutineEvents, type GhostRoutineEvents } from './routineEvents.js';
 
@@ -886,7 +887,7 @@ export const GHOST_SETUP_KV_KEY_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 /** 已校验的 ghost.json 协议文档；Desktop 会再投影成无 slots 的运行时模型。 */
 export interface GhostManifest {
   /** Optional MCP Apps resources and links to existing tools. */
-  mcpApps?: GhostMcpApps;
+  mcpApps?: unknown;
   /** Host-owned mail editor; providers supply mailbox adapters only. */
   mail?: true;
   /** Provider-owned read capability; Cindy owns mail presentation. */
@@ -1082,20 +1083,11 @@ export function ghostIconMimeType(p: string): string | null {
  * 无 `.`/`..` 段、无 Windows 设备保留名、字符集收敛,天然杜绝路径穿越
  * 与跨平台歧义。
  */
-const GHOST_PATH_SEGMENT_RE = /^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,63}$/;
-export function isSafeGhostRelativePath(p: unknown): p is string {
-  if (typeof p !== 'string' || p.length === 0 || p.length > 256) return false;
-  if (p.includes('\\')) return false;
-  const segments = p.split('/');
-  return segments.every(
-    (seg) =>
-      GHOST_PATH_SEGMENT_RE.test(seg) && seg !== '.' && seg !== '..' && !isWindowsReservedName(seg),
-  );
-}
+export { isSafeGhostRelativePath } from './internal/ghostPath.js';
 
 /** `validateGhostManifest` 的无异常校验结果。 */
 export type ManifestValidation =
-  { ok: true; manifest: GhostManifest } | { ok: false; reason: string };
+  { ok: true; manifest: GhostManifest & { mcpApps?: GhostMcpApps } } | { ok: false; reason: string };
 
 interface ParsedCindyVersion {
   core: readonly [string, string, string];
@@ -1383,6 +1375,12 @@ function dropEmptyLegacyCapabilitySlots(
  * 校验一份 JSON.parse 后的未知 `ghost.json` 值。已知字段严格检查；v2 未知
  * 字段忽略，v3 未知顶层字段原样保留但不解释、不授权。
  */
+/** Historical persisted data only; new packages must use validateGhostManifest. */
+export function validateStoredGhostManifest(value: unknown):
+  { ok: true; manifest: GhostManifest } | { ok: false; reason: string } {
+  return validateWithStoredMcpApps(value, validateGhostManifest);
+}
+
 export function validateGhostManifest(value: unknown): ManifestValidation {
   const preparation = prepareGhostManifestForValidation(value);
   if (!preparation.ok) return preparation;

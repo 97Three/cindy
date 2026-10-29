@@ -1,3 +1,4 @@
+import { getPluginToolUi } from '@cindy/plugin-protocol';
 import { pluginToolVisible, compareCindyVersions, PLUGIN_UI_MIN_CINDY_VERSION } from '@cindy/plugin-protocol';
 import type { PluginPageCall } from '../mcp-apps/pluginPageCall.js';
 import { publishPluginAppResult, pluginModelResult } from '../mcp-apps/pluginCards.js';
@@ -2533,7 +2534,7 @@ export function getCindyGhostsMcpDeps(
       if (result.ok && callSessionContext?.sessionId && !callSessionContext.remoteHostId) {
         await publishPluginAppResult(target, callSessionContext.sessionId, tool, args, result.result, pageAttachmentHashes)
           .catch(() => log.warn('Plugin App card could not be stored'));
-        if (target.manifest.mcpApps?.ui?.tools?.[tool]?.resourceUri) result.result = pluginModelResult(result.result);
+        if (getPluginToolUi(target.manifest)?.tools[tool]?.resourceUri) result.result = pluginModelResult(result.result);
       }
       const requestedImages = result.ok ? result.images : undefined;
       const plainResult: GhostToolCallResult = result.ok && result.images ? { ok: true, result: result.result } : result;

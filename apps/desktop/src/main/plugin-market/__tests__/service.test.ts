@@ -1,3 +1,4 @@
+import { getPluginToolUi, pluginHasToolUi, pluginToolVisible } from '@cindy/plugin-protocol';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -6713,7 +6714,7 @@ describe('organization catalog access error', () => {
  * plus a bound market record; only the Electron/runtime side effects are replaced.
  */
 describe('server default UI approval receipts', () => {
-  async function setup(options: { organization?: boolean; defaultInstall?: boolean } = {}) {
+  async function setup(options: { organization?: boolean; defaultInstall?: boolean; historicalMcpApps?: unknown } = {}) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'default-ui-receipt-'));
     roots.push(root);
     const manager = new GhostManager({
@@ -6736,6 +6737,7 @@ describe('server default UI approval receipts', () => {
         }], tools: { open: { resourceUri: "ui://planner" } } } },
     });
     let next = pageManifest('1.0.0');
+    if ('historicalMcpApps' in options) next.mcpApps = options.historicalMcpApps;
     let file = await writeTestCindyPackage(path.join(root, 'package.cindy'), next,
       { 'main.js': '// fixture', 'ui/planner.html': '<html>planner</html>', 'ui/extra.html': '<html>extra</html>' });
     const bytes = fs.readFileSync(file);
@@ -6757,11 +6759,12 @@ describe('server default UI approval receipts', () => {
     }) => {
       opts.assertCurrent?.();
       opts.beforeCommitInLock?.();
-      const inspected = await manager.inspect(packagePath);
+      const inspected = await manager.inspect(packagePath, 'stored-release');
       if ('rejection' in inspected) throw new Error(inspected.rejection.reason);
       const old = manager.list().find(g => g.manifest.id === item.ghostId && g.namespace === opts.namespace);
       assertGhostInstallConsent(opts.consent, old, inspected.manifest, inspected.packageSha256);
       const common = {
+        manifestSource: 'stored-release' as const,
         namespace: opts.namespace, expectedPackageSha256: inspected.packageSha256,
         uiCapabilityApproved: confirmedUiCapability(opts.consent, old, inspected.manifest),
       };
@@ -6789,14 +6792,15 @@ describe('server default UI approval receipts', () => {
     };
     return { ...h, item, manager, read, bind,
       async seed(bound = true, approved = false, origin: 'manual' | 'agent-forge' = 'manual') {
-        const result = await manager.install(file, { namespace: item.namespace, initiallyEnabled: false,
+        const result = await manager.install(file, { manifestSource: 'stored-release', namespace: item.namespace, initiallyEnabled: false,
           uiCapabilityApproved: approved, installOrigin: origin });
         expect(result).toHaveProperty('ghost');
         if (bound) bind();
       },
       async expand() {
         next = pageManifest('2.0.0');
-        next.mcpApps!.ui!.resources.push({ uri: 'ui://extra', file: 'ui/extra.html' });
+        if ('historicalMcpApps' in options) next.mcpApps = options.historicalMcpApps;
+        else getPluginToolUi(next)!.resources.push({ uri: 'ui://extra', file: 'ui/extra.html' });
         file = await writeTestCindyPackage(path.join(root, 'expanded.cindy'), next,
           { 'main.js': '// fixture', 'ui/planner.html': '<html>planner</html>', 'ui/extra.html': '<html>extra</html>' });
         const bytes = fs.readFileSync(file);
@@ -6805,6 +6809,24 @@ describe('server default UI approval receipts', () => {
       },
     };
   }
+
+  // Unit: historical delivery crosses the real service's detail/inspect gate,
+  // installs a real archive and updates its receipt; old UI cases only used valid data.
+  it.each([null, { ui: { resources: [{ uri: 'ui://old', file: '../page.html' }], tools: { open: {} } } }])(
+    'installs and updates a historical release without granting pages: %j', async historicalMcpApps => {
+      const h = await setup({ historicalMcpApps });
+      await h.service.snapshot();
+      expect(h.read()).toMatchObject({ enabled: true, manifest: { mcpApps: historicalMcpApps } });
+      expect(h.read()!.uiCapabilityApproved).not.toBe(true);
+      expect(pluginHasToolUi(h.read()!.manifest)).toBe(false);
+      expect(pluginToolVisible(h.read()!.manifest, 'open', 'model')).toBe(true);
+      await h.expand();
+      const snapshot = await h.service.snapshot();
+      expect(h.read()).toMatchObject({ enabled: true, manifest: { version: '2.0.0', mcpApps: historicalMcpApps } });
+      expect(h.read()!.uiCapabilityApproved).not.toBe(true);
+      expect(snapshot.items[0]?.updateRequiresConsent).not.toBe(true);
+    },
+  );
 
   it('grants first default delivery in its installed receipt without any prompt', async () => {
     const h = await setup();

@@ -4,7 +4,7 @@ import { getMobileAuthOwner, setMobileAuthOwner } from '@/auth/authOwnerGenerati
 import { createPluginManagementClient, type PluginManagementInvoke } from '@/plugins/pluginManagementClient';
 import { createPluginManagementController } from '@/plugins/pluginManagementController';
 import { isBoundedPluginResponse, parsePluginManagementDetail, parsePluginManagementReceipt,
-  parsePluginManagementSnapshot, marketItemMatchesPlugin, type ManagedPlugin,
+  parsePluginManagementSnapshot, marketItemMatchesPlugin, pluginNeedsUiApproval, type ManagedPlugin,
   type ManagedMarketDetail, type PluginManagementReceipt, type PluginManagementSnapshot } from '@/plugins/pluginManagementTypes';
 
 vi.mock('expo-crypto', () => ({ randomUUID: () => 'operation-1' }));
@@ -341,3 +341,14 @@ it.each([sharedTaskHostPeer('task', 'device'), providerShareHostPeer('share', 'd
   await expect(client.answer('operation', 'request', true)).rejects.toThrow('PLUGIN_MANAGEMENT_OWNER_ONLY');
   expect(invoke).not.toHaveBeenCalled();
 });
+
+// Unit: mobile must not prompt for historical malformed page data sent by a Host.
+// Existing optional-flag coverage did not validate the declaration itself.
+it.each([null, 'legacy', [], { ui: { resources: [{ uri: 'ui://run', file: '../page.html' }], tools: { run: {} } } }])(
+  'does not show page approval for inert historical mcpApps %j', mcpApps => {
+    const parsed = parsePluginManagementSnapshot(snapshot([{ ...plugin, manifest: { ...plugin.manifest, tools: [{ name: 'run' }], mcpApps } }]));
+    expect(pluginNeedsUiApproval(parsed.ghosts[0])).toBe(false);
+    expect(pluginNeedsUiApproval({ ...parsed.ghosts[0], manifest: { ...parsed.ghosts[0].manifest,
+      mcpApps: { ui: { resources: [{ uri: 'ui://run', file: 'page.html' }], tools: { run: {} } } } } })).toBe(true);
+  },
+);

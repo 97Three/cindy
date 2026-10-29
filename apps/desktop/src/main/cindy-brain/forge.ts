@@ -1,3 +1,4 @@
+import { getPluginToolUi } from '@cindy/plugin-protocol';
 import interactiveExampleManifest from '../../../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages/minimal/ghost.json?raw';
 import interactiveExampleMain from '../../../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages/minimal/main.js?raw';
 import interactiveExampleHtml from '../../../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages/minimal/ui/page.html?raw';
@@ -974,7 +975,7 @@ async function buildGhostPackage(
     }
 
     // 3) 清单声明的入口文件必须真实在场(打包期拦,别等装入后沙箱 404)。
-    const mustExist: string[] = (manifest.mcpApps?.ui?.resources ?? []).map(resource => resource.file);
+    const mustExist: string[] = (getPluginToolUi(manifest)?.resources ?? []).map(resource => resource.file);
     if (manifest.entry) mustExist.push(manifest.entry);
     if (manifest.node?.entry) {
       mustExist.push(manifest.node.entry, ...(manifest.node.entries ?? []));

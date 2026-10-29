@@ -1,3 +1,4 @@
+import { isSafeGhostRelativePath } from './internal/ghostPath.js';
 import { validateCspDomains } from './appCsp.js';
 /** First release with plugin pages; authoring floor, never a client install gate. */
 export const PLUGIN_UI_MIN_CINDY_VERSION = '0.1.121-beta';
@@ -12,7 +13,7 @@ export interface GhostUiResource {
 export interface GhostUiTool { resourceUri?: string; visibility?: ('model' | 'app')[]; [key: string]: unknown }
 export interface GhostUiNeeds { resources: GhostUiResource[]; tools: Record<string, GhostUiTool> }
 export interface GhostMcpApps { ui?: GhostUiNeeds; [key: string]: unknown }
-type UiManifest = { mcpApps?: GhostMcpApps; tools?: { name: string }[]; network?: { hosts: string[] } };
+type UiManifest = { schemaVersion?: unknown; mcpApps?: unknown; tools?: unknown; network?: unknown };
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const safeKey = (key: string) => /^[a-z][a-z0-9_-]{0,63}$/.test(key) && !['__proto__', 'constructor', 'prototype'].includes(key);
 const cspKeys = ['connectDomains', 'resourceDomains', 'frameDomains', 'baseUriDomains'] as const;
@@ -59,20 +60,38 @@ export function parseGhostUi(raw: unknown, tools: readonly { name: string }[], h
   }
   return raw as unknown as GhostUiNeeds;
 }
-function declaredUi(manifest: UiManifest): GhostUiNeeds | undefined {
-  // Historical receipts retain unknown v3 fields; malformed declarations grant nothing.
-  return parseGhostUi(manifest.mcpApps?.ui, manifest.tools ?? [], manifest.network?.hosts ?? [], value => typeof value === 'string') ?? undefined;
+/** Only valid declarations grant page authority, including on historical read paths. */
+export function getPluginToolUi(manifest: UiManifest): GhostUiNeeds | undefined {
+  if ((manifest.schemaVersion !== undefined && manifest.schemaVersion !== 3) || !object(manifest.mcpApps)) return;
+  const tools = manifest.tools ?? [];
+  const hosts = object(manifest.network) ? manifest.network.hosts ?? [] : [];
+  if (!Array.isArray(tools) || tools.some(tool => !object(tool) || typeof tool.name !== 'string') ||
+      !Array.isArray(hosts) || hosts.some(host => typeof host !== 'string')) return;
+  return parseGhostUi(manifest.mcpApps.ui, tools, hosts, isSafeGhostRelativePath) ?? undefined;
 }
-export function pluginHasToolUi(manifest: UiManifest): boolean { return !!declaredUi(manifest); }
+
+/** Preserve only historical mcpApps data; every other validation rule still applies. */
+export function validateWithStoredMcpApps<R extends { ok: boolean; manifest?: { mcpApps?: unknown } }>(
+  value: unknown, validate: (value: unknown) => R,
+): R {
+  const strict = validate(value);
+  if (strict.ok || !object(value) || !Object.prototype.hasOwnProperty.call(value, 'mcpApps')) return strict;
+  const rest = { ...value };
+  delete rest.mcpApps;
+  const compatible = validate(rest);
+  if (!compatible.ok) return compatible;
+  return { ...compatible, manifest: { ...compatible.manifest, mcpApps: value.mcpApps } };
+}
+export function pluginHasToolUi(manifest: UiManifest): boolean { return !!getPluginToolUi(manifest); }
 export function pluginToolVisible(manifest: UiManifest, name: string, audience: 'model' | 'app'): boolean {
-  const link = declaredUi(manifest)?.tools[name];
+  const link = getPluginToolUi(manifest)?.tools[name];
   return link ? !link.visibility || link.visibility.includes(audience) : audience === 'model';
 }
 export function pluginUiDomains(manifest: UiManifest): string[] {
-  return [...new Set((declaredUi(manifest)?.resources ?? []).flatMap(resource => cspKeys.flatMap(key => resource.csp?.[key] ?? [])))];
+  return [...new Set((getPluginToolUi(manifest)?.resources ?? []).flatMap(resource => cspKeys.flatMap(key => resource.csp?.[key] ?? [])))];
 }
 export function pluginUiPermissionsExpand(previous: UiManifest, next: UiManifest): boolean {
-  const previousUi = declaredUi(previous), nextUi = declaredUi(next);
+  const previousUi = getPluginToolUi(previous), nextUi = getPluginToolUi(next);
   const remaining = [...(previousUi?.resources ?? [])];
   // URI is an author's identifier, not a permission. A rename with the same file
   // retains its baseline; each old resource can cover only one new resource.

@@ -1,3 +1,4 @@
+import { getPluginToolUi, pluginHasToolUi, pluginToolVisible, pluginUiDomains, pluginUiPermissionsExpand } from '../toolUi.js';
 import { describe, expect, it } from 'vitest';
 import {
   GHOST_MANUAL_DESCRIPTION_MAX_CHARS,
@@ -2047,3 +2048,21 @@ describe('interactive page declarations', () => {
     expect(validateGhostManifest({ ...base, schemaVersion: 2 }).ok).toBe(false);
   });
 });
+
+// Unit: historical unknown mcpApps must stay inert; the strict authoring validator
+// already rejects these values, but capability checks previously accepted traversal.
+it.each(['../page.html', '/page.html', 'ui/../page.html', 'ui\\page.html', 'con.html'])(
+  'does not grant any page authority for historical path %s', file => {
+    const manifest = { schemaVersion: 3, tools: [{ name: 'help' }], network: { hosts: ['api.example.com'] },
+      mcpApps: { ui: { resources: [{ uri: 'ui://help', file, csp: { connectDomains: ['https://api.example.com'] } }],
+        tools: { help: { resourceUri: 'ui://help', visibility: ['app'] } } } } };
+    expect(getPluginToolUi(manifest)).toBeUndefined();
+    expect(pluginHasToolUi(manifest)).toBe(false);
+    expect(pluginToolVisible(manifest, 'help', 'model')).toBe(true);
+    expect(pluginToolVisible(manifest, 'help', 'app')).toBe(false);
+    expect(pluginUiDomains(manifest)).toEqual([]);
+    expect(pluginUiPermissionsExpand({}, manifest)).toBe(false);
+    const valid = { ...manifest, mcpApps: { ui: { ...manifest.mcpApps.ui, resources: [{ uri: 'ui://help', file: 'page.html' }] } } };
+    expect(pluginUiPermissionsExpand(manifest, valid)).toBe(true);
+  },
+);

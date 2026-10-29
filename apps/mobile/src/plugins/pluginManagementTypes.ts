@@ -1,3 +1,4 @@
+import { pluginHasToolUi } from '@cindy/plugin-protocol';
 /** Mobile projection of the existing Host management contract. Never contains saved settings. */
 export interface ManagedPluginManifest {
   [key: string]: unknown;
@@ -202,5 +203,5 @@ export function marketItemMatchesPlugin(item: ManagedMarketItem, plugin: Managed
 /** Presentation only; the executing Host owns declaration validation and approval. */
 export function pluginNeedsUiApproval(plugin: ManagedPlugin): boolean {
   return plugin.enabled && plugin.approval.state === 'approved' && !plugin.uiCapabilityApproved
-    && record(plugin.manifest.mcpApps) && record(plugin.manifest.mcpApps.ui);
+    && pluginHasToolUi(plugin.manifest);
 }

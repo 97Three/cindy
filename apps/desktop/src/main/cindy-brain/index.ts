@@ -7174,6 +7174,7 @@ export async function installAndDock(
     reclaimLegacyBareInstance?: boolean;
     beforePackagePlacement?: () => void;
     deferUsageBinding?: boolean;
+    manifestSource?: 'stored-release';
   },
 ): Promise<InstalledGhost> {
   return withGhostInstallLock(opts.ghostId, () => installAndDockLocked(manager, lizFilePath, opts));
@@ -7196,6 +7197,7 @@ async function installAndDockLocked(
     reclaimLegacyBareInstance?: boolean;
     beforePackagePlacement?: () => void;
     deferUsageBinding?: boolean;
+    manifestSource?: 'stored-release';
   },
 ): Promise<InstalledGhost> {
   // 确认依据的 manifest 必须就是 expectedPackageSha256 钉住的那份包；锁内现读受体
@@ -7213,6 +7215,7 @@ async function installAndDockLocked(
   // 初始启用态由入口显式传入；当前用户导入与市场首装都传 true，覆盖更新
   // 则走 manager.update 延续既有状态。保留 false 缺省以兼容内部受控调用方。
   const result = await manager.install(lizFilePath, {
+    manifestSource: opts.manifestSource,
     taskCapabilityApproved: confirmedTaskCapability(opts.consent.decision, installedBefore, opts.consent.manifest),
     targetCapabilityApproved: confirmedTaskCapability(opts.consent.decision, installedBefore, opts.consent.manifest, 'targets'),
     uiCapabilityApproved: confirmedUiCapability(opts.consent.decision, installedBefore, opts.consent.manifest),
@@ -7736,7 +7739,7 @@ async function installOrUpdateMarketGhostPackageLocked(
     const manager = getGhostManager();
     const registryError = blockedInstanceRegistryMarketError(manager.isInstanceRegistryBlocked());
     if (registryError) throwIpcError('PRECONDITION_FAILED', registryError);
-    const inspected = await manager.inspect(cindyFilePath);
+    const inspected = await manager.inspect(cindyFilePath, expected.pendingMarketRecord?.source === 'market' ? 'stored-release' : undefined);
     if ('rejection' in inspected) throwInstallError(inspected.rejection);
     const commitEvidence: MarketGhostPackageCommitEvidence = {
       rawManifestSha256: inspected.rawManifestSha256,
@@ -7844,6 +7847,7 @@ async function installOrUpdateMarketGhostPackageLocked(
       // 所有前置校验(保留前缀/能力上限/签名/解压上限)都会作用在旧字节上。
       // 本地 .cindy 装入通道已强制此对账,市场通道同一口径。
       const installedGhost = await installAndDock(manager, cindyFilePath, {
+        manifestSource: expected.pendingMarketRecord?.source === 'market' ? 'stored-release' : undefined,
         ghostId: expected.ghostId,
         enable: true,
         registrySource: 'market',
@@ -7892,6 +7896,7 @@ async function installOrUpdateMarketGhostPackageLocked(
       // the strict lock through package swap, receipt commit, and compensation.
       result = await withActiveOwnerGhostOauthMutationLock(installedGhostStoragePart(installed), () =>
         manager.update(cindyFilePath, {
+          manifestSource: expected.pendingMarketRecord?.source === 'market' ? 'stored-release' : undefined,
           taskCapabilityApproved: confirmedTaskCapability(expected.consent, installed, inspected.manifest),
           targetCapabilityApproved: confirmedTaskCapability(expected.consent, installed, inspected.manifest, 'targets'),
           uiCapabilityApproved: confirmedUiCapability(expected.consent, installed, inspected.manifest),
