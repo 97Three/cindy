@@ -555,7 +555,7 @@ describe('sessionActiveTurn', () => {
     await insert('m-4', 's-tools', 'tool_use', { toolName: 'Write', input: {} }, startedAt + 400, startedAt + 500);
     await insert('m-5', 's-silent', 'tool_use', { toolName: 'Read', input: {} }, startedAt - 1);
 
-    const rows = await listInterruptedResumeCandidateRows();
+    const rows = await listInterruptedResumeCandidateRows(() => true);
     expect(rows.sort((a, b) => a.sessionId.localeCompare(b.sessionId))).toEqual([
       { sessionId: 's-silent', interruptedAt: startedAt, lastToolUse: null },
       {
@@ -569,9 +569,14 @@ describe('sessionActiveTurn', () => {
   it('offers interrupted companion tasks for resume but keeps hidden lanes and red dots out', async () => {
     const { listInterruptedResumeCandidateRows } = await import('../interruptedResumeCandidates.js');
     const { listInterruptedPendingSessionIds } = await import('../sessionActiveTurn.js');
+    const { botSessionInputBlockReason, isShadowedCompanionSession } = await import('../../maker-ipc/botSessionInputGuard.js');
+    // 与 sessions:interrupted-resume-candidates 注入的守卫同构:伙伴降级到别的电脑时 shadowed。
+    const canResume = ({ botId, role, profileStatus }: { botId: string; role: string; profileStatus: string }) =>
+      botSessionInputBlockReason({ source: 'bot', role, profileStatus }) === null
+      && !isShadowedCompanionSession({ role, botId }, (id) => id === 'bot-shadowed');
     const client = createTestDbClient();
     const startedAt = Date.now() - 10_000;
-    await client.exec("INSERT INTO bot_profiles (id, status) VALUES ('bot-1', 'active'), ('bot-paused', 'paused')");
+    await client.exec("INSERT INTO bot_profiles (id, status) VALUES ('bot-1', 'active'), ('bot-paused', 'paused'), ('bot-shadowed', 'active')");
     await seedSession(client, 's-desktop', { startedAt });
     for (const role of ['canonical', 'delegation', 'routine', 'channel', 'history', 'group', 'thread']) {
       await seedSession(client, `bot-${role}`, { startedAt, source: 'bot' });
@@ -586,10 +591,16 @@ describe('sessionActiveTurn', () => {
       'INSERT INTO bot_session_links (id, bot_id, session_id, role, created_at) VALUES (?, ?, ?, ?, ?)',
       ['link-paused', 'bot-paused', 'bot-paused-canonical', 'canonical', startedAt],
     );
+    // 伙伴已降级到别的电脑:本机副本的主对话 / 例行发送一律被拒,不提示。
+    await seedSession(client, 'bot-shadowed-canonical', { startedAt, source: 'bot' });
+    await client.exec(
+      'INSERT INTO bot_session_links (id, bot_id, session_id, role, created_at) VALUES (?, ?, ?, ?, ?)',
+      ['link-shadowed', 'bot-shadowed', 'bot-shadowed-canonical', 'canonical', startedAt],
+    );
     // 没有伙伴关联的 bot 来源会话无处打开,不提示。
     await seedSession(client, 'bot-unlinked', { startedAt, source: 'bot' });
 
-    expect((await listInterruptedResumeCandidateRows()).map((r) => r.sessionId).sort()).toEqual([
+    expect((await listInterruptedResumeCandidateRows(canResume)).map((r) => r.sessionId).sort()).toEqual([
       'bot-canonical',
       'bot-channel',
       'bot-delegation',

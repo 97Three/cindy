@@ -375,34 +375,45 @@ export function _setBootAtMsForTests(ms: number): void {
  * 启动首拉消费它(见下方两条腿消费周期的说明);但 startedAt < bootAt 的守卫让它
  * 在任何时刻调用都不会把运行中的会话算进来,批量处置因此也可以安全复用。
  */
+export interface InterruptedBotTaskLink {
+  botId: string;
+  role: string;
+  profileStatus: string;
+}
+
 export async function listInterruptedPendingRows(
   options: { includeBotTasks?: boolean } = {},
-): Promise<{ sessionId: string; startedAt: number }[]> {
+): Promise<{ sessionId: string; startedAt: number; botTask?: InterruptedBotTaskLink }[]> {
   const db = getDbClient().drizzle;
   // 只统计桌面 sidebar 可见来源(含 feishu/slack 等 IM 渠道)——
   // 不可见来源的红点无处展示也无法清除。
   const listedSource = inArray(sessions.source, DESKTOP_TASK_LIST_SESSION_SOURCES);
+  // 伙伴任务只给启动弹窗用(includeBotTasks):范围只收有页面 / 列在普通任务列表的角色
+  // (主对话、委派、例行、渠道);group 与私聊话题专线是隐藏专线,history 只读。能不能
+  // 真正继续(伙伴启用、未降级)不在这里重写判据,由调用方用发送路径同一套守卫判定。
+  const visibleBotRole = inArray(botSessionLinks.role, [
+    'canonical',
+    'delegation',
+    'routine',
+    'channel',
+  ]);
   const rows = await db
-    .select({ id: sessions.id, startedAt: sessions.activeTurnStartedAt })
+    .select({
+      id: sessions.id,
+      source: sessions.source,
+      startedAt: sessions.activeTurnStartedAt,
+      botId: botSessionLinks.botId,
+      botRole: botSessionLinks.role,
+      botStatus: botProfiles.status,
+    })
     .from(sessions)
+    .leftJoin(botSessionLinks, eq(botSessionLinks.sessionId, sessions.id))
+    .leftJoin(botProfiles, eq(botProfiles.id, botSessionLinks.botId))
     .where(
       and(
         eq(sessions.status, 'active'),
         options.includeBotTasks
-          ? or(
-              listedSource,
-              // 能走普通「继续」路径的伙伴任务:主对话、委派任务有自己的页面,例行与渠道
-              // 专线列在普通任务列表里。history 只读、伙伴未启用(botSessionInputGuard 拒绝发送),群与
-              // 私聊话题专线是隐藏专线,由群聊 / 私聊收口,都不提示。
-              and(
-                eq(sessions.source, 'bot'),
-                sql`EXISTS (SELECT 1 FROM ${botSessionLinks}
-                  JOIN ${botProfiles} ON ${botProfiles.id} = ${botSessionLinks.botId}
-                  WHERE ${botSessionLinks.sessionId} = ${sessions.id}
-                    AND ${botSessionLinks.role} IN ('canonical', 'delegation', 'routine', 'channel')
-                    AND ${botProfiles.status} = 'active')`,
-              ),
-            )
+          ? or(listedSource, and(eq(sessions.source, 'bot'), visibleBotRole))
           : listedSource,
         // 插件后台隐藏任务不在侧栏展示，红点无处展示也无法清除。
         isNull(sessions.hiddenAt),
@@ -414,7 +425,17 @@ export async function listInterruptedPendingRows(
     );
   // startedAt 必非 null(上面的 gt/lt 比较已排除),类型收窄用于批量处置的 CAS。
   return rows.flatMap((r) =>
-    r.startedAt == null ? [] : [{ sessionId: r.id, startedAt: r.startedAt }],
+    r.startedAt == null
+      ? []
+      : [
+          {
+            sessionId: r.id,
+            startedAt: r.startedAt,
+            ...(r.source === 'bot' && r.botId && r.botRole && r.botStatus
+              ? { botTask: { botId: r.botId, role: r.botRole, profileStatus: r.botStatus } }
+              : {}),
+          },
+        ],
   );
 }
 

@@ -16,7 +16,7 @@
 import { and, desc, eq, gte, isNull, sql } from 'drizzle-orm';
 
 import { getDbClient } from './client/current';
-import { listInterruptedPendingRows } from './sessionActiveTurn';
+import { listInterruptedPendingRows, type InterruptedBotTaskLink } from './sessionActiveTurn';
 import { messages } from './schema';
 
 export interface InterruptedTurnToolUse {
@@ -45,10 +45,16 @@ function parseToolUse(raw: string | null): InterruptedTurnToolUse | null {
   }
 }
 
-export async function listInterruptedResumeCandidateRows(): Promise<
-  InterruptedResumeCandidateRow[]
-> {
-  const pending = await listInterruptedPendingRows({ includeBotTasks: true });
+/**
+ * `canResumeBotTask` 必须复用「继续」发送路径同一套守卫(伙伴启用、未降级到别的电脑等),
+ * 候选不再自己复刻判据 —— 弹窗默认勾选候选,列出点了必失败的任务只会留下一条失败提示。
+ */
+export async function listInterruptedResumeCandidateRows(
+  canResumeBotTask: (task: InterruptedBotTaskLink) => boolean,
+): Promise<InterruptedResumeCandidateRow[]> {
+  const pending = (await listInterruptedPendingRows({ includeBotTasks: true })).filter(
+    (row) => !row.botTask || canResumeBotTask(row.botTask),
+  );
   if (pending.length === 0) return [];
   const db = getDbClient().drizzle;
   return Promise.all(
