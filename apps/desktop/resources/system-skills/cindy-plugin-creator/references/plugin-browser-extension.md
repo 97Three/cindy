@@ -30,7 +30,8 @@ try {
   status = await cindy.send({ type: 'browser-extension-request', kind: 'status' });
 } catch (err) {
   // 只有旧宿主会拒绝这个管子类型([INVALID_PARAMS] 未知的管子消息类型):回落到你自己的
-  // 接线进程,并记住。不要把拒绝当作已连接。
+  // 接线进程,并记住。不要把拒绝当作已连接。其它异常(超时等)不回落,下次再探测。
+  if (!String(err?.message).includes('[INVALID_PARAMS]')) throw err;
 }
 // 新宿主也会返回 errorCode(HOST_NOT_READY、PERMISSION_DENIED 等):这表示宿主有这个槽,
 // 只是暂时不可用。不要据此回落,也不要缓存结果,下次再探测。
@@ -80,5 +81,5 @@ cindy.onHostMessage(async (msg) => {
   页面,不能当成功或未执行报告。
 - **宿主代码不认识你**:桥接只按声明工作,不会为某个插件写特例;需要线协议之外的能力,先提
   Cindy 改动,不要在扩展里绕过。
-- **向下兼容**:旧宿主没有这个槽,`status` 返回 `errorCode`;插件必须保留自带接线进程的降级
-  路径(或明确提示升级 Cindy),不能让已装用户的功能消失。
+- **向下兼容**:旧宿主没有这个槽,会以 `[INVALID_PARAMS]` 拒绝这个管子类型;插件必须保留
+  自带接线进程的降级路径(或明确提示升级 Cindy),不能让已装用户的功能消失。

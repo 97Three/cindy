@@ -785,12 +785,19 @@ describe('UserBrowserBackend · 读取与动作', () => {
       connected().map((c) => ({ ...c, boot }));
     fake.responses.set('open', (payload) => ({ ok: true, tabId: 42, window: 500, url: payload.url, title: 'New' }));
     const b = backend(fake.control);
-    await call(b, { action: 'open', url: 'https://example.test/new', label: 'n' });
+    const opened = await call(b, { action: 'open', url: 'https://example.test/new', label: 'n' });
+    const oldTarget = (opened.data as { targetId: string }).targetId;
     boot = '22222222-2222-2222-2222-222222222222';
     const before = fake.jobs.length;
     const result = await call(b, { action: 'act', targetId: 'n', request: { kind: 'click', ref: 'r1' } });
     expect(result.ok).toBe(false);
     expect(fake.jobs.slice(before).some(([action]) => action === 'click')).toBe(false);
+    // A restored tab with the same number gets a new handle; the old full id stays unknown.
+    fake.responses.set('tabs', () => ({ ok: true, tabs: [{ id: 42, url: 'https://example.test/restored', title: 'R' }] }));
+    const listed = await call(b, { action: 'tabs' });
+    const relisted = (listed.data as { tabs: Array<{ targetId: string }> }).tabs[0].targetId;
+    expect(relisted).not.toBe(oldTarget);
+    expect((await call(b, { action: 'act', targetId: oldTarget, request: { kind: 'click', ref: 'r1' } })).ok).toBe(false);
   });
 
   it('扩展已连上但没配对时 status 立即说明需要配对,不空等', async () => {

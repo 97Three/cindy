@@ -462,6 +462,9 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
     useInstalledGhosts().find((ghost) => ghost.manifest.id === RECOMMENDED_PAGE_CONTROL_PLUGIN_ID) ??
     null;
   const [userBrowserSetupBusy, setUserBrowserSetupBusy] = useState(false);
+  // Health can include an automatic embedded-browser recovery and therefore
+  // take several seconds. Track the latest health owner so a late initial
+  // probe cannot overwrite a newer user-initiated switch or recovery result.
   const browserBackendHealthSeqRef = useRef(0);
   const browserBackendKindRef = useRef(browserBackendKind);
   browserBackendKindRef.current = browserBackendKind;
@@ -558,9 +561,6 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
   }, [browserBackendKind, browserBackendHealth?.status, refreshUserBrowserHealth]);
   const [useRealProfilePending, setUseRealProfilePending] = useState(false);
   const confirmDialog = useOptionalConfirmDialog();
-  // Health can include an automatic embedded-browser recovery and therefore
-  // take several seconds. Track the latest health owner so a late initial
-  // probe cannot overwrite a newer user-initiated switch or recovery result.
 
   useEffect(() => {
     let cancelled = false;

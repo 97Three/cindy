@@ -57,8 +57,6 @@ interface TargetRecord {
   tabId: number;
   url: string;
   title?: string;
-  /** Browser launch the tab id belongs to; see forgetRestartedBrowsers. */
-  boot?: string;
 }
 
 export const USER_BROWSER_UNSUPPORTED_HINT =
@@ -446,7 +444,10 @@ export class UserBrowserBackend implements BrowserBackend {
   // ── 目标表 ──────────────────────────────────────────────────────────────
 
   private targetKey(clientId: string, tabId: number): string {
-    return `${clientId.slice(0, 8)}:${tabId}`;
+    // The browser launch is part of the handle: after a restart the same tab number is a different
+    // tab, and an old handle the agent still holds must not resolve to it.
+    const boot = this.clientBoots.get(clientId);
+    return `${clientId.slice(0, 8)}${boot ? '.' + boot.slice(0, 8) : ''}:${tabId}`;
   }
 
   private register(

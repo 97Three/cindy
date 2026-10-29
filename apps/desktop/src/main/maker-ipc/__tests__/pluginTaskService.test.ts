@@ -1421,7 +1421,7 @@ it('an open plugin selection without a source session follows the auxiliary chai
   const resolveStart = source.indexOf('    const resolveRoute = async');
   const resolve = source.slice(resolveStart, source.indexOf('    const readExecution', resolveStart));
   const run = (candidates: Array<{ agentKind: 'codex'; providerId: string; model: string }>, config = {}, sourceSessionId?: string) => {
-    const deps = { readPluginTaskConfig: () => config, getSelectedNewMakerRoute: () => selected,
+    const deps = { getPluginTaskDefaults: () => config, getSelectedNewMakerRoute: () => selected,
       activeOwnerScopeKey: () => 'owner', assertPlugin: () => {}, getPluginTaskSourceSessionId: () => sourceSessionId,
       resolveSessionExecution: resolver, PluginTaskError, routeUnavailable: () => { throw Error('unavailable'); },
       getEffectiveAuxiliaryModelRefs: () => ['chain'], getEffectiveAuxiliaryModelChainSnapshot: () => 'chain',

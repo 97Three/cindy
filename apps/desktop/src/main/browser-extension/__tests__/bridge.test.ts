@@ -328,13 +328,16 @@ describe('bridge · 连接与身份', () => {
   // Review 2026-10-29: without the user's saved permissions the permissive default must not stand
   // in for a blocklist the plugin still holds.
   it('等待策略的桥接在收到策略前拒绝页面作业', async () => {
-    const { bridge, client } = await fixture({ awaitPolicy: true });
+    let asked = 0;
+    const { bridge, client } = await fixture({ awaitPolicy: true, onPolicyMissing: () => asked++ });
     await client({ native: true });
     expect(await bridge.act('text', { url: 'https://example.test' })).toMatchObject({
       ok: false,
       error: 'POLICY_NOT_READY',
       execution: 'not_executed',
     });
+    // Each refusal tells the host, which asks the plugin again (throttled there).
+    expect(asked).toBeGreaterThan(0);
     await bridge.setPolicy(defaultBrowserExtensionPolicy());
     expect(await bridge.act('text', { url: 'https://example.test' })).not.toMatchObject({
       error: 'POLICY_NOT_READY',
@@ -472,6 +475,19 @@ describe('bridge · 作业生命周期', () => {
     expect((await promise).text).toBe('Hello');
     const status = await bridge.status();
     expect(status.ok && status.pending).toBe(0);
+  });
+
+  // Re-review 2026-10-29: jobs queued while the browser restarted were delivered to whatever tab
+  // had the same number in the new session.
+  it('浏览器重启(启动 id 变化)时结束它排队中的作业,不投递到新会话', async () => {
+    const { bridge, ready } = await fixture();
+    const c = await ready();
+    await c.request('/health', undefined, { 'X-My-Browser-Boot': '11111111-1111-1111-1111-111111111111' });
+    const pending = bridge.act('text', { url: 'https://example.test' });
+    await sleep(5);
+    await c.request('/health', undefined, { 'X-My-Browser-Boot': '22222222-2222-2222-2222-222222222222' });
+    expect(await pending).toMatchObject({ ok: false, error: 'BROWSER_RESTARTED', execution: 'not_executed' });
+    expect((await c.request('/poll')).job ?? null).toBeNull();
   });
 
   it('已确认的交互超时记为 unknown 且绝不重投;未确认的过期作业不能再执行', async () => {

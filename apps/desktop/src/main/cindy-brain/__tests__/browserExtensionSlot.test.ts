@@ -215,6 +215,34 @@ describe('browserExtensionSlot · 桥接随花名册启停', () => {
     expect(slot.getPageControl()).toBeNull();
   });
 
+  // Review 2026-10-29 (re-review): on an update the old bridge's stop and the new one's start ran
+  // concurrently, so the old binding saw no live connection and withdrew the new registration.
+  it('换版时新桥接等旧桥接与 native 注册关完后才安装', async () => {
+    const order: string[] = [];
+    const { slot, natives } = await makeSlot();
+    const wrapNative = (n: (typeof natives)[number], i: number) => {
+      n.install.mockImplementation(async () => {
+        order.push(`install${i}`);
+        return { ok: true as const };
+      });
+      n.close.mockImplementation(async () => {
+        await new Promise((r) => setTimeout(r, 30));
+        order.push(`close${i}`);
+      });
+    };
+    slot.reconcile([extGhost()]);
+    await vi.waitFor(() => expect(natives[0]).toBeDefined());
+    wrapNative(natives[0], 0);
+    await vi.waitFor(() => expect(order).toContain('install0'), { timeout: 2000 }).catch(() => undefined);
+    order.length = 0;
+    slot.reconcile([extGhost({ version: '1.1.0' })]);
+    await vi.waitFor(() => expect(natives[1]).toBeDefined());
+    wrapNative(natives[1], 1);
+    await vi.waitFor(() => expect(order).toContain('install1'));
+    expect(order.indexOf('close0')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('close0')).toBeLessThan(order.indexOf('install1'));
+  });
+
   // Native hosts run outside the sandbox and share one registration per account, so a plugin that
   // is not the official Cindy Chrome must not get one, even under the official name.
   it('只有官方 Cindy Chrome 能装 native host;其它插件声明了也只开桥接', async () => {

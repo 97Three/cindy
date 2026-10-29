@@ -131,6 +131,8 @@ function entrySignature(ghost: InstalledGhost, ownerScopeKey: string): string {
 /** 浏览器扩展槽:按插件启停桥接 → 转交扩展请求 → 承接插件的作业/策略推送 → 提供页面控制桥接。 */
 export class GhostBrowserExtensionSlot {
   private readonly entries = new Map<string, Entry>();
+  /** Stops in flight; a replacement entry waits for them so the old one cannot undo its setup. */
+  private readonly stopping = new Map<string, Promise<void>>();
   private disposed = false;
 
   constructor(private readonly deps: BrowserExtensionSlotDeps) {}
@@ -156,6 +158,7 @@ export class GhostBrowserExtensionSlot {
 
   private start(instanceId: string, ghost: InstalledGhost, ownerScopeKey: string): void {
     const needs = ghost.manifest.browserExtension!;
+    let lastPolicyRequest = Number.NEGATIVE_INFINITY;
     if (needs.nativeHost && !mayInstallNativeHost(ghost))
       this.deps.log?.warn('browser extension native host ignored: only the official plugin may install one', {
         instanceId,
@@ -170,6 +173,13 @@ export class GhostBrowserExtensionSlot {
     const bridge = (this.deps.createBridge ?? ((options) => new BrowserExtensionBridge(options)))({
       ghostId: ghost.manifest.id,
       awaitPolicy: true,
+      // The first request can be lost (plugin page still loading); ask again on refusal, throttled.
+      onPolicyMissing: () => {
+        const now = (this.deps.now ?? Date.now)();
+        if (now - lastPolicyRequest < 5000) return;
+        lastPolicyRequest = now;
+        void this.requestPolicy(instanceId);
+      },
       installedVersion: ghost.manifest.version,
       extensionIds: needs.extensionIds,
       ...(native ? { nativeToken: native.token } : {}),
@@ -189,7 +199,10 @@ export class GhostBrowserExtensionSlot {
       saved: { policy: null, trustedClients: [] },
       writes: Promise.resolve(),
     };
+    const previous = this.stopping.get(instanceId);
     entry.ready = (async () => {
+      // The old bridge must release its port and native registration before this one claims them.
+      await previous?.catch(() => undefined);
       const saved = await this.readSaved(instanceId);
       let restored = false;
       if (saved) {
@@ -242,15 +255,21 @@ export class GhostBrowserExtensionSlot {
     this.entries.set(instanceId, entry);
   }
 
-  private async stop(instanceId: string): Promise<void> {
+  private stop(instanceId: string): Promise<void> {
     const entry = this.entries.get(instanceId);
-    if (!entry || entry.closing) return;
+    if (!entry || entry.closing) return this.stopping.get(instanceId) ?? Promise.resolve();
     entry.closing = true;
     this.entries.delete(instanceId);
-    await entry.ready;
-    await entry.bridge.close();
-    await entry.native?.close();
-    this.deps.log?.info('browser extension bridge stopped', { instanceId });
+    const stopped = (async () => {
+      await entry.ready;
+      await entry.bridge.close();
+      await entry.native?.close();
+      this.deps.log?.info('browser extension bridge stopped', { instanceId });
+    })().finally(() => {
+      if (this.stopping.get(instanceId) === stopped) this.stopping.delete(instanceId);
+    });
+    this.stopping.set(instanceId, stopped);
+    return stopped;
   }
 
   async dispose(): Promise<void> {

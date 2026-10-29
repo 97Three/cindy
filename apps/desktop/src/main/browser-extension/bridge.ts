@@ -139,6 +139,8 @@ export interface BrowserExtensionBridgeOptions {
    * so the permissive default must not stand in for a blocklist the plugin still holds.
    */
   awaitPolicy?: boolean;
+  /** Called whenever a job is refused for lack of a policy, so the host can ask the plugin again. */
+  onPolicyMissing?: () => void;
   ports?: readonly number[];
   pollTimeout?: number;
   connectWait?: number;
@@ -240,13 +242,15 @@ export class BrowserExtensionBridge {
   }
 
   private gate(action: unknown, url: unknown): ReturnType<typeof checkBrowserExtensionPolicy> {
-    if (!this.policyKnown)
+    if (!this.policyKnown) {
+      this.options.onPolicyMissing?.();
       return {
         ok: false,
         error: 'POLICY_NOT_READY',
         message: 'Cindy is still loading your site permissions from the plugin. Try again shortly.',
         execution: 'not_executed',
       };
+    }
     return checkBrowserExtensionPolicy(this.policy, action, url);
   }
 
@@ -484,6 +488,19 @@ export class BrowserExtensionBridge {
     });
   }
 
+  private endJobsOf(clientId: string): void {
+    for (const job of [...this.jobs.values()])
+      if (job.clientId === clientId)
+        this.finish(
+          job,
+          this.jobFailure(
+            job,
+            'BROWSER_RESTARTED',
+            'The browser restarted before this finished. Check its tabs again before retrying.',
+          ),
+        );
+  }
+
   private jobFailure(job: Job, error: string, message: string): BrowserExtensionFailure {
     return failure(
       error,
@@ -657,7 +674,12 @@ export class BrowserExtensionBridge {
       client.browser = family ?? client.browser;
       client.version = String(this.header(req, 'x-my-browser-version') || '').slice(0, 30);
       const boot = this.header(req, 'x-my-browser-boot');
-      if (typeof boot === 'string' && /^[0-9a-f-]{36}$/i.test(boot)) client.boot = boot;
+      if (typeof boot === 'string' && /^[0-9a-f-]{36}$/i.test(boot)) {
+        // The browser restarted: tab ids start over, so jobs aimed at the old tabs must not reach
+        // whatever tab now has the same number.
+        if (client.boot && client.boot !== boot) this.endJobsOf(client.id);
+        client.boot = boot;
+      }
       client.installedVersion = installedVersion;
       client.seen = this.now();
       if (keyHeader !== undefined && publicKey !== client.publicKey) {
@@ -1036,6 +1058,12 @@ export class BrowserExtensionBridge {
             srv.once('error', reject);
             srv.listen(candidate, '127.0.0.1', resolve);
           });
+          // close() ran while this listen was pending: do not keep an ownerless listener.
+          if (this.closed) {
+            srv.closeAllConnections();
+            await new Promise<void>((r) => srv.close(() => r()));
+            throw new Error('BRIDGE_STOPPED');
+          }
           this.server = srv;
           const address = srv.address();
           this.port = typeof address === 'object' && address ? address.port : candidate;

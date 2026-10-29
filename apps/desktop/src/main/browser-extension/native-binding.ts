@@ -151,6 +151,10 @@ export function createNativeBinding(options: NativeBindingOptions): NativeBindin
     try {
       await privateDirectory(root);
       await privateDirectory(path.join(root, 'connections'));
+      // Claim the connection before touching the shared registration, so a binding closing at the
+      // same time (plugin update, re-approval, account switch) still sees this one in use.
+      config = path.join(root, 'connections', port + '.json');
+      await atomic(config, JSON.stringify({ token }));
       const binaryName = 'cindy-browser-native' + (platform === 'win32' ? '.exe' : '');
       const source = path.join(options.binaryDir, platform + '-' + arch, binaryName);
       const binary = path.join(root, binaryName);
@@ -196,8 +200,6 @@ export function createNativeBinding(options: NativeBindingOptions): NativeBindin
           await atomic(path.join(dir, options.hostName + '.json'), JSON.stringify(manifest));
         }
       }
-      config = path.join(root, 'connections', port + '.json');
-      await atomic(config, JSON.stringify({ token }));
       state = 'ready';
       return { ok: true as const };
     } catch (e) {
