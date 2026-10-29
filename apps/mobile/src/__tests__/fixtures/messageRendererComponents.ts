@@ -14,13 +14,13 @@ import { iconSize, iconStroke, lightColors } from '@/theme/tokens';
 // host or unrelated viewers. Only native view surfaces and unrelated children
 // are adapted; routing, folding, account/device keys, and React hooks stay real.
 export const rendererSource = ts.createSourceFile('MessageRenderer.tsx', readFileSync(resolve(process.cwd(), 'src/session/MessageRenderer.tsx'), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-export function rendererFunction(name: string): ts.FunctionDeclaration | ts.FunctionExpression {
+export function rendererFunction(name: string, source: ts.SourceFile = rendererSource): ts.FunctionDeclaration | ts.FunctionExpression {
   let found: ts.FunctionDeclaration | ts.FunctionExpression | undefined;
   function visit(node: ts.Node) {
     if ((ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) && node.name?.text === name) found = node;
     ts.forEachChild(node, visit);
   }
-  visit(rendererSource);
+  visit(source);
   if (!found?.body) throw new Error('Message renderer function was not found: ' + name);
   return found;
 }

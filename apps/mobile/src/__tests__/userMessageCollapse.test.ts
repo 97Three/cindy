@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -183,8 +185,9 @@ function nativeText(surface: string) {
 const Text = nativeText('rn-text');
 const UITextView = nativeText('ios-text-view');
 const ScrollView = (props: SurfaceProps) => React.createElement('div', { 'data-scroll': true }, props.children);
+const selectableTextSource = ts.createSourceFile('MarkdownSelectableText.tsx', readFileSync(resolve(process.cwd(), 'src/session/MarkdownSelectableText.tsx'), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const { BubbleHarness, MarkdownHarness } = executeRenderer<{ BubbleHarness: React.ComponentType<any>; MarkdownHarness: React.ComponentType<any> }>(
-  rendererFunction('MarkdownSelectableText').getText(rendererSource) + String.raw`
+  rendererFunction('MarkdownSelectableText', selectableTextSource).getText(selectableTextSource).replace(/^export\s+/, '') + String.raw`
 function MarkdownHarness({ pinContentWidth = false, allowIosUITextView = true, boundTextRuns = false, selectable, text, layout, code = false, codeCopyEnabled = true }) {
   const styles = {};
   const onOpenPayload = undefined;
