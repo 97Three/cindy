@@ -31,8 +31,10 @@ interface BrowserBackendSubsectionProps {
   onRecover: () => void;
   /** 推荐的页面控制插件已装在本机(可能未启用);决定第 1 步写「安装」还是「启用」。 */
   userBrowserPluginInstalled?: boolean;
-  /** 打开推荐插件(未装时进入市场安装;已装时进入它的详情与设置,里面有装浏览器扩展的入口)。 */
+  /** 第 1 步就地安装或启用推荐插件;第 2 步打开插件详情,里面有装浏览器扩展的入口。 */
   onSetUpUserBrowser?: () => void;
+  /** 正在就地安装或启用插件。 */
+  userBrowserSetupBusy?: boolean;
 }
 
 function healthReasonKey(reason: BrowserBackendHealthReason | undefined): string {
@@ -64,6 +66,7 @@ export function BrowserBackendSubsection({
   onRecover,
   userBrowserPluginInstalled = false,
   onSetUpUserBrowser,
+  userBrowserSetupBusy = false,
 }: BrowserBackendSubsectionProps) {
   const { t } = useTranslation();
   const embeddedHealth =
@@ -144,7 +147,10 @@ export function BrowserBackendSubsection({
         userBrowserHealth.reason === 'extension-disconnected') ? (
         // 「我的浏览器」还差一步:说清缺的是哪一步,并给出直接去做的按钮;连上后父组件轮询会自动变绿。
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--settings-theme-card-border)] px-4 py-[14px]">
-          <div className="flex min-w-0 flex-1 basis-[280px] items-start gap-2 text-12 leading-[1.5]" role="status">
+          <div
+            className="flex min-w-0 flex-1 basis-[280px] items-start gap-2 text-12 leading-[1.5]"
+            role="status"
+          >
             {userBrowserHealth.reason === 'plugin-missing' ? (
               <Puzzle size={14} className="mt-0.5 shrink-0 text-[var(--settings-section-desc)]" />
             ) : (
@@ -168,7 +174,13 @@ export function BrowserBackendSubsection({
             </div>
           </div>
           {onSetUpUserBrowser ? (
-            <Button variant="secondary" type="button" onClick={onSetUpUserBrowser} disabled={pending}>
+            <Button
+              variant="secondary"
+              type="button"
+              loading={userBrowserSetupBusy}
+              onClick={onSetUpUserBrowser}
+              disabled={pending || userBrowserSetupBusy}
+            >
               {userBrowserHealth.reason === 'plugin-missing'
                 ? t(
                     userBrowserPluginInstalled

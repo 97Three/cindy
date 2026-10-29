@@ -521,4 +521,44 @@ describe('ComputerUseSection browser backend health loading', () => {
       'settings.computerUse.browserBackend.health.ready',
     );
   });
+
+  // My browser without its plugin: step 1 installs the plugin in place (no trip to the market page)
+  // and the guidance moves on to step 2 as soon as the host reports the extension as the gap.
+  it('installs the My browser plugin from settings and moves on to the extension step', async () => {
+    const detail = {
+      pluginId: 'my-browser',
+      releaseId: 'release-1',
+      manifest: { id: 'my-browser' },
+      installState: 'not-installed',
+    };
+    const marketDetail = vi.fn().mockResolvedValue(detail);
+    const install = vi.fn().mockResolvedValue({ ghost: { manifest: { name: 'Cindy Chrome' } } });
+    Object.assign(window.electronAPI, { pluginMarket: { detail: marketDetail, install } });
+    api.getBackendState.mockResolvedValue({ active: 'user-browser' });
+    api.getBackendHealth
+      .mockResolvedValueOnce({ active: 'user-browser', status: 'error', reason: 'plugin-missing', canRecover: false })
+      .mockResolvedValue({
+        active: 'user-browser',
+        status: 'error',
+        reason: 'extension-disconnected',
+        canRecover: false,
+      });
+
+    render(<ComputerUseSection workingDir="/tmp/project" />);
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'settings.computerUse.browserBackend.userBrowserSetup.installPlugin',
+      }),
+    );
+
+    expect(
+      await screen.findByText('settings.computerUse.browserBackend.userBrowserSetup.installExtensionTitle'),
+    ).toBeTruthy();
+    expect(install).toHaveBeenCalledWith('my-browser', {
+      expectedReleaseId: 'release-1',
+      expectedManifest: { id: 'my-browser' },
+      allowSourceReplacement: false,
+    });
+    expect(api.successToast).toHaveBeenCalledWith('settings.ghosts.toast.installed');
+  });
 });

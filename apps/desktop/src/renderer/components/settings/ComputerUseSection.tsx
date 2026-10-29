@@ -46,6 +46,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { createLogger } from '@/lib/logger';
+import { extractIpcError } from '@/utils/ipcError';
+import { ghostInstallErrorKey } from '@/cindy-brain/installErrorKey';
+import { pluginMarketErrorKey } from '@/features/plugin/lib/pluginMarketErrorKey';
 import { BrowserBackendSubsection } from './BrowserBackendSubsection';
 import { useAutomationSettingsRead } from './useAutomationSettingsRead';
 import { ComputerPermissionRow } from './ComputerPermissionRow';
@@ -55,6 +58,8 @@ import {
   REAL_PROFILE_READ_DENIED,
   type BrowserBackendHealth,
 } from '../../../shared/browserBackend';
+import { ghostInstallApprovalToken } from '../../../shared/ghost';
+import { installedGhostStoragePart } from '../../../shared/pluginIdentity';
 import {
   browserOpenForLoginErrorCode,
   browserOpenForLoginToastKey,
@@ -453,27 +458,63 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
     [setBackendConfig],
   );
   const navigate = useNavigate();
-  const userBrowserPluginInstalled = useInstalledGhosts().some(
-    (ghost) => ghost.manifest.id === RECOMMENDED_PAGE_CONTROL_PLUGIN_ID,
-  );
+  const userBrowserPlugin =
+    useInstalledGhosts().find((ghost) => ghost.manifest.id === RECOMMENDED_PAGE_CONTROL_PLUGIN_ID) ??
+    null;
+  const [userBrowserSetupBusy, setUserBrowserSetupBusy] = useState(false);
+  const refreshUserBrowserHealth = useCallback(async () => {
+    const next = await window.electronAPI.browserBackend?.getHealth?.().catch(() => null);
+    if (next?.active === 'user-browser') setBrowserBackendHealth(next);
+  }, []);
+  // Step 1 happens right here: install the plugin from the market (Main still shows its usual
+  // permission confirmation) or turn it on, then re-check so the guidance moves on to step 2.
+  // Step 2 and anything unexpected open the plugin's own page, which has the extension install entry.
+  const handleSetUpUserBrowser = useCallback(async () => {
+    const openPluginPage = () =>
+      navigate(`/plugins?market=${encodeURIComponent(RECOMMENDED_PAGE_CONTROL_PLUGIN_ID)}`);
+    if (browserBackendHealth?.reason !== 'plugin-missing' || userBrowserPlugin?.enabled) {
+      openPluginPage();
+      return;
+    }
+    setUserBrowserSetupBusy(true);
+    try {
+      if (userBrowserPlugin) {
+        await window.electronAPI.ghosts.setEnabled(
+          installedGhostStoragePart(userBrowserPlugin),
+          true,
+          ghostInstallApprovalToken(userBrowserPlugin.approval),
+        );
+      } else {
+        const detail = await window.electronAPI.pluginMarket.detail(RECOMMENDED_PAGE_CONTROL_PLUGIN_ID);
+        if (detail.installState !== 'not-installed') {
+          openPluginPage();
+          return;
+        }
+        const result = await window.electronAPI.pluginMarket.install(detail.pluginId, {
+          expectedReleaseId: detail.releaseId,
+          expectedManifest: detail.manifest,
+          allowSourceReplacement: false,
+        });
+        toast.success(t('settings.ghosts.toast.installed', { name: result.ghost.manifest.name }));
+      }
+      await refreshUserBrowserHealth();
+    } catch (error) {
+      const code = extractIpcError(error)?.code;
+      // Cancelling the install confirmation is not a failure.
+      if (code !== 'MUTATION_CANCELLED') {
+        toast.error(t(userBrowserPlugin ? ghostInstallErrorKey(code) : pluginMarketErrorKey(error)));
+      }
+    } finally {
+      setUserBrowserSetupBusy(false);
+    }
+  }, [browserBackendHealth?.reason, navigate, refreshUserBrowserHealth, t, userBrowserPlugin]);
   // While "My browser" still lacks its plugin or extension, check again every few seconds so the
   // guidance turns into "connected" as soon as the user finishes a step elsewhere.
   useEffect(() => {
     if (browserBackendKind !== 'user-browser' || browserBackendHealth?.status !== 'error') return;
-    let cancelled = false;
-    const timer = setInterval(() => {
-      void window.electronAPI.browserBackend
-        ?.getHealth?.()
-        .then((next) => {
-          if (!cancelled && next?.active === 'user-browser') setBrowserBackendHealth(next);
-        })
-        .catch(() => {});
-    }, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [browserBackendKind, browserBackendHealth?.status]);
+    const timer = setInterval(() => void refreshUserBrowserHealth(), 3000);
+    return () => clearInterval(timer);
+  }, [browserBackendKind, browserBackendHealth?.status, refreshUserBrowserHealth]);
   const [useRealProfilePending, setUseRealProfilePending] = useState(false);
   const confirmDialog = useOptionalConfirmDialog();
   // Health can include an automatic embedded-browser recovery and therefore
@@ -1489,10 +1530,9 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
             health={browserBackendHealth}
             onSelect={(kind) => void handleSelectBackend(kind)}
             onRecover={() => void handleRecoverBrowserBackend()}
-            userBrowserPluginInstalled={userBrowserPluginInstalled}
-            onSetUpUserBrowser={() =>
-              navigate(`/plugins?market=${encodeURIComponent(RECOMMENDED_PAGE_CONTROL_PLUGIN_ID)}`)
-            }
+            userBrowserPluginInstalled={userBrowserPlugin !== null}
+            userBrowserSetupBusy={userBrowserSetupBusy}
+            onSetUpUserBrowser={() => void handleSetUpUserBrowser()}
           />
         ) : null}
         {browserBackendKind !== null ? (
