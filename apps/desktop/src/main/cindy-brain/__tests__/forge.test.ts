@@ -2514,10 +2514,13 @@ describe('packGhostDir · manual 渐进披露手册', () => {
 // 0.1.121-beta and later must pack, earlier core versions must fail.
 it('packs the shared page, defaults its version floor, and rejects missing HTML or a low floor', async () => {
   const base = { ...GOOD_MANIFEST, schemaVersion: 3, slots: undefined,
-    ui: { pages: { planner: { html: 'ui/planner.html' } }, tools: { do_thing: { page: 'planner' } } } };
+    mcpApps: { ui: { resources: [{
+            uri: "ui://planner",
+            file: 'ui/planner.html'
+        }], tools: { do_thing: { resourceUri: "ui://planner" } } } } };
   const dir = await makeSrcDir({ 'ghost.json': JSON.stringify(base), 'main.js': '/* fixture */', 'ui/planner.html': '<html>Planner</html>' });
   const result = await packGhostDir(dir);
-  expect(result).toMatchObject({ ok: true, manifest: { ui: base.ui, minCindyVersion: PLUGIN_UI_MIN_CINDY_VERSION } });
+  expect(result).toMatchObject({ ok: true, manifest: { mcpApps: base.mcpApps, minCindyVersion: PLUGIN_UI_MIN_CINDY_VERSION } });
   for (const [minCindyVersion, allowed] of [
     ['0.1.121-beta', true], ['0.1.121-beta.1', true], ['0.1.121', true],
     ['0.1.120', false], ['0.1.120-beta', false],

@@ -396,13 +396,16 @@ it('preserves the local-files limitation across Desktop and phone remote entry p
   const { McpAppsHost: RealHost, appServerRevision: revision } = await vi.importActual<typeof import('../host.js')>('../host.js');
   const { createPluginAppTransport, pluginAppTool } = await import('../pluginServer.js');
   const tools = [{ name: 'open', description: 'Open' }];
-  const ui = { pages: { page: { html: 'ui.html' } }, tools: { open: { page: 'page' } } };
+  const ui = { resources: [{
+            uri: "ui://page",
+            file: 'ui.html'
+        }], tools: { open: { resourceUri: "ui://page" } } };
   const config: import('../connection.js').AppServerConfig = { id: 'remote-files', url: '', transport: 'in-process', plugin: {
     instance: 'remote-files', revision: 'approved', packageSha256: 'hash', title: 'Files', trust: 'unverified', domains: [], assertCurrent() {},
     createTransport: () => createPluginAppTransport({ instance: 'remote-files', revision: 'approved', tools, ui, assertCurrent() {}, readHtml: () => '<p>Standard page</p>', call: async () => ({ content: [] }) }),
   } };
   const actual = new RealHost({ owner: () => state.owner!, config: () => config,
-    readCard: async (_task, card) => ({ version: 1, serverId: config.id, serverRevision: revision(config), resourceUri: 'ui://remote-files/page', tool: pluginAppTool('remote-files', tools[0], ui), arguments: {},
+    readCard: async (_task, card) => ({ version: 1, serverId: config.id, serverRevision: revision(config), resourceUri: 'ui://page', tool: pluginAppTool('remote-files', tools[0], ui), arguments: {},
       result: { content: card === 'files' ? [{ type: 'resource_link', uri: 'library:report.png', name: 'report' }] : [] } }),
     writeCard: async () => {}, authorizeTool: async () => {}, sendMessage: async () => {},
   });

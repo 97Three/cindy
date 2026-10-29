@@ -1,4 +1,4 @@
-import { parseGhostUi, type GhostUiNeeds } from '@cindy/plugin-protocol';
+import { parseGhostUi, parseGhostMcpApps, type GhostMcpApps } from '@cindy/plugin-protocol';
 import { pluginHasToolUi, pluginToolVisible, pluginUiDomains, pluginUiPermissionsExpand } from '@cindy/plugin-protocol';
 import { parseGhostSecretCheck, type GhostSecretCheckDecl } from '@cindy/plugin-protocol';
 import { parseGhostRoutineEvents, type GhostRoutineEvents } from '@cindy/plugin-protocol';
@@ -1476,7 +1476,7 @@ export function isGhostSetupErrorCode(value: unknown): value is GhostSetupErrorC
 /** ghost.json 清单(不变量由 validateGhostManifest 保证)。 */
 export interface GhostManifest {
   /** Optional MCP Apps resources and links to existing tools. */
-  ui?: GhostUiNeeds;
+  mcpApps?: GhostMcpApps;
   /** Optional v3 extension, validated only when projecting homepage recommendations. */
   recommendations?: unknown;
   /** 原始清单格式版本；v2 已在解析边界投影成与 v3 相同的直接字段。 */
@@ -2057,7 +2057,7 @@ export function ghostPermissionItems(manifest: GhostManifest): GhostPermissionIt
   const items: GhostPermissionItem[] = [];
   if (pluginHasToolUi(manifest)) items.push({ key: 'ui:pages', kind: 'panel', labelKey: 'mcpUi',
     detailKey: 'uiPageAccess', detailArgs: {
-      pages: Object.keys(manifest.ui?.pages ?? {}).sort().join(', ') || '—',
+      pages: (manifest.mcpApps?.ui?.resources ?? []).map(resource => resource.uri).sort().join(', ') || '—',
       domains: pluginUiDomains(manifest).join(', ') || '—',
       tools: (manifest.tools ?? []).filter(tool => pluginToolVisible(manifest, tool.name, 'app')).map(tool => tool.name).sort().join(', ') || '—',
     } });
@@ -2674,7 +2674,7 @@ export function diffInstalledGhostPermissionItems(
 ): GhostPermissionDiff {
   if (installed.approval.state === 'approved') {
     // Older Hosts preserved ui without granting page capabilities.
-    const previous = { ...installed.manifest, ui: installed.uiCapabilityApproved === true ? installed.manifest.ui : undefined };
+    const previous = { ...installed.manifest, mcpApps: installed.uiCapabilityApproved === true ? installed.manifest.mcpApps : undefined };
     return diffGhostPermissionItems(previous, next);
   }
   return {
@@ -3097,7 +3097,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 const GHOST_MANIFEST_KNOWN_TOP_LEVEL_FIELDS = new Set([
-  'ui',
+  'mcpApps',
   'routineEvents',
   'schemaVersion',
   'id',
@@ -6241,15 +6241,15 @@ function validateGhostManifestInput(value: unknown, preserveHistoricalTasks: boo
     }
   }
 
-  if (raw.ui !== undefined && raw.schemaVersion !== 3) return { ok: false, reason: 'ui requires schemaVersion 3' };
-  const parsedUi = raw.ui === undefined ? undefined : parseGhostUi(raw.ui, tools ?? [], network?.hosts ?? [], isSafeGhostRelativePath);
-  if (parsedUi === null && !preserveHistoricalTasks) return { ok: false, reason: 'ui 页面或工具声明无效，页面域名必须在 network.hosts 内' };
-  const ui = parsedUi === null ? raw.ui as GhostUiNeeds : parsedUi;
+  if (raw.mcpApps !== undefined && raw.schemaVersion !== 3) return { ok: false, reason: 'mcpApps requires schemaVersion 3' };
+  const parsedMcpApps = raw.mcpApps === undefined ? undefined : parseGhostMcpApps(raw.mcpApps, tools ?? [], network?.hosts ?? [], isSafeGhostRelativePath);
+  if (parsedMcpApps === null && !preserveHistoricalTasks) return { ok: false, reason: 'mcpApps.ui 页面或工具声明无效，页面域名必须在 network.hosts 内' };
+  const mcpApps = parsedMcpApps === null ? raw.mcpApps as GhostMcpApps : parsedMcpApps;
   return {
     ok: true,
     manifest: {
       ...prepared.unknownV3Fields,
-      ...(ui !== undefined ? { ui } : {}),
+      ...(mcpApps !== undefined ? { mcpApps } : {}),
       schemaVersion: prepared.schemaVersion,
       id: raw.id,
       name: raw.name,
@@ -9079,5 +9079,5 @@ export type GhostPipeRoutineRequest =
 /** A historical unknown declaration is not authorization. */
 export function hasGhostUiPermission(ghost: InstalledGhost): boolean {
   return ghost.enabled && ghost.approval.state === 'approved' && ghost.uiCapabilityApproved === true
-    && !!parseGhostUi(ghost.manifest.ui, ghost.manifest.tools ?? [], ghost.manifest.network?.hosts ?? [], isSafeGhostRelativePath);
+    && !!parseGhostUi(ghost.manifest.mcpApps?.ui, ghost.manifest.tools ?? [], ghost.manifest.network?.hosts ?? [], isSafeGhostRelativePath);
 }

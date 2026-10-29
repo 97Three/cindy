@@ -127,7 +127,7 @@ Library 请求同时绑定迁移代次和安装批准，根解析、排队及开
   `minCindyVersion`。Manifest schema 不设置统一的 Cindy 版本下限；具体版本只属于插件包元数据。
   v3 **没有** `slots`；
   `tools`、`card`、`panel`、`mainView`、`taskView`、`subscribe`、`skill`、`cindy`、`agent`、`node`、`network`、
-  `preview` 等顶层字段本身就是插件贡献项或自主 Host 能力的直接声明。
+  `preview`、`mcpApps` 等顶层字段本身就是插件贡献项或自主 Host 能力的直接声明。
 - 无配置的布尔能力只接受字面量 `true`：`notify`、`badge`、`confirm`、`fs`、`library`、
   `sessionContext`、`pick`、`workspace`。不用就省略，写 `false` 是无效清单。
 - `card: {}` 与 `agent: {}` 分别表示基础卡片能力和由真实用户点击触发 Agent 回合；
@@ -136,6 +136,7 @@ Library 请求同时绑定迁移代次和安装批准，根解析、排队及开
   但当前 Host 不展示、不授权、也不因此阻止安装或发布。
   未来 Host 识别该字段后，才按正常的能力展示和运行时守门链路启用。不能把
   未知字段猜成现有权限，也不能让它意外获得能力。
+- `mcpApps.ui` 使用 `resources[]`（作者指定唯一 `ui://` URI、包内 `file`）与按原工具名声明的标准 `_meta.ui`。资源 `file` 不透传；`domain` / `permissions` 仅校验保留，不授予权限。资源 URI 单独改名不算扩权，新增资源、页面域名或 app 可调用工具仍按安装批准规则处理。旧宿主保留未知顶层 `mcpApps`，不授权。
 - 顶层 `showTaskPreferences?: boolean` 由每个插件在自己的 manifest 声明。
   省略或 `true` 保持该插件的卡片配置、权限限制和执行规则；`false` 隐藏该插件的 Desktop/手机卡片，
   且运行期不读取、不使用、不回写其模型、目录和权限配置。旧数据保留，重新启用后恢复。

@@ -6730,7 +6730,10 @@ describe('server default UI approval receipts', () => {
     if (options.organization) setCurrentOrganization();
     const pageManifest = (version: string): GhostManifest => normalizedManifest({
       ...manifest(item.ghostId, version), tools: [{ name: 'open', description: 'Open page' }],
-      ui: { pages: { planner: { html: 'ui/planner.html' } }, tools: { open: { page: 'planner' } } },
+      mcpApps: { ui: { resources: [{
+            uri: "ui://planner",
+            file: 'ui/planner.html'
+        }], tools: { open: { resourceUri: "ui://planner" } } } },
     });
     let next = pageManifest('1.0.0');
     let file = await writeTestCindyPackage(path.join(root, 'package.cindy'), next,
@@ -6793,7 +6796,7 @@ describe('server default UI approval receipts', () => {
       },
       async expand() {
         next = pageManifest('2.0.0');
-        next.ui!.pages.extra = { html: 'ui/extra.html' };
+        next.mcpApps!.ui!.resources.push({ uri: 'ui://extra', file: 'ui/extra.html' });
         file = await writeTestCindyPackage(path.join(root, 'expanded.cindy'), next,
           { 'main.js': '// fixture', 'ui/planner.html': '<html>planner</html>', 'ui/extra.html': '<html>extra</html>' });
         const bytes = fs.readFileSync(file);
@@ -6826,7 +6829,7 @@ describe('server default UI approval receipts', () => {
     await h.seed(true, true);
     await h.expand();
     await h.service.snapshot();
-    expect(h.read()).toMatchObject({ uiCapabilityApproved: true, manifest: { version: '2.0.0', ui: { pages: { extra: { html: 'ui/extra.html' } } } } });
+    expect(h.read()).toMatchObject({ uiCapabilityApproved: true, manifest: { version: '2.0.0', mcpApps: { ui: { resources: expect.arrayContaining([{ uri: 'ui://extra', file: 'ui/extra.html' }]) } } } });
   });
 
   it.each(['withdrawn', 'opted-out'] as const)('does not approve expanded pages after default entitlement is %s', async state => {

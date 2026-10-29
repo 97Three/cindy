@@ -202,5 +202,5 @@ export function marketItemMatchesPlugin(item: ManagedMarketItem, plugin: Managed
 /** Presentation only; the executing Host owns declaration validation and approval. */
 export function pluginNeedsUiApproval(plugin: ManagedPlugin): boolean {
   return plugin.enabled && plugin.approval.state === 'approved' && !plugin.uiCapabilityApproved
-    && record(plugin.manifest.ui);
+    && record(plugin.manifest.mcpApps) && record(plugin.manifest.mcpApps.ui);
 }

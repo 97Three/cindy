@@ -26,8 +26,7 @@ Codex 原生未必自行发送 MCP 取消；服务仍须限制长操作，并区
 该下限用于打包校验和市场兼容版本投影，不新增客户端安装闸门。
 
 插件继续通过 `ghost_info` / `ghost_call` 发现与执行 main.js 工具，不向 Agent 增加 MCP 服务。
-v3 顶层 `ui.pages` 声明包内静态 HTML、页面 CSP 和 `prefersBorder`，`ui.tools` 按原工具名
-引用页面并声明 `visibility`。多个工具可以共用资源；仅供页面的工具不出现在模型清单，
+v3 顶层 `mcpApps.ui.resources[]` 声明作者指定的 `ui://` URI、包内静态 HTML 的 `file`、页面 CSP 和 `prefersBorder`；`mcpApps.ui.tools` 按原工具名原样保存标准 `_meta.ui`（`resourceUri` / `visibility`）。多个工具可以共用资源；仅供页面的工具不出现在模型清单，
 也不能经 `ghost_call` 调用。未关联的旧工具默认仅供模型使用。
 
 Main 为已批准页面能力的插件建立进程内 MCP 服务：`tools/list` 投影标准 `_meta.ui`，
@@ -41,13 +40,14 @@ Main 为已批准页面能力的插件建立进程内 MCP 服务：`tools/list` 
 派发链，沿用联网凭证、设置、文件、作品库和媒体能力的现有规则。页面不能自行提供 Agent
 附件或 `save_dir` 过户凭据。页面工具结果不会再生成第二张 App 卡片。
 
-普通安装确认列出交互页面；新增页面、页面域名或工具的 app 访问权限需要确认。
+普通安装确认列出交互页面；新增资源、页面域名或工具的 app 访问权限需要确认。只改 HTML 内容不扩权；同一文件的 URI 改名不扩权，改名同时新增域名或 app 工具权限仍需确认。
+`mcpApps` 是 Cindy 的清单扩展，并非 MCP Apps 标准包格式。资源的 `file` 不透传到 `_meta.ui`；`domain` / `permissions` 校验并保留，但一期不授予相应浏览器能力或指定源。未知 `mcpApps` 扩展保留为数据。
 服务端 `defaultInstall` 下发的插件，交互页面能力随下发方静默授予：首次默认安装、组织默认接管、
 同源静默更新以及仍具默认资格的恢复都随真实包批准写入 `uiCapabilityApproved`，不另询问、不出待确认提示条。
 旧 Host 安装缺该事实时，Main 依据当前默认资格、来源账本、owner、实例与 revision，复用市场更新事务
 重新校验当前发布包后补齐。普通市场手动安装、自定义市场、本地包、Forge 或已失去默认资格的插件不代批；
 Server 审核和展示 manifest 不是授权依据。
-CSP 域名不得超出 `network.hosts`。旧 Host 保留 v3 顶层未知 `ui`，但不加载页面；升级后
+CSP 域名不得超出 `network.hosts`。旧 Host 保留 v3 顶层未知 `mcpApps`，但不加载页面；升级后
 未具备默认下发资格且缺 `uiCapabilityApproved` 的插件仍可执行原工具，仅显示文字。用户通过执行电脑、同账号远程查看端或手机的任务提示条/插件详情确认
 后，下次调用即可显示页面，不改变当前任务工具注册。旧 Host 不识别 visibility，作者不能
 依赖旧 Host 隐藏工具。停用、卸载、更新、账号切换与睡眠撤销页面；晚到的调用结果不再交付。

@@ -518,9 +518,9 @@ export function GhostPluginDetailView({
         {detail.permissions.length > 0 ? <PermissionSummary items={detail.permissions} /> : null}
         {ghost && pluginHasToolUi(ghost.manifest) && <section className="mt-4 space-y-3">
           <h3 className="text-14 font-medium text-[var(--text-primary)]">{t('settings.ghosts.perm.mcpUi')}</h3>
-          {ghost.manifest.tools?.filter(tool => ghost.manifest.ui?.tools?.[tool.name]).map(tool => <div key={tool.name} className="text-13 text-[var(--text-secondary)]">
+          {ghost.manifest.tools?.filter(tool => ghost.manifest.mcpApps?.ui?.tools?.[tool.name]).map(tool => <div key={tool.name} className="text-13 text-[var(--text-secondary)]">
             <p>{tool.name}</p>
-            <p className="break-all text-12">{ghost.manifest.ui?.tools?.[tool.name].visibility && !ghost.manifest.ui.tools[tool.name].visibility!.includes('model') ? t('settings.ghosts.perm.mcpAppOnly') : `ghost_call: ${tool.name}`}</p>
+            <p className="break-all text-12">{ghost.manifest.mcpApps?.ui?.tools?.[tool.name].visibility && !ghost.manifest.mcpApps?.ui?.tools[tool.name].visibility!.includes('model') ? t('settings.ghosts.perm.mcpAppOnly') : `ghost_call: ${tool.name}`}</p>
           </div>)}
           {!remote && enabled && ghost.uiCapabilityApproved !== true && <Button variant="secondary" size="sm" disabled={taskApprovalPending} onClick={async () => {
             setTaskApprovalPending(true);

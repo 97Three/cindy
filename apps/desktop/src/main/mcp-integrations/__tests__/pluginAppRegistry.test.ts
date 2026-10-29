@@ -38,7 +38,10 @@ function fixture() {
       entry: 'main.js',
       version: '1',
       tools: [{ name: 'open', description: 'Open' }],
-      ui: { pages: { form: { html: 'form.html' } }, tools: { open: { page: 'form' } } },
+      mcpApps: { ui: { resources: [{
+            uri: "ui://form",
+            file: 'form.html'
+        }], tools: { open: { resourceUri: "ui://form" } } } },
     },
     enabled: true,
     dir: '/fixture',
@@ -73,7 +76,7 @@ it.each(['unapproved', 'disabled', 'invalid'] as const)(
     const f = fixture();
     if (kind === 'unapproved') delete f.ghost.uiCapabilityApproved;
     if (kind === 'disabled') f.ghost.enabled = false;
-    if (kind === 'invalid') f.ghost.manifest.ui = { pages: null, tools: null } as never;
+    if (kind === 'invalid') f.ghost.manifest.mcpApps = { ui: { resources: null, tools: null } } as never;
     f.refresh();
     expect(state.configs.size).toBe(0);
     expect(state.reads).toBe(0);
@@ -87,7 +90,7 @@ it('discovers tools with the real SDK without reading HTML during registration o
   try {
     await client.connect(config.plugin!.createTransport());
     expect((await client.listTools()).tools[0]._meta?.ui).toMatchObject({
-      visibility: ['model', 'app'],
+      resourceUri: 'ui://form',
     });
     expect(state.reads).toBe(0);
   } finally {

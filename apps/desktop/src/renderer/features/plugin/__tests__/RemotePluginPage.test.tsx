@@ -917,7 +917,10 @@ describe('remote task interactive-page consent prompt', () => {
       if (action === 'management:snapshot') {
         const data = snapshot(device);
         return { effects: [], result: { ...data, ...(capability ? { uiCapabilityApproval: true } : {}),
-          ghosts: data.ghosts.map(g => ({ ...g, manifest: { ...g.manifest, ui: { pages: { planner: { html: 'ui.html' } }, tools: {} } } })) } };
+          ghosts: data.ghosts.map(g => ({ ...g, manifest: { ...g.manifest, mcpApps: { ui: { resources: [{
+            uri: "ui://planner",
+            file: 'ui.html'
+        }], tools: {} } } } })) } };
       }
       if (action === 'management:operation') return { effects: [], result: {
         operationId: args[0].input.operationId, phase: 'confirmation', consent: {

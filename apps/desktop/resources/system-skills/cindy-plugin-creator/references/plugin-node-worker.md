@@ -334,29 +334,31 @@ network setup/readiness，不能拿 CLI 的登录结果冒充宿主凭据配置�
 
 ```json
 {
-  "ui": {
-    "pages": {
-      "planner": {
-        "html": "ui/planner.html",
+  "mcpApps": {
+    "ui": {
+      "resources": [{
+        "uri": "ui://planner/v1",
+        "file": "ui/planner.html",
         "csp": { "connectDomains": [], "resourceDomains": [], "frameDomains": [], "baseUriDomains": [] },
         "prefersBorder": true
+      }],
+      "tools": {
+        "open_planner": { "resourceUri": "ui://planner/v1" },
+        "save_plan": { "visibility": ["app"] }
       }
-    },
-    "tools": {
-      "open_planner": { "page": "planner" },
-      "save_plan": { "visibility": ["app"] }
     }
   }
 }
 ```
 
-所有 `ui.tools` 键必须已存在于 `tools[]`；`page` 引用已声明页面。未写 visibility 默认
+所有 `mcpApps.ui.tools` 键必须已存在于 `tools[]`；`resourceUri` 引用已声明资源。未写 visibility 默认
 `["model", "app"]`，未关联 ui 的原工具仅供模型使用。app-only 工具不会通过 `ghost_info`、
 `ghost_list` 暴露，也不能由模型直接 `ghost_call`。旧 Host 不识别 visibility，不能依赖它隐藏工具。
 页面是包内安全相对路径的静态 HTML；请把脚本与样式打包进 HTML，页面不能直接读取插件文件。
 四类 CSP 域名使用 MCP Apps 的 origin 格式，且主机必须在 `network.hosts` 中。
 
-宿主自动生成 `ui://` URI，并投影标准 tools/list 与 resources/read。页面使用官方
+作者自己指定插件内唯一的 `ui://` URI；宿主原样投影 tools/list 的 `_meta.ui` 和 resources/read 的资源 URI。
+`mcpApps` 是 Cindy 清单扩展，`file` 是包内路径、不进入资源元数据；`domain` / `permissions` 仅校验保留，一期不生效。页面使用官方
 `@modelcontextprotocol/ext-apps` App SDK（`App.connect()`、`callServerTool()` 等）或标准 JSON-RPC，
 不使用 `cindy.*`。main.js 工具可返回标准 `{content, structuredContent, _meta}`；完整结果给页面，
 根 `_meta` 不给模型。普通字符串/对象也可作为文字结果显示。

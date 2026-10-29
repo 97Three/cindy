@@ -3704,7 +3704,7 @@ describe('plugin page audience and shared tool execution', () => {
     return { ...(chipGhost('art') as InstalledGhost), dir: tmpUserData,
       approval: { state: 'approved', revision: 'approved-ui' }, uiCapabilityApproved: true,
       manifest: { ...(chipGhost('art') as InstalledGhost).manifest,
-        ui: { pages: {}, tools: { run: { visibility: ['app'] } } } } };
+        mcpApps: { ui: { resources: [], tools: { run: { visibility: ['app'] } } } } } };
   }
   // C14/X01: a cold page call used to bootstrap with no business id, then leak
   // its ALS grant into long-lived MCP callbacks. Existing tests only used live
@@ -3764,7 +3764,10 @@ describe('plugin page audience and shared tool execution', () => {
   });
   it('keeps an old receipt usable as text while withholding view-only result metadata', async () => {
     const ghost = pageGhost(); delete ghost.uiCapabilityApproved;
-    ghost.manifest.ui = { pages: { form: { html: 'ui/form.html' } }, tools: { run: { page: 'form' } } };
+    ghost.manifest.mcpApps = { ui: { resources: [{
+            uri: "ui://form",
+            file: 'ui/form.html'
+        }], tools: { run: { resourceUri: "ui://form" } } } };
     listMock.mockReturnValue([ghost]);
     dispatchMock.mockResolvedValueOnce({ ok: true, result: { content: [{ type: 'text', text: 'done' }], _meta: { privatePageData: 'hidden' } } } as never);
     const result = await makeDeps().callGhostTool({ ghostId: 'art', tool: 'run', args: {} });

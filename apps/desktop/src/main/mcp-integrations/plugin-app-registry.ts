@@ -73,7 +73,7 @@ export function refreshPluginApps(
             instance,
             revision,
             tools: ghost.manifest.tools ?? [],
-            ui: ghost.manifest.ui!,
+            ui: ghost.manifest.mcpApps?.ui!,
             hosts: ghost.manifest.network?.hosts,
             assertCurrent,
             readHtml: (html) => {

@@ -1,7 +1,11 @@
 import { ghostPermissionItems } from '../../../src/shared/ghost';
 const manifest = { schemaVersion: 3, id: 'planner', name: 'Planner', version: '1.0.0', network: { hosts: ['planner.example'] },
   tools: [{ name: 'refresh_metrics', description: 'Refresh metrics', inputSchema: { type: 'object' } }, { name: 'save_plan', description: 'Save the plan', inputSchema: { type: 'object' } }],
-  ui: { pages: { planner: { html: 'ui/planner.html', csp: { connectDomains: ['https://planner.example'] } } }, tools: { refresh_metrics: { page: 'planner' }, save_plan: { visibility: ['app'] } } },
+  mcpApps: { ui: { resources: [{
+            uri: "ui://planner",
+            file: 'ui/planner.html',
+            csp: { connectDomains: ['https://planner.example'] }
+        }], tools: { refresh_metrics: { resourceUri: "ui://planner" }, save_plan: { visibility: ['app'] } } } },
 };
 let approved = false;
 export async function hasPluginManagement() { return true; }

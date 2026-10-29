@@ -9,9 +9,12 @@ export async function pluginUiFixture(raw = false, allowed, probes = false) {
     whenToUse: '演示标准 MCP Apps 交互页面，打开表单或指标页面',
     ...(allowed ? { network: { hosts: [new URL(allowed).hostname] } } : {}),
     tools: names.map(name => ({ name, description: name, parameters: { type: 'object', additionalProperties: true } })),
-    ui: { pages: { planner: { html: 'ui/planner.html', prefersBorder: true,
-      ...(allowed ? { csp: Object.fromEntries(['connectDomains','resourceDomains','frameDomains','baseUriDomains'].map(key => [key, [allowed]])) } : {}) } },
-      tools: { [names[0]]: { page: 'planner' }, [names[1]]: { visibility: ['app'] }, ...(probes ? { file_probe: { visibility: ['app'] } } : {}) } },
+    mcpApps: { ui: { resources: [{
+            uri: "ui://planner",
+            file: 'ui/planner.html',
+            prefersBorder: true,
+            ...(allowed ? { csp: Object.fromEntries(['connectDomains', 'resourceDomains', 'frameDomains', 'baseUriDomains'].map(key => [key, [allowed]])) } : {})
+        }], tools: { [names[0]]: { resourceUri: "ui://planner" }, [names[1]]: { visibility: ['app'] }, ...(probes ? { file_probe: { visibility: ['app'] } } : {}) } } },
   };
   const main = `let count=0;cindy.onHostMessage(message=>{if(message.type!=='tool-call')return;
     const args=message.args||{};let result;

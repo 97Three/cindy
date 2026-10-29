@@ -2533,7 +2533,7 @@ export function getCindyGhostsMcpDeps(
       if (result.ok && callSessionContext?.sessionId && !callSessionContext.remoteHostId) {
         await publishPluginAppResult(target, callSessionContext.sessionId, tool, args, result.result, pageAttachmentHashes)
           .catch(() => log.warn('Plugin App card could not be stored'));
-        if (target.manifest.ui?.tools?.[tool]?.page) result.result = pluginModelResult(result.result);
+        if (target.manifest.mcpApps?.ui?.tools?.[tool]?.resourceUri) result.result = pluginModelResult(result.result);
       }
       const requestedImages = result.ok ? result.images : undefined;
       const plainResult: GhostToolCallResult = result.ok && result.images ? { ok: true, result: result.result } : result;

@@ -542,7 +542,10 @@ it('treats a plugin App action as click intent while binding its card and task i
   const { createPluginAppTransport, pluginAppTool } = await import('../pluginServer.js');
   const calls: string[] = [];
   const tools = [{ name: 'open', description: 'Open' }, { name: 'save', description: 'Save' }];
-  const ui = { pages: { form: { html: 'ui/form.html' } }, tools: { open: { page: 'form' }, save: { visibility: ['app' as const] } } };
+  const ui = { resources: [{
+            uri: "ui://form",
+            file: 'ui/form.html'
+        }], tools: { open: { resourceUri: "ui://form" }, save: { visibility: ['app' as const] } } };
   const config: AppServerConfig = { id: 'plugin-gate', url: '', transport: 'in-process', plugin: {
     instance: 'plugin', revision: 'approved', packageSha256: 'hash', title: 'Plugin', trust: 'unverified', domains: [], assertCurrent() {},
     createTransport: () => createPluginAppTransport({ instance: 'plugin', revision: 'approved', tools, ui, assertCurrent() {}, readHtml: () => '<html>Form</html>',
@@ -551,7 +554,7 @@ it('treats a plugin App action as click intent while binding its card and task i
   const owner = {}, connection = new AppConnection(config), target = pluginAppTool('plugin', tools[0], ui);
   const authorize = vi.fn(async () => { throw new Error('UNEXPECTED_APPROVAL'); });
   const host = new McpAppsHost({ owner: () => owner, config: () => config, connection: () => connection,
-    readCard: async () => ({ version: 1, serverId: config.id, serverRevision: appServerRevision(config), resourceUri: 'ui://plugin/form', tool: target, arguments: {} }),
+    readCard: async () => ({ version: 1, serverId: config.id, serverRevision: appServerRevision(config), resourceUri: 'ui://form', tool: target, arguments: {} }),
     writeCard: async () => {}, sendMessage: async () => {}, authorizeTool: authorize,
   }); hosts.push(host);
   vi.spyOn(AppBridge.prototype, 'teardownResource').mockResolvedValue({});
@@ -580,7 +583,10 @@ it('treats a plugin App action as click intent while binding its card and task i
 it.each(['initial', 'tool-result', 'standard'] as const)('degrades only remote plugin files (%s)', async stage => {
   const { createPluginAppTransport, pluginAppTool } = await import('../pluginServer.js');
   const tools = [{ name: 'open', description: 'Open' }];
-  const ui = { pages: { form: { html: 'ui/form.html' } }, tools: { open: { page: 'form' } } };
+  const ui = { resources: [{
+            uri: "ui://form",
+            file: 'ui/form.html'
+        }], tools: { open: { resourceUri: "ui://form" } } };
   const content = [{ type: 'resource_link' as const, name: 'photo.png', uri: stage === 'standard' ? 'https://example.com/photo.png' : 'library:photo.png' }];
   const config: AppServerConfig = { id: 'plugin-files', url: '', transport: 'in-process', plugin: {
     instance: 'plugin', revision: 'approved', packageSha256: 'hash', title: 'Plugin', trust: 'unverified', domains: [], assertCurrent() {},
@@ -588,7 +594,7 @@ it.each(['initial', 'tool-result', 'standard'] as const)('degrades only remote p
   } };
   const owner = {}, connection = new AppConnection(config), target = pluginAppTool('plugin', tools[0], ui);
   const host = new McpAppsHost({ owner: () => owner, config: () => config, connection: () => connection,
-    readCard: async () => ({ version: 1, serverId: config.id, serverRevision: appServerRevision(config), resourceUri: 'ui://plugin/form', tool: target, arguments: {}, ...(stage === 'initial' ? { result: { content } } : {}) }),
+    readCard: async () => ({ version: 1, serverId: config.id, serverRevision: appServerRevision(config), resourceUri: 'ui://form', tool: target, arguments: {}, ...(stage === 'initial' ? { result: { content } } : {}) }),
     writeCard: async () => {}, sendMessage: async () => {}, authorizeTool: async () => {},
   }); hosts.push(host);
   vi.spyOn(AppBridge.prototype, 'teardownResource').mockResolvedValue({});
@@ -628,7 +634,10 @@ it.each(['complete', 'unmount'] as const)('keeps plugin page calls alive past 60
     holdCall: (id, call, budget) => dispatcher.holdCall(id, call, budget), releaseCall: (id, call) => dispatcher.releaseCall(id, call),
   });
   const tools = [{ name: 'pick', description: 'Select' }];
-  const ui = { pages: { form: { html: 'ui/form.html' } }, tools: { pick: { page: 'form' } } };
+  const ui = { resources: [{
+            uri: "ui://form",
+            file: 'ui/form.html'
+        }], tools: { pick: { resourceUri: "ui://form" } } };
   const config: AppServerConfig = { id: 'pick-lifetime', url: '', transport: 'in-process', plugin: {
     instance: 'pick-lifetime', revision: 'approved', packageSha256: 'hash', title: 'Picker', trust: 'unverified', domains: [], assertCurrent() {},
     createTransport: () => createPluginAppTransport({ instance: 'pick-lifetime', revision: 'approved', tools, ui, assertCurrent() {}, readHtml: () => '<p>Select</p>',
@@ -644,7 +653,7 @@ it.each(['complete', 'unmount'] as const)('keeps plugin page calls alive past 60
   } };
   const owner = {}, connection = new AppConnection(config);
   const host = new McpAppsHost({ owner: () => owner, config: () => config, connection: () => connection,
-    readCard: async () => ({ version: 1, serverId: config.id, serverRevision: appServerRevision(config), resourceUri: 'ui://pick-lifetime/form', tool: pluginAppTool('pick-lifetime', tools[0], ui), arguments: {} }),
+    readCard: async () => ({ version: 1, serverId: config.id, serverRevision: appServerRevision(config), resourceUri: 'ui://form', tool: pluginAppTool('pick-lifetime', tools[0], ui), arguments: {} }),
     writeCard: async () => {}, sendMessage: async () => {}, authorizeTool: async () => { throw new Error('Unexpected approval'); },
   }); hosts.push(host);
   vi.spyOn(AppBridge.prototype, 'teardownResource').mockResolvedValue({});

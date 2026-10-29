@@ -915,7 +915,8 @@ async function buildGhostPackage(
       return { ok: false, errorCode: 'MANIFEST_INVALID', message: `清单不合格:${reservedNamespace}` };
     }
     if (manifestRaw && typeof manifestRaw === 'object' && !Array.isArray(manifestRaw) &&
-        'ui' in manifestRaw &&
+        'mcpApps' in manifestRaw && manifestRaw.mcpApps && typeof manifestRaw.mcpApps === 'object' &&
+        'ui' in manifestRaw.mcpApps &&
         !('minCindyVersion' in manifestRaw)) {
       manifestRaw = { ...manifestRaw, minCindyVersion: PLUGIN_UI_MIN_CINDY_VERSION };
       manifestBytes = Buffer.from(`${JSON.stringify(manifestRaw)}\n`, 'utf8');
@@ -952,7 +953,7 @@ async function buildGhostPackage(
     }
 
     // 3) 清单声明的入口文件必须真实在场(打包期拦,别等装入后沙箱 404)。
-    const mustExist: string[] = Object.values(manifest.ui?.pages ?? {}).map(page => page.html);
+    const mustExist: string[] = (manifest.mcpApps?.ui?.resources ?? []).map(resource => resource.file);
     if (manifest.entry) mustExist.push(manifest.entry);
     if (manifest.node?.entry) {
       mustExist.push(manifest.node.entry, ...(manifest.node.entries ?? []));

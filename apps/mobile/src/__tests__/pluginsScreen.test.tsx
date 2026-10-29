@@ -1092,7 +1092,7 @@ it("checks an unknown operation from the phone detail and restores actions", asy
  * 最小输入：带 ui 声明但缺批准的已装插件；tier: unit，渲染生产入口，不检查 JSX 源码。 */
 it('offers UI consent in plugin details even when the Host has suppressed its task prompt', async () => {
   const { plugin, snapshot, controller } = managedScreen();
-  Object.assign(plugin.manifest, { ui: { pages: { form: { html: 'ui/form.html' } } } });
+  Object.assign(plugin.manifest, { mcpApps: { ui: { resources: [{ uri: 'ui://form', file: 'ui/form.html' }], tools: {} } } });
   Object.assign(plugin, { uiPromptSuppressed: true });
   Object.assign(snapshot, { uiCapabilityApproval: true });
   const approveUi = vi.fn();
@@ -1108,14 +1108,14 @@ it('offers UI consent in plugin details even when the Host has suppressed its ta
 });
 it('uses read-only guidance for an old Host rather than sending an unsupported page approval', async () => {
   const { plugin } = managedScreen();
-  Object.assign(plugin.manifest, { ui: {} });
+  Object.assign(plugin.manifest, { mcpApps: { ui: {} } });
   await openDetail();
   expect(fixture.props.get('detail').uiApprovalNotice).toMatchObject({ detail: 'plugins.uiApproval.updateHost', actions: undefined });
 });
 
 it('uses Host deferral for the task prompt and skips shared-task and provider-share visitors', async () => {
   const { plugin, snapshot, controller } = managedScreen();
-  Object.assign(plugin.manifest, { ui: {} });
+  Object.assign(plugin.manifest, { mcpApps: { ui: {} } });
   Object.assign(snapshot, { uiCapabilityApproval: true });
   const deferUi = vi.fn();
   Object.assign(controller, { deferUi });
@@ -1139,7 +1139,7 @@ it('uses Host deferral for the task prompt and skips shared-task and provider-sh
 /* 依据：另一个查看端选择稍后后，本端也隐藏提示；最小输入：plugins 失效推送；tier: unit。 */
 it('refreshes task prompt suppression from the executing Host without storing a controller-local decision', async () => {
   const { plugin, snapshot } = realManagementHost();
-  Object.assign(plugin.manifest, { ui: {} });
+  Object.assign(plugin.manifest, { mcpApps: { ui: {} } });
   Object.assign(snapshot, { uiCapabilityApproval: true });
   await act(async () => root.render(createElement(PluginUiEnablePrompt, {
     deviceId: 'mac', deviceName: 'Mac', online: true, active: true,

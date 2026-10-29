@@ -36,7 +36,7 @@ export async function publishPluginAppResult(
   attachmentHashes: readonly string[] = [],
 ): Promise<void> {
   const declared = ghost.manifest.tools?.find((tool) => tool.name === name);
-  if (!declared || !ghost.manifest.ui?.tools?.[name]?.page) return;
+  if (!declared || !ghost.manifest.mcpApps?.ui?.tools?.[name]?.resourceUri) return;
   if (!hasGhostUiPermission(ghost)) return;
   const config = readAppServer(pluginAppServerId(ghost));
   if (
@@ -48,7 +48,7 @@ export async function publishPluginAppResult(
   config.plugin.assertCurrent(sessionId);
   const host = getMcpAppsHost(),
     owner = host.captureOwner();
-  const tool = pluginAppTool(config.plugin.instance, declared, ghost.manifest.ui!);
+  const tool = pluginAppTool(config.plugin.instance, declared, ghost.manifest.mcpApps?.ui!);
   tool.title = config.plugin.title;
   tool._meta = {
     ...tool._meta,

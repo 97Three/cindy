@@ -169,7 +169,7 @@ function OwnerPrompt({ deviceId }: { deviceId: string }) {
     (ghost) =>
       ghost.enabled &&
       ghost.approval.state === 'approved' &&
-      ghost.manifest.ui &&
+      ghost.manifest.mcpApps?.ui &&
       ghost.uiCapabilityApproved !== true &&
       !ghost.uiPromptSuppressed,
   );

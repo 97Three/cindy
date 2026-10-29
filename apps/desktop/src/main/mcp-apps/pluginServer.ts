@@ -13,20 +13,14 @@ import { pluginToolVisible, type GhostToolDecl, type GhostUiNeeds } from '@cindy
 import { consumePluginPageTicket, type PluginPageCall } from './pluginPageCall.js';
 
 export const PLUGIN_PAGE_TICKET = 'cindy/plugin-page-ticket';
-export function pluginToolResourceUri(instance: string, pageId: string): string {
-  return `ui://${encodeURIComponent(instance)}/${encodeURIComponent(pageId)}`;
-}
-export function pluginAppTool(instance: string, tool: GhostToolDecl, ui: GhostUiNeeds): Tool {
+export function pluginAppTool(_instance: string, tool: GhostToolDecl, ui: GhostUiNeeds): Tool {
   const link = ui.tools[tool.name];
   return {
     name: tool.name,
     description: tool.description,
     inputSchema: { ...tool.parameters, type: 'object' },
     _meta: {
-      ui: {
-        ...(link?.page ? { resourceUri: pluginToolResourceUri(instance, link.page) } : {}),
-        visibility: link ? (link.visibility ?? ['model', 'app']) : ['model'],
-      },
+      ui: link ? { ...link } : { visibility: ['model'] },
     },
   };
 }
@@ -50,11 +44,7 @@ export function createPluginAppTransport(options: {
     { name: options.instance, version: '1.0.0' },
     { capabilities: { tools: {}, resources: {} } },
   );
-  const resources = Object.entries(options.ui.pages).map(([id, page]) => ({
-    id,
-    page,
-    uri: pluginToolResourceUri(options.instance, id),
-  }));
+  const resources = options.ui.resources;
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     options.assertCurrent();
     return {
@@ -64,14 +54,14 @@ export function createPluginAppTransport(options: {
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
     options.assertCurrent();
     return {
-      resources: resources.map(({ id, uri }) => ({ uri, name: id, mimeType: RESOURCE_MIME_TYPE })),
+      resources: resources.map(({ uri }) => ({ uri, name: uri, mimeType: RESOURCE_MIME_TYPE })),
     };
   });
   server.setRequestHandler(ReadResourceRequestSchema, async ({ params }) => {
     options.assertCurrent();
     const resource = resources.find((resource) => resource.uri === params.uri);
     if (!resource) throw new Error('MCP_APP_RESOURCE_NOT_FOUND');
-    const text = options.readHtml(resource.page.html);
+    const text = options.readHtml(resource.file);
     options.assertCurrent();
     return {
       contents: [
@@ -81,10 +71,10 @@ export function createPluginAppTransport(options: {
           text,
           _meta: {
             ui: {
-              csp: resource.page.csp ?? {},
-              ...(resource.page.prefersBorder !== undefined
-                ? { prefersBorder: resource.page.prefersBorder }
-                : {}),
+              ...(resource.csp !== undefined ? { csp: resource.csp } : {}),
+              ...(resource.prefersBorder !== undefined ? { prefersBorder: resource.prefersBorder } : {}),
+              ...(resource.domain !== undefined ? { domain: resource.domain } : {}),
+              ...(resource.permissions !== undefined ? { permissions: resource.permissions } : {}),
             },
           },
         },
@@ -97,7 +87,7 @@ export function createPluginAppTransport(options: {
     if (
       !tool ||
       !pluginToolVisible(
-        { ui: options.ui, tools: options.tools, network: { hosts: options.hosts ?? [] } },
+        { mcpApps: { ui: options.ui }, tools: options.tools, network: { hosts: options.hosts ?? [] } },
         tool.name,
         'app',
       )

@@ -22,14 +22,14 @@ const tools = ['open', 'save', 'model_only'].map((name) => ({
   parameters: { type: 'object' as const },
 }));
 const ui = {
-  pages: {
-    planner: {
-      html: 'ui/planner.html',
-      csp: { connectDomains: ['https://api.example.com'] },
-      prefersBorder: true,
-    },
-  },
-  tools: { open: { page: 'planner' }, save: { visibility: ['app' as const] } },
+    resources: [{
+            uri: "ui://planner",
+            file: 'ui/planner.html',
+            csp: { connectDomains: ['https://api.example.com'] },
+            prefersBorder: true,
+            domain: "retained.example", permissions: { camera: {} }
+        }],
+    tools: { open: { resourceUri: "ui://planner" }, save: { visibility: ['app' as const] } }
 };
 async function fixture() {
   let current = true;
@@ -90,16 +90,16 @@ describe('plugin virtual App server', () => {
   it('projects shared pages and visibility into standard MCP tools and resource metadata', async () => {
     const { client } = await fixture();
     expect((await client.listTools()).tools.map((tool) => tool._meta?.ui)).toEqual([
-      { resourceUri: 'ui://demo/planner', visibility: ['model', 'app'] },
+      { resourceUri: 'ui://planner' },
       { visibility: ['app'] },
       { visibility: ['model'] },
     ]);
-    const resource = (await client.readResource({ uri: 'ui://demo/planner' })).contents[0];
+    const resource = (await client.readResource({ uri: 'ui://planner' })).contents[0];
     expect(resource).toEqual({
-      uri: 'ui://demo/planner',
+      uri: 'ui://planner',
       mimeType: RESOURCE_MIME_TYPE,
       text: '<html>ui/planner.html</html>',
-      _meta: { ui: { csp: ui.pages.planner.csp, prefersBorder: true } },
+      _meta: { ui: { csp: ui.resources[0].csp, prefersBorder: true, domain: "retained.example", permissions: { camera: {} } } },
     });
     await expect(client.readResource({ uri: 'ui://other/planner' })).rejects.toThrow(
       'MCP_APP_RESOURCE_NOT_FOUND',
@@ -151,7 +151,7 @@ describe('plugin virtual App server', () => {
     revoke();
     finish();
     await rejected;
-    await expect(client.readResource({ uri: 'ui://demo/planner' })).rejects.toThrow(
+    await expect(client.readResource({ uri: 'ui://planner' })).rejects.toThrow(
       'MCP_APP_SERVER_CHANGED',
     );
   });
