@@ -85,7 +85,7 @@ void mountPage({
           { name: 'cc', label: 'Cc', kind: 'recipients', value: '' },
           { name: 'bcc', label: 'Bcc', kind: 'recipients', value: 'private@example.test', collapsed: true },
         ]} />
-      ) : ctx.case === 'source-change' ? (
+      ) : ctx.case === 'source-change' || ctx.case === 'delegation' ? (
         <GhostInstallConsentHost />
       ) : (
         <MailPreviewBody

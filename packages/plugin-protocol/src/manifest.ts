@@ -233,6 +233,8 @@ export interface GhostAgentNeeds {
   tasks?: boolean;
   /** 查询项目、任务、伙伴并投递消息;必须同时声明 tasks,需独立批准。 */
   targets?: boolean;
+  /** Independently approved, scoped Auto delegation to an existing companion. */
+  delegation?: boolean;
   /** 后台隐藏任务;必须与 `tasks: true` 同时声明。 */
   hiddenTasks?: boolean;
   schedule?: boolean;
@@ -274,6 +276,10 @@ export interface GhostNodeSecretBinding {
   label: string;
   /** 允许注入的 JSON-RPC 方法白名单(1–16 条)。 */
   methods: string[];
+  /** Explicit opt-in: methods allowed to save a credential after a live authorization flow. */
+  saveMethods?: string[];
+  /** Settings-page device authorization; must be a saveMethods member. */
+  settingsMethod?: string;
   /** 可选目标入口；缺省只绑定 node.entry 主入口。 */
   entry?: string;
   /** 可选输入提示。 */
@@ -3077,10 +3083,16 @@ export function validateGhostManifest(value: unknown): ManifestValidation {
         return { ok: false, reason: 'agent.targets: true 需要同时声明 agent.tasks: true' };
       }
     }
+    if (agentRaw.delegation !== undefined) {
+      if (typeof agentRaw.delegation !== 'boolean') return { ok: false, reason: 'agent.delegation must be boolean' };
+      if (agentRaw.delegation === true && (agentRaw.tasks !== true || agentRaw.targets !== true)) {
+        return { ok: false, reason: 'agent.delegation requires agent.tasks and agent.targets' };
+      }
+    }
     if (agentRaw.schedule !== undefined && typeof agentRaw.schedule !== 'boolean') {
       return { ok: false, reason: 'agent.schedule 必须是布尔值' };
     }
-    if (agentRaw.background !== true && agentRaw.errand !== true && agentRaw.schedule !== true && agentRaw.tasks !== true && Object.keys(unknownDeclarationFields(agentRaw, ['background', 'errand', 'schedule', 'tasks', 'hiddenTasks', 'targets'])).length === 0) {
+    if (agentRaw.background !== true && agentRaw.errand !== true && agentRaw.schedule !== true && agentRaw.tasks !== true && Object.keys(unknownDeclarationFields(agentRaw, ['background', 'errand', 'schedule', 'tasks', 'hiddenTasks', 'targets', 'delegation'])).length === 0) {
       return {
         ok: false,
         reason:
@@ -3088,11 +3100,12 @@ export function validateGhostManifest(value: unknown): ManifestValidation {
       };
     }
     agent = {
-      ...unknownDeclarationFields(agentRaw, ['background', 'errand', 'schedule', 'tasks', 'hiddenTasks', 'targets']),
+      ...unknownDeclarationFields(agentRaw, ['background', 'errand', 'schedule', 'tasks', 'hiddenTasks', 'targets', 'delegation']),
       ...(agentRaw.background === true ? { background: true } : {}),
       ...(agentRaw.errand === true ? { errand: true } : {}),
       ...(agentRaw.tasks === true ? { tasks: true } : {}),
       ...(agentRaw.tasks === true && agentRaw.targets === true ? { targets: true } : {}),
+      ...(agentRaw.tasks === true && agentRaw.targets === true && agentRaw.delegation === true ? { delegation: true } : {}),
       ...(agentRaw.tasks === true && agentRaw.hiddenTasks === true ? { hiddenTasks: true } : {}),
       ...(agentRaw.schedule === true ? { schedule: true } : {}),
     };
@@ -3300,6 +3313,21 @@ export function validateGhostManifest(value: unknown): ManifestValidation {
           }
           methods.push(method);
         }
+        let saveMethods: string[] | undefined;
+        if (binding.saveMethods !== undefined) {
+          if (binding.oauthSecret !== undefined || !Array.isArray(binding.saveMethods)
+            || binding.saveMethods.length < 1 || binding.saveMethods.length > GHOST_NODE_MAX_SECRET_METHODS
+            || binding.saveMethods.some((m: unknown) => typeof m !== 'string'
+              || !methods.includes(m) || isGhostNodeMcpReservedMethod(m))
+            || new Set(binding.saveMethods).size !== binding.saveMethods.length) {
+            return { ok: false, reason: 'node.secretBindings[].saveMethods must be unique methods from methods, without oauthSecret' };
+          }
+          saveMethods = binding.saveMethods as string[];
+        }
+        if (binding.settingsMethod !== undefined &&
+          (typeof binding.settingsMethod !== 'string' || !saveMethods?.includes(binding.settingsMethod))) {
+          return { ok: false, reason: 'node.secretBindings[].settingsMethod must name a saveMethods member' };
+        }
         let bindingEntry: string | undefined;
         if (binding.entry !== undefined) {
           if (
@@ -3356,11 +3384,13 @@ export function validateGhostManifest(value: unknown): ManifestValidation {
           return { ok: false, reason: 'node.secretBindings[].oauthSecret 必须是本插件 OAuth 凭证键' };
         }
         nodeSecretBindings.push({
-          ...unknownDeclarationFields(binding, ['key', 'label', 'methods', 'entry', 'hint', 'url', 'oauthSecret']),
+          ...unknownDeclarationFields(binding, ['key', 'label', 'methods', 'entry', 'hint', 'url', 'oauthSecret', 'saveMethods', 'settingsMethod']),
           ...(binding.oauthSecret !== undefined ? { oauthSecret: binding.oauthSecret as string } : {}),
           key: binding.key,
           label: binding.label,
           methods,
+          ...(saveMethods ? { saveMethods } : {}),
+          ...(binding.settingsMethod ? { settingsMethod: binding.settingsMethod as string } : {}),
           ...(bindingEntry !== undefined ? { entry: bindingEntry } : {}),
           ...(binding.hint !== undefined ? { hint: binding.hint as string } : {}),
           ...(binding.url !== undefined ? { url: binding.url as string } : {}),

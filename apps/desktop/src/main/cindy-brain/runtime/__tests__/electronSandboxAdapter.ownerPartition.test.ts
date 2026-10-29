@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 
 const harness = vi.hoisted(() => {
   let nextWebContentsId = 1;
@@ -8,6 +9,7 @@ const harness = vi.hoisted(() => {
     permissionCheck: ReturnType<typeof vi.fn>;
     on: ReturnType<typeof vi.fn>;
     beforeRequest: ReturnType<typeof vi.fn>;
+    beforeSendHeaders: ReturnType<typeof vi.fn>;
     protocolHandle: ReturnType<typeof vi.fn>;
     protocolHandler?: (request: Request) => Promise<Response>;
     downloadHandler?: (event: { preventDefault(): void }) => void;
@@ -34,6 +36,7 @@ const harness = vi.hoisted(() => {
           if (event === 'will-download') created.downloadHandler = handler;
         }),
         beforeRequest: vi.fn(),
+        beforeSendHeaders: vi.fn(),
         fetch: vi.fn(async (url: string, options: RequestInit) => created.protocolHandler
           ? created.protocolHandler(new Request(url, options)) : new Response(null, { status: 404 })),
         protocolHandle: vi.fn(
@@ -46,7 +49,7 @@ const harness = vi.hoisted(() => {
         setPermissionRequestHandler: created.permissionRequest,
         setPermissionCheckHandler: created.permissionCheck,
         on: created.on,
-        webRequest: { onBeforeRequest: created.beforeRequest },
+        webRequest: { onBeforeRequest: created.beforeRequest, onBeforeSendHeaders: created.beforeSendHeaders },
         protocol: { handle: created.protocolHandle },
         fetch: created.fetch,
       };
@@ -131,6 +134,7 @@ import {
   setGhostKvStore,
   setGhostConnectionsHandler,
   setGhostOauthHandler,
+  setGhostNodeAuthorizationHandler,
   setGhostSecretsHandler,
   setGhostMediaModelsProvider,
 } from '../electronSandboxAdapter';
@@ -1030,4 +1034,46 @@ it('rejects failed in-flight model reads after owner changes', async () => {
   harness.activeOwner = { mode: 'cloud', dataOwnerId: 'owner-b', generation: 2 };
   reject(new Error('old visibility mirror cleared'));
   expect((await pending).status).toBe(403);
+});
+
+// Security unit: caller-supplied URL/header cannot grant settings authority;
+// the real initiating frame owns the lifetime, including same-URL reload.
+describe('settings authorization source',()=>{
+ it.each(['reload','commit','destroy'] as const)('keeps intercepted links alive and revokes the Main source on %s',async kind=>{
+  const g=ghost('settings-source-'+kind);g.manifest.settingsHtml='settings.html';ensureGhostProtocolRegistered(g);
+  const session=harness.sessions.get(ownerScopedGhostPartitionForInstalledGhost(g,harness.activeOwner)!)!;
+  const wc=Object.assign(new EventEmitter(),{session:session.session!,isDestroyed:()=>false,executeJavaScript:vi.fn()});harness.contents.set(9001,wc);
+  const frame={url:'cindy-ghost://'+g.manifest.id+'/settings.html',parent:null,detached:false};
+  let signal!:AbortSignal;let guard!:()=>boolean;let dispose!:()=>void;
+  const provider=vi.fn(async(_id:string,r:Request,current:()=>boolean,close:()=>void)=>{signal=r.signal;guard=current;dispose=close;return new Response('ready');});
+  setGhostNodeAuthorizationHandler(provider);
+  const requestUrl='cindy-ghost://'+g.manifest.id+'/node-authorization/account';
+  expect((await session.protocolHandler!(new Request(requestUrl,{method:'POST',headers:{'x-cindy-authorization-source':'forged'}}))).status).toBe(403);
+  const before=session.beforeSendHeaders.mock.calls[0][0];let result:{cancel?:boolean;requestHeaders:Record<string,string>};
+  before({url:requestUrl,requestHeaders:{'x-cindy-authorization-source':'forged'},frame,webContentsId:9001},(v:typeof result)=>{result=v;});
+  expect(result!.requestHeaders['x-cindy-authorization-source']).not.toBe('forged');
+  expect((await session.protocolHandler!(new Request(requestUrl,{method:'POST',headers:result!.requestHeaders}))).status).toBe(200);
+  expect(guard()).toBe(true);expect(signal.aborted).toBe(false);
+  // Regression/unit: opening the OAuth link is intercepted by the existing
+  // navigation gate; it must not revoke the still-visible settings document.
+  for (const url of ['https://open.feishu.cn/page/launcher', 'cindy-ghost://'+g.manifest.id+'/preview/image.png', 'http://blocked.example/']) {
+   wc.emit('did-start-navigation',{},url,false,true);
+   expect(signal.aborted).toBe(false);expect(guard()).toBe(true);
+  }
+  if(kind==='reload')wc.emit('did-start-navigation',{},frame.url,false,true);
+  else if(kind==='commit')wc.emit('did-navigate',{},'https://outside.example/');
+  else wc.emit('destroyed');
+  expect(signal.aborted).toBe(true);expect(guard()).toBe(false);dispose();
+  expect((await session.protocolHandler!(new Request(requestUrl,{method:'POST',headers:result!.requestHeaders}))).status).toBe(403);
+  expect(provider).toHaveBeenCalledTimes(1);
+ });
+ it.each(['logic','child','external'] as const)('rejects %s before issuing a source receipt',kind=>{
+  const g=ghost('settings-reject-'+kind);g.manifest.settingsHtml='settings.html';ensureGhostProtocolRegistered(g);
+  const session=harness.sessions.get(ownerScopedGhostPartitionForInstalledGhost(g,harness.activeOwner)!)!;
+  harness.contents.set(9002,{session:session.session!,isDestroyed:()=>false,executeJavaScript:vi.fn()});
+  const root='cindy-ghost://'+g.manifest.id+'/';
+  const frame={url:kind==='external'?'https://outside.example/':root+(kind==='logic'?'__boot__':'settings.html'),parent:kind==='child'?{}:null};
+  const callback=vi.fn();session.beforeSendHeaders.mock.calls[0][0]({url:root+'node-authorization/account',requestHeaders:{},frame,webContentsId:9002},callback);
+  expect(callback).toHaveBeenCalledWith({cancel:true});
+ });
 });

@@ -23,6 +23,13 @@ Desktop 的本机分享命令与既有同账号供应商管理通道增量支持
 不扩大 IPC allowlist、设备权限或分享范围，不新增重放策略；一次来源失败不重启其他连接。
 回归见 `local-agent/__tests__/remoteCatalog.test.ts`、`remote-agent/__tests__/roundtrip.test.ts`
 与 `groupRelay.test.ts`，公开应用合同见 [本机 Agent API](../local-agent-api.md)。
+## 插件私有文件读取的缺失判定
+
+`fs-request` 的 `root:data / op:read` 在确认为 ENOENT 时，向既有
+`{ok:false,message}` 回执增量添加 `errorCode:NOT_FOUND`。旧插件继续读取原字段；
+新插件仅可据该错误码初始化缺失记录，不得把权限、路径或未知读取错误当成空数据。
+旧宿主缺少错误码时保持未核实状态，不解析人类文案推断文件缺失。
+实现及回归：`fsSlot.ts`、`fsSlot.test.ts`。
 
 ## 本机应用的可见任务（2026-10-28）
 
@@ -4009,3 +4016,27 @@ Slack 复用既有 user-token 工具网关，在 `listTools` 增加 `cindy_get_m
 才能直接看图。Slack 权限继续由原绑定用户的 Slack 授权决定，无新增 scope/env。
 
 X 属于公开帖子接入，本轮不新增付费历史抓取；其已有推文上下文自动带图路径不变。
+
+## 插件页面 Node 授权（未发布）
+
+可选 node.secretBindings.settingsMethod 必须是 saveMethods 子项；旧声明无变化。
+新本机协议 /node-authorization/<key> 返回 NDJSON authorize/saved/failed，只有授权 URL
+和已存身份可投影；无 Secret、Token、Node 原始响应。Main webRequest 绑定发起 frame
+并在导航/销毁时撤销，复用 owner/安装守卫。旧 Host 忽略新声明，调用方须检查响应 MIME
+及状态；手机/远程 relay 未加入此接口，不宣称跨端已支持，不新增 invoke 白名单。
+
+
+## 插件伙伴委派协议与回执（未发布，执行尚未接线）
+
+agent.delegation 为可选独立能力，依赖 tasks + targets，只有 Host 确认的
+delegationCapabilityApproved 才授予；历史未知字段、旧 tasks/targets 批准不推断新授权。
+缺省不改变旧权限项、批准、配置或回执摘要；已安装的历史字段保留，不因新校验停用。
+新包严格校验声明，旧 receipt 缺少新可选字段照常读取。无需 schema migration。
+
+targets.capabilities 新增只读协议发现；delegation.version=1 与 execution 就绪状态分开。
+当前没有审核接线，execution=false，显式 delegation 请求在预留/投递前返回
+UNSUPPORTED_CAPABILITY；不得降级为普通消息或另建任务。旧 Host 无入口时不发送。
+后续委派只允许 bot + queue，scope 最多 8000 字符并参与请求摘要，持久回执保存版本、
+执行范围及原目标/批准事实。取消、撤权、换批准版本和恢复排队沿原接口复核。
+现阶段不改输入协调器、伙伴权限、自动审核器、maker-core 或业务插件。
+作者契约见 cindy-plugin-creator/references/plugin-agent-tasks.md §4.11.7。

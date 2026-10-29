@@ -1,4 +1,5 @@
 import { checkGhostSecret } from './runtime/ghostSecretCheck.js';
+import { nodeSettingsAuthorization } from './runtime/nodeSettingsAuthorization.js';
 import { PluginDeviceSync } from './deviceSyncSlot.js';
 import { contactsSyncKeyStore } from '../contacts-sync/keyStore.js';
 import { RemotePluginPreferences } from './remotePluginPreferences.js';
@@ -87,7 +88,7 @@ import { PluginDownloadSlot } from './downloadSlot.js';
 import { createDownloader } from '../downloader/index.js';
 import { handlePluginTaskRequest, type PluginTaskHandler } from './taskSlot.js';
 import { PluginTargetSlot, type PluginTargetAdapter } from './pluginTargetSlot.js';
-import { ensurePluginTaskApproval, hasPluginTaskApproval, hasPluginTargetApproval, PluginTaskApprovalGate } from './taskCapability.js';
+import { ensurePluginTaskApproval, hasPluginTaskApproval, hasPluginTargetApproval, hasPluginDelegationApproval, PluginTaskApprovalGate } from './taskCapability.js';
 import {
   registerGhostCardRemoteProvider,
   persistGhostCardWithRemoteChange,
@@ -123,10 +124,10 @@ import { isDeepStrictEqual } from 'node:util';
 import type { GhostInstallConsentFacts } from '../../shared/ghostInstallConsent.js';
 
 const taskApprovalGate = new PluginTaskApprovalGate();
-function requestPluginTaskApproval(id: string, isCurrent: () => boolean, confirm: (facts: GhostInstallConsentFacts) => Promise<boolean>, explicit = false, capability: 'tasks' | 'targets' = 'tasks'): Promise<boolean> {
+function requestPluginTaskApproval(id: string, isCurrent: () => boolean, confirm: (facts: GhostInstallConsentFacts) => Promise<boolean>, explicit = false, capability: 'tasks' | 'targets' | 'delegation' = 'tasks'): Promise<boolean> {
   const ghost = findGhostForInstanceId(id);
   if (!isCurrent()) return Promise.resolve(false);
-  if ((capability === 'targets' ? hasPluginTargetApproval : hasPluginTaskApproval)(ghost)) return Promise.resolve(true);
+  if ((capability === 'delegation' ? hasPluginDelegationApproval : capability === 'targets' ? hasPluginTargetApproval : hasPluginTaskApproval)(ghost)) return Promise.resolve(true);
   const owner = getActiveDataOwnerPushStamp();
   const manager = getGhostManager();
   const revision = ghostInstallApprovalToken(ghost?.approval);
@@ -176,6 +177,7 @@ import {
   isGhostInstallApprovalToken,
   ghostAppContextLocale,
   unreviewedGhostPermissionItems,
+  approvedNodeCredentialManifest,
   ghostWebviewEntryPaths,
   isCindyAccountGhostId,
   isUserInstallReservedGhostId,
@@ -293,6 +295,7 @@ import {
   setGhostAgentModelsProvider,
   setGhostModelPickerProvider,
   setGhostOauthHandler,
+  setGhostNodeAuthorizationHandler,
   setGhostSandboxDevToolsDisabled,
   setGhostSecretsHandler,
   setGhostWakeHandler,
@@ -448,6 +451,7 @@ import {
   abortAllGhostInstallConsentPrompts,
   assertGhostInstallConsent,
   confirmedTaskCapability,
+  confirmedNodeCredentialCapability,
   obtainGhostInstallConsent,
   type GhostInstallConsentDecision,
   type GhostInstallConsentPrompt,
@@ -1136,7 +1140,7 @@ function availableGhosts(): InstalledGhost[] {
 
 function projectGhostForRenderer(ghost: InstalledGhost): InstalledGhost {
   try {
-    const runtimeManifest = ghost.manifest;
+    const runtimeManifest = approvedNodeCredentialManifest(ghost);
     const storeId = installedGhostStoragePart(ghost);
     const oauthManager = getGhostOauthAccountManager();
     const expiredAccountCount = (runtimeManifest.network?.secrets ?? []).reduce(
@@ -2230,6 +2234,11 @@ export function pluginTargetAuthorizationRevision(id: string): string | null {
   return hasPluginTargetApproval(ghost) ? pluginTaskAuthorizationRevision(id) : null;
 }
 
+export function pluginDelegationAuthorizationRevision(id: string): string | null {
+  const ghost = findGhostForInstanceId(id);
+  return hasPluginDelegationApproval(ghost) ? pluginTaskAuthorizationRevision(id) : null;
+}
+
 // Undefined means this plugin opted out of its Host task card. Saved settings
 // remain on disk, but are neither read nor used for that plugin at runtime.
 export function getPluginTaskDefaults(id: string) {
@@ -2380,6 +2389,9 @@ export function getGhostNodeRuntimeBroker(): GhostNodeRuntimeBroker {
       ownerScope: ghostOwnerScope,
       readSecret: (ghostId, secretKey) => readGhostSecret(ghostId, secretKey),
       secretSaved: ghostSecretSaved,
+      saveSecret: storeGhostSecret,
+      authenticatedFetch: (ghostId, request, authorization, assertCurrent, signal) =>
+        getGhostNetworkSlot().handleAuthenticatedNodeFetch(ghostId, request, authorization, assertCurrent, signal),
       resolveOauthSecret: async (ghostId, secretKey, accountId) => {
         const ghost = findGhostForInstanceId(ghostId);
         const source = ghost
@@ -5811,7 +5823,7 @@ export function getGhostSetupAssessment(ghostId: string): GhostSetupAssessment {
     throw new Error('ghost setup unavailable: ' + ghostId);
   }
   const storeId = installedGhostStoragePart(ghost);
-  const runtimeManifest = ghost.manifest;
+  const runtimeManifest = approvedNodeCredentialManifest(ghost);
   const assessment = evaluateGhostSetupAssessment(
     runtimeManifest,
     getGhostSetupProbes(storeId, runtimeManifest),
@@ -5859,7 +5871,7 @@ export async function executeGhostSetupAction(args: {
     if (!secretKey) {
       return { ok: false, errorCode: 'ACTION_STALE', message: '授权动作已失效' };
     }
-    const runtimeManifest = ghost.manifest;
+    const runtimeManifest = approvedNodeCredentialManifest(ghost);
     const decl = runtimeManifest.network?.secrets?.find(
       (secret) => secret.key === secretKey && secret.source === 'oauth',
     )?.oauth;
@@ -5945,7 +5957,7 @@ export async function executeGhostSetupInlineAction(
       getAssessment: getGhostSetupAssessment,
       getManifest: (ghostId) => {
         const ghost = findGhostForInstanceId(ghostId);
-        return ghost ? ghost.manifest : null;
+        return ghost ? approvedNodeCredentialManifest(ghost) : null;
       },
       storeSecret: (ghostId, secretKey, value) => {
         const ghost = findGhostForInstanceId(ghostId);
@@ -7091,7 +7103,9 @@ async function installAndDockLocked(
   // 则走 manager.update 延续既有状态。保留 false 缺省以兼容内部受控调用方。
   const result = await manager.install(lizFilePath, {
     taskCapabilityApproved: confirmedTaskCapability(opts.consent.decision, installedBefore, opts.consent.manifest),
+    nodeCredentialCapabilityApproved: confirmedNodeCredentialCapability(opts.consent.decision, installedBefore, opts.consent.manifest),
     targetCapabilityApproved: confirmedTaskCapability(opts.consent.decision, installedBefore, opts.consent.manifest, 'targets'),
+    delegationCapabilityApproved: confirmedTaskCapability(opts.consent.decision, installedBefore, opts.consent.manifest, 'delegation'),
     initiallyEnabled: opts.enable ?? false,
     expectedPackageSha256: opts.expectedPackageSha256,
     ...(opts.trustOverride ? { trustOverride: opts.trustOverride } : {}),
@@ -7273,7 +7287,9 @@ async function updateLocalGhostPackageLocked(
         () =>
           manager.update(cindyFilePath, {
           taskCapabilityApproved: confirmedTaskCapability(consent, previousGhost, inspected.manifest),
+          nodeCredentialCapabilityApproved: confirmedNodeCredentialCapability(consent, previousGhost, inspected.manifest),
           targetCapabilityApproved: confirmedTaskCapability(consent, previousGhost, inspected.manifest, 'targets'),
+          delegationCapabilityApproved: confirmedTaskCapability(consent, previousGhost, inspected.manifest, 'delegation'),
           expectedPackageSha256,
           expectedInstalledApproval,
           installOrigin: installOrigin ?? 'manual',
@@ -7766,7 +7782,9 @@ async function installOrUpdateMarketGhostPackageLocked(
       result = await withActiveOwnerGhostOauthMutationLock(installedGhostStoragePart(installed), () =>
         manager.update(cindyFilePath, {
           taskCapabilityApproved: confirmedTaskCapability(expected.consent, installed, inspected.manifest),
+          nodeCredentialCapabilityApproved: confirmedNodeCredentialCapability(expected.consent, installed, inspected.manifest),
           targetCapabilityApproved: confirmedTaskCapability(expected.consent, installed, inspected.manifest, 'targets'),
+          delegationCapabilityApproved: confirmedTaskCapability(expected.consent, installed, inspected.manifest, 'delegation'),
           expectedPackageSha256: inspected.packageSha256,
           expectedInstalledApproval: expected.expectedInstalledApproval!,
           ...(previousRelId ? { simulatorPreviousRelId: previousRelId } : {}),
@@ -8429,6 +8447,9 @@ export function registerGhostIpc(): void {
   // 面板唤醒电子脑(cindy-ghost://<id>/wake 供片分支):面板零桥,唤醒经它
   // 自己的协议通道进来。只对"已装且唤醒"的意识放行;熔断态不清账(重载 /
   // 重新唤醒才 resetFuse),spawn 幂等所以重复唤醒零成本。
+  setGhostNodeAuthorizationHandler((id, request, current, dispose) => nodeSettingsAuthorization(
+    { ghost: findGhostForInstanceId, broker: getGhostNodeRuntimeBroker }, id, request, current, dispose,
+  ));
   setGhostWakeHandler(async (ghostId) => {
     const ghost = findGhostForInstanceId(ghostId);
     if (!ghost || !ghost.enabled) return { state: 'off' };
@@ -8560,7 +8581,7 @@ export function registerGhostIpc(): void {
   setGhostOauthHandler(async ({ ghostId, method, pathname, readBodyText, isCurrent }) => {
     const ghost = findGhostForInstanceId(ghostId);
     if (!ghost) return { status: 404 };
-    const runtimeManifest = ghost.manifest;
+    const runtimeManifest = approvedNodeCredentialManifest(ghost);
     const oauthSecrets = new Map<string, GhostOauthDecl>();
     for (const s of runtimeManifest.network?.secrets ?? []) {
       if (s.source === 'oauth' && s.oauth) oauthSecrets.set(s.key, s.oauth);
@@ -8969,6 +8990,13 @@ export function registerGhostIpc(): void {
       if (type === 'targets-request' && findGhostForInstanceId(id)?.manifest.agent?.targets !== true) {
         return { ok: false, error: { code: 'PERMISSION_DENIED', message: 'PERMISSION_DENIED', retryable: false } };
       }
+      const wantsDelegation = type === 'targets-request' &&
+        (payload as { kind?: unknown })?.kind === 'send' &&
+        (payload as { delegation?: unknown })?.delegation !== undefined;
+      // Do not ask for task/target grants for an execution path this build cannot run.
+      if (wantsDelegation && !pluginTargetSlot.supportsDelegationExecution()) {
+        return { ok: false, error: { code: 'UNSUPPORTED_CAPABILITY', message: 'UNSUPPORTED_CAPABILITY', retryable: false } };
+      }
       const confirmCapability = (facts: GhostInstallConsentFacts) => {
         const pageId = (payload as { mobilePageId?: string }).mobilePageId;
         if (pageId) {
@@ -8996,6 +9024,15 @@ export function registerGhostIpc(): void {
       } catch {
         return { ok: false, error: { code: 'PERMISSION_DENIED', message: 'PERMISSION_DENIED', retryable: false } };
       }
+      if (wantsDelegation) {
+        try {
+          if (!await requestPluginTaskApproval(id, isCurrent, confirmCapability, false, 'delegation')) {
+            return { ok: false, error: { code: 'PERMISSION_DENIED', message: 'PERMISSION_DENIED', retryable: false } };
+          }
+        } catch {
+          return { ok: false, error: { code: 'PERMISSION_DENIED', message: 'PERMISSION_DENIED', retryable: false } };
+        }
+      }
       const revision = pluginTargetAuthorizationRevision(id);
       const assertAuthorized = () => {
         if (!isCurrent() || !revision || pluginTargetAuthorizationRevision(id) !== revision)
@@ -9004,7 +9041,7 @@ export function registerGhostIpc(): void {
       try { return { ok: true, data: await pluginTargetSlot.handle(id, payload, assertAuthorized) }; }
       catch (error) {
         const rawCode = (error as { code?: unknown })?.code ?? (error instanceof Error ? error.message : '');
-        const code = ['PERMISSION_DENIED', 'HOST_NOT_READY', 'INVALID_PARAMS', 'INVALID_ATTACHMENTS', 'INVALID_INVOCATION', 'TASK_BUSY', 'TARGET_UNAVAILABLE', 'SUPERSEDED', 'REQUEST_KEY_CONFLICT', 'DELIVERY_UNCERTAIN', 'DELIVERY_REJECTED', 'STALE_REVISION', 'ROUTE_UNAVAILABLE'].includes(String(rawCode)) ? String(rawCode) : 'HOST_NOT_READY';
+        const code = ['PERMISSION_DENIED', 'HOST_NOT_READY', 'UNSUPPORTED_CAPABILITY', 'INVALID_PARAMS', 'INVALID_ATTACHMENTS', 'INVALID_INVOCATION', 'TASK_BUSY', 'TARGET_UNAVAILABLE', 'SUPERSEDED', 'REQUEST_KEY_CONFLICT', 'DELIVERY_UNCERTAIN', 'DELIVERY_REJECTED', 'STALE_REVISION', 'ROUTE_UNAVAILABLE'].includes(String(rawCode)) ? String(rawCode) : 'HOST_NOT_READY';
         return { ok: false, error: { code, message: code, retryable: code === 'TASK_BUSY' } };
       }
     }
@@ -9413,7 +9450,7 @@ export function registerGhostIpc(): void {
       id,
       getRuntimeManifest: (ghostId) => {
         const ghost = findGhostForInstanceId(ghostId);
-        return ghost ? ghost.manifest : null;
+        return ghost ? approvedNodeCredentialManifest(ghost) : null;
       },
       probesFor: (runtimeManifest) => {
         const ghost = findGhostForInstanceId(typeof id === 'string' ? id : runtimeManifest.id);

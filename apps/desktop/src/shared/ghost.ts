@@ -211,6 +211,8 @@ export interface GhostAgentNeeds {
   tasks?: boolean;
   /** 查询项目、任务、伙伴并投递消息;必须同时声明 tasks,需独立批准。 */
   targets?: boolean;
+  /** Independently approved, scoped Auto delegation to an existing companion. */
+  delegation?: boolean;
   /**
    * hiddenTasks = 「可创建不显示在任务列表里的后台任务」(2026-10)。
    *
@@ -260,6 +262,28 @@ export function isGhostNodeMcpReservedMethod(method: string): boolean {
   return GHOST_NODE_MCP_RESERVED_METHODS.has(method);
 }
 
+/** Historical unknown fields remain stored, but malformed declarations grant no capability. */
+export function nodeCredentialSaveMethods(binding: GhostNodeSecretBinding): string[] | undefined {
+  const methods = binding.saveMethods;
+  return binding.oauthSecret === undefined && Array.isArray(methods) && methods.length > 0 &&
+    methods.length <= GHOST_NODE_MAX_SECRET_METHODS && new Set(methods).size === methods.length &&
+    methods.every(method => typeof method === 'string' && binding.methods.includes(method) && !isGhostNodeMcpReservedMethod(method))
+    ? methods : undefined;
+}
+
+export function nodeCredentialSettingsMethod(binding: GhostNodeSecretBinding): string | undefined {
+  return typeof binding.settingsMethod === 'string' && nodeCredentialSaveMethods(binding)?.includes(binding.settingsMethod)
+    ? binding.settingsMethod : undefined;
+}
+
+/** Runtime projection only; never rewrite the approved manifest or its digest. */
+export function approvedNodeCredentialManifest(ghost: InstalledGhost): GhostManifest {
+  if (ghost.nodeCredentialCapabilityApproved === true || !ghost.manifest.node?.secretBindings) return ghost.manifest;
+  return { ...ghost.manifest, node: { ...ghost.manifest.node,
+    secretBindings: ghost.manifest.node.secretBindings.map(({ saveMethods: _save, settingsMethod: _settings, ...binding }) => binding),
+  } };
+}
+
 /**
  * 主机保险库 → 随包 Node Worker 的按请求凭证绑定。
  *
@@ -277,6 +301,10 @@ export interface GhostNodeSecretBinding {
   label: string;
   /** 允许注入的 JSON-RPC 方法白名单(1–16 条)。 */
   methods: string[];
+  /** Methods allowed to save a credential after live authorization. */
+  saveMethods?: string[];
+  /** Settings-page device authorization; must be a saveMethods member. */
+  settingsMethod?: string;
   /** 可选目标入口；缺省只绑定 node.entry 主入口。 */
   entry?: string;
   /** 可选输入提示。 */
@@ -353,6 +381,8 @@ export const GHOST_NODE_CHILD_MODE_FLAG = '__cindy-node-child__';
 
 /** worker → 主机:代启/喂 stdin/收 stdin/杀进程。 */
 export type GhostNodeChildToHostMessage =
+  | { type: 'credential-save'; reqId: string; rpcId: string; key: string; value: string; identity: string }
+  | { type: 'authenticated-fetch'; reqId: string; rpcId: string; authorization: string; request: Record<string, unknown> }
   | { type: 'plugin-authorize'; reqId: string; rpcId: string; request: PluginAuthorizationRequest }
   | { type: 'device-authorize'; reqId: string; rpcId: string; url: string }
   | { type: 'spawn-child'; reqId: string; entry: string; args?: string[]; rpcId?: string }
@@ -362,6 +392,7 @@ export type GhostNodeChildToHostMessage =
 
 /** 主机 → worker:代启结果/子进程输出/退出。 */
 export type GhostNodeChildToWorkerMessage =
+  | { type: 'node-host-result'; reqId: string; ok: boolean; result?: unknown }
   | { type: 'plugin-authorize-result'; reqId: string; ok: boolean; result?: PluginAuthorizationResult }
   | { type: 'device-authorize-result'; reqId: string; ok: boolean }
   | { type: 'spawn-child-result'; reqId: string; ok: true; childId: string; pid?: number }
@@ -378,6 +409,22 @@ function isChildId(v: unknown): v is string {
 export function parseGhostNodeChildToHostMessage(raw: unknown): GhostNodeChildToHostMessage | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const m = raw as Record<string, unknown>;
+  if (m.type === 'credential-save' || m.type === 'authenticated-fetch') {
+    if (!isChildId(m.reqId) || typeof m.rpcId !== 'string' || !/^\d{1,16}$/.test(m.rpcId)) return null;
+    if (m.type === 'credential-save') {
+      if (Object.keys(m).sort().join(',') !== 'identity,key,reqId,rpcId,type,value'
+        || typeof m.identity !== 'string' || !/^[A-Za-z0-9._:@-]{1,256}$/.test(m.identity)
+        || typeof m.key !== 'string' || !/^[a-z][a-z0-9_]{0,31}$/.test(m.key)
+        || typeof m.value !== 'string' || m.value.length < 1 || m.value.length > 16384) return null;
+      return { type: m.type, reqId: m.reqId, rpcId: m.rpcId, key: m.key, value: m.value, identity: m.identity };
+    }
+    if (Object.keys(m).sort().join(',') !== 'authorization,reqId,request,rpcId,type'
+      || typeof m.authorization !== 'string' || !/^Bearer [A-Za-z0-9._~+\/=-]{1,8192}$/.test(m.authorization)
+      || !m.request || typeof m.request !== 'object' || Array.isArray(m.request)
+      || JSON.stringify(m.request).length > 65536) return null;
+    return { type: m.type, reqId: m.reqId, rpcId: m.rpcId, authorization: m.authorization,
+      request: m.request as Record<string, unknown> };
+  }
   if (m.type === 'plugin-authorize') {
     if (Object.keys(m).sort().join(',') !== 'reqId,request,rpcId,type'
       || !isChildId(m.reqId) || typeof m.rpcId !== 'string' || !/^\d{1,16}$/.test(m.rpcId)) return null;
@@ -1714,6 +1761,8 @@ export interface InstalledGhost {
   taskCapabilityApproved?: true;
   /** Independent Host consent for cross-task/companion target access. */
   targetCapabilityApproved?: true;
+  delegationCapabilityApproved?: true;
+  nodeCredentialCapabilityApproved?: true;
   manifest: GhostManifest;
   /** 安装目录绝对路径(userData/brain/<id> 或 userData/brain/_ns/<org>/<id>)。 */
   dir: string;
@@ -2122,6 +2171,9 @@ export function ghostPermissionItems(manifest: GhostManifest): GhostPermissionIt
     if (manifest.agent?.tasks === true) {
       items.unshift({ key: 'agent:tasks', kind: 'agent', labelKey: 'agentTasks', detailKey: 'agentTasksDetail' });
     }
+    if (manifest.agent?.tasks === true && manifest.agent.targets === true && manifest.agent.delegation === true) {
+      items.unshift({ key: 'agent:delegation', kind: 'agent', labelKey: 'agentDelegation', detailKey: 'agentDelegationDetail' });
+    }
     if (manifest.agent?.tasks === true && manifest.agent.targets === true) {
       items.unshift({ key: 'agent:targets', kind: 'agent', labelKey: 'agentTargets', detailKey: 'agentTargetsDetail' });
     }
@@ -2162,6 +2214,18 @@ export function ghostPermissionItems(manifest: GhostManifest): GhostPermissionIt
     for (const binding of manifest.node.secretBindings ?? []) {
       const targetEntry = binding.entry ?? manifest.node.entry;
       const stableMethods = [...binding.methods].sort();
+      const settingsMethod = nodeCredentialSettingsMethod(binding);
+      const saveMethods = nodeCredentialSaveMethods(binding);
+      if (settingsMethod) items.unshift({
+        key: 'node:settings-authorization:' + binding.key + ':' + targetEntry + ':' + settingsMethod,
+        kind: 'node', labelKey: 'nodeCredentialSave', labelArgs: { name: binding.label },
+        detailKey: 'nodeCredentialSaveDetail', detail: settingsMethod,
+      });
+      if (saveMethods) items.unshift({
+        key: 'node:credential-save:' + binding.key + ':' + targetEntry + ':' + [...saveMethods].sort().join(','),
+        kind: 'node', labelKey: 'nodeCredentialSave', labelArgs: { name: binding.label },
+        detailKey: 'nodeCredentialSaveDetail', detail: saveMethods.join('\n'),
+      });
       items.unshift({
         key: `node:secret:${binding.key}:${targetEntry}:${stableMethods.join(',')}${binding.oauthSecret ? `:oauth:${binding.oauthSecret}` : ''}`,
         kind: 'node',
@@ -2646,7 +2710,7 @@ export function diffInstalledGhostPermissionItems(
   next: GhostManifest,
 ): GhostPermissionDiff {
   if (installed.approval.state === 'approved') {
-    return diffGhostPermissionItems(installed.manifest, next);
+    return diffGhostPermissionItems(approvedNodeCredentialManifest(installed), next);
   }
   return {
     added: ghostPermissionItems(next),
@@ -4592,10 +4656,16 @@ function validateGhostManifestInput(value: unknown, preserveHistoricalTasks: boo
         return { ok: false, reason: 'agent.targets: true 需要同时声明 agent.tasks: true' };
       }
     }
+    if (!preserveHistoricalTasks && agentRaw.delegation !== undefined) {
+      if (typeof agentRaw.delegation !== 'boolean') return { ok: false, reason: 'agent.delegation must be boolean' };
+      if (agentRaw.delegation === true && (agentRaw.tasks !== true || agentRaw.targets !== true)) {
+        return { ok: false, reason: 'agent.delegation requires agent.tasks and agent.targets' };
+      }
+    }
     if (agentRaw.schedule !== undefined && typeof agentRaw.schedule !== 'boolean') {
       return { ok: false, reason: 'agent.schedule 必须是布尔值' };
     }
-    if (agentRaw.background !== true && agentRaw.errand !== true && agentRaw.schedule !== true && agentRaw.tasks !== true && Object.keys(unknownDeclarationFields(agentRaw, preserveHistoricalTasks ? ['background', 'errand', 'schedule'] : ['background', 'errand', 'schedule', 'tasks', 'hiddenTasks', 'targets'])).length === 0) {
+    if (agentRaw.background !== true && agentRaw.errand !== true && agentRaw.schedule !== true && agentRaw.tasks !== true && Object.keys(unknownDeclarationFields(agentRaw, preserveHistoricalTasks ? ['background', 'errand', 'schedule'] : ['background', 'errand', 'schedule', 'tasks', 'hiddenTasks', 'targets', 'delegation'])).length === 0) {
       return {
         ok: false,
         reason:
@@ -4603,11 +4673,12 @@ function validateGhostManifestInput(value: unknown, preserveHistoricalTasks: boo
       };
     }
     agent = {
-      ...unknownDeclarationFields(agentRaw, preserveHistoricalTasks ? ['background', 'errand', 'schedule'] : ['background', 'errand', 'schedule', 'tasks', 'hiddenTasks', 'targets']),
+      ...unknownDeclarationFields(agentRaw, preserveHistoricalTasks ? ['background', 'errand', 'schedule'] : ['background', 'errand', 'schedule', 'tasks', 'hiddenTasks', 'targets', 'delegation']),
       ...(agentRaw.background === true ? { background: true } : {}),
       ...(agentRaw.errand === true ? { errand: true } : {}),
       ...(agentRaw.tasks === true ? { tasks: true } : {}),
       ...(agentRaw.tasks === true && agentRaw.targets === true ? { targets: true } : {}),
+      ...(agentRaw.tasks === true && agentRaw.targets === true && agentRaw.delegation === true ? { delegation: true } : {}),
       ...(agentRaw.tasks === true && agentRaw.hiddenTasks === true ? { hiddenTasks: true } : {}),
       ...(agentRaw.schedule === true ? { schedule: true } : {}),
     };
@@ -4777,6 +4848,21 @@ function validateGhostManifestInput(value: unknown, preserveHistoricalTasks: boo
           }
           methods.push(method);
         }
+        let saveMethods: string[] | undefined;
+        if (!preserveHistoricalTasks && binding.saveMethods !== undefined) {
+          if (binding.oauthSecret !== undefined || !Array.isArray(binding.saveMethods)
+            || binding.saveMethods.length < 1 || binding.saveMethods.length > GHOST_NODE_MAX_SECRET_METHODS
+            || binding.saveMethods.some((m: unknown) => typeof m !== 'string'
+              || !methods.includes(m) || isGhostNodeMcpReservedMethod(m))
+            || new Set(binding.saveMethods).size !== binding.saveMethods.length) {
+            return { ok: false, reason: 'node.secretBindings[].saveMethods must be unique methods from methods, without oauthSecret' };
+          }
+          saveMethods = binding.saveMethods as string[];
+        }
+        if (!preserveHistoricalTasks && binding.settingsMethod !== undefined &&
+          (typeof binding.settingsMethod !== 'string' || !saveMethods?.includes(binding.settingsMethod))) {
+          return { ok: false, reason: 'node.secretBindings[].settingsMethod must name a saveMethods member' };
+        }
         let bindingEntry: string | undefined;
         if (binding.entry !== undefined) {
           if (
@@ -4830,11 +4916,13 @@ function validateGhostManifestInput(value: unknown, preserveHistoricalTasks: boo
           return { ok: false, reason: 'node.secretBindings[].oauthSecret 必须是本插件 OAuth 凭证键' };
         }
         nodeSecretBindings.push({
-          ...unknownDeclarationFields(binding, ['key', 'label', 'methods', 'entry', 'hint', 'url', 'oauthSecret']),
+          ...unknownDeclarationFields(binding, preserveHistoricalTasks ? ['key', 'label', 'methods', 'entry', 'hint', 'url', 'oauthSecret'] : ['key', 'label', 'methods', 'entry', 'hint', 'url', 'oauthSecret', 'saveMethods', 'settingsMethod']),
           ...(binding.oauthSecret !== undefined ? { oauthSecret: binding.oauthSecret as string } : {}),
           key: binding.key,
           label: binding.label,
           methods,
+          ...(saveMethods ? { saveMethods } : {}),
+          ...(!preserveHistoricalTasks && binding.settingsMethod ? { settingsMethod: binding.settingsMethod as string } : {}),
           ...(bindingEntry !== undefined ? { entry: bindingEntry } : {}),
           ...(binding.hint !== undefined ? { hint: binding.hint as string } : {}),
           ...(binding.url !== undefined ? { url: binding.url as string } : {}),
@@ -8510,7 +8598,7 @@ export type GhostPipeFsResult =
     }
   | { ok: true; op: 'list'; entries: GhostFsListEntry[]; truncated?: boolean }
   | { ok: true; op: 'delete'; path: string; /** false = 本来就不存在(幂等)。 */ existed: boolean }
-  | { ok: false; message: string };
+  | { ok: false; message: string; errorCode?: 'NOT_FOUND' };
 
 /* ── library 能力:持久作品库(2026-08-20;详见 docs/dev-rules/plugin-library-storage.md)── */
 

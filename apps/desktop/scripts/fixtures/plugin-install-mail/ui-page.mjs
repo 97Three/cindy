@@ -27,6 +27,7 @@ export default {
       about: 'Long organization and plugin names in a narrow sidebar',
       viewport: { width: 360, height: 600 },
     },
+    'delegation': { about: 'Independent companion delegation permission in the existing Host confirmation', viewport: { width: 390, height: 700 } },
     'source-change': { about: 'Source replacement and duplicate account impact' },
     'no-reader': { about: 'A restored tab with no mail plugin; original URL remains accessible', viewport: { width: 360, height: 600 } },
     'not-ready': { about: 'An unconfigured mail plugin without a pointless retry', viewport: { width: 360, height: 600 } },
@@ -221,7 +222,7 @@ export default {
       await page.getByRole('button', { name: await ui.t('mailReader.openMailbox'), exact: true }).waitFor();
       return;
     }
-    if (selected !== 'source-change') {
+    if (selected !== 'source-change' && selected !== 'delegation') {
       await page.getByText(await ui.t('mailReader.choosePlugin')).waitFor();
       return;
     }
@@ -229,14 +230,14 @@ export default {
       requestId: 'fixture-install',
       initiator: 'user',
       origin: 'local-file',
-      target: { namespace: null, sourceChanged: true, otherCopies: 1 },
+      target: { namespace: null, sourceChanged: selected === 'source-change', otherCopies: selected === 'source-change' ? 1 : 0 },
       facts: {
         kind: 'update',
         ghostId: 'mail-fixture',
         name: 'Mail',
         version: '2.0.0',
         previousVersion: '1.0.0',
-        added: [],
+        added: selected === 'delegation' ? [{ key: 'agent:delegation', kind: 'agent', labelKey: 'agentDelegation', detailKey: 'agentDelegationDetail' }] : [],
         removed: [],
         unchangedCount: 2,
         builtinOauthClientChanged: false,
@@ -248,6 +249,7 @@ export default {
         exact: true,
       })
       .waitFor();
+    if (selected === 'delegation') await page.getByText(await ui.t('settings.ghosts.perm.agentDelegation'), { exact: true }).waitFor();
     await ui.capture('confirmation');
   },
 };

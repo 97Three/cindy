@@ -325,3 +325,63 @@ undefined；不支持时明确报错，远程流程不能回退到在执行设�
 断开控制端或事务到期会取消该 Node RPC 及其绑定子进程。不要把 URL、轮询码或 token 放进
 stdout 的 RPC 结果、通知、模型回复或错误；业务状态返回固定摘要。此卡片不改变 Host 的
 network setup/readiness，不能拿 CLI 的登录结果冒充宿主凭据配置已完成。
+
+### 4.12.6 Node 授权凭据保存与文件鉴权请求
+
+需要保存设备授权返回的新凭据时，在已有 node.secretBindings 条目中显式增加
+saveMethods（非空、去重、必须是该条 methods 的子集；不可与 oauthSecret 共用）。
+这是一项独立的凭据写入权限；已有只读凭据批准不会自动授权写入。未声明此字段的
+存量插件继续使用原来的设置页、注入格式与权限，不需要重新设置或批准。
+
+逻辑页必须通过真实工具调用的 callId 发起 cancelWithCall: true 的 Node 请求。
+Node 处理该请求时捕获 globalThis.__CINDY_NODE__.bindHostServices()；旧 Host 没有
+此入口，应在启动外部授权前报告不支持，不得用设置页、聊天、KV 或本机文件代存密钥。
+捕获的方法只能用于原请求，不能缓存到后续 RPC 或交给另一个入口使用。
+
+该对象提供（将 signal 传给 SDK，以便原调用结束时立即停止轮询）：
+
+- signal：当前 RPC 的 AbortSignal；取消或结算时中止。
+
+- saveCredential(key, value, identity)：只能在已声明 saveMethods 的当前入口与方法内，
+  且同一请求已打开 Host 授权卡后调用。Host 在插件自己的保险库原子保存凭据和身份，
+  返回 {saved:true,key,identity,revision}，不返回密钥。每个 key 每次 RPC 只允许保存一次；
+  写入失败或结果未知不能视为成功。保存成功后授权流程中止，下一请求仍可从保险库恢复。
+- authenticatedFetch(request, authorization)：将 Node 获取的短期 Bearer 令牌通过
+  bootstrap 私有通道交给 Host 网络槽。request 沿用公开网络请求格式，包括 uploadDir；
+  callId 由 Host 从当前调用绑定，覆盖插件自报值。文件仍须来自该次工具调用的真实
+  dir_deposit 票据并通过既有文件数量、大小和路径检查。仅支持清单 network.hosts，
+  不借用临时域名授权；不跟随重定向、不自动重发。页面自报 Authorization 仍被丢弃。
+
+启用 saveMethods 的条目在后续已声明方法中注入的 cindy.secrets[key] 是 JSON 字符串：
+{nodeCredentialVersion:1,identity,value,revision}。身份与凭据作为一个保险库值保存；
+插件须核对 identity 与当前应用一致。尚未授权时该 key 缺省，允许启动授权流程。
+恢复方法只返回身份、revision 和是否已保存，绝不能将 value 或整个 envelope 作为
+工具结果返回。旧的无 saveMethods 条目继续注入原字符串，格式不变。
+
+Host 在调用取消/结束、账号变更、插件停用/更新时撤销这些方法；网络请求随调用中止。
+私有服务每个 worker 最多 8 项待处理、每个 RPC 最多 4 项 Host 操作，120 秒超时。
+不要将凭据或 token 写 stdout/stderr。Host 阻断已知私有凭据的原样 RPC 输出并清除
+敏感日志，但这不能替代插件对转换、编码或拼接后的敏感值的保密责任。
+
+
+### 设置页设备授权（未发布增量）
+
+Node 凭据绑定可选声明 settingsMethod，必须逐字属于同一绑定的 saveMethods。
+已有绑定省略该字段时权限及调用行为不变；新增字段单列能力，须正常安装更新批准。
+插件自己的 settingsHtml 或 mainView 顶层页面可 fetch POST
+/node-authorization/<key>，Content-Type 为 application/json，body 为该方法参数。
+方法和随包入口由 Host 从声明选择，页面不能指定 callId、Session、入口或保存目标。
+该接口不创建任务，不调用模型。GET 同路径只查询本机是否支持。
+
+响应为 application/x-ndjson 流：第一条 state=authorize 带 url、可选 expiresAt；
+页面可用随包二维码库显示该链接或让用户点击。链接仅短暂保留在当前页面内存，
+不得进入 BroadcastChannel、main.js、KV、历史、日志或 Agent。
+Node 继续使用 bindAuthorization 与 bindHostServices().saveCredential，后者只准保存
+本次绑定的 key。Host 最后只发 state=saved 和 identity，或 state=failed；不转发 Node
+结果/错误正文，也不返回凭据。消费完 saved 后通过既有 binding restore 方法核对持久身份。
+
+请求由 Main 的 webRequest 绑定真实发起顶层 frame、插件实例、安装版本和 owner；
+非设置页/主页面、子帧和旧文档不能借用。页面应给 fetch 传 AbortSignal，取消和 pagehide
+立即 abort。宿主在导航、销毁、身份/安装失效或五分钟期限到达时终止；结束后旧 Node
+回调不得保存。仅本机插件页面支持本增量，远程设置/手机 relay 暂不提供流式通道，
+调用方检测失败时说明当前入口不可用，不绕到聊天或虚构授权。

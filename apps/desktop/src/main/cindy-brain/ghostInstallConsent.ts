@@ -10,7 +10,7 @@
  * 每条安装路径都必须显式交出一个策略：用户或 Agent 发起的安装走 `prompt`，后台自动
  * 更新走 `automatic`（需要确认就跳过，不替用户点头），只有服务端默认安装走 `exempt`。
  */
-import type { GhostManifest, InstalledGhost } from '../../shared/ghost.js';
+import { ghostPermissionItems, type GhostManifest, type InstalledGhost } from '../../shared/ghost.js';
 import {
   evaluateGhostInstallConsent,
   ghostInstallConsentKey,
@@ -56,12 +56,23 @@ export function confirmedTaskCapability(
   decision: GhostInstallConsentDecision,
   installed: InstalledGhost | null | undefined,
   next: GhostManifest,
-  capability: 'tasks' | 'targets' = 'tasks',
+  capability: 'tasks' | 'targets' | 'delegation' = 'tasks',
 ): true | undefined {
   if (decision.mode !== 'confirmed') return undefined;
   const facts = evaluateGhostInstallConsent(installed, next);
   const shown = facts?.kind === 'install' ? facts.permissions : facts?.added;
   return shown?.some(item => item.key === `agent:${capability}`) ? true : undefined;
+}
+
+/** Called only after the package and receiver have passed assertGhostInstallConsent. */
+export function confirmedNodeCredentialCapability(
+  decision: GhostInstallConsentDecision, installed: InstalledGhost | null | undefined, next: GhostManifest,
+): true | undefined {
+  if (decision.mode === 'exempt') return ghostPermissionItems(next).some(item => item.key.startsWith('node:credential-save:')) ? true : undefined;
+  if (decision.mode !== 'confirmed') return undefined;
+  const facts = evaluateGhostInstallConsent(installed, next);
+  const shown = facts?.kind === 'install' ? facts.permissions : facts?.added;
+  return shown?.some(item => item.key.startsWith('node:credential-save:')) ? true : undefined;
 }
 
 /**

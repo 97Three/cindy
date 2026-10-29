@@ -10,6 +10,7 @@ import {
   abortAllGhostInstallConsentPrompts,
   assertGhostInstallConsent,
   confirmedTaskCapability,
+  confirmedNodeCredentialCapability,
   isGhostInstallConsentRequiredError,
   obtainGhostInstallConsent,
   trackGhostInstallConsentPrompt,
@@ -300,4 +301,34 @@ it('records target consent only when the independent capability was shown', asyn
   const unrelated = await obtainGhostInstallConsent(policy, alreadyDeclared, expanded, reviewedDigest);
   assertGhostInstallConsent(unrelated, alreadyDeclared, expanded, reviewedDigest);
   expect(confirmedTaskCapability(unrelated, alreadyDeclared, expanded, 'targets')).toBeUndefined();
+});
+
+it('records delegation consent only when that independent capability was confirmed', async () => {
+  const previous = { ...manifest(['api.weather.test']), agent: { tasks: true, targets: true } };
+  const next = { ...previous, agent: { tasks: true, targets: true, delegation: true } };
+  const prompt = userPrompt(true);
+  const policy = { mode: 'prompt' as const, prompt, initiator: 'user' as const, origin: 'market' as const };
+  const before = installed(previous);
+  const decision = await obtainGhostInstallConsent(policy, before, next, reviewedDigest);
+  assertGhostInstallConsent(decision, before, next, reviewedDigest);
+  expect(prompt).toHaveBeenCalledWith(expect.objectContaining({ facts: expect.objectContaining({ added: [expect.objectContaining({ key: 'agent:delegation' })] }) }));
+  expect(confirmedTaskCapability(decision, before, next, 'delegation')).toBe(true);
+  expect(confirmedTaskCapability(decision, before, next, 'targets')).toBeUndefined();
+  expect(confirmedTaskCapability({ mode: 'unprompted' }, before, next, 'delegation')).toBeUndefined();
+});
+
+// Standard unit: an old manifest is not evidence that newly understood write privileges were approved.
+it('requires confirmation for historical Node capture and records only the shown capability', async () => {
+  const next: GhostManifest = { ...manifest(['api.weather.test']), node: { entry: 'worker.js', protocol: 'json-rpc-stdio',
+    secretBindings: [{ key: 'account', label: 'Account', methods: ['authorize'], saveMethods: ['authorize'] }] } };
+  const old = installed(next);
+  const policy = { mode: 'prompt' as const, prompt: userPrompt(true), initiator: 'user' as const, origin: 'market' as const };
+  const decision = await obtainGhostInstallConsent(policy, old, next, reviewedDigest);
+  assertGhostInstallConsent(decision, old, next, reviewedDigest);
+  expect(confirmedNodeCredentialCapability(decision, old, next)).toBe(true);
+  expect(confirmedNodeCredentialCapability({ mode: 'unprompted' }, old, next)).toBeUndefined();
+  expect(confirmedNodeCredentialCapability({ mode: 'exempt', reason: 'server-default-install' }, old, next)).toBe(true);
+  await expect(obtainGhostInstallConsent({ mode: 'automatic' }, old, next, reviewedDigest)).rejects.toThrow();
+  await expect(obtainGhostInstallConsent({ ...policy, prompt: userPrompt(false) }, old, next, reviewedDigest)).rejects.toThrow();
+  expect(old.enabled).toBe(true);
 });

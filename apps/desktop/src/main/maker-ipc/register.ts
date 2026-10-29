@@ -18,6 +18,7 @@ import { assertBotTaskCoordination, classifySessionMessagePurpose, coordinationI
 import type { BotTaskCoordination, SessionMessagePurpose } from '../../shared/botTaskCoordination.js';
 import { openSession, setSessionOpeningModelAdmission } from '../localDb/sessionOpening.js';
 import { createPluginTaskReviewResolver } from './pluginTaskReviewContext.js';
+import { createPluginTargetReviewLoader } from '../cindy-brain/pluginTargetReview.js';
 import { isPluginTaskPermissionAllowed, assertPluginTaskResult, createPluginTaskService, isTeamPlanLabelLockedByReceipt, readPluginTaskPlanReceipt, PluginTaskError, type PluginTaskService } from './pluginTaskService.js';
 import { assertPluginWorkerDirectoryScope, resolvePluginWorkerDirectory } from './pluginWorkerDirectory.js';
 import { PluginWriteAccessGate } from './pluginWriteAccessGate.js';
@@ -39,6 +40,7 @@ import {
   setPluginTaskUninstaller,
   setPluginTaskRelocator,
   pluginTargetAuthorizationRevision,
+  pluginDelegationAuthorizationRevision,
   isPluginTaskAuthorized,
   getPluginTaskDefaults,
   // #5529：PR 侧的授权候选解析仍要这个可空查询。
@@ -14691,6 +14693,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     }
   };
   setPluginTaskHandler(handlePluginTask);
+  let pluginTargetReviewReady = false;
   setPluginTargetAdapter({
     prepareInvocation: preparePluginInvocation,
     acceptInvocation: acceptPluginInvocation,
@@ -14703,6 +14706,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       });
     },
     approvalRevision: pluginTargetAuthorizationRevision,
+    delegationRevision: pluginDelegationAuthorizationRevision,
+    delegationReviewAvailable: () => pluginTargetReviewReady,
     candidates: listPluginTargetCandidates,
     session: resolvePluginTargetSession,
     assertCreatePermission: (pluginId, permissionMode) => {
@@ -14778,6 +14783,18 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         await awaitAgentInputQueueSnapshotPersistence(taskId);
         return 'queue';
       });
+    },
+    deliverySettled: async (taskId, clientId, guard) => {
+      guard();
+      await inputCoordinator.ensureQueueRestored(taskId);
+      guard();
+      // Cancellation has durably fenced future acceptance. Only an idle runtime
+      // with no restored queued input can acknowledge completion of withdrawal.
+      const queue = inputCoordinator.getQueueControlSnapshot(taskId);
+      return !maker.getSession(taskId)?.isTurnRunning() &&
+        !inputCoordinator.getAcceptedInputProvenance(taskId) &&
+        !queue.pendingQueue.some(item => item.clientId === clientId) &&
+        !queue.steeringQueueClientIds.includes(clientId);
     },
     withdraw: async (taskId, clientId, guard) => {
       guard();
@@ -18166,7 +18183,28 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     await drainPersistQueue();
     return listMessagesForAgentHandoff(sessionId, null, undefined, 'authorization');
   };
+  const loadPluginTargetReview = createPluginTargetReviewLoader({
+    owner: getCurrentDbClientSnapshot,
+    drain: drainPersistQueue,
+    assertDelivery: assertPluginTargetQueuedDelivery,
+    approvalRevision: pluginDelegationAuthorizationRevision,
+    permissionCeiling: pluginId => getPluginTaskDefaults(pluginId)?.permissionMode,
+    activeInput: sessionId => {
+      const input = inputCoordinator.getAcceptedInputProvenance(sessionId);
+      const session = maker.getSession(sessionId);
+      const ids = inputCoordinator.getActiveInputClientIds(sessionId);
+      if (!input || !session?.isTurnRunning() || input.autoResume || input.retrySourceClientId ||
+          input.authoredText !== undefined || input.delegatedRequest ||
+          inputCoordinator.isActiveInputAccountScoped(sessionId) ||
+          inputCoordinator.getActiveInputClientId(sessionId) !== input.clientId ||
+          ids.length !== 1 || ids[0] !== input.clientId) return null;
+      return { clientId: input.clientId, generation: inputCoordinator.getGeneration(sessionId),
+        instanceId: session.instanceId, turnGeneration: session.getTurnGeneration() };
+    },
+  });
   setAutoReviewContextResolver(createPluginTaskReviewResolver(async sessionId => {
+    const targetReview = await loadPluginTargetReview(sessionId);
+    if (targetReview) return targetReview;
     const epoch = getCurrentDbClientSnapshot();
     if (!epoch) throw new Error('Task storage unavailable');
     const db = epoch.client.drizzle;
@@ -18261,6 +18299,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       historyComplete: true,
     };
   }));
+
+  pluginTargetReviewReady = true;
 
   const {
     sendToAgentAccepted: sendToAgentAcceptedUnlocked,

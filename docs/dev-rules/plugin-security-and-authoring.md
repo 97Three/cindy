@@ -988,3 +988,33 @@ public 身份归属；共享访客及插件托管/errand 任务与其 Worker 沿
 详见 [客户端实现与验证边界](../plugin-community-contribution.md) 和
 [HTTP 契约](../plugin-community-contribution-contract.md)。此改动涉及打包原语和授权边界，仍须人工 review
 及本规则第 5 节的插件基座白名单确认后方可合并；本地代码检查不替代该门禁。
+
+
+### 插件页面 Node 设备授权（未发布增量）
+
+node.secretBindings.settingsMethod 显式开放一条 saveMethods 中的方法给本机设置/主页面。
+Main webRequest 以真实顶层 frame 签发单次请求来源，不采信页面自报身份；
+页导航、销毁、owner/安装失效及五分钟期限均终止本次 RPC。只展示经原 targetPolicy
+核准的设备授权 URL，Node 原始结果/错误不出流，密钥仍走原私有保存通道且限定同 key。
+这不是 Agent 在途权限的复用，不创建 Session，不开放 authenticatedFetch 或其它 Host
+服务。省略字段不改变旧权限键、批准或配置；新增字段走正常增量能力确认。
+远程/手机版 relay 不支持该新流式入口，保持既有 OAuth 路径，不静默降级到聊天任务。
+
+
+## 插件伙伴委派协议与回执（未发布）
+
+agent.delegation 为可选独立能力，依赖 tasks + targets，只有 Host 确认的
+delegationCapabilityApproved 才授予；历史未知字段、旧 tasks/targets 批准不推断新授权。
+缺省不改变旧权限项、批准、配置或回执摘要；已安装的历史字段保留，不因新校验停用。
+新包严格校验声明，旧 receipt 缺少新可选字段照常读取。无需 schema migration。
+
+targets.capabilities 新增只读协议发现；delegation.version=1 与 execution 就绪状态分开。
+执行端接入现有 Auto 审核后才报告 execution=true；未就绪时显式 delegation 请求在预留/投递前返回
+UNSUPPORTED_CAPABILITY，不降级为普通消息或另建任务。旧 Host 无入口时不发送。
+委派只允许 bot + queue，scope 最多 8000 字符并参与请求摘要，持久回执保存版本、
+执行范围及原目标/批准事实。取消、撤权、换批准版本和恢复排队沿原接口复核。
+Main 从当前接受的输入、原批准和持久回执读取 scope，交给现有 Auto 审核投影；
+不伪造主人原话，不提升伙伴权限，不新增团队，Core 不包含业务插件流程。
+作者契约见 cindy-plugin-creator/references/plugin-agent-tasks.md §4.11.7。
+
+Node 凭据写入与页面授权另需 Host receipt 的 nodeCredentialCapabilityApproved。旧安装的同名未知字段原样保留，不推断批准；有效字段在更新确认中作为新增能力展示，畸形历史字段不导致停用。运行时与权限投影共用有效声明判据。
