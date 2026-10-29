@@ -5020,7 +5020,7 @@ describe('Bot Session task end-to-end runtime', () => {
       if (!result.ok) throw new Error(result.message);
       expect(readCallerPermission).toHaveBeenCalledWith('group-lane');
       expect(h.sqlite!.prepare('SELECT project_dir, working_dir FROM sessions WHERE id = ?').get(result.childSessionId))
-        .toEqual({ project_dir: '/selected-project', working_dir: h.userDataDir });
+        .toEqual({ project_dir: '/selected-project', working_dir: normalizeWorkingDirForStorage(h.userDataDir) });
       const row = h.sqlite!.prepare('SELECT parent_session_id, permission_snapshot_json FROM bot_delegations WHERE id=?').get(result.delegationId) as { parent_session_id: string; permission_snapshot_json: string };
       // The lane that started the task stays its parent; no private chat is created or re-used.
       expect(row.parent_session_id).toBe('group-lane');

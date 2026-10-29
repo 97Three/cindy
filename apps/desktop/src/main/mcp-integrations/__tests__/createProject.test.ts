@@ -142,6 +142,25 @@ describe('createProject', () => {
     await expect(readCurrentSessionProject('caller')).rejects.toThrow('Active account changed');
   });
 
+  // Unit regression: explicit conventional worktree projects are valid catalog
+  // entries; self-inspection must return the same selectable path, not its parent.
+  it('round-trips an explicitly registered worktree project through self-inspection', async () => {
+    const projectDir = path.join(directory, '.worktrees', 'feature');
+    await mkdir(projectDir, { recursive: true });
+    const normalized = projectDir.replaceAll('\\', '/');
+    h.registered = [{ path: normalized }];
+    h.query.mockResolvedValue([{
+      id: 'caller', projectDir: normalized, workingDir: directory,
+      workspaceKind: 'project', remoteHostId: null,
+    }]);
+    const current = await readCurrentSessionProject('caller');
+    expect(current.projectDir).toBe(normalized);
+    expect(await resolveSessionProject({ callerSessionId: 'caller', projectDir: current.projectDir! }))
+      .toEqual({ ok: true, projectDir: normalized });
+    expect(h.upsert).not.toHaveBeenCalled();
+    expect(h.restore).not.toHaveBeenCalled();
+  });
+
   // Unit: selecting cwd previously registered it implicitly. A project choice
   // must resolve from the catalog without adding/restoring anything.
   it('resolves an existing visible project without changing the catalog', async () => {

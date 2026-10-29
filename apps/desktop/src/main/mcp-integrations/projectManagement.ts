@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { eq } from 'drizzle-orm';
-import { collapseWorktreeDirForGrouping, sessionProjectDirectory } from '@cindy/maker-shared/worktree-paths';
+import { collapseWorktreeDirForGrouping } from '@cindy/maker-shared/worktree-paths';
 import { getActiveDataOwnerPushStamp, isAppSessionBoundaryPending } from '../appSessionState.js';
 import { tryGetDbClient } from '../localDb/client/current.js';
 import { listRecentWorkdirs } from '../localDb/ipc/recentWorkdirs.js';
@@ -35,10 +35,9 @@ export async function readCurrentSessionProject(sessionId: string) {
       current.dataOwnerId !== owner.dataOwnerId || current.ownerGeneration !== owner.ownerGeneration)
     throw new Error('Active account changed');
   if (!row) throw new Error('Calling task unavailable');
-  const directory = sessionProjectDirectory(row);
   return {
-    projectDir: row.workspaceKind === 'dialogue' || !directory
-      ? null : collapseWorktreeDirForGrouping(directory),
+    projectDir: row.workspaceKind === 'dialogue' ? null
+      : row.projectDir ?? (row.workingDir ? collapseWorktreeDirForGrouping(row.workingDir) : null),
     workspaceKind: row.workspaceKind,
     remoteHostId: row.remoteHostId,
   };

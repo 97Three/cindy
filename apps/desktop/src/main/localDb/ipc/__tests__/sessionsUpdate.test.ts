@@ -1148,6 +1148,27 @@ describe('local-db:sessions:update handler wiring', () => {
     expect(h.sqlite!.prepare('SELECT project_dir FROM sessions WHERE id = ?').get('codex-local')).toEqual({ project_dir: null });
   });
 
+  // Unit regression: persistence alone left other windows/device-link mirrors
+  // grouping by the old project. Exercise the real update handler and its pushes.
+  it.each([
+    { workingDir: '/another-project', workspaceKind: 'project' as const },
+    { workspaceKind: 'dialogue' as const },
+  ])('broadcasts cleared membership to mounted clients after a move: %j', async patch => {
+    h.sqlite!.prepare("UPDATE sessions SET project_dir = '/product' WHERE id = ?").run('codex-local');
+    const windows = [0, 1].map(() => ({
+      isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() },
+    }));
+    h.windows = windows;
+    await invokeUpdate('codex-local', patch);
+    const payload = expect.objectContaining({
+      sessionId: 'codex-local', patch: expect.objectContaining({ ...patch, projectDir: null }),
+    });
+    expect(h.tapWindowBroadcast).toHaveBeenCalledWith('local-db:sessions:patched', payload);
+    for (const window of windows) {
+      expect(window.webContents.send).toHaveBeenCalledWith('local-db:sessions:patched', payload);
+    }
+  });
+
   it('does not advance a terminal handoff while the goal is active', async () => {
     h.sqlite!.exec("CREATE TABLE session_goals (session_id TEXT PRIMARY KEY, status TEXT); INSERT INTO session_goals VALUES ('codex-local', 'active')");
     await touchSessionActivityInDb('codex-local', 1_786_500_050_000, true);

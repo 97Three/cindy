@@ -2559,10 +2559,13 @@ export async function updateSessionInDb(
       if (currentRow) broadcastStatus = currentRow.status;
     }
     const broadcastPatch =
-      p.pinnedAt === undefined && p.status === undefined
+      p.pinnedAt === undefined && p.status === undefined && setObj.projectDir === undefined
         ? p
         : {
             ...p,
+            // Include mapper-derived changes so every mounted mirror drops the
+            // old explicit membership after a move, just as SQLite does.
+            ...(setObj.projectDir !== undefined ? { projectDir: updated.projectDir } : {}),
             ...(p.pinnedAt !== undefined ? { pinnedAt: updated.pinnedAt } : {}),
             ...(p.status !== undefined ? { status: broadcastStatus } : {}),
             ...(p.pinnedAt !== undefined && updated.pinnedAt === null ? { summary: null } : {}),
