@@ -196,6 +196,37 @@ relay 以 close 1013 `inbound backpressure` 主动断连，此时任何「立即
 
 ## 远程 Agent 的拉取与恢复(`maker:remote-agent:v1`)
 
+供应商进程重启（2026-10-29）：已打开的 run 收到 `missing`、`provider-restarting` 或旧端的
+`aborted` 时只释放这条远程连接，保留本机执行器和 MCP 身份。空闲任务下次发送再接回；进行中的
+一轮通过现有供应商组恢复租约、五次有界探测和输入队列自动续跑一次，未归组的供应商也适用。
+原生会话 ID 必须接回，设置必须重放完成，才能发送续跑；不重发原消息或结果不明的方法调用。
+权限、Plan 和自动动作来源沿用原轮次；Stop、新输入、归档／删除使恢复失效。持续不可达、撤权或
+接不回原生会话保留原错误与人工恢复入口。伙伴、目标模式与共享任务沿用既有自动恢复归属检查。
+
+正常退出先经 device-link 同步 quit 回调走 `dropAllControllers('shutdown') → abortAll('app-quit')`；
+`host.dispose()` 来自 Maker 重置，不是常规退出必经路径。两条入口共用闲置／忙碌判断，重叠时等待
+首次收尾再回收。新版主动断开（`user` / `toggle-off`）发 `controller-disconnected`，控制端映射为
+既有 `user-revoked`，不自动续跑或让供应商组换电脑；中转也不发换电脑凭证。旧版 `aborted` 无法
+区分退出和主动断开：兼容旧版退出意味着旧版一键断开可能连回一次，关闭远程控制则被权限门拒绝。
+
+分享在已经发生链路不可达后临时报 `ACCESS_REVOKED` / `REMOTE_AGENT_SHARE_UNAVAILABLE`，
+只保留原两分钟窗口，不重置截止时间；首次即撤权仍立即失败。恢复只作用于当前 run 的连接与
+当前电脑的拉取器，不重连共享 relay、不绕过授权。两控制端共用一个 host 的回归中，一个 run 消失并
+重新打开，另一控制端仍能发送、原生会话不变。实现及回归：`remote-agent/controller/`、
+`remote-agent/__tests__/connectionPool.test.ts`、`poll.test.ts` 与 `provider-group/service.ts`。
+
+直连分享任务持久位置仍为 `share:<id>`，该位置代表 O，不等于实际执行电脑 M。重启恢复通过
+现有直连句柄向 O 为原 M 申请新许可并探测 M，空闲 run 重开也先完成相同授权，不改选电脑。
+断链窗口内的临时拒绝可触发同一授权流程；授权请求不阻塞两分钟截止时间，也不能延长已到期的
+本机租约。授权、关停与启动代次复核在异步返回后再次执行，失效请求只释放本次授权代次。
+M 仍保存但已撤权的 run 明确收尾为 `access-revoked`，不以 `missing` 触发续跑。
+回归见 `roundtrip.test.ts`、`groupRelay.test.ts`、`poll.test.ts` 与供应商组 `service.test.ts`。
+
+离线期间 Stop 仍走 Session 既有的有界中止复核（15 秒）。远程 close 通知失败只记日志，不能把已
+清理的本机代理留在运行状态；本机资源清理失败仍须上抛。代理 dispose 同时清空 turnRunning /
+preparing，本机 Session 可正常关闭，下一条显式消息按原生会话 ID 重建；不依赖离线电脑确认才能
+解除队列占用。回归同时覆盖远程通知失败与本机清理失败，不能把两者混为一谈。
+
 协议见 [`protocol-compatibility.md`](protocol-compatibility.md)「远程 Agent」。恢复策略按故障半径三问：
 
 1. **故障层级**：只处理同一台被控端的事件拉取。`poll` 遇到 peer reset、超时、背压或链路暂断时，

@@ -74,6 +74,12 @@ Cindy 以 `pi --mode rpc` spawn pi 二进制(JSONL/stdio),`translator.ts` 把 pi
   MCP 请求接入 Pi 的取消信号；Bun fetch 的独立空闲计时关闭，由既有请求期限统一约束响应头与
   正文。取消只中止本次 HTTP 等待，不承诺撤销服务端已执行的动作。网络错误只附白名单错误码，
   仅 JSON-RPC `-32602` 明确参数错误附 schema，工具业务错误保留原反馈。
+  启动失败、传输断开、请求超时或已建立的 MCP session 返回 404 后，下一次定向发现／调用
+  按服务重新 initialize + tools/list，复用既有启动期限；并发等待共享一次握手，取消只退出
+  当前等待。恢复不自动重放 tools/call，不重启 Pi 或其它服务；新工具表替换旧表，定义改变
+  或删除时拒绝用旧定义继续调用。只恢复启动快照里的服务，不热加载配置变更。
+  工具批准按 toolCallId 绑定审批时的定义指纹；即使同批前面的发现已披露新定义，也不得
+  沿用旧批准。SSE 在匹配响应前结束或失效时同样标记连接需恢复，不重放原操作。
 - **plan 模式**:自动挂载 Pi 分发包自带的 plan-mode 扩展，无需用户另装。UI 勾选是下一条
   消息的一次性意图，与原生运行态分开；`StartSessionOptions.planMode` 设置起始档，
   `SendOptions.planMode` 快照决定本轮，切档与 prompt 在同一 RPC 串行段执行。发送后消耗
@@ -104,7 +110,7 @@ Cindy 以 `pi --mode rpc` spawn pi 二进制(JSONL/stdio),`translator.ts` 把 pi
 
 本机 Pi bridge 在原生 `before_provider_request` 处理后，通过既有单向通知发送白名单
 请求摘要。宿主以 `startupTraceId + requestSequence` 记录 debug 级 `pi request stage`：
-`provider-request-prepared`（本桥处理后的工具数、消息数、wire effort）、`first-output`
+`provider-request-prepared`（本桥处理后的工具数、消息数、wire effort、`preparationMs`）、`first-output`
 （首个文本／推理增量或工具调用开始／增量）、`agent-settled`（原生整轮终态，不能用 `agent_end` 替代）。
 请求阶段时长用宿主单调时钟，`elapsedMs` 从最近一次请求摘要到达起算；终态另有
 `turnElapsedMs`，从本轮第一次请求摘要到达起算，包含重试／工具等后续处理。
@@ -115,6 +121,15 @@ Cindy 以 `pi --mode rpc` spawn pi 二进制(JSONL/stdio),`translator.ts` 把 pi
 只记录有界计数和已知档位名，无法识别的请求字段省略，不把未知工具数当成零。
 不记录请求正文、工具定义、模型 ID、凭据或任意上游字符串；
 诊断失败不能阻止发送，也不出现在聊天里，不增加需要宿主应答的 RPC。
+`preparationMs` 单独记录本桥 `before_provider_request` 的单调时钟耗时，包含 Fast 偏好
+查询的等待；它不包含此前 Pi 构造上下文及此后网络传输，也不改变既有 `elapsedMs` 起点。
+
+升级官方 Pi 后可运行 `node scripts/pi-healthcheck.mjs --binary /absolute/path/to/pi`。
+省略参数使用仓库分发二进制；脚本不安装或替换运行时、不读取正式任务或配置、不启用扩展。
+它启动临时 PiAgent 与本机协议端点，逐项检查 Fast、窗口与恢复、线上请求档位投影、图片与
+历史、MCP 批准／拒绝、多服务、结构化结果、SSE 和分页。JSON 报告输出到 stdout，测试输出
+到 stderr；任一必需项失败、跳过或未发现都返回非零。它验证接线兼容性，不证明在线模型
+质量、上游服务可用性或真实网络速度。
 
 Gateway 的档位成员仍以供应商实报为准。目录支持 low 时，Cindy 能传 low；不支持时，
 启动选择按现有默认档收敛，不能把直接调用 SDK 的 low→medium 结果冒充完整宿主路径。
