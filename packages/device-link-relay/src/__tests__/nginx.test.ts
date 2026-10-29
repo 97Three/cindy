@@ -3,9 +3,9 @@
  * - 生产入口：manageNginx 的 prepare/activate/renew/rollback/remove；观察实际写出的配置与恢复结果。
  * - 规则依据：2026-10-29 用户要求自动兼容 Nginx；不得停用已有网站、覆盖其他人的配置或破坏证书续期。
  * - 现有覆盖缺口：Desktop SSH fake 只覆盖调度，未执行远端配置事务。
- * - 最小输入：带默认网站的 80/443 配置、同一个块监听两端口、校验失败及中途断开。
+ * - 最小输入：带默认网站的 80/443 配置、同一个块监听两端口/多个 IP、NAT 公网地址、校验失败及中途断开。
  * - tier：unit。文件系统/进程为内存适配，独立 CLI 的真实 Nginx 验证另在 Docker 执行。
- * - 实测耗时：单独运行本文件 0.49 秒（16 例，2026-10-29）。
+ * - 实测耗时：见 PR 描述（19 例，2026-10-29）。
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -218,7 +218,7 @@ it('opens HTTP validation before requesting a certificate when Nginx only serves
   h.files.set(site, httpsOnly);
   prepare();
   const beforeCertificate = h.files.get(`${root}/http.conf`)!;
-  expect(beforeCertificate).toContain('listen 203.0.113.10:80;');
+  expect(beforeCertificate).toContain('listen 0.0.0.0:80;');
   expect(beforeCertificate).toContain('proxy_pass http://127.0.0.1:47822;');
   expect(beforeCertificate).not.toContain('listen 443');
   material('key-one');
@@ -281,7 +281,7 @@ it('restores a separate HTTPS file after activation fails and preserves other ce
   h.failTest = 0;
   domain();
   manageNginx('activate');
-  expect(h.files.get(tlsFile)).toContain('server_name www.example.test;');
+  expect(h.files.get(tlsFile)).toContain('server_name relay.example.test www.example.test;');
   expect(h.files.get(tlsFile)).toContain('ssl_certificate /site/cert.pem;');
   manageNginx('commit');
   manageNginx('remove');
@@ -319,6 +319,35 @@ it('uses the matching specific socket and leaves other IP defaults and HTTP site
   manageNginx('commit');
   manageNginx('remove');
   expect(h.files.get(site)).toBe(targeted + '\n' + unrelated);
+});
+
+// PR #7776：公网地址可能在 NAT 后；没有同族监听时不能把它当成本机网卡地址。
+it.each(['203.0.113.10', 'relay.example.test'])('opens an unbound port on a wildcard for a NAT public address (%s)', (address) => {
+  const httpOnly = originalSite.slice(0, originalSite.indexOf('server { listen 443'));
+  h.files.set(site, httpOnly);
+  manageNginx('prepare', { address, resolvedAddresses: ['203.0.113.10'] });
+  material('key-one');
+  manageNginx('activate');
+  expect(h.files.get(`${root}/http.conf`)).toContain('listen 0.0.0.0:443 ssl');
+  manageNginx('commit');
+  manageNginx('remove');
+  expect(h.files.get(site)).toBe(httpOnly);
+});
+
+it('keeps a shared server name on HTTP and unrelated TLS sockets when replacing only the target certificate', () => {
+  const shared = 'server { listen 203.0.113.10:80; listen 203.0.113.10:443 ssl; listen 203.0.113.11:443 ssl; server_name relay.example.test; ssl_certificate /site/cert.pem; ssl_certificate_key /site/key.pem; root /website/public; }';
+  const other = 'server { listen 203.0.113.11:443 ssl default_server; server_name _; }';
+  h.files.set(site, other + '\n' + shared);
+  manageNginx('prepare', { address: 'relay.example.test', resolvedAddresses: ['203.0.113.10'] });
+  material('key-one');
+  manageNginx('activate');
+  expect(h.files.get(site)).toContain('server_name relay.example.test;');
+  expect(h.files.get(site)).toContain(other);
+  expect(h.files.get(`${root}/http.conf`)).toContain('listen 203.0.113.10:443 ssl;');
+  expect(h.files.get(`${root}/http.conf`)).not.toContain('listen 203.0.113.11:443');
+  manageNginx('commit');
+  manageNginx('remove');
+  expect(h.files.get(site)).toBe(other + '\n' + shared);
 });
 
 it.each([

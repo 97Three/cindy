@@ -245,12 +245,11 @@ chown -R cindy-relay:cindy-relay ${DATA_DIR}
 rm -f ${DATA_DIR}/status.json
 EXTRA=""
 CAPS=""
-if [ "$MODE" = nginx-existing ]; then
-  EXTRA=" --trust-proxy"
-else
+if [ "$MODE" != nginx-existing ]; then
   EXTRA=" --acme-identifier $ADDRESS --acme-http-port $CHALLENGE_PORT"
   if [ -n "$ACME_DIRECTORY" ]; then EXTRA="$EXTRA --acme-directory $ACME_DIRECTORY"; fi
 fi
+if [ "$MODE" != direct ]; then EXTRA="$EXTRA --trust-proxy"; fi
 if [ "$MODE" = direct ]; then CAPS=CAP_NET_BIND_SERVICE; fi
 cat > /etc/systemd/system/cindy-relay.service.new <<UNIT
 [Unit]

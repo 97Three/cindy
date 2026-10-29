@@ -80,7 +80,7 @@ async function inside() {
   }
   const websiteMaterial = certificate('website-tls', 'DNS:website.example.test');
   const initialMain =
-    'user nobody nogroup; worker_processes 1; pid /tmp/nginx.pid; events { worker_connections 128; } http { access_log off; include /etc/nginx/conf.d/website.conf; }\n';
+    'user nobody nogroup; worker_processes 1; pid /tmp/nginx.pid; error_log /tmp/nginx-error.log; events { worker_connections 128; } http { access_log /tmp/nginx-access.log; include /etc/nginx/conf.d/website.conf; }\n';
   const initialSite = `server { listen 80 default_server; server_name website.example.test;
     location / { return 200 "website-home"; }
     location ^~ /.well-known/acme-challenge/ { root /tmp/acme; try_files $uri =404; }
@@ -136,11 +136,11 @@ async function inside() {
     });
   };
   let servername: string | undefined;
-  const get = (pathname: string, method = 'GET', body?: Buffer, headers: Record<string, string> = {}) =>
+  const get = (pathname: string, method = 'GET', body?: Buffer, headers: Record<string, string> = {}, localAddress?: string) =>
     new Promise<{ status: number; body: Buffer }>((resolve, reject) => {
       const req = https.request(
         `https://127.0.0.1${pathname}`,
-        { method, ca: material.cert, agent: false, servername, headers: { ...headers, ...(servername ? { Host: servername } : {}) } },
+        { method, ca: material.cert, agent: false, servername, localAddress, headers: { ...headers, ...(servername ? { Host: servername } : {}) } },
         (res) => {
           const chunks: Buffer[] = [];
           res.on('data', (chunk) => chunks.push(chunk));
@@ -150,6 +150,13 @@ async function inside() {
       req.on('error', reject);
       req.end(body);
     });
+  const checkPairingSources = async () => {
+    for (let i = 0; i < 20; i++) {
+      assert.equal((await get('/api/device-link/relay/pair', 'POST', Buffer.from('{}'), { 'X-Forwarded-For': `203.0.113.${i + 1}` })).status, 400);
+    }
+    assert.equal((await get('/api/device-link/relay/pair', 'POST', Buffer.from('{}'), { 'X-Forwarded-For': '198.51.100.1' })).status, 429);
+    assert.equal((await get('/api/device-link/relay/pair', 'POST', Buffer.from('{}'), { 'X-Forwarded-For': '198.51.100.1' }, '127.0.0.2')).status, 400);
+  };
   let relay: Awaited<ReturnType<typeof startRelayServer>> | undefined;
   let challenge: Awaited<ReturnType<typeof startChallengeServer>> | undefined;
   try {
@@ -203,6 +210,7 @@ async function inside() {
       port: plan.port,
       tls: material,
       publicUrl: 'https://127.0.0.1',
+      trustProxyHeaders: true,
     });
     cli('activate');
     await retry(
@@ -233,6 +241,7 @@ async function inside() {
     });
     assert.equal(originalWebsite, 'website-home');
     cli('commit');
+    await checkPairingSources();
     const socket = new WebSocket('wss://127.0.0.1/api/device-link/ws', {
       ca: material.cert,
       headers: { Authorization: `CindyRelay ${owner.credential}` },
@@ -261,6 +270,7 @@ async function inside() {
     );
     assert.equal(upload.status, 200);
     const { putUrl } = JSON.parse(upload.body.toString());
+    const signedPath = new URL(putUrl).pathname + new URL(putUrl).search;
     assert.equal(
       (await get(new URL(putUrl).pathname + new URL(putUrl).search, 'PUT', bytes, { 'Content-Type': 'application/octet-stream' })).status,
       200,
@@ -298,6 +308,7 @@ async function inside() {
       host: '127.0.0.1',
       port: existing.port,
       publicUrl: 'https://127.0.0.1',
+      trustProxyHeaders: true,
     });
     cli('activate');
     cli('commit');
@@ -305,10 +316,20 @@ async function inside() {
       () => get('/api/device-link/relay/info'),
       (value) => value.status === 200,
     );
-    cli('remove');
-    assert.equal(fs.readFileSync(site, 'utf8'), initialSite);
+    await checkPairingSources();
     await relay.close();
     relay = undefined;
+    assert.equal((await get(signedPath)).status, 502);
+    await retry(
+      async () => fs.readFileSync('/tmp/nginx-access.log', 'utf8'),
+      (value) => value.includes('GET / HTTP/1.1'),
+      'original website logging',
+    );
+    for (const log of ['/tmp/nginx-access.log', '/tmp/nginx-error.log']) {
+      assert.ok(!fs.readFileSync(log, 'utf8').includes('/api/device-link/'), 'relay paths and signed queries must not enter inherited logs');
+    }
+    cli('remove');
+    assert.equal(fs.readFileSync(site, 'utf8'), initialSite);
     const httpOnlySite = initialSite.slice(0, initialSite.indexOf('server { listen 443'));
     fs.writeFileSync(site, httpOnlySite);
     command('nginx', ['-t']);
@@ -391,6 +412,55 @@ async function inside() {
       await relay.close();
       relay = undefined;
     }
+    const sharedMaterial = certificate('shared-website', 'DNS:relay.example.test');
+    fs.writeFileSync('/tmp/website-tls/cert.pem', sharedMaterial.cert);
+    fs.writeFileSync('/tmp/website-tls/key.pem', sharedMaterial.key);
+    const sharedSite = `server { listen 127.0.0.2:443 ssl default_server; server_name _;
+      ssl_certificate /tmp/website-tls/cert.pem; ssl_certificate_key /tmp/website-tls/key.pem; return 200 "other-default"; }
+    server { listen 127.0.0.1:80; listen 127.0.0.1:443 ssl; listen 127.0.0.2:443 ssl; server_name relay.example.test;
+      ssl_certificate /tmp/website-tls/cert.pem; ssl_certificate_key /tmp/website-tls/key.pem; return 200 "shared-website"; }\n`;
+    fs.writeFileSync(site, sharedSite);
+    await restartFixture();
+    material = certificate('shared-relay', 'DNS:relay.example.test');
+    saveMaterial();
+    const shared = prepare(false, 'relay.example.test');
+    relay = await startRelayServer({ dataDir, host: '127.0.0.1', port: shared.port, tls: material, publicUrl: 'https://relay.example.test' });
+    servername = 'relay.example.test';
+    cli('activate');
+    cli('commit');
+    await retry(() => get('/api/device-link/relay/info'), (value) => value.status === 200, 'shared server target');
+    const otherSocket = await new Promise<string>((resolve, reject) => {
+      const req = https.get({
+        hostname: '127.0.0.2', servername, headers: { Host: servername! }, ca: sharedMaterial.cert, agent: false,
+      }, (res) => {
+        let text = '';
+        res.on('data', (chunk) => { text += chunk; });
+        res.on('end', () => resolve(text));
+      });
+      req.on('error', reject);
+    });
+    assert.equal(otherSocket, 'shared-website');
+    assert.equal(await fetch('http://127.0.0.1', { headers: { Host: servername } }).then((res) => res.text()), 'shared-website');
+    cli('remove');
+    assert.equal(fs.readFileSync(site, 'utf8'), sharedSite);
+    await relay.close();
+    relay = undefined;
+    fs.appendFileSync('/etc/hosts', '\n203.0.113.10 nat-relay.example.test\n');
+    fs.writeFileSync(site, httpOnlySite);
+    await restartFixture();
+    material = certificate('nat-relay', 'DNS:nat-relay.example.test');
+    saveMaterial();
+    const nat = prepare(false, 'nat-relay.example.test');
+    relay = await startRelayServer({ dataDir, host: '127.0.0.1', port: nat.port, tls: material, publicUrl: 'https://nat-relay.example.test' });
+    servername = 'nat-relay.example.test';
+    cli('activate');
+    cli('commit');
+    await retry(() => get('/api/device-link/relay/info'), (value) => value.status === 200, 'NAT public address on a wildcard');
+    cli('remove');
+    assert.equal(fs.readFileSync(site, 'utf8'), httpOnlySite);
+    await relay.close();
+    relay = undefined;
+    console.log('[nginx-interop] NAT public DNS, shared server names, isolated pairing sources and signed URL log privacy passed');
     console.log('[nginx-interop] specific IP sockets, domain implicit TLS default and unrelated IP website preservation passed');
     console.log('[nginx-interop] renewal, interrupted deployment rollback, existing HTTPS reuse and exact uninstall restoration passed');
   } catch (error) {

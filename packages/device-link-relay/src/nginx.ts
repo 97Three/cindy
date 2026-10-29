@@ -187,7 +187,10 @@ function destinations(servers: Directive[], port: number, addresses: string[], f
     const specific = v6 ? `[${address}]:${port}` : `${address}:${port}`;
     const wildcard = v6 ? `[::]:${port}` : `0.0.0.0:${port}`;
     // 具体地址优先于通配监听；其他 IP 的站点和默认归属不能参与本次修改。
-    const group = groups.get(specific) ?? groups.get(wildcard) ?? { endpoint: specific, entries: [] };
+    // 公网地址可能经 NAT 映射；该端口尚无同族 socket 时用通配监听，不绑定公网 IP。
+    // 已有其他具体地址时保留隔离，避免热重载新增通配 socket 与现有绑定冲突。
+    const hasFamily = [...groups.keys()].some((socket) => socket.startsWith('[') === v6);
+    const group = groups.get(specific) ?? groups.get(wildcard) ?? { endpoint: hasFamily ? specific : wildcard, entries: [] };
     targets.set(group.endpoint, group);
   }
   return [...targets.values()];
@@ -243,6 +246,7 @@ function location(port: number, tls: boolean): string {
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-Host $http_host;
     proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $cindy_relay_connection_upgrade;
     proxy_read_timeout 3600s;
@@ -253,6 +257,8 @@ function location(port: number, tls: boolean): string {
     proxy_intercept_errors off;
     client_max_body_size 0;
     auth_basic off;
+    access_log off;
+    error_log /dev/null;
 }`;
 }
 
@@ -400,26 +406,14 @@ export function planNginx(options: {
     };
 
     // 使用独立虚拟站点承载新证书，不能替换多域名网站原有的证书。
-    const exactTls = httpsServers.filter((s) =>
-      children(s.children ?? [], files, main).some(
-        (d) => d.name === 'server_name' && d.args.some((n) => n.toLowerCase() === address.toLowerCase()),
-      ),
-    );
     // 直接访问 IP 的 TLS 客户端常常不发 SNI。IP 证书必须用于默认握手，域名站点仍由 SNI 选择。
     // 原默认站点若只写 server_name _，从证书补出域名，保留已有 SNI 访问。
     const defaults = new Map(httpsSockets.filter((g) => g.defaultServer).map((g) => [g.endpoint, g.defaultServer!]));
-    for (const server of new Set([...exactTls, ...defaults.values()])) {
+    for (const server of new Set(defaults.values())) {
       patchServer(
         server,
         (body) => {
-          if (exactTls.includes(server)) {
-            const names = parse('body', body).filter((d) => d.name === 'server_name');
-            if (names.some((d) => d.args.some((name) => name.startsWith('~'))))
-              throw new Error('Nginx regex server names cannot be rewritten automatically');
-            const retained = names.flatMap((d) => d.args).filter((n) => n.toLowerCase() !== address.toLowerCase());
-            for (const d of [...names].reverse()) body = body.slice(0, d.start) + body.slice(d.end);
-            body += `\nserver_name ${retained.length ? retained.join(' ') : '_'};\n`;
-          }
+          // 托管 include 先登记目标 TLS 名字。保留原块的名字，保护它同时承载的其他 socket 和 HTTP。
           for (const d of [...parse('body', body)].reverse()) {
             const socket = endpoint(d, 443);
             if (!socket || defaults.get(socket) !== server) continue;
