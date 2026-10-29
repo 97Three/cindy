@@ -266,6 +266,16 @@ describe('browserExtensionSlot · 桥接随花名册启停', () => {
     expect(natives).toHaveLength(0);
     expect(slot.getPageControl()).toBeNull();
   });
+
+  // 2026-10-30: only the official Cindy Chrome takes over My browser; another plugin's declaration is ignored.
+  it('其它插件声明 pageControl 也不会成为「我的浏览器」', async () => {
+    const ghosts = [extGhost({ id: 'other-browser', nativeHost: false })];
+    const { slot, bridges, settle } = await makeSlot({}, ghosts);
+    slot.reconcile(ghosts);
+    await settle();
+    expect(bridges).toHaveLength(1);
+    expect(slot.getPageControl()).toBeNull();
+  });
 });
 
 describe('browserExtensionSlot · 管子上行', () => {

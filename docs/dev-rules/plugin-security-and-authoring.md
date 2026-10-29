@@ -135,7 +135,8 @@ Library 请求同时绑定迁移代次和安装批准，根解析、排队及开
   Cindy 共用一份注册，宿主只为官方 Cindy Chrome（`my-browser`、`com.makecindy.browser`、
   声明了 Node 程序）安装，其它插件的声明被忽略（2026-10-29 决定，宿主代码点名具体插件的唯一
   例外）；注册在没有任何运行中的 Cindy 仍在使用时撤销。可选 `pageControl: true` 表示扩展实现
-  页面控制契约、可作为 Browser Use 的「我的浏览器」执行端。宿主代码里不得出现具体插件名
+  页面控制契约、可作为 Browser Use 的「我的浏览器」执行端；同样只有官方 Cindy Chrome 的声明生效，其它
+  插件声明了也不会接管「我的浏览器」（2026-10-30 决定）。宿主代码里不得出现具体插件名
   或专有协议：桥接按声明启停（`cindy-brain/browserExtensionSlot.ts`），扩展发起的请求经
   `browser-extension-relay` 事件转交给声明插件，插件经 `browser-extension-request` 投递作业、
   推送站点策略与配对身份。站点策略归插件所有，宿主只缓存到 owner 私有目录并在每个作业上

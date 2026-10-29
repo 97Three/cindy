@@ -71,6 +71,15 @@ export function mayInstallNativeHost(ghost: InstalledGhost): boolean {
   );
 }
 
+/** 「我的浏览器」只由官方 Cindy Chrome 提供;其它插件声明 pageControl 一律忽略(2026-10-30 决定)。 */
+export function mayProvidePageControl(ghost: InstalledGhost): boolean {
+  return (
+    ghost.manifest.browserExtension?.pageControl === true &&
+    ghost.namespace == null &&
+    OFFICIAL_NATIVE_HOSTS.has(ghost.manifest.id)
+  );
+}
+
 export interface BrowserExtensionSlotDeps {
   getGhost(id: string): InstalledGhost | null;
   /** 把转交事件投到插件逻辑页;false = 逻辑页不在线。 */
@@ -424,7 +433,7 @@ export class GhostBrowserExtensionSlot {
 
   getPageControl(): UserBrowserPageControl | null {
     for (const [instanceId, entry] of this.entries) {
-      if (entry.ghost.manifest.browserExtension?.pageControl === true) {
+      if (mayProvidePageControl(entry.ghost)) {
         return {
           bridge: entry.bridge,
           ghostId: entry.ghost.manifest.id,
