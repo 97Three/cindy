@@ -20,6 +20,7 @@ import {
   createTaskActionAuthorizer,
   taskActionInputGuard,
   taskActionPrincipal,
+  taskActionRoutineRevision,
   hasTaskActionAuthorization,
   TASK_ACTION_TOOLS,
   ORCA_TASK_ACTION_TOOLS,
@@ -290,10 +291,34 @@ function desktopFixture(kind: 'private' | 'group' | 'automatic' = 'group') {
     reviewHostPermissionAction: vi.fn(async (): Promise<AutoReviewDecision> => ({ verdict: 'allow' })),
   };
   const getSession = vi.fn((): typeof runtime | undefined => runtime);
+  const permissionRequest = { requestId: 'permission-1', kind: 'permission',
+    toolName: 'bash', input: { command: 'echo reviewed' } };
+  const capturePermissionRequest = vi.fn(async () => {
+    const request = structuredClone(permissionRequest);
+    return {
+      details: { task: { id: 'own', title: 'Child task' }, request },
+      assertCurrent() {
+        if (JSON.stringify(permissionRequest) !== JSON.stringify(request))
+          throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
+      },
+    };
+  });
+  const routines = new Map<string, { enabled: boolean; revision: number }>();
   const authorize = createDesktopTaskActionAuthorizer({
     input: () => ({ ...activeInput }), confirm, getSession,
+    capturePermissionRequest,
+    captureRoutine: async (_botId, id) => {
+      const row = routines.get(id);
+      if (!row) return undefined;
+      const captured = { ...row };
+      return { ...captured, assertCurrent() {
+        if (routines.get(id)?.revision !== captured.revision)
+          throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
+      } };
+    },
   });
-  return { authorize, confirm, activeInput, caller, rows, runtime, getSession };
+  return { authorize, confirm, activeInput, caller, rows, runtime, getSession,
+    permissionRequest, capturePermissionRequest, routines };
 }
 const ownerWrites = [
   ['cindy_helper', 'start_session_task'],
@@ -892,6 +917,62 @@ describe('teammate turn principal', () => {
     expect(await admission.run(effect)).toBe('deleted');
     await expect(admission.run(effect)).rejects.toThrow('AUTHORIZATION_EXPIRED');
     expect(effect).toHaveBeenCalledTimes(1);
+  });
+
+  // Review #7782: approval must describe and bind the child's exact request, not
+  // whichever request is current after the parent card is answered. Unit tier.
+  it.each(['request-id', 'arguments'] as const)('expires a permission answer when child %s changes', async change => {
+    const h = desktopFixture('automatic');
+    live(h);
+    h.confirm.mockImplementation(async () => {
+      if (change === 'request-id') h.permissionRequest.requestId = 'permission-2';
+      else h.permissionRequest.input.command = 'echo replacement';
+      return true;
+    });
+    const effect = vi.fn(async () => 'approved');
+    const result = await withToolCallAuthority(h.authorize,
+      helper('message_session_task', { task_id: 'own', decision: 'approve' }), effect);
+    expect(h.confirm).toHaveBeenCalledWith('companion', 'message_session_task',
+      { task_id: 'own', decision: 'approve' }, expect.objectContaining({ risk: 'permission', details: {
+        task: { id: 'own', title: 'Child task' },
+        request: { requestId: 'permission-1', kind: 'permission', toolName: 'bash', input: { command: 'echo reviewed' } },
+      } }));
+    expect(JSON.stringify(result)).toContain('AUTHORIZATION_EXPIRED');
+    expect(effect).not.toHaveBeenCalled();
+  });
+
+  // Same save API on helper and scheduler: only an existing disabled->enabled
+  // transition is a resume; ordinary creation/editing remains unchanged.
+  it.each(['cindy_helper', 'cindy_scheduler'] as const)('asks for routine restoration through %s', async server => {
+    const h = desktopFixture('automatic');
+    live(h);
+    h.routines.set('saved', { enabled: false, revision: 3 });
+    const request = { ...helper('routine_save', { botId: 'bot', id: 'saved', enabled: true }), server };
+    expect(await withToolCallAuthority(h.authorize, request,
+      async () => taskActionRoutineRevision('bot', 'saved'))).toBe(3);
+    expect(h.confirm).toHaveBeenCalledWith('companion', 'routine_save', request.args,
+      { server, risk: 'resume' });
+    h.confirm.mockClear();
+    h.routines.set('saved', { enabled: true, revision: 4 });
+    expect(await withToolCallAuthority(h.authorize, request, async () => 'edited')).toBe('edited');
+    expect(await withToolCallAuthority(h.authorize,
+      { ...request, args: { botId: 'bot', enabled: true } }, async () => 'created')).toBe('created');
+    expect(h.confirm).not.toHaveBeenCalled();
+  });
+
+  it('does not restore a routine changed during confirmation', async () => {
+    const h = desktopFixture('automatic');
+    live(h);
+    h.routines.set('saved', { enabled: false, revision: 1 });
+    h.confirm.mockImplementation(async () => {
+      h.routines.set('saved', { enabled: false, revision: 2 });
+      return true;
+    });
+    const effect = vi.fn(async () => 'enabled');
+    const result = await withToolCallAuthority(h.authorize,
+      helper('routine_save', { id: 'saved', enabled: true }), effect);
+    expect(JSON.stringify(result)).toContain('AUTHORIZATION_EXPIRED');
+    expect(effect).not.toHaveBeenCalled();
   });
 
   it.each(['deny', 'input-changed', 'permission-changed'] as const)(

@@ -13,7 +13,8 @@ import { createMoveSession } from './moveSession.js';
 import { listProjects, renameProject, removeProject } from './projectManagement.js';
 import { activeOwnerScopeKey, getActiveAppSession, isAppSessionBoundaryPending } from '../appSessionState.js';
 import type { createBotCapabilityService } from '../maker-ipc/botCapabilityService.js';
-import { routineTools } from '../routines/service.js';
+import { getRoutineEngine, routineTools } from '../routines/service.js';
+import { taskActionRoutineRevision } from '../maker-ipc/taskActionAuthorization.js';
 import { join as pathJoin } from 'node:path';
 import { and, eq, inArray } from 'drizzle-orm';
 
@@ -69,6 +70,7 @@ import {
   getTaskActionInputState,
   getTaskActionSession,
   confirmTaskAction,
+  captureTaskActionPermissionRequest,
 } from '../maker-ipc/register.js';
 import { createBotProfile } from '../localDb/ipc/bots.js';
 import { submitGithubIssueForSession } from '../github-issue/index.js';
@@ -312,6 +314,19 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     isScopeCurrent: (db) => !isAppSessionBoundaryPending() && db === tryGetDbClient(),
     authorizeAction: createDesktopTaskActionAuthorizer({
       input: getTaskActionInputState, getSession: getTaskActionSession, confirm: confirmTaskAction,
+      capturePermissionRequest: captureTaskActionPermissionRequest,
+      captureRoutine: async (botId, id) => {
+        const engine = await getRoutineEngine();
+        const routine = (await routineTools.list(botId)).find(row => row.id === id);
+        if (!routine) return undefined;
+        return {
+          enabled: routine.enabled, revision: routine.revision,
+          assertCurrent() {
+            if (engine.list(botId).find(row => row.id === id)?.revision !== routine.revision)
+              throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
+          },
+        };
+      },
     }),
   });
   // Companion history uses the same account scope as ordinary task history.
@@ -1027,7 +1042,11 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         },
       },
       botRoutines: {
-        service: routineTools,
+        service: {
+          ...routineTools,
+          save: (botId, input, id) => routineTools.save(botId, input, id,
+            taskActionRoutineRevision(botId, id)),
+        },
         resolveBotId: async (callerSessionId) => {
           const scope = activeOwnerScopeKey();
           if (!getActiveAppSession().dataOwnerId || isAppSessionBoundaryPending()) {

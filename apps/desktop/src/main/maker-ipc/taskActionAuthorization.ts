@@ -64,6 +64,7 @@ export interface TaskActionScope {
   key: string;
   ownerInput: boolean;
   principal?: TaskActionPrincipal;
+  routine?: { botId: string; id: string; revision: number };
   /** Existing, explicitly confirmed delegation; never inferred from creator/follower. */
   delegated: boolean;
   /** Rechecked at mutation/delivery; includes account, target and delegation revocation. */
@@ -78,6 +79,7 @@ interface ActionContext {
   tool: string;
   fingerprint: string;
   principal?: TaskActionPrincipal;
+  routine?: TaskActionScope['routine'];
   assertCurrent(): Promise<void>;
   assertCurrentSync?(): void;
   assertDeliveryCurrent(): Promise<void>;
@@ -115,15 +117,29 @@ export type TaskActionRisk = 'remove' | 'permission' | 'resume';
 export interface TaskActionConfirmation {
   server: string;
   risk?: TaskActionRisk;
+  details?: Record<string, unknown>;
+}
+
+export interface TaskActionTarget {
+  details: Record<string, unknown>;
+  assertCurrent(): void;
+}
+
+export interface TaskActionRoutineSnapshot {
+  enabled: boolean;
+  revision: number;
+  assertCurrent(): void;
 }
 
 /** A small, explicit risk list. Everything else follows the task's normal permissions. */
-export function taskActionRisk(call: Pick<Call, 'server' | 'tool' | 'args'>): TaskActionRisk | undefined {
+export function taskActionRisk(call: Pick<Call, 'server' | 'tool' | 'args'>,
+  facts?: { routineEnabled?: boolean }): TaskActionRisk | undefined {
   const args = call.args && typeof call.args === 'object' && !Array.isArray(call.args)
     ? call.args as Record<string, unknown> : {};
   if (call.tool === 'routine_delete' || call.tool === 'schedule_delete')
     return 'remove';
   if (call.tool === 'message_session_task' && args.decision !== undefined) return 'permission';
+  if (call.tool === 'routine_save' && args.enabled === true && facts?.routineEnabled === false) return 'resume';
   if ((call.tool === 'message_session_task' && args.mode === 'resume') || call.tool === 'schedule_resume')
     return 'resume';
   return undefined;
@@ -188,6 +204,7 @@ export async function admitTaskAction(
           tool: call.tool,
           fingerprint,
           principal: scope.principal,
+          routine: scope.routine,
           assertCurrent: scope.assertCurrent,
           assertCurrentSync: scope.assertCurrentSync,
           assertDeliveryCurrent: scope.assertDeliveryCurrent ?? scope.assertCurrent,
@@ -212,6 +229,13 @@ export function approvedTaskDelegation(
 export function taskActionPrincipal(callerSessionId: string): TaskActionPrincipal | undefined {
   const current = actionContext.getStore();
   return current?.sessionId === callerSessionId ? current.principal : undefined;
+}
+
+/** Keep a saved routine's reviewed state through the service's atomic revision check. */
+export function taskActionRoutineRevision(botId: string, id?: string): number | undefined {
+  const current = actionContext.getStore();
+  return current?.tool === 'routine_save' && current.routine?.botId === botId && current.routine.id === id
+    ? current.routine.revision : undefined;
 }
 
 export async function assertTaskActionCurrent(): Promise<void> {

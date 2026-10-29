@@ -21,6 +21,8 @@ import {
   DELEGATED_TASK_ACTIONS,
   taskActionRisk,
   type TaskActionConfirmation,
+  type TaskActionTarget,
+  type TaskActionRoutineSnapshot,
   taskActionFingerprint,
   type TaskActionPrincipal,
   type TaskActionScope,
@@ -108,6 +110,8 @@ export function createDesktopTaskActionAuthorizer(deps: {
   };
   getSession(sessionId: string): TaskActionSession | undefined;
   confirm(sessionId: string, tool: string, args: unknown, context?: TaskActionConfirmation): Promise<boolean>;
+  capturePermissionRequest(sessionId: string, taskId: string): Promise<TaskActionTarget | null>;
+  captureRoutine(botId: string, id: string): Promise<TaskActionRoutineSnapshot | undefined>;
 }): ToolCallAuthorizer {
   return isolateTaskActionAuthorizer(async (call) => {
     // Per invocation: a concurrent automatic call must never inherit owner evidence.
@@ -203,6 +207,21 @@ export function createDesktopTaskActionAuthorizer(deps: {
             ? (call.args as Record<string, unknown>)
             : {};
         const taskId = typeof args.task_id === 'string' ? args.task_id : undefined;
+        const needsPermissionTarget = principal === 'autonomous' && runtimePermissionApplies &&
+          call.tool === 'message_session_task' && args.decision !== undefined;
+        const permissionTarget = needsPermissionTarget && taskId
+          ? await deps.capturePermissionRequest(sessionId, taskId) : undefined;
+        if (needsPermissionTarget && !permissionTarget) {
+          rejectedDecision = { ok: false, errorCode: 'INTERACTION_STALE',
+            message: 'The target permission request is unavailable. Read the task again before proposing a new decision.' };
+          return null;
+        }
+        const routineBotId = call.server === 'cindy_scheduler' && typeof args.botId === 'string'
+          ? args.botId : caller.botId;
+        const routineId = typeof args.id === 'string' && args.id ? args.id : undefined;
+        const routine = principal === 'autonomous' && runtimePermissionApplies &&
+          call.tool === 'routine_save' && args.enabled === true && routineBotId && routineId
+          ? await deps.captureRoutine(routineBotId, routineId) : undefined;
         const readDelegation = async (rechecking = false) => {
           if (
             !taskId ||
@@ -311,6 +330,8 @@ export function createDesktopTaskActionAuthorizer(deps: {
           runtime?.assertInputCurrent();
           group?.assertCurrent();
           assertPermissionCurrent();
+          permissionTarget?.assertCurrent();
+          routine?.assertCurrent();
           const current = deps.input(sessionId);
           if (
             isAppSessionBoundaryPending() || db !== tryGetDbClient() ||
@@ -321,6 +342,8 @@ export function createDesktopTaskActionAuthorizer(deps: {
           key: input.key,
           ownerInput,
           principal,
+          ...(routine && routineBotId && routineId
+            ? { routine: { botId: routineBotId, id: routineId, revision: routine.revision } } : {}),
           delegated: !!delegation || !!orcaTeam,
           assertDeliveryCurrent,
           assertCurrentSync,
@@ -334,11 +357,11 @@ export function createDesktopTaskActionAuthorizer(deps: {
         // Missing owner provenance no longer disables ordinary work. Only explicit
         // risks on autonomous turns need an exact, visible owner decision. The decision
         // does not change the principal or grant future calls; admission stays single-use.
-        const risk = principal === 'autonomous' ? taskActionRisk(call) : undefined;
+        const risk = principal === 'autonomous' ? taskActionRisk(call, { routineEnabled: routine?.enabled }) : undefined;
         if (risk && runtimePermissionApplies) {
           await scope.assertCurrent();
           const confirmed = await deps.confirm(sessionId, call.tool, structuredClone(call.args),
-            { server: call.server, risk });
+            { server: call.server, risk, ...(permissionTarget ? { details: permissionTarget.details } : {}) });
           if (!confirmed) {
             rejectedDecision = { ok: false, errorCode: 'USER_CANCELLED',
               message: 'The action was not approved. Do not execute or retry it without a new request.' };

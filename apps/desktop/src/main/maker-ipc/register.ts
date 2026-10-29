@@ -3374,7 +3374,7 @@ export async function confirmTaskAction(
     title: t('taskActionConfirmation.title'),
     description: t(context?.risk ? `taskActionConfirmation.${context.risk}` : 'taskActionConfirmation.once'),
     toolName: `mcp__${context?.server ?? 'cindy_helper'}__${tool}`,
-    input: structuredClone(args) as Record<string, unknown>,
+    input: structuredClone(context?.details ? { action: args, ...context.details } : args) as Record<string, unknown>,
     metadata: { hostOwnedConfirmation: 'task_action' },
   };
   try {
@@ -3386,6 +3386,27 @@ export async function confirmTaskAction(
   } finally {
     unsubscribe();
   }
+}
+
+/** Snapshot the actual child request after the delegation service checks its owner. */
+export async function captureTaskActionPermissionRequest(sessionId: string, taskId: string) {
+  const task = await botDelegationServiceHolder?.getSessionTask(sessionId, taskId);
+  if (!task?.ok || !task.task.session_id || !task.task.pendingInteraction) return null;
+  const childId = task.task.session_id;
+  const requestId = task.task.pendingInteraction.requestId;
+  const pending = getPendingInteractionsForSession(childId).find(entry => entry.request.requestId === requestId);
+  if (!pending || (pending.request.kind !== 'permission' && pending.request.kind !== 'plan_review')) return null;
+  const request = structuredClone(pending.request);
+  const signature = JSON.stringify(request);
+  const child = getMakerIfReady()?.getSession(childId);
+  return {
+    details: { task: { id: taskId, title: task.task.title }, request },
+    assertCurrent() {
+      const current = getPendingInteractionsForSession(childId).find(entry => entry.request.requestId === requestId);
+      if (getMakerIfReady()?.getSession(childId) !== child || !current || JSON.stringify(current.request) !== signature)
+        throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
+    },
+  };
 }
 
 /**
