@@ -116,7 +116,9 @@ export const SCHEDULER_TASK_ACTION_TOOLS: ReadonlySet<string> = new Set([
 
 export type TaskActionRisk = 'remove' | 'permission' | 'resume' | 'command' | 'authority';
 export type TaskActionScheduleDefinition = Pick<Schedule,
-  'id' | 'name' | 'executionMode' | 'scriptConfig' | 'preRunHook' | 'workingDir' | 'targetSessionId'>;
+  'id' | 'name' | 'executionMode' | 'scriptConfig' | 'preRunHook' | 'workingDir' | 'targetSessionId'> & {
+    hookInstallation?: { workingDir?: string; fallbackDir: string };
+  };
 export interface TaskActionConfirmation {
   server: string;
   risk?: TaskActionRisk;
@@ -159,6 +161,7 @@ export function taskActionRisk(call: Pick<Call, 'server' | 'tool' | 'args'>,
         return 'command';
     }
   }
+  if (call.tool === 'routine_run_now' && facts?.routinePreRunCommand?.trim()) return 'command';
   const routineHook = args.preRunHook;
   if (call.tool === 'routine_save' && routineHook && typeof routineHook === 'object' &&
     'command' in routineHook && typeof routineHook.command === 'string' && routineHook.command.trim() &&

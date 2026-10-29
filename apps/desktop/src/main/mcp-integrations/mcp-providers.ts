@@ -309,17 +309,36 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     },
   }));
 
+  // Share the installer's directory resolver with its reviewed target snapshot.
+  const resolveHookSessionWorkDir = async (sessionId: string) => {
+    try {
+      const { getMaker } = await import('../maker-host/index.js');
+      const meta = await getMaker().getSessionMeta(sessionId);
+      return meta?.workDir?.trim() ? meta.workDir : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
   const authorizeTaskToolCall = createTaskToolCallAuthorizer({
     getDb: () => (isAppSessionBoundaryPending() ? null : tryGetDbClient()),
     isScopeCurrent: (db) => !isAppSessionBoundaryPending() && db === tryGetDbClient(),
     authorizeAction: createDesktopTaskActionAuthorizer({
       input: getTaskActionInputState, getSession: getTaskActionSession, confirm: confirmTaskAction,
       capturePermissionRequest: captureTaskActionPermissionRequest,
-      getScheduleDefinition: async id => {
+      getSessionWorkDir: resolveHookSessionWorkDir,
+      getScheduleDefinition: async (id, hookInstallation) => {
         const schedule = await getScheduler().get(id);
         if (!schedule) return null;
         const { name, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId } = schedule;
-        return { id, name, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId };
+        const definition = { id, name, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId };
+        if (!hookInstallation) return definition;
+        let installWorkingDir = hookInstallation.workingDir;
+        if (!installWorkingDir && executionMode !== 'script' && targetSessionId)
+          installWorkingDir = await resolveHookSessionWorkDir(targetSessionId) ?? installWorkingDir;
+        const { app } = await import('electron');
+        return { ...definition, hookInstallation: { workingDir: installWorkingDir ?? workingDir,
+          fallbackDir: pathJoin(app.getPath('userData'), 'schedule-hooks') } };
       },
       captureRoutine: async (botId, id) => {
         const engine = await getRoutineEngine();
@@ -525,15 +544,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         },
         // 绑定会话(heartbeat)任务安装 hook 时解析会话真实工作目录 —— schedule
         // 行上的 workingDir 为空/过期,落盘与自测必须用会话 meta.workDir。
-        resolveSessionWorkDir: async (sessionId) => {
-          try {
-            const { getMaker } = await import('../maker-host/index.js');
-            const meta = await getMaker().getSessionMeta(sessionId);
-            return meta?.workDir?.trim() ? meta.workDir : undefined;
-          } catch {
-            return undefined;
-          }
-        },
+        resolveSessionWorkDir: resolveHookSessionWorkDir,
         stabilizeCommand: async ({ command, workingDir }) => {
           await assertPreRunHookCommandSyntax(command);
           return stabilizeHookCommand(command, workingDir);
@@ -544,6 +555,8 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
             import('../maker-host/index.js'),
             import('electron'),
           ]);
+          // Recheck after target resolution and lazy imports, before any script write/self-test.
+          await assertTaskActionCurrent();
           // maker 仅 description 生成模式需要;未就绪时传 null,script 模式照常工作,
           // description 模式由生成器报"maker not ready"。
           let maker = null;

@@ -113,7 +113,8 @@ export function createDesktopTaskActionAuthorizer(deps: {
   confirm(sessionId: string, tool: string, args: unknown, context?: TaskActionConfirmation): Promise<boolean>;
   capturePermissionRequest(sessionId: string, taskId: string): Promise<TaskActionTarget | null>;
   captureRoutine(botId: string, id: string): Promise<TaskActionRoutineSnapshot | undefined>;
-  getScheduleDefinition(id: string): Promise<TaskActionScheduleDefinition | null>;
+  getSessionWorkDir(sessionId: string): Promise<string | undefined>;
+  getScheduleDefinition(id: string, hookInstallation?: { workingDir?: string }): Promise<TaskActionScheduleDefinition | null>;
 }): ToolCallAuthorizer {
   return isolateTaskActionAuthorizer(async (call) => {
     // Per invocation: a concurrent automatic call must never inherit owner evidence.
@@ -226,11 +227,17 @@ export function createDesktopTaskActionAuthorizer(deps: {
           ? await deps.captureRoutine(routineBotId, routineId) : undefined;
         // Read saved commands for execution/partial updates; the card must show
         // what a bare schedule ID will run, and a changed definition expires it.
+        const helperInstallation = principal === 'autonomous' && runtimePermissionApplies &&
+          call.server === 'cindy_helper' && call.tool === 'schedule_set_pre_run_hook';
+        const helperInstallDir = helperInstallation ? await deps.getSessionWorkDir(sessionId) : undefined;
+        const hookInstallation = call.server === 'cindy_scheduler' && call.tool === 'schedule_set_pre_run_hook'
+          ? { workingDir: typeof args.workingDir === 'string' ? args.workingDir : undefined } : undefined;
+        const scheduleIdArg = hookInstallation ? args.scheduleId : args.id;
         const scheduleId = principal === 'autonomous' && runtimePermissionApplies &&
-          call.server === 'cindy_scheduler' && (!args.device || args.device === 'local') &&
-          ['schedule_update', 'schedule_run_now'].includes(call.tool) && typeof args.id === 'string'
-          ? args.id : undefined;
-        const schedule = scheduleId ? await deps.getScheduleDefinition(scheduleId) : undefined;
+          (hookInstallation || call.server === 'cindy_scheduler' && (!args.device || args.device === 'local') &&
+            ['schedule_update', 'schedule_run_now'].includes(call.tool)) && typeof scheduleIdArg === 'string'
+          ? scheduleIdArg : undefined;
+        const schedule = scheduleId ? await deps.getScheduleDefinition(scheduleId, hookInstallation) : undefined;
         const scheduleSignature = JSON.stringify(schedule);
         const readDelegation = async (rechecking = false) => {
           if (
@@ -361,7 +368,9 @@ export function createDesktopTaskActionAuthorizer(deps: {
             if (fingerprint !== taskActionFingerprint(call))
               throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
             await assertDeliveryCurrent();
-            if (scheduleId && JSON.stringify(await deps.getScheduleDefinition(scheduleId)) !== scheduleSignature)
+            if (helperInstallation && await deps.getSessionWorkDir(sessionId) !== helperInstallDir)
+              throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
+            if (scheduleId && JSON.stringify(await deps.getScheduleDefinition(scheduleId, hookInstallation)) !== scheduleSignature)
               throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
             assertCurrentSync();
           },
@@ -376,6 +385,7 @@ export function createDesktopTaskActionAuthorizer(deps: {
           await scope.assertCurrent();
           const confirmed = await deps.confirm(sessionId, call.tool, structuredClone(call.args),
             { server: call.server, risk, ...(permissionTarget ? { details: permissionTarget.details }
+              : helperInstallation ? { details: { installation: { workingDir: helperInstallDir ?? null } } }
               : risk === 'command' && schedule ? { details: { schedule } }
               : call.tool === 'routine_run_now' && routine?.details ? { details: routine.details } : {}) });
           if (!confirmed) {

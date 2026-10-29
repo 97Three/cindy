@@ -308,10 +308,12 @@ function desktopFixture(kind: 'private' | 'group' | 'automatic' = 'group') {
   });
   const routines = new Map<string, { enabled: boolean; revision: number; prompt?: string; preRunCommand?: string }>();
   const schedules = new Map<string, TaskActionScheduleDefinition>();
+  const workDirs = new Map([['companion', '/companion']]);
   const authorize = createDesktopTaskActionAuthorizer({
     input: () => ({ ...activeInput }), confirm, getSession,
     capturePermissionRequest,
     getScheduleDefinition: async id => structuredClone(schedules.get(id) ?? null),
+    getSessionWorkDir: async id => workDirs.get(id),
     captureRoutine: async (_botId, id) => {
       const row = routines.get(id);
       if (!row) return undefined;
@@ -323,7 +325,7 @@ function desktopFixture(kind: 'private' | 'group' | 'automatic' = 'group') {
     },
   });
   return { authorize, confirm, activeInput, caller, rows, runtime, getSession,
-    permissionRequest, capturePermissionRequest, routines, schedules };
+    permissionRequest, capturePermissionRequest, routines, schedules, workDirs };
 }
 const ownerWrites = [
   ['cindy_helper', 'start_session_task'],
@@ -1019,7 +1021,7 @@ describe('teammate turn principal', () => {
     expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, install))).toContain('USER_CANCELLED');
     expect(install).not.toHaveBeenCalled();
     expect(h.confirm).toHaveBeenCalledWith('companion', request.tool, request.args,
-      { server: 'cindy_helper', risk: 'command' });
+      { server: 'cindy_helper', risk: 'command', details: { installation: { workingDir: '/companion' } } });
     h.confirm.mockResolvedValue(true);
     expect(await withToolCallAuthority(h.authorize, request, install)).toBe('installed');
     expect(install).toHaveBeenCalledTimes(1);
@@ -1028,6 +1030,77 @@ describe('teammate turn principal', () => {
     expect(await withToolCallAuthority(h.authorize, request, install)).toBe('installed');
     expect(h.confirm).not.toHaveBeenCalled();
   });
+
+  // r4409429594: installer inherits mutable target state after its card.
+  // Unit: production admission must show the target and reject a changed directory/path.
+  it('binds the scheduler hook installer decision to its actual schedule target', async () => {
+    const h = desktopFixture('automatic');
+    live(h);
+    const target = { id: 'bound', name: 'Bound check', executionMode: 'agent' as const,
+      targetSessionId: 'child', workingDir: '/schedule', preRunHook: { command: 'node old.mjs' },
+      hookInstallation: { workingDir: '/session', fallbackDir: '/fallback' } };
+    h.schedules.set('bound', target);
+    const request = { ...helper('schedule_set_pre_run_hook', { scheduleId: 'bound', script: 'process.exit(2)' }), server: 'cindy_scheduler' as const };
+    const install = vi.fn(async () => 'installed');
+    h.confirm.mockImplementation(async () => {
+      target.hookInstallation.workingDir = '/replacement';
+      target.preRunHook.command = 'node replacement.mjs';
+      return true;
+    });
+    expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, install)))
+      .toContain('AUTHORIZATION_EXPIRED');
+    expect(install).not.toHaveBeenCalled();
+    expect(h.confirm).toHaveBeenCalledWith('companion', request.tool, request.args,
+      expect.objectContaining({ details: { schedule: expect.objectContaining({
+        targetSessionId: 'child', preRunHook: { command: 'node old.mjs' },
+        hookInstallation: { workingDir: '/session', fallbackDir: '/fallback' },
+      }) } }));
+    h.confirm.mockResolvedValue(true);
+    expect(await withToolCallAuthority(h.authorize, request, install)).toBe('installed');
+    expect(install).toHaveBeenCalledTimes(1);
+  });
+
+  // Helper deliberately accepts no scheduleId/workingDir: its actual target is the caller workspace.
+  it('binds the helper installation directory without granting a schedule target', async () => {
+    const h = desktopFixture('automatic');
+    live(h);
+    const request = helper('schedule_set_pre_run_hook', { script: 'process.exit(2)' });
+    const install = vi.fn(async () => 'installed');
+    h.confirm.mockImplementation(async () => {
+      h.workDirs.set('companion', '/replacement');
+      return true;
+    });
+    expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, install)))
+      .toContain('AUTHORIZATION_EXPIRED');
+    expect(install).not.toHaveBeenCalled();
+    expect(h.confirm).toHaveBeenCalledWith('companion', request.tool, request.args,
+      { server: 'cindy_helper', risk: 'command', details: { installation: { workingDir: '/companion' } } });
+    h.confirm.mockResolvedValue(true);
+    expect(await withToolCallAuthority(h.authorize, request, install)).toBe('installed');
+    expect(install).toHaveBeenCalledTimes(1);
+  });
+
+  // r4409429587: ID-only manual execution runs the saved shell hook, not just a prompt.
+  // Existing save tests did not cover an enabled rule's command. Unit, real admission/effect.
+  it.each(['cindy_helper', 'cindy_scheduler'] as const)(
+    'shows and confirms the saved routine command before %s manual execution', async server => {
+      const h = desktopFixture('automatic');
+      live(h);
+      h.routines.set('command', { enabled: true, revision: 3, prompt: 'Reviewed instructions', preRunCommand: 'node check.mjs' });
+      const request = { ...helper('routine_run_now', { botId: 'bot', id: 'command' }), server };
+      const execute = vi.fn(async () => taskActionRoutineRevision('bot', 'command'));
+      h.confirm.mockResolvedValue(false);
+      expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, execute))).toContain('USER_CANCELLED');
+      expect(execute).not.toHaveBeenCalled();
+      expect(h.confirm).toHaveBeenCalledWith('companion', request.tool, request.args,
+        expect.objectContaining({ risk: 'command', details: { routine: expect.objectContaining({
+          id: 'command', preRunCommand: 'node check.mjs', revision: 3,
+        }) } }));
+      h.confirm.mockResolvedValue(true);
+      expect(await withToolCallAuthority(h.authorize, request, execute)).toBe(3);
+      expect(execute).toHaveBeenCalledTimes(1);
+    },
+  );
 
   // Security r4409367066: saving instructions must not manufacture a standing
   // owner grant for the next routine turn. Unit, production admission + effect.
