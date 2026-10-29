@@ -14,6 +14,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { goalApiFor } from '@/lib/makerTransport';
+import { extractIpcError } from '@/utils/ipcError';
+import { isWritableDirectoryGrantErrorCode } from '../../../shared/writableDirectoryGrantError';
 import { GoalAdvancedLimits, DEFAULT_GOAL_LIMITS, type GoalLimitValues } from './GoalAdvancedLimits';
 import { ListComposerTextarea } from './ListComposerTextarea';
 
@@ -75,7 +77,12 @@ export function NewGoalDialog({ sessionId, open, onOpenChange, onCreate, initial
       onCreated?.(); // 创建成功 → 通知父组件清空 composer(默认目标文字的来源)
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('goal.newGoalDialog.failed'));
+      // The recovery notice explains the handled picker error. A later retry
+      // can fail for another reason while that notice is still visible.
+      const handledPickerError = Boolean(
+        creationRecovery && isWritableDirectoryGrantErrorCode(extractIpcError(err)?.code),
+      );
+      setError(handledPickerError ? null : err instanceof Error ? err.message : t('goal.newGoalDialog.failed'));
     } finally {
       setSaving(false);
     }
@@ -127,7 +134,7 @@ export function NewGoalDialog({ sessionId, open, onOpenChange, onCreate, initial
           />
           <GoalAdvancedLimits value={limits} onChange={setLimits} />
           {creationRecovery}
-          {error && !creationRecovery && (
+          {error && (
             <div className="text-12" style={{ color: 'var(--error-fg)' }}>
               {error}
             </div>

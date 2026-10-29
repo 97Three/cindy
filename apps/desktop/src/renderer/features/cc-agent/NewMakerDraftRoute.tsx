@@ -5333,9 +5333,10 @@ export function NewMakerDraftRoute() {
         });
         if (!newSession) {
           if (optimisticGoalTitle) emitAutoTitlePreviewCleared(goalSessionId);
-          throw new Error(t(createSessionErrorHandledRef.current
-            ? 'ccAgent.draft.directoryRecovery.required'
-            : 'ccAgent.draft.createSessionFailed'));
+          if (createSessionErrorHandledRef.current && createSessionErrorRef.current) {
+            throw createSessionErrorRef.current;
+          }
+          throw new Error(t('ccAgent.draft.createSessionFailed'));
         }
         // 草稿里选中的那条收藏跟着会话走(见 carryDraftFavoriteAnchorToSession)。
         carryDraftFavoriteAnchorToSession(
