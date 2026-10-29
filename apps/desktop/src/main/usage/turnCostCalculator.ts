@@ -2,6 +2,7 @@
  * 单轮费用计算。定价先看实际 billing route，再看模型；模型名不再决定来源。
  */
 
+import { isByokProviderId } from '@cindy/model-providers';
 import type { CindyRegion } from '@cindy/maker-shared/brand-identity';
 
 import { gatewayLedgerCurrency, getModelPriceQuote } from '../../shared/modelPriceQuote.js';
@@ -228,7 +229,8 @@ export function computePriceQuoteTurnMoney(
       : computeGatewayTurnCost(tokens, price);
   if (standardAmount == null) return null;
   const discount =
-    price.source === 'gateway' &&
+    (price.source === 'gateway' ||
+      (price.source === 'provider-reference' && isByokProviderId(price.providerId))) &&
     typeof price.costDiscount === 'number' &&
     Number.isFinite(price.costDiscount) &&
     price.costDiscount > 0 &&
