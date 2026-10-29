@@ -1024,7 +1024,11 @@ export class BrowserExtensionBridge {
         typeof c === 'object' &&
         typeof (c as BrowserExtensionTrustedClient).id === 'string' &&
         typeof (c as BrowserExtensionTrustedClient).origin === 'string' &&
-        typeof (c as BrowserExtensionTrustedClient).extensionId === 'string',
+        typeof (c as BrowserExtensionTrustedClient).extensionId === 'string' &&
+        // A Chromium extension must be one the user was shown at install, whatever the plugin pushes.
+        // (Safari extensions are paired explicitly by the user and carry their own identifiers.)
+        (!(c as BrowserExtensionTrustedClient).origin.startsWith('chrome-extension://') ||
+          this.knownIds.has((c as BrowserExtensionTrustedClient).extensionId)),
     );
     for (const c of this.clients.values()) c.trusted = this.approved(c);
     return { ok: true };

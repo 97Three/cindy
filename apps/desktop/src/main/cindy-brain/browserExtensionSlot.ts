@@ -60,9 +60,10 @@ const OFFICIAL_NATIVE_HOSTS: ReadonlyMap<string, string> = new Map([
   ['my-browser', 'com.makecindy.browser'],
 ]);
 
-export function mayInstallNativeHost(ghost: InstalledGhost): boolean {
+export function mayInstallNativeHost(ghost: InstalledGhost, verified = true): boolean {
   const name = ghost.manifest.browserExtension?.nativeHost?.name;
   return (
+    verified &&
     name !== undefined &&
     ghost.namespace == null &&
     OFFICIAL_NATIVE_HOSTS.get(ghost.manifest.id) === name &&
@@ -71,8 +72,9 @@ export function mayInstallNativeHost(ghost: InstalledGhost): boolean {
 }
 
 /** 「我的浏览器」只由官方 Cindy Chrome 提供;其它插件声明 pageControl 一律忽略(2026-10-30 决定)。 */
-export function mayProvidePageControl(ghost: InstalledGhost): boolean {
+export function mayProvidePageControl(ghost: InstalledGhost, verified = true): boolean {
   return (
+    verified &&
     ghost.manifest.browserExtension?.pageControl === true &&
     ghost.namespace == null &&
     OFFICIAL_NATIVE_HOSTS.has(ghost.manifest.id)
@@ -80,6 +82,12 @@ export function mayProvidePageControl(ghost: InstalledGhost): boolean {
 }
 
 export interface BrowserExtensionSlotDeps {
+  /**
+   * Whether this installed package really is the official one (installed from the public market with
+   * the approved bytes; unpacked dev builds count). The manifest id alone proves nothing: only a
+   * verified package may install the native host, provide My browser or inherit saved pairings.
+   */
+  isVerifiedOfficial(ghost: InstalledGhost): boolean;
   getGhost(id: string): InstalledGhost | null;
   /** 把转交事件投到插件逻辑页;false = 逻辑页不在线。 */
   sendToGhost(ghostId: string, payload: unknown): boolean;
@@ -122,6 +130,8 @@ interface Entry {
 
 interface SavedBrowserExtensionState {
   trustedClients: unknown[];
+  /** Read from a file written before pairings recorded their package source. */
+  unstamped?: true;
 }
 
 function fail(
@@ -177,12 +187,13 @@ export class GhostBrowserExtensionSlot {
   private start(instanceId: string, ghost: InstalledGhost, ownerScopeKey: string): void {
     const needs = ghost.manifest.browserExtension!;
     const cacheDir = this.deps.policyDir();
-    if (needs.nativeHost && !mayInstallNativeHost(ghost))
-      this.deps.log?.warn('browser extension native host ignored: only the official plugin may install one', {
+    const verified = this.deps.isVerifiedOfficial(ghost);
+    if (needs.nativeHost && !mayInstallNativeHost(ghost, verified))
+      this.deps.log?.warn('browser extension native host ignored: only the verified official plugin may install one', {
         instanceId,
         hostName: needs.nativeHost.name,
       });
-    const native = needs.nativeHost && mayInstallNativeHost(ghost)
+    const native = needs.nativeHost && mayInstallNativeHost(ghost, verified)
       ? (this.deps.createNativeBinding ?? createNativeBinding)({
           hostName: needs.nativeHost.name,
           binaryDir: path.join(ghost.dir, needs.nativeHost.binary),
@@ -214,7 +225,10 @@ export class GhostBrowserExtensionSlot {
     entry.ready = (async () => {
       // The old bridge must release its port and native registration before this one claims them.
       await previous?.catch(() => undefined);
-      const saved = await this.readSaved(cacheDir, instanceId, entry.source);
+      // Pairings are restored only for the verified official package, and a file saved before pairings
+      // carried a source is stamped now so a later replacement cannot inherit it.
+      const saved = verified ? await this.readSaved(cacheDir, instanceId, entry.source) : null;
+      if (saved?.unstamped) void this.persist(entry, { trustedClients: saved.trustedClients });
       if (saved) {
         entry.saved = saved;
         try {
@@ -408,7 +422,7 @@ export class GhostBrowserExtensionSlot {
 
   getPageControl(): UserBrowserPageControl | null {
     for (const [instanceId, entry] of this.entries) {
-      if (mayProvidePageControl(entry.ghost)) {
+      if (mayProvidePageControl(entry.ghost, this.deps.isVerifiedOfficial(entry.ghost))) {
         return {
           bridge: entry.bridge,
           ghostId: entry.ghost.manifest.id,
@@ -450,6 +464,7 @@ export class GhostBrowserExtensionSlot {
       }
       return {
         trustedClients: Array.isArray(raw.trustedClients) ? raw.trustedClients : [],
+        ...(raw.source === undefined ? { unstamped: true as const } : {}),
       };
     } catch {
       return null;

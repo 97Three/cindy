@@ -314,6 +314,19 @@ describe('bridge · 连接与身份', () => {
     expect((await c.request('/act', { action: 'click' })).status).toBe(404);
   });
 
+  // Review 2026-10-30 (Codex P1): a plugin could pair any extension id it pushed.
+  it('插件推送的配对只接受清单里钉死的扩展 id', async () => {
+    const { bridge } = await fixture();
+    bridge.setTrustedClients([
+      { id: 'c1', origin: 'chrome-extension://' + EXT_ID, extensionId: EXT_ID, publicKey: 'k' },
+      { id: 'c2', origin: 'chrome-extension://' + 'z'.repeat(32), extensionId: 'z'.repeat(32), publicKey: 'k' },
+    ]);
+    const status = await bridge.status();
+    expect(status.extension_ids).toEqual([EXT_ID, STORE_ID]);
+    // Only the listed extension is kept as a pin: the unknown one never becomes trusted.
+    expect((bridge as unknown as { pins: Array<{ extensionId: string }> }).pins.map((p) => p.extensionId)).toEqual([EXT_ID]);
+  });
+
   it('官方扩展经 native 绑定后无需手工配对即可认证;伪造调用方不能自称官方', async () => {
     const { bridge, client } = await fixture();
     for (const extensionId of [EXT_ID, STORE_ID]) {

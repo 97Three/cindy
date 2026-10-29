@@ -151,6 +151,7 @@ async function makeSlot(
       return true;
     }),
     policyDir: () => dir,
+    isVerifiedOfficial: () => true,
     ownerScopeKey: () => 'owner-a',
     createBridge: (options) => {
       const bridge = new FakeBridge(options);
@@ -366,6 +367,33 @@ describe('browserExtensionSlot · 管子上行', () => {
     await vi.waitFor(() => expect(again.bridges[0]?.started).toBe(true));
     expect(again.bridges[0].calls).toEqual([['setTrustedClients', [[]]]]);
     expect(again.sent.some(([, payload]) => (payload as { name?: string }).name === 'browser-extension-policy-request')).toBe(false);
+  });
+
+  // Review 2026-10-30 (Codex P1): a manifest that merely claims the official id must not get the native
+  // host, My browser or saved pairings.
+  it('未核验来源的包不装 native host、不接管「我的浏览器」、不继承配对', async () => {
+    const clients = [{ id: 'c1', origin: 'chrome-extension://' + CHROME_ID, extensionId: CHROME_ID, publicKey: 'k' }];
+    const { slot, bridges, natives, dir } = await makeSlot({ isVerifiedOfficial: () => false });
+    await fs.writeFile(
+      path.join(dir, encodeURIComponent('_root__my-browser') + '.json'),
+      JSON.stringify({ version: 1, source: '[null,null]', trustedClients: clients }),
+    );
+    slot.reconcile([extGhost()]);
+    await vi.waitFor(() => expect(bridges[0]?.started).toBe(true));
+    expect(natives).toHaveLength(0);
+    expect(slot.getPageControl()).toBeNull();
+    expect(bridges[0].calls.some(([name]) => name === 'setTrustedClients')).toBe(false);
+  });
+
+  // A pairing cache written before sources were recorded is stamped when first read.
+  it('没有来源记录的旧配对缓存读到后立即补上来源', async () => {
+    const clients = [{ id: 'c1', origin: 'chrome-extension://' + CHROME_ID, extensionId: CHROME_ID, publicKey: 'k' }];
+    const { slot, bridges, dir } = await makeSlot();
+    const file = path.join(dir, encodeURIComponent('_root__my-browser') + '.json');
+    await fs.writeFile(file, JSON.stringify({ version: 1, trustedClients: clients }));
+    slot.reconcile([extGhost()]);
+    await vi.waitFor(() => expect(bridges[0]?.started).toBe(true));
+    await vi.waitFor(async () => expect(JSON.parse(await fs.readFile(file, 'utf8')).source).toBe('[null,null]'));
   });
 
   // Review 2026-10-29 (Codex P1): a package from another source reused the old package's pairings.
