@@ -984,6 +984,27 @@ describe('teammate turn principal', () => {
     expect(h.confirm).not.toHaveBeenCalled();
   });
 
+  // r4409346213: the helper forwards to the same installing/self-testing handler.
+  // Unit tier: a valid helper script must wait before any installer effect.
+  it('requires the same command decision for the helper hook installer', async () => {
+    const h = desktopFixture('automatic');
+    live(h);
+    const request = helper('schedule_set_pre_run_hook', { script: 'process.exit(2)' });
+    const install = vi.fn(async () => 'installed');
+    h.confirm.mockResolvedValue(false);
+    expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, install))).toContain('USER_CANCELLED');
+    expect(install).not.toHaveBeenCalled();
+    expect(h.confirm).toHaveBeenCalledWith('companion', request.tool, request.args,
+      { server: 'cindy_helper', risk: 'command' });
+    h.confirm.mockResolvedValue(true);
+    expect(await withToolCallAuthority(h.authorize, request, install)).toBe('installed');
+    expect(install).toHaveBeenCalledTimes(1);
+    h.confirm.mockClear();
+    h.activeInput.ownerInput = true;
+    expect(await withToolCallAuthority(h.authorize, request, install)).toBe('installed');
+    expect(h.confirm).not.toHaveBeenCalled();
+  });
+
   // Review #7782: approval must describe and bind the child's exact request, not
   // whichever request is current after the parent card is answered. Unit tier.
   it.each(['request-id', 'arguments'] as const)('expires a permission answer when child %s changes', async change => {

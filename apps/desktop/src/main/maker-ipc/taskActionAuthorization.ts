@@ -141,10 +141,11 @@ export function taskActionRisk(call: Pick<Call, 'server' | 'tool' | 'args'>,
     ? call.args as Record<string, unknown> : {};
   // The local scheduler is a trusted MCP, but its script runner bypasses the
   // harness's shell approval. Classify the command effect, not all scheduler writes.
+  if ((call.server === 'cindy_helper' || call.server === 'cindy_scheduler') &&
+    call.tool === 'schedule_set_pre_run_hook' &&
+    [args.script, args.description].some(value => typeof value === 'string' && value.trim()))
+    return 'command'; // both surfaces install and self-test through the same handler
   if (call.server === 'cindy_scheduler') {
-    if (call.tool === 'schedule_set_pre_run_hook' &&
-      [args.script, args.description].some(value => typeof value === 'string' && value.trim()))
-      return 'command'; // installs and self-tests code
     if (['schedule_create', 'schedule_update', 'schedule_run_now'].includes(call.tool)) {
       const definition = call.tool === 'schedule_run_now' ? facts?.schedule
         : { ...facts?.schedule, ...args };

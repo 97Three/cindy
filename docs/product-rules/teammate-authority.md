@@ -19,7 +19,7 @@
 
 | 风险 | 实际入口 |
 | --- | --- |
-| 本机调度命令 | `schedule_create` / `schedule_update` 保存脚本执行或命令前置检查、`schedule_run_now` 执行含此类命令的已存定义、`schedule_set_pre_run_hook` 安装并自测脚本 |
+| 本机调度命令 | `schedule_create` / `schedule_update` 保存脚本执行或命令前置检查、`schedule_run_now` 执行含此类命令的已存定义、`cindy_helper` 和 `cindy_scheduler` 两个入口的 `schedule_set_pre_run_hook` 安装并自测脚本 |
 | 删除自动化 | `routine_delete`、`schedule_delete` |
 | 代用户回答权限请求 | `message_session_task` 携带 `decision` |
 | 恢复暂停执行 | `message_session_task(mode=resume)`、`schedule_resume`，以及 `routine_save` 将已有停用规则保存为启用（含内置规则） |
