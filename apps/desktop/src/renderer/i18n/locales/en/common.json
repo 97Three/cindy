@@ -9892,6 +9892,13 @@
     }
   },
   "bots": {
+    "avatarStatus": {
+      "awaiting": "Needs your confirmation",
+      "error": "Needs attention",
+      "running": "Working",
+      "done": "Completed",
+      "unread": "Unread"
+    },
     "workbench": {
       "ownedMark": "Belongs to {{names}}",
       "createdMark": "Created by {{names}}",

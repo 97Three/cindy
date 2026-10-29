@@ -695,7 +695,14 @@
     "createMenu": "New",
     "awaiting": "Needs your OK",
     "taskResult": "Task result",
-    "collapseResult": "Hide result"
+    "collapseResult": "Hide result",
+    "avatarStatus": {
+      "awaiting": "Needs your confirmation",
+      "error": "Needs attention",
+      "running": "Working",
+      "done": "Completed",
+      "unread": "Unread"
+    }
   },
   "companionProfile": {
     "avatar": "Avatar",

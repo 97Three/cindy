@@ -695,7 +695,14 @@
     "createMenu": "新建",
     "awaiting": "等你确认",
     "taskResult": "任务结果",
-    "collapseResult": "收起结果"
+    "collapseResult": "收起结果",
+    "avatarStatus": {
+      "awaiting": "待你确认",
+      "error": "需要关注",
+      "running": "正在工作",
+      "done": "已完成",
+      "unread": "未读"
+    }
   },
   "companionProfile": {
     "avatar": "头像",
