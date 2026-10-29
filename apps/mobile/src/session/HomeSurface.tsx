@@ -123,6 +123,7 @@ import {
   type HomeLastActivityFilter,
   type HomeListViewMode,
   type HomeProjectFilter,
+  type HomeTeammateFilter,
   type HomeTaskInfoField,
   type HomeVendorFilter,
 } from '@/session/homeDisplaySettings';
@@ -504,7 +505,7 @@ function HomeScreenContent({ active = true, width, newSessionInSystemBar = false
   const preferenceOwnerRef = useRef(preferenceOwner);
   preferenceOwnerRef.current = preferenceOwner;
   const saveHomeViewPreferences = useCallback((
-    patch: Omit<HomeViewPreferencePatch, 'projectFilter' | 'teammateFilter'> & { projectFilter?: HomeProjectFilter; teammateFilter?: HomeProjectFilter },
+    patch: Omit<HomeViewPreferencePatch, 'projectFilter' | 'teammateFilter'> & { projectFilter?: HomeProjectFilter; teammateFilter?: HomeTeammateFilter },
   ) => {
     const owner = getMobileAuthOwner();
     const { projectFilter, teammateFilter, ...rest } = patch;
@@ -682,7 +683,7 @@ function HomeScreenContent({ active = true, width, newSessionInSystemBar = false
   const [sortBy, setSortBy] = useRetainedHomeState<HomeListSortBy>(viewSession, 'sortBy', 'recency');
   const [projectOrder, setProjectOrder] = useRetainedHomeState<HomeProjectOrder>(viewSession, 'projectOrder', 'activity');
   const [manualProjectOrder, setManualProjectOrder] = useRetainedHomeState<string[]>(viewSession, 'manualProjectOrder', []);
-  const [teammateFilter, setTeammateFilter] = useRetainedHomeState<HomeProjectFilter>(viewSession, 'teammateFilter', 'all');
+  const [teammateFilter, setTeammateFilter] = useRetainedHomeState<HomeTeammateFilter>(viewSession, 'teammateFilter', 'all');
   const [projectFilter, setProjectFilter] = useRetainedHomeState<HomeProjectFilter>(viewSession, 'projectFilter', 'all');
   const [vendorFilter, setVendorFilter] = useRetainedHomeState<HomeVendorFilter>(viewSession, 'vendorFilter', 'all');
   const [lastActivityFilter, setLastActivityFilter] = useRetainedHomeState<HomeLastActivityFilter>(viewSession, 'lastActivityFilter', 'all');
