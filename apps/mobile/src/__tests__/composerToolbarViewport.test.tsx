@@ -145,7 +145,7 @@ it('keeps typed text visible when the card body overflows and reports a hidden t
   const render = (cardActive: boolean) => act(() => root.render(<MobileComposerInputRow
     accessibilityLabel="Message" inputTestID="input" placeholder="Message" placeholderTextColor="inherit" value="Long text"
     onChangeText={() => {}} cardActive={cardActive} bodyScrollGesture={gesture} bodyScrollRef={outerRef as never}
-    accessoryAbove={<div>Image</div>} onAccessoryAboveHeightChange={onTrayHeight} testID="composer"
+    accessoryAbove={<div data-testid="tray">Image</div>} onAccessoryAboveHeightChange={onTrayHeight} testID="composer"
   />));
   try {
     render(true);
@@ -160,6 +160,10 @@ it('keeps typed text visible when the card body overflows and reports a hidden t
     expect(scrollToEnd).toHaveBeenCalledTimes(2);
     expect(scrollToEnd).toHaveBeenLastCalledWith({ animated: false });
     expect(onTrayHeight).not.toHaveBeenCalled();
+    // 托盘量到非零高度时必须原样上报，页面据此缩小文字区上限。
+    const measured = container.querySelector('[data-testid="tray"]')!.parentElement!;
+    act(() => nativeLayout.get(measured)!(72));
+    expect(onTrayHeight).toHaveBeenLastCalledWith(72);
     render(false);
     (scrollViewProps.current as typeof props).onContentSizeChange();
     expect(scrollToEnd).toHaveBeenCalledTimes(2);
