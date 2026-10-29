@@ -5045,6 +5045,16 @@ describe('ghost · browserExtension 槽(2026-10-27 浏览器扩展经宿主桥�
     expect(ghostBrowserExtensionWithinCap(withUnknown.manifest, sameUnknown.manifest)).toBe(true);
   });
 
+  // Review 2026-10-30 (Codex P1): the same holds for members nested inside nativeHost.
+  it('nativeHost 里未识别的成员也须与已审清单一致', () => {
+    const reviewed = withNeeds(good);
+    const nativeHost = { name: 'com.example.browser', binary: 'native-host/bin' };
+    const withUnknown = withNeeds({ ...good, nativeHost: { ...nativeHost, futureCapability: true } });
+    if (!reviewed.ok || !withUnknown.ok) throw new Error('fixture');
+    expect(ghostBrowserExtensionWithinCap(reviewed.manifest, withUnknown.manifest)).toBe(false);
+    expect(ghostBrowserExtensionWithinCap(withUnknown.manifest, withUnknown.manifest)).toBe(true);
+  });
+
   it('pageControlReplaces 列出被「我的浏览器」取代的插件工具与手册,须与 pageControl 同时声明', () => {
     const replaces = { tools: ['browser_read', 'browser_act'], manual: ['browser'] };
     const ok = withNeeds({ ...good, pageControlReplaces: replaces });

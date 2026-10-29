@@ -332,6 +332,10 @@ describe('UserBrowserBackend · 读取与动作', () => {
     expect(
       await call(b, { action: 'act', targetId: 't1', request: { kind: 'wait', selector: '.ready', timeMs: 500 } }),
     ).toMatchObject({ ok: false, message: expect.stringContaining('组合') });
+    // Review 2026-10-30 (Codex P2): a text wait is not something an older extension can run either.
+    expect(
+      await call(b, { action: 'act', targetId: 't1', request: { kind: 'wait', selector: '.ready', text: '完成' } }),
+    ).toMatchObject({ ok: false });
     expect(
       await call(b, { action: 'act', targetId: 't1', request: { kind: 'wait', loadState: 'networkidle' } }),
     ).toMatchObject({ ok: false, message: expect.stringContaining('networkidle') });

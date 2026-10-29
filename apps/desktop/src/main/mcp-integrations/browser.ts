@@ -597,11 +597,21 @@ export function getBrowserMcpDeps(): {
       if (!hasSecretPages()) return false;
       const listed = await backendController.call({ action: 'tabs', ...(profile ? { profile } : {}) });
       if (!listed.ok) return true;
-      const tabs = (listed.data as { tabs?: Array<{ targetId?: unknown; url?: unknown }> } | undefined)?.tabs ?? [];
-      // Without a target the runtime acts on its last tab; check every tab conservatively.
-      return tabs
-        .filter((tab) => !targetId || tab.targetId === targetId)
-        .some((tab) => typeof tab.url === 'string' && isSecretPage(tab.url));
+      const tabs = (listed.data as { tabs?: Array<Record<string, unknown>> } | undefined)?.tabs ?? [];
+      // The backend also accepts a tab's short alias, label or an unambiguous id prefix, so match those too.
+      const named = targetId
+        ? tabs.filter(
+            (tab) =>
+              tab.targetId === targetId ||
+              tab.tabId === targetId ||
+              tab.suggestedTargetId === targetId ||
+              tab.label === targetId ||
+              (typeof tab.targetId === 'string' && tab.targetId.startsWith(targetId)),
+          )
+        : [];
+      // Without a target (or one that matches nothing listed) the runtime acts on its last tab, or
+      // the call fails; check every tab conservatively.
+      return (named.length > 0 ? named : tabs).some((tab) => typeof tab.url === 'string' && isSecretPage(tab.url));
     },
     logger,
   };

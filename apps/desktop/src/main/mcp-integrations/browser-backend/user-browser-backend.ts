@@ -1408,7 +1408,7 @@ export class UserBrowserBackend implements BrowserBackend {
     bridge: BrowserExtensionBridge,
   ): Promise<BackendResult> {
     const request = req.request!;
-    if (request.fn || request.textGone) return unsupported(req.action, 'wait.fn / wait.textGone');
+    if (request.fn || request.textGone || request.text) return unsupported(req.action, 'wait.fn / wait.text / wait.textGone');
     // Older extensions run one wait condition per call; a combination would silently drop all but the
     // first, so it is refused instead.
     const conditions = [request.selector, typeof request.timeMs === 'number', request.url, request.loadState].filter(Boolean);

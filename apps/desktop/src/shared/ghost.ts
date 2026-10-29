@@ -2853,18 +2853,33 @@ export function ghostBrowserExtensionWithinCap(
   }
   // Members this Host does not interpret ride along on the declaration. A later Host that starts to read
   // one must not find it already approved: every such member has to be in the reviewed declaration too.
-  const known = new Set(['protocol', 'extensionIds', 'nativeHost', 'pageControl', 'pageControlReplaces']);
-  for (const [key, value] of Object.entries(actualNeeds)) {
-    if (known.has(key)) continue;
-    if (
-      !Object.prototype.hasOwnProperty.call(cap, key) ||
-      canonicalGhostExtensionValue(value) !==
-        canonicalGhostExtensionValue((cap as unknown as Record<string, unknown>)[key])
-    ) {
-      return false;
+  const unknownWithinCap = (actualObject: object, capObject: object, known: readonly string[]): boolean => {
+    for (const [key, value] of Object.entries(actualObject)) {
+      if (known.includes(key)) continue;
+      if (
+        !Object.prototype.hasOwnProperty.call(capObject, key) ||
+        canonicalGhostExtensionValue(value) !==
+          canonicalGhostExtensionValue((capObject as Record<string, unknown>)[key])
+      ) {
+        return false;
+      }
     }
+    return true;
+  };
+  if (
+    actualNeeds.nativeHost !== undefined &&
+    cap.nativeHost !== undefined &&
+    !unknownWithinCap(actualNeeds.nativeHost, cap.nativeHost, ['name', 'binary'])
+  ) {
+    return false;
   }
-  return true;
+  return unknownWithinCap(actualNeeds, cap, [
+    'protocol',
+    'extensionIds',
+    'nativeHost',
+    'pageControl',
+    'pageControlReplaces',
+  ]);
 }
 
 /** 市场清单对 Node Worker 凭证注入与配置引导的授权上限。 */
