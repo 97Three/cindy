@@ -46,13 +46,23 @@ function conversationSessionId(row: HostedRemoteCollectionItem): string | null {
 }
 
 /** Bot conversations stopped on a question or a permission prompt (「等你确认」). */
-function useAwaitingSessions(items: readonly HostedRemoteCollectionItem[]): ReadonlySet<string> {
+export function useAwaitingSessions(items: readonly HostedRemoteCollectionItem[]): ReadonlySet<string> {
   const sessions = useMemo(() => items.map(conversationSessionId).filter((id): id is string => !!id), [items]);
   const snapshot = useCallback(() => sessions.filter((id) => remoteSessionStore.getSessionLiveActivity(id)?.phase === 'needs-interaction'
     || remoteSessionStore.getPendingInteractions(id).length > 0).join('\u0000'), [sessions]);
   // A joined id string keeps unrelated store churn (streaming, other sessions) from re-rendering the list.
   const key = useSyncExternalStore(remoteSessionStore.subscribe, snapshot);
   return useMemo(() => new Set(key ? key.split('\u0000') : []), [key]);
+}
+
+/** Same attention criteria for full rows and a collapsed section's header. */
+export function teammateAttention(row: HostedRemoteCollectionItem, online: boolean, awaiting: ReadonlySet<string>, language: string) {
+  const display = row.item.display;
+  const attention = display.status?.tone === 'warning' || display.status?.tone === 'critical'
+    ? resolveRemoteText(display.status.label, language) : '';
+  const sessionId = conversationSessionId(row);
+  const waiting = online && !display.generation && !!sessionId && awaiting.has(sessionId);
+  return { attention, waiting };
 }
 
 export type TeammateListEntry = { kind: 'bot' | 'group'; row: HostedRemoteCollectionItem };
@@ -104,10 +114,7 @@ export function useTeammateRowRenderer({ items, isOnline, connectionState, quiet
     const online = isOnline(row.host);
     const connected = connectionState ? connectionState(row.host) : online;
     const generating = online && !!display.generation;
-    const attention = display.status?.tone === 'warning' || display.status?.tone === 'critical'
-      ? resolveRemoteText(display.status.label, i18n.language) : '';
-    const sessionId = conversationSessionId(row);
-    const waiting = online && !generating && !!sessionId && awaiting.has(sessionId);
+    const { attention, waiting } = teammateAttention(row, online, awaiting, i18n.language);
     const ambiguous = (duplicateNames.get(title.normalize('NFKC').toLocaleLowerCase(i18n.language)) ?? 0) > 1;
     const unread = isRemoteResourceUnread(user?.id ?? '', row.host.deviceId, row.item.ref.id, display.lastReplyAt);
     const timestamp = display.timestamp;

@@ -403,6 +403,7 @@
         "30d": "30일",
         "all": "전체"
       },
+      "showCollapsedTeammateAvatars": "접었을 때 아바타 표시",
       "displayHeading": "표시",
       "view": {
         "text": "텍스트",
