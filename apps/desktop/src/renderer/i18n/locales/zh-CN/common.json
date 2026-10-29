@@ -13736,7 +13736,8 @@
         "custom": "用鼠标拖动项目行调整顺序，组内任务仍按上面的排序"
       },
       "filterCreatorsHeading": "伙伴",
-      "filterCreatorsAny": "不限来源",
+      "filterCreatorsAny": "全部",
+      "filterCreatorsNone": "都不显示",
       "filterSelectedCreators": "已选 {{count}} 位",
       "filterProjectsHeading": "项目",
       "filterAllProjects": "所有项目",

@@ -9196,11 +9196,13 @@ export function ChatInput({
     showStopButton && (canSend || voiceBusyOnCurrentComposer) && !sendDispatchInFlight;
   // Companion-only idle action: keep the existing send/stop slots and voice-release
   // target. Recording/refinement and queue editing must never become "start call".
+  // A recommendation is still a suggestion: keep the call available until the
+  // user accepts it into the draft. Its Tab/click acceptance and Enter send remain available.
   const mainSlotIsVoice = Boolean(
     onStartVoiceConversation &&
       !queueEditActive &&
       !mainSlotIsStop &&
-      !canSend &&
+      !hasComposerPayload &&
       !hasVoiceDraftText &&
       !voiceBusyOnCurrentComposer,
   );

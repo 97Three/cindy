@@ -13736,7 +13736,8 @@
         "custom": "用滑鼠拖動專案列調整順序，組內任務仍按上面的排序"
       },
       "filterCreatorsHeading": "夥伴",
-      "filterCreatorsAny": "不限來源",
+      "filterCreatorsAny": "全部",
+      "filterCreatorsNone": "都不顯示",
       "filterSelectedCreators": "已選 {{count}} 位",
       "filterProjectsHeading": "專案",
       "filterAllProjects": "所有專案",
