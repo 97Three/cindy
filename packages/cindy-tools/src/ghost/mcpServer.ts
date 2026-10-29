@@ -140,6 +140,7 @@ const D_GHOST_FORGE_SCAFFOLD = [
   "template 可选:plain(普通沙箱工具)、agent-action(卡片点击后让 Agent 继续/分叉/新建)、",
   "node-json-rpc(普通随包 Node 服务)、node-mcp(随包 stdio MCP)。Node 模板只写零依赖示例",
   "源码，不会执行 npm install / npx / postinstall。生成后按需求修改，再调用 ghost_forge_pack。",
+  "四种模板均可叠加 withUi:true，生成标准 MCP Apps 交互页面和 main.js 工具；不需要页面构建。参见 §4.23。",
   "骨架不自动填写 ghost.json.releaseNotes；首次上架可省略，后续更新须补写相对上一已上架版本完整变化的纯文本说明，见 ghost_forge_guide 的第 2、7.3 章。",
   "会话工作目录内直接生成；工作目录外(例如相邻 worktree)走当前会话权限:",
   "本地 Full Access 自动放行,Auto 交审阅,Ask 向用户确认。不要因为目录在工作目录外就改换目录或空转重试。",
@@ -1099,6 +1100,7 @@ export async function handleForgeScaffold(
   input: {
     dir: string;
     template: CindyForgeScaffoldTemplate;
+    withUi?: boolean;
     id: string;
     name: string;
     description?: string;
@@ -1446,6 +1448,7 @@ export function createCindyGhostsMcpServer(
         .describe(
           "起步模板:普通插件 / Agent 交互卡 / 普通 Node 服务 / stdio MCP",
         ),
+      withUi: z.boolean().optional().describe("可选：叠加 MCP Apps 交互页面，最低版本不低于 0.1.121-beta"),
       id: z.string().describe("插件 id:小写字母、数字、连字符，1–32 位"),
       name: z.string().describe("给用户看的插件名称"),
       description: z

@@ -1,3 +1,6 @@
+import interactiveExampleManifest from '../../../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages/minimal/ghost.json?raw';
+import interactiveExampleMain from '../../../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages/minimal/main.js?raw';
+import interactiveExampleHtml from '../../../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages/minimal/ui/page.html?raw';
 import { PLUGIN_UI_MIN_CINDY_VERSION, compareCindyVersions, pluginHasToolUi } from '@cindy/plugin-protocol';
 /**
  * forge.ts — 意识锻造(agent 帮用户做意识的主机真身,2026-07-11 Lizi 定案)。
@@ -209,6 +212,7 @@ export type ForgeScaffoldResult =
 interface ForgeScaffoldInput {
   dir: string;
   template: ForgeScaffoldTemplate;
+  withUi?: boolean;
   id: string;
   name: string;
   description?: string;
@@ -545,6 +549,11 @@ const SCAFFOLD_ICON_PNG_BASE64 =
 /** 按模板产出相对路径到源码内容的完整映射。 */
 function scaffoldFiles(input: ForgeScaffoldInput): Record<string, string | Buffer> {
   const manifest = scaffoldManifest(input);
+  if (input.withUi) {
+    const example = JSON.parse(interactiveExampleManifest) as { tools: unknown[]; mcpApps: unknown };
+    manifest.tools = [...(manifest.tools as unknown[]), ...example.tools];
+    manifest.mcpApps = example.mcpApps;
+  }
   const files: Record<string, string | Buffer> = {
     [GHOST_MANIFEST_FILE]: `${JSON.stringify(manifest, null, 2)}\n`,
     'main.js':
@@ -557,6 +566,14 @@ function scaffoldFiles(input: ForgeScaffoldInput): Record<string, string | Buffe
             : plainMainSource(),
     'assets/icon.png': Buffer.from(SCAFFOLD_ICON_PNG_BASE64, 'base64'),
   };
+  if (input.withUi) {
+    const handler = interactiveExampleMain.replace('cindy.onHostMessage(handleInteractivePage);', '');
+    files['main.js'] = handler + String(files['main.js']).replace(
+      'cindy.onHostMessage(async function (msg) {',
+      'cindy.onHostMessage(async function (msg) {\n  if (handleInteractivePage(msg)) return;',
+    );
+    files['ui/page.html'] = interactiveExampleHtml;
+  }
   if (input.template === 'node-json-rpc') files['node/worker.cjs'] = nodeJsonRpcWorkerSource();
   if (input.template === 'node-mcp') files['node/worker.cjs'] = nodeMcpWorkerSource();
   return files;
@@ -584,6 +601,10 @@ export async function scaffoldGhostDir(
     isCurrent?: () => boolean;
   },
 ): Promise<ForgeScaffoldResult> {
+  if (input.withUi !== undefined && typeof input.withUi !== 'boolean')
+    return { ok: false, errorCode: 'INVALID_INPUT', message: 'withUi 必须是布尔值' };
+  if (input.withUi && (compareCindyVersions(input.minCindyVersion, PLUGIN_UI_MIN_CINDY_VERSION) ?? -1) < 0)
+    return { ok: false, errorCode: 'INVALID_INPUT', message: `交互页面要求 minCindyVersion >= ${PLUGIN_UI_MIN_CINDY_VERSION}` };
   const template = input.template;
   if (!FORGE_SCAFFOLD_TEMPLATES.includes(template)) {
     return { ok: false, errorCode: 'INVALID_INPUT', message: `不认识的模板:${String(template)}` };

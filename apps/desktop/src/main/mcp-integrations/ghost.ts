@@ -1,4 +1,4 @@
-import { pluginToolVisible } from '@cindy/plugin-protocol';
+import { pluginToolVisible, compareCindyVersions, PLUGIN_UI_MIN_CINDY_VERSION } from '@cindy/plugin-protocol';
 import type { PluginPageCall } from '../mcp-apps/pluginPageCall.js';
 import { publishPluginAppResult, pluginModelResult } from '../mcp-apps/pluginCards.js';
 import * as community from '../plugin-contributions/host.js';
@@ -2593,12 +2593,14 @@ export function getCindyGhostsMcpDeps(
         if (
           declaredMinCindyVersion &&
           (declaredMinCindyVersion === '0.0.0' ||
-            !stableCindyVersionPattern.test(declaredMinCindyVersion))
+            !(request.withUi
+              ? (compareCindyVersions(declaredMinCindyVersion, PLUGIN_UI_MIN_CINDY_VERSION) ?? -1) >= 0
+              : stableCindyVersionPattern.test(declaredMinCindyVersion)))
         ) {
           return {
             ok: false,
             errorCode: 'INVALID_INPUT',
-            message: 'minCindyVersion 必须是插件实际依赖的首个 Cindy 正式版本（major.minor.patch）',
+            message: request.withUi ? `交互页面要求 minCindyVersion >= ${PLUGIN_UI_MIN_CINDY_VERSION}` : 'minCindyVersion 必须是插件实际依赖的首个 Cindy 正式版本（major.minor.patch）',
           };
         }
         const currentCindyVersion = hostDeps.getAppVersion?.().trim();
@@ -2608,7 +2610,10 @@ export function getCindyGhostsMcpDeps(
           stableCindyVersionPattern.test(currentCindyVersion)
             ? currentCindyVersion
             : null;
-        const minCindyVersion = declaredMinCindyVersion || stableCurrentCindyVersion;
+        const defaultMinCindyVersion = request.withUi &&
+          (!stableCurrentCindyVersion || (compareCindyVersions(stableCurrentCindyVersion, PLUGIN_UI_MIN_CINDY_VERSION) ?? -1) < 0)
+            ? PLUGIN_UI_MIN_CINDY_VERSION : stableCurrentCindyVersion;
+        const minCindyVersion = declaredMinCindyVersion || defaultMinCindyVersion;
         if (!minCindyVersion) {
           return {
             ok: false,

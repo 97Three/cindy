@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm';
 /**
  * forge.test.ts — 意识锻造打包(packGhostDir)单测。
  * 纯 Node 直测(规则 14):tmpdir 造源码目录 → 打包 → 用 GhostManager
@@ -1418,15 +1419,19 @@ describe('scaffoldGhostDir', () => {
     expect(typeof captured?.expectedParent.ino).toBe('bigint');
   });
 
-  it.each<ForgeScaffoldTemplate>(['plain', 'agent-action', 'node-json-rpc', 'node-mcp'])(
-    '生成 %s 模板，随后可以直接打包并通过装入检查',
-    async (template) => {
+  // The withUi overlay must preserve each template and execute its example handler.
+  // Existing plain scaffolds did not cover mixed handlers or a packaged resource. Tier: unit.
+  it.each((['plain', 'agent-action', 'node-json-rpc', 'node-mcp'] as ForgeScaffoldTemplate[])
+    .flatMap(template => [false, true].map(withUi => ({ template, withUi }))))(
+    '生成 $template 模板（withUi=$withUi），随后可以直接打包并通过装入检查',
+    async ({ template, withUi }) => {
       const dir = path.join(workDir, template);
       const result = await scaffoldGhostDir(
         {
           dir,
           template,
           id: `demo-${template}`,
+          withUi,
           name: `演示 ${template}`,
           description: `${template} 起步插件`,
         },
@@ -1459,6 +1464,17 @@ describe('scaffoldGhostDir', () => {
       expect(await manager.inspect(packed.cindyPath)).toHaveProperty('manifest');
 
       const mainSource = await fs.promises.readFile(path.join(dir, 'main.js'), 'utf8');
+      if (withUi) {
+        expect(result.files).toContain('ui/page.html');
+        expect(packed.manifest.mcpApps?.ui?.resources[0].uri).toBe('ui://planner/v1');
+        let handler: ((message: unknown) => unknown) | undefined;
+        const results: Array<{ result: { structuredContent: unknown } }> = [];
+        runInNewContext(mainSource, { cindy: { onHostMessage: (callback: typeof handler) => { handler = callback; }, send: (message: typeof results[number]) => { results.push(message); } } });
+        await handler!({ type: 'tool-call', tool: 'save_plan', callId: 'page', args: { title: '用户修改' } });
+        expect(results).toHaveLength(1);
+        expect(results[0].result.structuredContent).toEqual({ title: '用户修改', savedPlans: 1 });
+      } else expect(packed.manifest).not.toHaveProperty('mcpApps');
+
       if (template === 'agent-action') {
         expect(mainSource).toContain('cindy.agent.run');
         expect(mainSource).toContain('{{user_message}}');

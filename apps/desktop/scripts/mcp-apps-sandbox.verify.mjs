@@ -300,8 +300,9 @@ try {
       assert.equal(await inner().executeJavaScript("getComputedStyle(document.body).backgroundColor"),'rgb(248, 248, 246)');
       stage='reject App-originated Host context';
       const previousMode=await window.webContents.executeJavaScript('window.testState.mode');
-      await inner().executeJavaScript("window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/host-context-changed',params:{displayMode:'fullscreen'}},'*');window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/size-changed',params:{height:421}},'*');");
-      await wait(()=>window.webContents.executeJavaScript('window.testState.size?.height===421'));
+      // A normal request is the ordering barrier. A size notification is not:
+      // App SDK autoResize and Host coalescing can replace a synthetic height.
+      await inner().executeJavaScript("new Promise(resolve=>{const listener=e=>{if(e.source===parent&&e.data?.id==='context-barrier'){removeEventListener('message',listener);resolve();}};addEventListener('message',listener);parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/host-context-changed',params:{displayMode:'fullscreen'}},'*');parent.postMessage({jsonrpc:'2.0',id:'context-barrier',method:'tools/list',params:{}},'*');})");
       assert.equal(await window.webContents.executeJavaScript('window.testState.mode'),previousMode);
       stage='theme change';
       await window.webContents.executeJavaScript("window.testController.context({theme:'dark',styles:{variables:{'--color-background-primary':'rgb(31,31,30)','--color-text-primary':'rgb(255,255,255)'}}})");
