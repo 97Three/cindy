@@ -6092,8 +6092,9 @@ const interruptProductTurn = createProductTurnFailureFinalizer({
   gate: deferredProductTurnFailureGate,
   isCurrentOwner: isCurrentProductTurnFailureOwner,
   commitActivity: (sessionId) => sessionListActivityTracker.commit(sessionId),
-  interrupt: async (sessionId, owner) => {
-    if (owner) notePluginTaskLifecycle(service => service.settle(sessionId, owner.originalExecution ?? owner, 'failed'));
+  settlePluginTasks: (sessionId, execution, inputClientIds) =>
+    settlePluginTaskTerminal(sessionId, execution, 'failed', undefined, inputClientIds),
+  interrupt: async (sessionId) => {
     await interruptUpstreamMergeTurn(sessionId);
   },
 });
@@ -6143,8 +6144,8 @@ function cleanupClosedSessionRuntime(session: WiredSession): void {
 // Keep holder reads live, including reads after an awaited pricing/persistence
 // operation. Capturing these services when wiring a Session would freeze the
 // pre-initialization or previous runtime value for later events.
-const sessionEventDependencies: SessionEventDependencies = {
-  onPluginTaskTerminal: (sessionId, execution, outcome, outputMessageId, inputClientIds) => {
+const settlePluginTaskTerminal: NonNullable<SessionEventDependencies['onPluginTaskTerminal']> =
+  (sessionId, execution, outcome, outputMessageId, inputClientIds) => {
     notePluginTaskLifecycle(service => service.settle(sessionId, execution, outcome, outputMessageId));
     for (const inputClientId of inputClientIds ?? []) {
       const snapshot = getCurrentDbClientSnapshot();
@@ -6156,8 +6157,10 @@ const sessionEventDependencies: SessionEventDependencies = {
           .catch(() => log.warn('Plugin target terminal receipt could not be saved'));
       }
     }
+  };
 
-  },
+const sessionEventDependencies: SessionEventDependencies = {
+  onPluginTaskTerminal: settlePluginTaskTerminal,
   onSuccessfulProductTurn: finishProductTurn,
   onUnsuccessfulProductTurn: interruptProductTurn,
   deferUnsuccessfulProductTurn: (owner) => deferredProductTurnFailureGate.defer(owner),

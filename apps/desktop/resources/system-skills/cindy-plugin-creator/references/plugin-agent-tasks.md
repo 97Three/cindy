@@ -357,7 +357,7 @@ run 的 acceptedConfig 是接收配置，execution 是观测到的原生 instanc
 实验性接口尚未提供全部恢复路径的最终对账和事件补拉，因此暂不用于无人值守正式评测。
 
 
-### 4.11.7 伙伴委派协议与回执（未发布）
+## 4.11.7 伙伴委派协议与回执（未发布）
 
 此增量在插件系统实现，不创建普通任务代替伙伴，不更改伙伴身份、模型、目录或权限档。
 插件声明 `agent: { tasks: true, targets: true, delegation: true }`；`agent:delegation`
@@ -391,4 +391,5 @@ targets.get({requestKey}) 只读本插件原收据，未知键返回 {found:fals
 status 是 pending/accepted/cancelled 投递状态，不能当作任务完成；result 含原输入的
 instanceId、generation、outcome（completed/failed/cancelled/interrupted）及可选 outputMessageId。
 自然终态持久记录，重启后仍可查询；崩溃而没有终态证据时 settled=false，不自动重发。
+恢复尚未结束时保持 settled=false；恢复最终失败后记录原输入的 failed 终态，即使运行时已重建也保留原 instanceId/generation，不结算后来排队的请求。
 取消只撤回该插件输入，只有原队列和执行确已结束时 settled=true。不读取伙伴历史。

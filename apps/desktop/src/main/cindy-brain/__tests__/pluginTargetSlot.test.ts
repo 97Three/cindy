@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import Database from 'better-sqlite3';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
+import type { Session, AgentEvent } from '@cindy/maker-core';
+import type { DbClient } from '../../localDb/client/DbClient.js';
+import { createPluginTargetStore } from '../../maker-ipc/pluginTargetStore.js';
+import { captureProductTurnFailureOwner, createDeferredProductTurnFailureGate, createProductTurnFailureFinalizer } from '../../maker-ipc/productTurnFailureOwner.js';
 
 vi.mock('../../appSessionState.js', () => ({
   activeOwnerScopeKey: () => 'owner',
@@ -96,6 +102,55 @@ describe('plugin target queries and delivery', () => {
     receipt.terminal = { instanceId:'native',generation:2,outcome:'completed',outputMessageId:'reply' };
     expect(await query()).toMatchObject({ settled:true,result:{outcome:'completed',outputMessageId:'reply'} });
     expect(f.send).toHaveBeenCalledOnce();
+  });
+  // P1 regression (unit): successful native terminals had coverage, but a final
+  // recovery failure never persisted a target receipt. Exercise the production
+  // finalizer, SQLite store and public query across a runtime/slot replacement.
+  it('persists only the original target receipt when recovery finally fails after a rebuild', async () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE plugin_task_requests (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL,
+      operation TEXT NOT NULL, target_id TEXT NOT NULL, request_key TEXT NOT NULL,
+      fingerprint TEXT NOT NULL, payload TEXT NOT NULL, revision INTEGER NOT NULL, created_at INTEGER NOT NULL,
+      UNIQUE(plugin_id, operation, target_id, request_key));`);
+    try {
+      const durable = createPluginTargetStore({ drizzle: drizzle(db) } as unknown as DbClient, () => {});
+      const f = delegatedFixture();
+      f.slot.adapter!.store = () => durable;
+      await f.call(f.request);
+      await f.call({ ...f.request, requestKey: 'next' });
+      const original = (await durable.get('plugin', 'send'))!;
+      const session = { id: 'chosen', instanceId: 'failed-runtime', getTurnGeneration: () => 7 } as Session;
+      const gate = createDeferredProductTurnFailureGate();
+      const inputIds = [original.id];
+      gate.defer(captureProductTurnFailureOwner(session, { type: 'error', data: { message: 'expired' } } as AgentEvent, undefined, inputIds));
+      inputIds[0] = (await durable.get('plugin', 'next'))!.id;
+      const replacement = { id: 'chosen', instanceId: 'replacement', getTurnGeneration: () => 0 } as Session;
+      gate.rebindSession('chosen', replacement);
+      const query = (requestKey = 'send') => f.call({ kind: 'get', requestKey });
+      expect(await query()).toMatchObject({ settled: false });
+      const writes: Promise<void>[] = [];
+      const finalize = createProductTurnFailureFinalizer({
+        gate, isCurrentOwner: owner => owner.session === replacement, commitActivity: () => {},
+        settlePluginTasks: (id, execution, ids) => {
+          for (const inputId of ids ?? []) writes.push(durable.settle(inputId, id, { ...execution, outcome: 'failed' }));
+        },
+        interrupt: async () => {},
+      });
+      let completion: Promise<void> | undefined;
+      const fail = () => gate.settle('chosen', owner => owner.session === replacement,
+        owner => { completion = finalize('chosen', owner); });
+      expect(fail()).toBe(true);
+      await completion;
+      await Promise.all(writes);
+      expect(fail()).toBe(false);
+      const restarted = new PluginTargetSlot();
+      restarted.adapter = { ...f.slot.adapter!, store: () => createPluginTargetStore({ drizzle: drizzle(db) } as unknown as DbClient, () => {}) };
+      expect(await restarted.handle('plugin', { kind: 'get', requestKey: 'send' }, f.guard)).toMatchObject({
+        settled: true, result: { outcome: 'failed', instanceId: 'failed-runtime', generation: 7 },
+      });
+      expect(await query('next')).toMatchObject({ settled: false });
+      expect(writes).toHaveLength(1);
+    } finally { db.close(); }
   });
   it('never declares settled while the delivery transaction is still in flight', async () => {
     const f = fixture(); const wait = deferred<void>(); const entered = deferred<void>();
