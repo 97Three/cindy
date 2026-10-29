@@ -433,6 +433,25 @@ describe('browserExtensionSlot · 管子上行', () => {
     expect(await slot.handleRequest('_root__my-browser', { kind: 'status' })).toMatchObject({ ok: true });
   });
 
+  // Review 2026-10-30 (Codex P1): a package that only claims the official id cannot pair browsers.
+  it('只自称官方 id 的未核验包不能保存配对', async () => {
+    const clients = [{ id: 'c1', origin: 'chrome-extension://' + CHROME_ID, extensionId: CHROME_ID, publicKey: 'k' }];
+    const { slot, bridges, settle, ghosts } = await makeSlot({ isVerifiedOfficial: () => false });
+    slot.reconcile(ghosts);
+    await settle();
+    expect(await slot.handleRequest('_root__my-browser', { kind: 'setTrustedClients', clients })).toMatchObject({
+      ok: false,
+      errorCode: 'PERMISSION_DENIED',
+    });
+    expect(bridges[0].calls.some(([name]) => name === 'setTrustedClients')).toBe(false);
+    // Another plugin id is not an official claimant: its pairings work as before.
+    const other = [extGhost({ id: 'other-browser', nativeHost: false })];
+    const b = await makeSlot({ isVerifiedOfficial: () => false }, other);
+    b.slot.reconcile(other);
+    await b.settle();
+    expect(await b.slot.handleRequest('_root__other-browser', { kind: 'setTrustedClients', clients: [] })).toEqual({ ok: true });
+  });
+
   // Review 2026-10-30 (Codex P1): raw DevTools commands from a plugin that is not the verified official one.
   it('非官方插件不能经管子发原始 DevTools 命令', async () => {
     const payload = { kind: 'act', action: 'cdp', payload: { url: 'https://example.test', tabId: 1, op: 'command', method: 'DOM.setFileInputFiles', params: { files: ['/etc/hosts'] } } };

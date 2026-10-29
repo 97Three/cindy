@@ -60,6 +60,11 @@ const OFFICIAL_NATIVE_HOSTS: ReadonlyMap<string, string> = new Map([
   ['my-browser', 'com.makecindy.browser'],
 ]);
 
+/** A package that claims an official id without verified source gets no trust of any kind. */
+function claimsUnverifiedOfficialId(ghost: InstalledGhost, verified: boolean): boolean {
+  return !verified && OFFICIAL_NATIVE_HOSTS.has(ghost.manifest.id);
+}
+
 export function mayInstallNativeHost(ghost: InstalledGhost, verified = true): boolean {
   const name = ghost.manifest.browserExtension?.nativeHost?.name;
   return (
@@ -432,6 +437,11 @@ export class GhostBrowserExtensionSlot {
         case 'setPolicy':
           return entry.bridge.setPolicy() as GhostPipeBrowserExtensionResult;
         case 'setTrustedClients': {
+          // A package that only claims the official id could read an unpaired client's key through
+          // status and pin it back; it gets no pairings at all (native binding is its only way in, and
+          // it has none).
+          if (claimsUnverifiedOfficialId(entry.ghost, this.deps.isVerifiedOfficial(entry.ghost)))
+            return fail('PERMISSION_DENIED', '未核验来源的插件不能保存浏览器配对');
           let applied: { ok: true };
           try {
             applied = entry.bridge.setTrustedClients(req.clients);

@@ -208,6 +208,8 @@ const LIST_ENTRY_CAPS: ReadonlyArray<readonly [string, number]> = [
   ['events', 5000],
 ];
 const ENTRY_STRING_MAX = 8192;
+/** Largest plugin answer to a relayed extension request (translations and subtitles included). */
+const RELAY_RESULT_MAX_CHARS = 8_000_000;
 const TEXT_RESULT_MAX = 400_000;
 
 export class BrowserExtensionBridge {
@@ -1123,6 +1125,16 @@ export class BrowserExtensionBridge {
     const found = this.relayItem(id);
     if (!found || !found.valid) return failure('REQUEST_CANCELLED', 'Request no longer active.');
     if (!found.item.result) {
+      // The plugin's answer is held for minutes and serialized again for each poll; bound its size so a
+      // faulty or hostile plugin cannot fill Main's memory. Over the bound it becomes a structured failure.
+      let size = Number.POSITIVE_INFINITY;
+      try {
+        size = JSON.stringify(result)?.length ?? 0;
+      } catch {
+        // Not serializable: treated as too large.
+      }
+      if (size > RELAY_RESULT_MAX_CHARS)
+        result = { ok: false, error: 'RESULT_TOO_LARGE', message: 'The plugin result is too large.' };
       found.item.result = result;
       found.item.expiresAt = this.now() + RELAY_TIMING.resultRetention;
       this.options.log?.info('browser extension relay answered', {

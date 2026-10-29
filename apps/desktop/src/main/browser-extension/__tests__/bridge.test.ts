@@ -493,6 +493,18 @@ describe('bridge · 作业生命周期', () => {
     expect((await clicked).ok).toBe(true);
   });
 
+  // Review 2026-10-30 (Codex P1): a relayed answer from a plugin is bounded before it is held.
+  it('插件返回的转交结果过大时改为结构化失败', async () => {
+    const { bridge, ready } = await fixture();
+    const c = await ready();
+    const job = { id: crypto.randomUUID(), request: { op: 'translate', text: 'hello', source: { url: 'https://example.test/' } } };
+    expect((await c.signed('/learning/start', job)).ok).toBe(true);
+    expect(bridge.relayResult(job.id, { ok: true, translations: ['x'.repeat(9_000_000)] })).toEqual({ ok: true });
+    const answer = await c.signed('/learning/result', { id: job.id });
+    expect(answer.done).toBe(true);
+    expect(answer.result).toMatchObject({ ok: false, error: 'RESULT_TOO_LARGE' });
+  });
+
   // Review 2026-10-30 (Codex P1): debugger events are [method, params] tuples and must stay arrays.
   it('cdp 事件列表保留元组形状并按数量封顶', async () => {
     const { bridge, ready } = await fixture();
