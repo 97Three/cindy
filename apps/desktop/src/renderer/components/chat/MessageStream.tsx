@@ -6244,7 +6244,7 @@ export function MessageStream({
     root.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
   }, [railJumpRequest, allRenderItems, visibleRenderItems, beginChipJump]);
 
-  // 第一条 user 消息 fork 出来等价于复制整条任务,UI 层藏掉 fork 入口。
+  // 第一条 user 消息没有可 fork 的前文(fork 出来等价于复制整条任务),UI 层藏掉 fork 入口。
   // 注意:这里要用全量 messages 而不是 visibleRenderItems —— "首条 user" 的语义
   // 是整段对话的首条,不是当前窗口的首条;且 messages 本身也只是已加载的尾部
   // 切片,还有老页未加载(hasMoreMessages)时不能把切片首条误判为对话首条
