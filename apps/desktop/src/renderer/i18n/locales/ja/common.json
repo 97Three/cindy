@@ -11514,6 +11514,40 @@
     },
     "modelSelector": {
       "displayPricing": {
+        "components": {
+          "text": "テキスト",
+          "image": "画像",
+          "audio": "音声",
+          "video": "動画"
+        },
+        "roles": {
+          "text": {
+            "input": "テキスト入力",
+            "output": "テキスト出力",
+            "cacheRead": "テキストキャッシュ読み取り",
+            "cacheWrite": "テキストキャッシュ書き込み"
+          },
+          "image": {
+            "input": "画像入力",
+            "output": "画像出力",
+            "cacheRead": "画像キャッシュ読み取り",
+            "cacheWrite": "画像キャッシュ書き込み"
+          },
+          "audio": {
+            "input": "音声入力",
+            "output": "音声出力",
+            "cacheRead": "音声キャッシュ読み取り",
+            "cacheWrite": "音声キャッシュ書き込み"
+          },
+          "video": {
+            "input": "動画入力",
+            "output": "動画出力",
+            "cacheRead": "動画キャッシュ読み取り",
+            "cacheWrite": "動画キャッシュ書き込み"
+          }
+        },
+        "durationInput": "入力時間",
+        "durationOutput": "出力時間",
         "million": "100万",
         "free": "無料",
         "estimated": "約 {{price}}",

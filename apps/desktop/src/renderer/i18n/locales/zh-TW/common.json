@@ -11514,6 +11514,40 @@
     },
     "modelSelector": {
       "displayPricing": {
+        "components": {
+          "text": "文字",
+          "image": "圖片",
+          "audio": "音訊",
+          "video": "影片"
+        },
+        "roles": {
+          "text": {
+            "input": "文字輸入",
+            "output": "文字輸出",
+            "cacheRead": "文字快取讀取",
+            "cacheWrite": "文字快取寫入"
+          },
+          "image": {
+            "input": "圖片輸入",
+            "output": "圖片輸出",
+            "cacheRead": "圖片快取讀取",
+            "cacheWrite": "圖片快取寫入"
+          },
+          "audio": {
+            "input": "音訊輸入",
+            "output": "音訊輸出",
+            "cacheRead": "音訊快取讀取",
+            "cacheWrite": "音訊快取寫入"
+          },
+          "video": {
+            "input": "影片輸入",
+            "output": "影片輸出",
+            "cacheRead": "影片快取讀取",
+            "cacheWrite": "影片快取寫入"
+          }
+        },
+        "durationInput": "時長輸入",
+        "durationOutput": "時長輸出",
         "million": "百萬",
         "free": "免費",
         "estimated": "約 {{price}}",

@@ -11514,6 +11514,40 @@
     },
     "modelSelector": {
       "displayPricing": {
+        "components": {
+          "text": "텍스트",
+          "image": "이미지",
+          "audio": "오디오",
+          "video": "동영상"
+        },
+        "roles": {
+          "text": {
+            "input": "텍스트 입력",
+            "output": "텍스트 출력",
+            "cacheRead": "텍스트 캐시 읽기",
+            "cacheWrite": "텍스트 캐시 쓰기"
+          },
+          "image": {
+            "input": "이미지 입력",
+            "output": "이미지 출력",
+            "cacheRead": "이미지 캐시 읽기",
+            "cacheWrite": "이미지 캐시 쓰기"
+          },
+          "audio": {
+            "input": "오디오 입력",
+            "output": "오디오 출력",
+            "cacheRead": "오디오 캐시 읽기",
+            "cacheWrite": "오디오 캐시 쓰기"
+          },
+          "video": {
+            "input": "동영상 입력",
+            "output": "동영상 출력",
+            "cacheRead": "동영상 캐시 읽기",
+            "cacheWrite": "동영상 캐시 쓰기"
+          }
+        },
+        "durationInput": "입력 길이",
+        "durationOutput": "출력 길이",
         "million": "100만",
         "free": "무료",
         "estimated": "약 {{price}}",
