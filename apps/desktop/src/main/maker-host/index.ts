@@ -459,12 +459,6 @@ const requestAutoReviewText = createAutoReviewModelRouter({
   createAuxiliaryFallback: createCustomAutoReviewFallback,
 });
 
-let autoReviewContextResolver: AutoReviewDelegate['prepareRequest'];
-/** Main bootstrap supplies a fresh owner-bound lookup; no plugin/renderer can set this. */
-export function setAutoReviewContextResolver(resolver: AutoReviewDelegate['prepareRequest']): void {
-  autoReviewContextResolver = resolver;
-}
-
 export const reviewAutoPermissionAction: AutoReviewDelegate = createAutoPermissionReviewer({
   logger: desktopMakerLogger,
   managesRetries: true,
@@ -476,10 +470,7 @@ const reviewToolLoop = createToolLoopReviewer({
   requestText: (prompt, opts) => requestUtilityText(getMaker(), prompt, opts),
 });
 
-reviewAutoPermissionAction.prepareRequest = async request => {
-  if (!autoReviewContextResolver) throw new Error('Authorization context is not ready');
-  return autoReviewContextResolver(request);
-};
+reviewAutoPermissionAction.prepareRequest = async request => request;
 
 /**
  * Codex 模型补拉 coordinator —— 随 maker 一起创建(需要 maker 实例做 live 拉取)、随
@@ -1139,7 +1130,6 @@ export function getMaker(): Maker {
         const session = _maker?.getSession(sessionId);
         if (!session || session.instanceId !== sessionInstanceId) return null;
         const snapshot = resolveGhostFsSessionSnapshot((id) => _maker?.getSession(id), sessionId, sessionInstanceId);
-        const acceptedInput = getSessionInputProvenance(sessionId);
         const accountInput = isActiveInputAccountScoped(sessionId);
         return {
           contributionAccountAllowed: async (acceptedOperation = false) => {
@@ -1148,10 +1138,9 @@ export function getMaker(): Maker {
             if (!current()) return false;
             const db = getCurrentDbClientSnapshot();
             if (!db) return false;
-            // An authorized upload outlives the input that started it. Keep that
-            // input's identity; recheck task, owner, helper surface and permissions.
-            const surface = await resolveHelperSurface(db.client, sessionId,
-              acceptedOperation ? () => acceptedInput : getSessionInputProvenance);
+            // An authorized upload outlives the input that started it. Recheck
+            // task, account, helper surface and permissions before completion.
+            const surface = await resolveHelperSurface(db.client, sessionId);
             return surface !== 'restricted' && db === getCurrentDbClientSnapshot()
               && current();
           },

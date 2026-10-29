@@ -65,7 +65,6 @@ import {
   tryGetBotDirectMessageService,
   tryGetOrcaCollabService,
   isSessionInTurn,
-  getSessionInputProvenance,
   getTaskActionInputState,
   getTaskActionSession,
   confirmTaskAction,
@@ -327,7 +326,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     if (!dbClient || !sessionId) throw new Error('Account data caller unavailable');
     const assertAccess = async () => {
       if (isAppSessionBoundaryPending() || dbClient !== tryGetDbClient()) throw new Error('Account changed');
-      if (await resolveHelperSurface(dbClient, sessionId, getSessionInputProvenance) === 'restricted')
+      if (await resolveHelperSurface(dbClient, sessionId) === 'restricted')
         throw new Error('Account data is unavailable for this task');
       if (isAppSessionBoundaryPending() || dbClient !== tryGetDbClient()) throw new Error('Account changed');
     };
@@ -576,7 +575,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         if (!dbClient || isAppSessionBoundaryPending() || !opts.callerSessionId)
           throw new Error('Task history caller unavailable');
         // session_search bypasses cindy_helper, so share its account-data surface.
-        if (await resolveHelperSurface(dbClient, opts.callerSessionId, getSessionInputProvenance) === 'restricted')
+        if (await resolveHelperSurface(dbClient, opts.callerSessionId) === 'restricted')
           throw new Error('Task history search is unavailable for this task');
         if (isAppSessionBoundaryPending() || dbClient !== tryGetDbClient())
           throw new Error('Task history caller unavailable');
@@ -585,7 +584,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         });
         if (isAppSessionBoundaryPending() || dbClient !== tryGetDbClient())
           throw new Error('Task history caller unavailable');
-        if (await resolveHelperSurface(dbClient, opts.callerSessionId, getSessionInputProvenance) === 'restricted')
+        if (await resolveHelperSurface(dbClient, opts.callerSessionId) === 'restricted')
           throw new Error('Task history search is unavailable for this task');
         if (isAppSessionBoundaryPending() || dbClient !== tryGetDbClient())
           throw new Error('Task history caller unavailable');
@@ -781,7 +780,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       resolveSurface: async ({ sessionId }) => {
         const dbClient = tryGetDbClient();
         if (!dbClient || isAppSessionBoundaryPending()) return 'restricted';
-        const surface = await resolveHelperSurface(dbClient, sessionId, getSessionInputProvenance);
+        const surface = await resolveHelperSurface(dbClient, sessionId);
         if (isAppSessionBoundaryPending() || dbClient !== tryGetDbClient()) return 'restricted';
         return surface;
       },

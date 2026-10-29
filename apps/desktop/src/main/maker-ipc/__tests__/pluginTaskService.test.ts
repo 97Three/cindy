@@ -4,7 +4,6 @@ import { createHash } from 'node:crypto';
 import ts from 'typescript';
 import { createSessionExecutionResolver } from '../sessionExecutionSelection.js';
 import { Session } from '@cindy/maker-core';
-import { fastModeToStorage } from '@cindy/maker-shared';
 import { handlePluginTaskRequest } from '../../cindy-brain/taskSlot.js';
 import { withParsedPluginMessageAttachments } from '../../cindy-media/pluginMessageAttachments.js';
 import { PLUGIN_ATTACHMENT_MAX_BYTES } from '../../../shared/pluginAttachments.js';
@@ -12,8 +11,6 @@ import type { InstalledGhost } from '../../../shared/ghost.js';
 import {
   createPluginTaskService,
   isPluginTaskPermissionAllowed,
-  isTeamPlanLabelLocked,
-  isTeamPlanLabelLockedByReceipt,
   PluginTaskError,
   assertPluginTaskResult,
   readPluginTaskPlanReceipt,
@@ -21,41 +18,9 @@ import {
   type PluginTaskStore,
   type PluginTaskServiceDeps,
 } from '../pluginTaskService.js';
-import type { PluginTeamPlan, PluginTaskView } from '../../../shared/pluginTasks.js';
+import type { PluginTaskView } from '../../../shared/pluginTasks.js';
 import { controlOwnedSessionExecution, isSameSessionExecution, withdrawOwnedSessionInputs } from '../sessionExecutionOwnership.js';
 import { PLUGIN_TEAM_PLAN_MAX_JSON_CHARS, PLUGIN_TASK_RECEIPT_MAX_JSON_CHARS } from '../../../shared/pluginTasks.js';
-
-it('locks only unsettled team-plan labels for worker rename', () => {
-  const route = {} as never;
-  const plan = {
-    concurrency: 2,
-    items: [
-      { label: 'w0', workingDir: '/answer', route },
-      { label: 'w1', workingDir: '/answer', route },
-    ],
-  } as unknown as PluginTeamPlan;
-  expect(isTeamPlanLabelLocked(plan, [], ['w0'])).toBe(true);
-  expect(isTeamPlanLabelLocked(plan, [], ['w1', null])).toBe(true);
-  expect(isTeamPlanLabelLocked(plan, ['w0'], ['w0'])).toBe(false);
-  expect(isTeamPlanLabelLocked(plan, ['w0'], ['w1'])).toBe(true);
-  expect(isTeamPlanLabelLocked(plan, [], ['other'])).toBe(false);
-  expect(isTeamPlanLabelLocked(undefined, [], ['w0'])).toBe(false);
-});
-
-it('releases the plan label lock only after the plugin is uninstalled', () => {
-  const route = {} as never;
-  const plan = {
-    concurrency: 1,
-    items: [{ label: 'w0', workingDir: '/answer', route }],
-  } as unknown as PluginTeamPlan;
-  const receipt = { payload: JSON.stringify({ teamPlan: plan }), operation: 'create' as const };
-  expect(isTeamPlanLabelLockedByReceipt(receipt, true, ['w0'])).toBe(true);
-  // 插件卸载（任务归属确实撤销）后，保留的收据不再锁定改名；
-  // 停用 / 未批准仍传入 true（可恢复），继续锁定由上层保证。
-  expect(isTeamPlanLabelLockedByReceipt(receipt, false, ['w0'])).toBe(false);
-  expect(isTeamPlanLabelLockedByReceipt({ payload: receipt.payload, operation: 'send' }, true, ['w0'])).toBe(false);
-  expect(isTeamPlanLabelLockedByReceipt(undefined, true, ['w0'])).toBe(false);
-});
 
 it('rejects oversized plans before saving and refuses oversized legacy receipts without truncation', async () => {
   const f=fixture(), task=await f.create();
@@ -67,29 +32,6 @@ it('rejects oversized plans before saving and refuses oversized legacy receipts 
     expect(()=>readPluginTaskPlanReceipt(payload)).toThrow('size');
   f.rows.get(task.taskId)!.payload=JSON.stringify({teamPlan:plan});
   await expect(f.service.settleWorkerLabel('p',task.taskId,'w0')).rejects.toMatchObject({code:'INVALID_REQUEST'});
-});
-
-it.each([false,true])('production Auto context checks uninstall after its projection await (worker=%s)', async worker => {
-  for (const revoked of [false,true]) {
-    const f=fixture(),task=await f.create();
-    const session={...f.route,source:'plugin',workingDir:'/answer',permissionMode:'auto',status:'active'};
-    const results=[[session],worker?[{leadId:task.taskId,label:'w',teamId:'team',teamStatus:'active'}]:[],[session]];
-    const query={from:()=>query,where:()=>query,innerJoin:()=>query,limit:async()=>results.shift()};
-    const epoch={client:{drizzle:{select:()=>query},queryOne:async()=>({unchanged:1}),tx:async()=>{if(revoked)await f.service.withUninstall('p',async()=>{});return {};}}};
-    let load!:(id:string)=>Promise<unknown>;
-    const deps={setAutoReviewContextResolver:(callback:typeof load)=>{load=callback;},createPluginTaskReviewResolver:(callback:typeof load)=>callback,
-      getCurrentDbClientSnapshot:()=>epoch,sessions:{},orcaWorkers:{},orcaTeams:{},eq:()=>true,fastModeToStorage,
-      createPluginTaskStore:()=>f.deps.store,drainPersistQueue:async()=>{},
-      pluginTaskServiceForCurrentOwner:()=>f.service,getPluginTaskDefaults:()=>({permissionMode:'auto'}),
-      readPluginTaskPlanReceipt,isPluginTaskPermissionAllowed,pluginTaskAuthorizationRevision:()=> 'new-install',isPluginTaskAuthorized:()=>true};
-    const source=readFileSync(new URL('../register.ts',import.meta.url),'utf8');
-    const start=source.indexOf('  setAutoReviewContextResolver(createPluginTaskReviewResolver(async sessionId => {');
-    const block=source.slice(start,source.indexOf('\n  }));',start)+7);
-    const js=ts.transpileModule(block,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
-    new Function(...Object.keys(deps),js)(...Object.values(deps));
-    if(revoked)await expect(load(worker?'worker':task.taskId)).rejects.toMatchObject({code:'TASK_NOT_FOUND'});
-    else await expect(load(worker?'worker':task.taskId)).resolves.toMatchObject({authorized:true,pluginId:'p'});
-  }
 });
 
 function fixture() {

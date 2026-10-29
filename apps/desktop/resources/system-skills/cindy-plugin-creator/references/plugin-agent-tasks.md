@@ -271,19 +271,11 @@ text 与 context 合计不超过 64000；tasks.send 的 text 上限仍为 32768�
 
 原有 `cindy.tasks` 的归属限制不变。先调用 `capabilities()` 获取实际支持操作。当前仅支持本插件创建的本机普通任务：
 `models`、`create`、`get`、`setModel`、`list`、`send`、`getRun`、`listRuns`、`readMessages`、`cancel`、`setHidden`。
-可对自有任务调用 `startTeam({taskId})` 启用 Orca 主任务，并用 `getTeam({taskId})` 读取实际协同状态。协调主任务需经用户授权 Auto，Worker 自动沿用 Auto。
-插件直接调用的 `cindy.tasks` 仍只能管理本插件创建的任务；这些任务及其 Worker 中的 Agent 则按普通任务权限使用 `cindy_helper`、`cindy_memory` 等已连接工具，包括账号级历史和跨任务操作。协调仍可使用独立 Orca 工具，插件通过 `readMessages/getTeam` 读取自己的结果。个人插件投稿另核验当前输入来源，插件输入不能借用 Host 账号发布。明确卸载撤销归属后，保留任务中仍执行的旧插件输入继续受限；已无执行中输入或已接受真人输入时恢复普通能力。撤销不恢复插件控制权，也不保证停止已接受执行，不构成通用执行沙箱。
-在首次派发前调用 `setTeamPlan({taskId,plan:{concurrency,task,items}})`，每项包含
-`label, workingDir, route, task`。可选 `task` 是插件提供的工作范围（每段最多 8000 字符），
-不是用户原话。Host 核对已批准启用的插件、自有主任务、真实 Worker 归属、模型和目录后，
-将范围单独交给 Auto 审阅。进入 Host 审批的动作逐次核验用户限制、撤权和只读设置。
-首版保留 Codex 原生 Auto；其常规工作区动作可能直接执行，不保证每个动作都经过 Host 范围审批。
-卸载会撤销插件后续 API 控制，但不保证停止已派发的原生工作；需要停止时请使用任务停止入口。
-计划须在首次派发或创建 Worker 前登记，之后不可改写（包括补填 task）；需要不同范围时创建新任务。
-缺少该字段的存量计划继续可读，但 Host 不允许插件任务自动授权或普通 MCP 快捷放行，不会从 Agent 消息推导额外授权；进入 Host 的 Ask/acceptEdits 动作仍可沿原流程逐次确认。
-计划不授予目录权限。Worker 仅可使用宿主任务目录及解析后仍在其中的子目录、启用卡片时的插件配置目录或用户亲选的确切目录；Library 绑定不自动变成 Agent 工作根。宿主在登记和创建时均复核。
-插件自有主任务不支持用 `execution_device_id` 新建跨设备 Worker；本机目录授权不代表已授权另一台电脑的同名目录，登记团队计划也不改变此限制。
-这描述准入检查，不是持续的 OS 目录隔离保证。首版用于可信本地工作区；同权限进程在检查后恶意置换目录对象仍可能改变实际 cwd，不提供此类对抗性沙箱。
+可对自有任务调用 `startTeam({taskId})` 启用 Orca 主任务，并用 `getTeam({taskId})` 读取实际协同状态。通过此插件 API 启用团队需经用户授权 Auto，Worker 使用 Auto；任务中的 Agent 使用公共 Orca 工具时走普通权限流程。
+插件直接调用的 `cindy.tasks` 仍只能管理本插件创建的任务；这些任务及其 Worker 中的 Agent 则按普通任务权限使用 `cindy_helper`、`cindy_memory` 等已连接工具，包括账号级历史、跨任务操作和个人插件投稿。协调仍可使用独立 Orca 工具，插件通过 `readMessages/getTeam` 读取自己的结果。任务创建来源不参与 Agent 工具授权；插件消息标签不额外收窄任务权限，原本要求用户当场输入的操作仍按通用规则判断。卸载撤销归属后，插件不能继续管理旧任务；保留任务中的 Agent 仍按任务权限工作。撤销不保证停止已接受执行，也不构成通用执行沙箱。
+若插件需要记录批次与结算 Worker，可在首次派发前调用 `setTeamPlan({taskId,plan:{concurrency,task,items}})`；每项包含 `label, workingDir, route, task`。`task` 是插件自己的说明，不是用户原话，也不会改变 Agent 的 Auto 审阅或工具权限。计划登记后不可改写；`releaseWorker` 按计划标签结算。没有计划的任务及 Worker 照常使用普通任务权限。
+
+插件直接调用 `cindy.tasks` 时仍需当前插件批准和自有任务归属。Agent 使用公共 Orca 工具创建、调度或管理 Worker 时，按普通任务的账号、权限档、团队成员关系和操作凭证检查；任务创建来源、插件输入标签、插件计划与卸载状态不额外设限。Worker 目录、模型和运行位置沿普通 Orca 规则，目录不是持续的 OS 隔离保证。
 
 `models()` 返回统一目录可选项的完整 route、efforts 和 supportsFastMode。用户明确选择后将 route 原样传给 create，或用 `setModel({taskId, expectedRevision, route})` 修改已有自有任务。运行中按普通任务的安全边界切换，不修改应用默认。两方法使用前检查 capabilities.operations。
 当 `capabilities().pluginDefaultModel === true` 时，持续复用任务的插件可在每次新输入前调用
@@ -319,7 +311,7 @@ await cindy.tasks.setHidden({ taskId: bg.taskId, hidden: false });
 // requestWriteAccess({taskId, mode: 'auto'}) 请求宿主原生确认，不能替用户确认。
 // 拒绝或失败后，同一账号代际/安装修订/任务在当前宿主进程不再自动弹窗（更换 mode 也不重置）。
 // 用户可从本机任务权限菜单“重新确认插件写权限”恢复原请求；插件不能清除拒绝记录。
-// 省略 mode 保留 acceptEdits；Auto 插件主任务的 Worker 使用 Auto，不改全局权限。
+// 省略 mode 保留 acceptEdits；通过 cindy.tasks.startTeam 创建的 Worker 使用 Auto，不改全局权限。
 
 const task = await cindy.tasks.create({ requestKey: 'experiment-1-create', title: 'My evaluation' });
 const run = await cindy.tasks.send({ taskId: task.taskId, expectedRevision: task.revision,

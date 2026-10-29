@@ -8,6 +8,7 @@ import { HOST_ONLY_AGENT_PREFIX, buildMakerUserMessage, sanitizeQueuedMessageFor
 import { redactInputProjectionForSharedGuest } from '../../device-link/sharedTaskMessageOrigin.js';
 import { MCP_APP_MESSAGE_GUARD } from '../../mcp-apps/message.js';
 import { captureAgentRequest } from '../forwardedRequest.js';
+import { restoreAutoReviewUserIntent } from '../autoReviewUserIntent.js';
 
 const source = readFileSync(resolve(__dirname, '..', 'register.ts'), 'utf8');
 const compile = (code: string) => ts.transpileModule(code, {
@@ -92,15 +93,15 @@ it('restores human authorization for both live and cold internal delegated sends
   }
 });
 
-it('marks plugin dispatch and every queue fallback with the host-only receipt', () => {
+it('uses accepted plugin task text for Auto review and preserves it through queue fallbacks', () => {
   const start = source.indexOf('async function sendToSessionInternal(params: {');
   const end = source.indexOf('const startOrcaTeamForCaller', start);
   const dispatch = source.slice(start, end);
   const pluginStart = source.indexOf('      dispatch: async (pluginId, taskId, clientId, text');
   expect(pluginStart).toBeGreaterThan(0);
   const pluginDispatch = source.slice(pluginStart, source.indexOf('      inspect:', pluginStart));
-  // Independent context changes the message expression, not its Host authorship.
-  expect(pluginDispatch).toContain("autoReviewUserText: { kind: 'delegated-continuation' }, forceQueue: true");
+  // Context may decorate the model message; the reviewed task instruction is the plugin's text.
+  expect(pluginDispatch).toContain('autoReviewUserText: text, forceQueue: true');
   const queues = [...dispatch.matchAll(/await enqueueSendToSessionMessage\(\{([\s\S]*?)\}\);/g)];
   // Verified create handoffs add a fifth durable entry; all must retain provenance.
   expect(queues).toHaveLength(5);
@@ -121,9 +122,11 @@ it('keeps empty receipts distinct from missing authorship on direct persistence'
   expect(build({ autoReviewUserText: { kind: 'delegated-continuation' } }, undefined)).toEqual({ autoReviewUserText: { kind: 'delegated-continuation' }, delivery: 'turn' });
   expect(build({}, undefined)).toBeUndefined();
   expect(build({ autoReviewUserText: { kind: 'delegated-continuation' } }, { kind: 'orca' })).toMatchObject({ origin: { kind: 'orca' }, autoReviewUserText: { kind: 'delegated-continuation' } });
+  expect(build({ autoReviewUserText: 'Inspect the project', sourcePlugin: { pluginId: 'p' } }, undefined))
+    .toMatchObject({ sourcePlugin: { pluginId: 'p' }, autoReviewUserText: 'Inspect the project', delivery: 'turn' });
 });
 
-it('builds a durable queued plugin input without promoting plugin text to user intent', async () => {
+it('builds a durable queued plugin input with its accepted task text', async () => {
   const start = source.indexOf('  async function buildSessionControlInputItem(params: {');
   const end = source.indexOf('  const orcaInterAgentDispatcher:', start);
   expect(start).toBeGreaterThan(0);
@@ -133,14 +136,26 @@ it('builds a durable queued plugin input without promoting plugin text to user i
       vi.fn(async () => createOpts), (mode: string) => mode, '[UI_ACTION_TRIGGER]', HOST_ONLY_AGENT_PREFIX, bindTaskActionInput,
     );
   const base = { targetSessionId: 'lead', clientId: 'plugin-input', message: 'Plugin instructions', persistedContent: 'Plugin instructions', meta: {} };
-  const queued = JSON.parse(JSON.stringify(await build({ ...base, autoReviewUserText: { kind: 'delegated-continuation' } })));
-  expect(queued).toMatchObject({ text: base.message, persistedContent: base.persistedContent, autoReviewUserText: { kind: 'delegated-continuation' }, permissionMode: 'auto' });
+  const queued = JSON.parse(JSON.stringify(await build({ ...base, autoReviewUserText: base.message, sourcePlugin: { pluginId: 'p' } })));
+  expect(queued).toMatchObject({ text: base.message, persistedContent: base.persistedContent, autoReviewUserText: base.message, permissionMode: 'auto', sourcePlugin: { pluginId: 'p' } });
   expect(await build(base)).not.toHaveProperty('autoReviewUserText');
   expect(await build(base)).not.toHaveProperty('agentOmitsTriggerPrefix');
   // Plugin attribution travels on the queued item for the label and source note; it is not an origin.
   const fromPlugin = await build({ ...base, sourcePlugin: { pluginId: 'gh-1', name: 'Reviewer' } });
   expect(fromPlugin).toMatchObject({ sourcePlugin: { pluginId: 'gh-1', name: 'Reviewer' } });
   expect(fromPlugin).not.toHaveProperty('origin');
+});
+
+it('reviews accepted plugin task text alongside earlier user restrictions', () => {
+  const history = [
+    { clientId: 'human', role: 'user', content: 'Do not publish', createdAt: 1,
+      agentMeta: { delivery: 'turn', autoReviewUserText: 'Do not publish' } },
+    { clientId: 'plugin-task:run', role: 'user', content: 'Inspect and edit the project', createdAt: 2,
+      agentMeta: { delivery: 'turn', autoReviewUserText: 'Inspect and edit the project', sourcePlugin: { pluginId: 'p' } } },
+  ];
+  expect(restoreAutoReviewUserIntent(history)).toEqual({
+    earlierUserMessages: ['Do not publish'], currentUserMessage: 'Inspect and edit the project',
+  });
 });
 
 it('keeps host receipts hidden in the queue while the model text omits the trigger prefix', async () => {
@@ -231,16 +246,12 @@ it('aborts both internal delegated entry points when authorization history canno
   }
 });
 
-it('shares the Lead send lock across whole plan registration and final Worker admission', () => {
+it('registers the plugin plan under the Lead send lock', () => {
   const registration = source.slice(source.indexOf("case 'setTeamPlan':"), source.indexOf("case 'releaseWorker':"));
   expect(registration).toContain('return withSendToSessionLock(request.taskId, async () => {');
   expect(registration.indexOf('await resolvePluginWorkerDirectory(')).toBeGreaterThan(registration.indexOf('withSendToSessionLock('));
   expect(registration.indexOf('return service.setTeamPlan(')).toBeGreaterThan(registration.indexOf('await resolvePluginWorkerDirectory('));
   expect(registration.trimEnd().endsWith('});')).toBe(true);
-  const start=source.indexOf('const orcaWorkerCreationService = createOrcaWorkerCreationService({');
-  const block=source.slice(start, source.indexOf('getLeadSessionRow:',start));
-  expect(block).toContain('withLeadSendLock: withSendToSessionLock');
-  expect(block.lastIndexOf('createPluginTaskStore(epoch.client).get')).toBeGreaterThan(block.indexOf('pluginTaskServiceForCurrentOwner!().get'));
 });
 
 

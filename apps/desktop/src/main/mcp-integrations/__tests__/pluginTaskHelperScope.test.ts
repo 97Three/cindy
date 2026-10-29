@@ -61,119 +61,25 @@ function fixture() {
     setPending: () => { pending = true; } };
 }
 
-it.each(['lead', 'worker'])('uses the ordinary surface for owned %s and preserves explicit revocation, legacy tasks and Bots', async sessionId => {
+it.each(['lead', 'worker'])('uses the ordinary surface for %s regardless of the creating plugin receipt', async sessionId => {
   const f = fixture();
   try {
     f.setExecution({ executing: true, input: { clientId: 'plugin-task:run' } });
-    for (const payload of ['{}', '{"ownershipRevoked":false}', '{"ownershipRevoked":"true"}']) {
+    for (const payload of ['{}', '{bad', 'null', '[]', '{"ownershipRevoked":false}', '{"ownershipRevoked":true}']) {
       f.sqlite.prepare('UPDATE plugin_task_requests SET payload=?').run(payload);
       expect(await f.resolve({ sessionId })).toBe('default');
     }
-    for (const payload of ['{bad', 'null', '[]']) {
-      f.sqlite.prepare('UPDATE plugin_task_requests SET payload=?').run(payload);
-      expect(await f.resolve({ sessionId })).toBe('restricted');
-    }
+    f.sqlite.exec('DROP TABLE plugin_task_requests');
+    expect(await f.resolve({ sessionId })).toBe('default');
     f.setExecution({ executing: false, input: null });
-    f.sqlite.exec(`UPDATE plugin_task_requests SET payload='{"ownershipRevoked":true}'`);
     expect(await f.resolve({ sessionId })).toBe('default');
     expect(await f.resolve({ sessionId: 'legacy' })).toBe('default');
     expect(await f.resolve({ sessionId: 'user' })).toBe('default');
     expect(await f.resolve({ sessionId: 'bot' })).toBe('bot');
-    f.sqlite.exec(`INSERT INTO bot_session_links(session_id, bot_id) VALUES ('lead','b'); UPDATE plugin_task_requests SET payload='{}'`);
+    f.sqlite.exec(`INSERT INTO bot_session_links(session_id, bot_id) VALUES ('lead','b')`);
     expect(await f.resolve({ sessionId })).toBe(sessionId === 'lead' ? 'bot' : 'default');
   } finally { f.sqlite.close(); }
 });
-
-it.each(['lead', 'worker'].flatMap(sessionId => ['plugin', 'auto-retry', 'manual-retry', 'queued-orca', 'native', 'unknown'].map(state => ({ sessionId, state }))))(
-  'keeps revoked $sessionId restricted during $state execution on helper and memory', async ({ sessionId, state }) => {
-    const f = fixture();
-    try {
-      f.sqlite.exec(`UPDATE plugin_task_requests SET payload='{"ownershipRevoked":true}'`);
-      const insert = f.sqlite.prepare('INSERT INTO messages VALUES (?, ?, ?, ?, ?, NULL)');
-      insert.run('older-human', sessionId, 'user', 10, JSON.stringify({ delivery: 'turn', autoReviewUserText: 'Previous user task' }));
-      insert.run('plugin-task:run', sessionId, 'user', 20, '{"delivery":"turn"}');
-      if (state === 'unknown') insert.run('unknown', sessionId, 'user', 30, '{}');
-      f.setExecution({ executing: true, input: state === 'native' ? null : state === 'plugin' ? { clientId: 'plugin-task:run' }
-        : state.includes('retry') ? { clientId: 'retry', retrySourceClientId: 'plugin-task:run', autoResume: state === 'auto-retry' }
-          : { clientId: state, originKind: state === 'queued-orca' ? 'orca' : undefined } });
-      expect(await f.resolve({ sessionId })).toBe('restricted');
-      await expect(f.searchSessions('private', { callerSessionId: sessionId })).rejects.toThrow();
-      expect(f.searchSessionsFn).not.toHaveBeenCalled();
-      f.setExecution({ executing: false, input: null });
-      expect(await f.resolve({ sessionId })).toBe('default');
-      f.setExecution({ executing: true, input: { clientId: 'new-human', authoredText: 'Continue my retained task' } });
-      expect(await f.resolve({ sessionId })).toBe('default');
-    } finally { f.sqlite.close(); }
-  },
-);
-
-it.each(['lead', 'worker'])('allows memory history search for owned %s but rejects revoked plugin input', async callerSessionId => {
-  const f = fixture();
-  try {
-    await expect(f.searchSessions('private', { callerSessionId, sessionId: 'user' })).resolves.toHaveLength(1);
-    expect(f.searchSessionsFn).toHaveBeenCalledOnce();
-    f.sqlite.exec(`UPDATE plugin_task_requests SET payload='{"ownershipRevoked":true}'`);
-    f.setExecution({ executing: true, input: { clientId: 'plugin-task:run' } });
-    await expect(f.searchSessions('private', { callerSessionId })).rejects.toThrow();
-    expect(f.searchSessionsFn).toHaveBeenCalledOnce();
-    f.setExecution({ executing: true, input: { clientId: 'new-human', authoredText: 'Continue my retained task' } });
-    await expect(f.searchSessions('private', { callerSessionId })).resolves.toHaveLength(1);
-    expect(f.searchSessionsFn).toHaveBeenCalledTimes(2);
-    f.searchSessionsFn.mockImplementationOnce(async () => { f.setCurrent(); return []; });
-    await expect(f.searchSessions('private', { callerSessionId })).rejects.toThrow();
-  } finally { f.sqlite.close(); }
-});
-
-it.each(['lead', 'worker'].flatMap(sessionId => ['human', 'orca-after-human', 'unknown-after-human', 'retry-unknown', 'retry-human', 'cleared', 'rewound', 'child', 'ui-trigger'].map(history => ({ sessionId, history }))))(
-  'uses only current accepted evidence for revoked $sessionId after $history', async ({ sessionId, history }) => {
-    const f = fixture();
-    try {
-      f.sqlite.exec(`UPDATE plugin_task_requests SET payload='{"ownershipRevoked":true}'`);
-      const add = (id: string, at: number, meta: object, rewind: number | null = null) =>
-        f.sqlite.prepare('INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?)').run(id, sessionId, 'user', at, JSON.stringify(meta), rewind);
-      add('plugin-task:run', 10, { delivery: 'turn' });
-      add('human', 20, { delivery: 'turn', autoReviewUserText: history === 'ui-trigger' ? '[UI_ACTION_TRIGGER] Continue' : 'New human task',
-        ...(history === 'child' ? { parentUuid: 'child' } : {}) }, history === 'rewound' ? 25 : null);
-      if (history === 'cleared') f.sqlite.exec('UPDATE sessions SET cleared_at=25');
-      if (history === 'orca-after-human') add('orca', 30, { delivery: 'turn', origin: { kind: 'orca' } });
-      if (history === 'unknown-after-human' || history === 'retry-unknown') add('unknown', 30, { delivery: 'turn' });
-      f.setExecution({ executing: true, input: history.startsWith('retry-') ? { clientId: 'retry', retrySourceClientId: history.slice(6) } : null });
-      const allowed = ['human', 'retry-human'].includes(history) || (sessionId === 'lead' && history === 'orca-after-human');
-      expect(await f.resolve({ sessionId })).toBe(allowed ? 'default' : 'restricted');
-      if (allowed) await expect(f.searchSessions('private', { callerSessionId: sessionId })).resolves.toHaveLength(1);
-      else await expect(f.searchSessions('private', { callerSessionId: sessionId })).rejects.toThrow();
-    } finally { f.sqlite.close(); }
-  },
-);
-
-it.each(['lead', 'worker'])('rejects late history and helper results when accepted input changes for %s', async sessionId => {
-  const f = fixture();
-  try {
-    f.sqlite.exec(`UPDATE plugin_task_requests SET payload='{"ownershipRevoked":true}'`);
-    const human = { executing: true, input: { clientId: 'human', authoredText: 'My new input' } };
-    const plugin = { executing: true, input: { clientId: 'plugin-task:run' } };
-    f.setExecution(human);
-    f.searchSessionsFn.mockImplementationOnce(async () => { f.setExecution(plugin); return [{ sessionId: 'user', snippet: 'private' }]; });
-    await expect(f.searchSessions('private', { callerSessionId: sessionId })).rejects.toThrow();
-    f.setExecution(human);
-    const pending = f.resolve({ sessionId });
-    queueMicrotask(() => f.setExecution(plugin));
-    expect(await pending).toBe('restricted');
-  } finally { f.sqlite.close(); }
-});
-
-it.each(['lead', 'worker'].flatMap(sessionId => [false, true].flatMap(autoResume => ['human', 'plugin-task:run'].map(retrySourceClientId => ({ sessionId, autoResume, retrySourceClientId })))))(
-  'preserves superseded $retrySourceClientId authority for $sessionId retry auto=$autoResume', async ({ sessionId, autoResume, retrySourceClientId }) => {
-    const f = fixture();
-    try {
-      f.sqlite.exec(`UPDATE plugin_task_requests SET payload='{"ownershipRevoked":true}'`);
-      f.sqlite.prepare('INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?)').run(retrySourceClientId, sessionId, 'user', 10,
-        JSON.stringify({ delivery: 'turn', autoReviewUserText: 'Original task' }), 20);
-      f.setExecution({ executing: true, input: { clientId: 'retry', retrySourceClientId, autoResume, authoredText: 'Original task' } });
-      expect(await f.resolve({ sessionId })).toBe(retrySourceClientId === 'human' ? 'default' : 'restricted');
-    } finally { f.sqlite.close(); }
-  },
-);
 
 it.each(['missing caller', 'missing DB', 'pending', 'switched after read'] as const)('fails closed: %s', async state => {
   const f = fixture();
@@ -191,25 +97,7 @@ it.each(['missing caller', 'missing DB', 'pending', 'switched after read'] as co
   } finally { f.sqlite.close(); }
 });
 
-it.each(['lead', 'worker'].flatMap(sessionId => ['human', 'idle'].map(next => ({ sessionId, next }))))(
-  'does not transfer the old $sessionId tool call to $next during its first query', async ({ sessionId, next }) => {
-    const f = fixture();
-    try {
-      f.sqlite.exec(`UPDATE plugin_task_requests SET payload='{"ownershipRevoked":true}'`);
-      f.setExecution({ executing: true, input: { clientId: 'plugin-task:run' } });
-      const query = f.db.queryOne.bind(f.db);
-      f.db.queryOne = async <T = unknown>(sql: string, params?: unknown[]): Promise<T | undefined> => {
-        const row = await query<T>(sql, params);
-        f.setExecution(next === 'human' ? { executing: true, input: { clientId: 'human', authoredText: 'New user task' } } : { executing: false, input: null });
-        return row;
-      };
-      expect(await f.resolve({ sessionId })).toBe('restricted');
-      expect(await f.resolve({ sessionId })).toBe('default');
-    } finally { f.sqlite.close(); }
-  },
-);
-
-it.each(['codex', 'claude-code', 'pi'] as const)('allows installed plugin tasks to use helper while rechecking revocation for %s', async agentKind => {
+it.each(['codex', 'claude-code', 'pi'] as const)('keeps helper tools available after plugin revocation for %s', async agentKind => {
   const f = fixture();
   const history = { resolveSessionScope: vi.fn(async () => ({ ok: true as const, sessionIds: null })),
     listWorkdirs: vi.fn(), listSessions: vi.fn(async () => ({ ok: true as const, page: { items: [], nextCursor: null, hasMore: false } })),
@@ -229,27 +117,17 @@ it.each(['codex', 'claude-code', 'pi'] as const)('allows installed plugin tasks 
     expect(history.listSessions).toHaveBeenCalledOnce();
     f.sqlite.exec(`UPDATE plugin_task_requests SET payload='{"ownershipRevoked":true}'`);
     f.setExecution({ executing: true, input: { clientId: 'plugin-task:run' } });
-    expect(payload(await client.callTool({ name: 'list_tools', arguments: {} })).categories).toEqual([]);
-    for (const name of ['list_workdirs', 'list_sessions', 'get_chat_history', 'search_chat_history', 'list_session_queue', 'send_to_session', 'send_to_agent']) {
-      expect(payload(await client.callTool({ name: 'call_tool', arguments: { name, args: { session_id: 'user' } } })))
-        .toMatchObject({ ok: false, errorCode: 'CAPABILITY_NOT_AVAILABLE' });
-    }
-    expect(history.listSessions).toHaveBeenCalledOnce();
-    for (const fn of [history.listWorkdirs, history.getMessages, history.searchChatHistory, listSessionQueue, sendToSession, messageAgent])
-      expect(fn).not.toHaveBeenCalled();
-    f.setExecution({ executing: true, input: { clientId: 'new-human', authoredText: 'My new input' } });
     expect(payload(await client.callTool({ name: 'list_tools', arguments: {} })).categories.length).toBeGreaterThan(0);
-    f.sqlite.exec(`UPDATE plugin_task_requests SET payload='{}'`);
-    expect(payload(await client.callTool({ name: 'list_tools', arguments: {} })).categories.length).toBeGreaterThan(0);
+    expect(payload(await client.callTool({ name: 'call_tool', arguments: { name: 'list_sessions', args: {} } }))).toMatchObject({ ok: true });
+    expect(history.listSessions).toHaveBeenCalledTimes(2);
     f.sqlite.exec('DROP TABLE plugin_task_requests');
-    expect(payload(await client.callTool({ name: 'call_tool', arguments: { name: 'get_chat_history', args: { session_id: 'user' } } })))
-      .toMatchObject({ ok: false, errorCode: 'CAPABILITY_NOT_AVAILABLE' });
+    expect(payload(await client.callTool({ name: 'call_tool', arguments: { name: 'list_sessions', args: {} } }))).toMatchObject({ ok: true });
   } finally { await client.close(); await server.close(); f.sqlite.close(); }
 });
 
 it.each(['lead', 'worker'].flatMap(sessionId => (['codex', 'claude-code', 'pi'] as const).flatMap(agentKind =>
   (['cindy_contacts', 'cindy_scheduler', 'cindy_slack', 'cindy_memory'] as const).map(name => ({ sessionId, agentKind, name })))))(
-  'allows owned $sessionId through $agentKind $name while protecting revoked input', async ({ sessionId, agentKind, name }) => {
+  'allows $sessionId through $agentKind $name regardless of plugin creation source', async ({ sessionId, agentKind, name }) => {
     const f = fixture();
     const privateData = [{ id: 'private', displayName: 'Synthetic private contact', prompt: 'Synthetic private schedule' }];
     const read = vi.fn(async () => privateData);
@@ -287,8 +165,8 @@ it.each(['lead', 'worker'].flatMap(sessionId => (['codex', 'claude-code', 'pi'] 
       expect(JSON.stringify(await call())).toContain('Synthetic private');
       f.sqlite.exec(`UPDATE plugin_task_requests SET payload='{"ownershipRevoked":true}'`);
       f.setExecution({ executing: true, input: { clientId: 'plugin-task:run' } });
-      denied(await client.callTool({ name: name === 'cindy_slack' ? 'slack_list_tools' : 'list_tools', arguments: {} }));
-      denied(await call());
+      expect((await client.callTool({ name: name === 'cindy_slack' ? 'slack_list_tools' : 'list_tools', arguments: {} })).isError).not.toBe(true);
+      expect(JSON.stringify(await call())).toContain('Synthetic private');
       f.setExecution({ executing: true, input: { clientId: 'new-human', authoredText: 'My own request' } });
       expect(JSON.stringify(await call())).toContain('Synthetic private');
       read.mockImplementationOnce(async () => { f.setCurrent(); return privateData; });
@@ -296,11 +174,10 @@ it.each(['lead', 'worker'].flatMap(sessionId => (['codex', 'claude-code', 'pi'] 
       expect(existsSync(join(workingDir, 'private.json'))).toBe(false);
       f.setCurrent(f.db);
       read.mockImplementationOnce(async () => { f.setExecution({ executing: true, input: { clientId: 'plugin-task:run' } }); return privateData; });
-      denied(await call(true));
-      expect(existsSync(join(workingDir, 'private.json'))).toBe(false);
+      expect(JSON.stringify(await call())).toContain('Synthetic private');
       f.setExecution({ executing: true, input: { clientId: 'new-human', authoredText: 'My own request' } });
       if (name === 'cindy_slack') {
-        // Revocation after fetching data must also block the existing spill path.
+        // A changed account during the spill must block the result.
         const mkdir = fs.mkdir.bind(fs);
         const spy = vi.spyOn(fs, 'mkdir').mockImplementation(async (...args) => {
           const result = await mkdir(...args);
@@ -317,7 +194,7 @@ it.each(['lead', 'worker'].flatMap(sessionId => (['codex', 'claude-code', 'pi'] 
         liveId = 'user';
         expect(JSON.stringify(await call())).toContain('Synthetic private');
         liveId = sessionId;
-        denied(await call());
+        expect(JSON.stringify(await call())).toContain('Synthetic private');
         f.setExecution({ executing: true, input: { clientId: 'new-human', authoredText: 'My own request' } });
       }
       f.setPending();

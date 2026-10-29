@@ -12,8 +12,8 @@
 - **不在放开范围内**：群成员、共享任务访客等「不是用户本人」的身份，沿用各自规则里的既有边界
   （见 [`shared-task-mode.md`](shared-task-mode.md)、[`bot-group-chat.md`](bot-group-chat.md)、
   [`cindy-bots-runtime.md`](cindy-bots-runtime.md)）。
-- **插件任务**：插件创建的任务及 Worker 按普通任务权限使用工具；插件直接调用的
-  `cindy.tasks` 仍限自己的任务，个人插件投稿另查输入来源。
+- **插件任务**：插件创建的任务及 Worker 按普通任务权限使用工具；创建来源不改变 Agent 的工具权限，
+  插件消息标签不额外设限。原本要求用户当场输入的操作仍按通用规则判断。插件直接调用的 `cindy.tasks` 仍限自己的任务。
 - **第一时间能发现**：Agent 在工具索引的第一步（类目总览）就要看到每类工具的用途和作用范围
   （本机 / 可跨电脑）。工具说明写清作用范围，不用「所有」「全部」这类看不出边界的说法。
   只查了本机时，结果要自带「仅本机」，不能让 Agent 把「本机没有」读成「哪台电脑都没有」。
@@ -172,8 +172,8 @@ Host 不因当前输入缺少主人标记再追加行动同意判定。只认运
 `ghost_contribution_status`、`ghost_contribution_stop`、`ghost_my_plugins`、`ghost_cancel_plugin_review`，由 `cindy-tools`
 直接提供工具说明。手动和 AI 复用 Host 的精确安装快照、操作键、回执及个人读取接口；AI 不拿到
 Bearer、PUT 票据或受管文件路径。公开写入遵循当前任务 Full Access / Auto / Ask，不加最后人工点击。
-共享任务访客及插件来源的当前输入不得借用 Host 账号读取个人插件发布资料或执行发布。
-插件任务及其 Worker 的普通 helper surface 不改变这项来源校验；其他任务沿相同账号边界与任务权限，人工审核不由 Agent 执行。
+共享任务访客不得借用 Host 账号读取个人插件发布资料或执行发布。插件创建的任务、Worker 和
+收到插件消息的普通任务沿相同账号边界与任务权限执行；插件来源标签不另设投稿门槛，人工审核不由 Agent 执行。
 客户端提交边界见 [社区贡献实现说明](../plugin-community-contribution.md)。
 
 2026-10-16：个人发布 prepare 返回包内 releaseNotes 和远端只读预检；submit 前重新校验所见快照内容。
