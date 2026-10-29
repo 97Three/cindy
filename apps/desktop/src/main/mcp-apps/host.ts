@@ -486,9 +486,9 @@ export class McpAppsHost {
         const tools = await currentResult(connection.tools(extra.signal), extra.signal);
         const target = tools.find((item) => item.name === params.name);
         if (!target || !toolVisibleTo(target, 'app')) throw new Error('MCP_APP_TOOL_NOT_VISIBLE');
-        // A plugin App action is the user's click intent. The one-use document ticket
-        // authorizes this dispatch; main.js capabilities retain their individual gates.
-        if (!config.plugin) await this.deps.authorizeTool(sessionId, target, params.arguments ?? {}, extra.signal, { clientId, serverId: record.serverId, title: record.tool.title ?? record.tool.name });
+        // Page calls use the tool's normal policy regardless of how the script started.
+        // The one-use ticket below binds identity; it does not grant approval.
+        await this.deps.authorizeTool(sessionId, target, params.arguments ?? {}, extra.signal, { clientId, serverId: record.serverId, title: record.tool.title ?? record.tool.name });
         const client = await currentClient(extra.signal);
         const invoke = (ticket?: string) => currentResult(client.callTool({ ...params,
           ...(ticket ? { _meta: { ...params._meta, [PLUGIN_PAGE_TICKET]: ticket } } : {}),

@@ -24,7 +24,7 @@ export interface AppServerConfig {
   id: string;
   url: string;
   transport: 'http' | 'sse' | 'in-process';
-  plugin?: { instance: string; revision: string; packageSha256: string; title: string; trust: string; domains: string[]; assertCurrent(sessionId?: string): void; createTransport(): Transport };
+  plugin?: { ghostId?: string; namespace?: string | null; instance: string; revision: string; packageSha256: string; title: string; trust: string; domains: string[]; assertCurrent(sessionId?: string): void; createTransport(): Transport };
   headers?: Record<string, string>;
 }
 

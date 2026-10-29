@@ -445,3 +445,44 @@ it.each([
   await expect(state.handle!({ sender: { id: 1 } }, 'task', { deviceId: 'execution-computer', op: 'open', clientId: 'card' }))
     .rejects.toThrow(`[PRECONDITION_FAILED] ${expected}`);
 });
+
+// Unit: real registerMcpAppsIpc authorizer + production ghost_call classifier.
+// Plugin pages formerly skipped this path; two ordinary page calls must share only
+// a page grant, while Full Access, media policy and Auto produce distinct outcomes.
+describe('plugin page ghost_call approval policy', () => {
+  const source = { clientId: 'card', serverId: 'plugin-example', title: 'Page' };
+  const tool = { name: 'save', inputSchema: { type: 'object' as const } };
+  function bind(ghostId = 'notes', namespace?: string | null) {
+    vi.mocked(readAppServer).mockReturnValue({ id: source.serverId, url: '', transport: 'in-process', plugin: {
+      ghostId, ...(namespace !== undefined ? { namespace } : {}), instance: '_root__' + ghostId, revision: 'approved', packageSha256: 'hash', title: 'Page',
+      trust: 'unverified', domains: [], assertCurrent() {}, createTransport() { throw new Error('unused'); },
+    } });
+  }
+  const call = (target = tool) => state.deps!.authorizeTool('task', target, { value: 3 }, new AbortController().signal, source);
+  it('asks through the page request and remembers only page calls in this task', async () => {
+    bind();
+    request.mockResolvedValue({ kind: 'permission', behavior: 'allow', permissionUpdates: [{ destination: 'session' }] } as never);
+    await call(); await call();
+    expect(request).toHaveBeenCalledOnce();
+    expect(request).toHaveBeenCalledWith('task', expect.objectContaining({ suggestions: expect.any(Array),
+      metadata: { mcpApp: { ...source, scope: 'session' } } }), expect.any(AbortSignal));
+  });
+  it.each(['bypassPermissions', 'media', 'media-auto'] as const)('does not ask for %s', async mode => {
+    bind(mode === 'bypassPermissions' ? 'notes' : 'cindy-art');
+    state.session.permissionMode = mode === 'media-auto' ? 'auto' : mode === 'media' ? 'default' : mode;
+    const review = vi.fn(async () => ({ verdict: 'ask' as const }));
+    registerMcpAppsIpc(async () => {}, request, review);
+    await call(mode === 'bypassPermissions' ? tool : { ...tool, name: 'gen_image' });
+    expect(review).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
+  });
+  it.each([undefined, null, 'example'])('reviews the original ghost_call identity and page origin in Auto: %s', async namespace => {
+    bind('notes', namespace); state.session.permissionMode = 'auto';
+    const review = vi.fn(async () => ({ verdict: 'allow' as const }));
+    registerMcpAppsIpc(async () => {}, request, review);
+    await call();
+    expect(review).toHaveBeenCalledWith('task', 'cindy', 'ghost_call',
+      { ghost_id: 'notes', ...(namespace !== undefined ? { namespace } : {}), tool: 'save', args: { value: 3 } }, expect.stringContaining('由插件交互页面发起'));
+    expect(request).not.toHaveBeenCalled();
+  });
+});

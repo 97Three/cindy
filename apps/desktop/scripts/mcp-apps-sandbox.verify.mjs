@@ -169,7 +169,7 @@ try {
       const args=independent?{threshold:75}:{title:'AI draft',body:'Review before creating'};
       const result=pluginMode?await executePlugin(tool.name,args):await client.callTool({name:tool.name,arguments:args});
       let record={version:1,serverId:'example',serverRevision:appServerRevision(config),resourceUri:tool._meta.ui.resourceUri,tool,arguments:args,result};
-      let turns=0, receivedImages=[];
+      let turns=0, receivedImages=[], pageApprovals=0, approvalGate;
       host=new McpAppsHost({downloadFile:pluginMode?input=>saveAppDownload({...input,showSaveDialog:async name=>process.env.CINDY_MCP_APP_TEST_DIR+'/saved-'+name}):undefined,pluginFiles:pluginMode?{
         describe:async(_instance,uri)=>{if(authorVault&&uri.startsWith('library:')){const file=await authorVault.stat({path:uri.slice('library:'.length)});return file.ok&&file.kind==='file'?{mimeType:'text/plain',size:file.bytes}:null;}return uri==='library:fixture.txt'?{mimeType:'text/plain',size:14}:uri==='cindy-media://blobs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png'?{mimeType:'image/png',size:8}:null;},
         read:async(_instance,uri,request)=>{
@@ -177,7 +177,7 @@ try {
           const file=await openFile(process.env.CINDY_MCP_APP_TEST_DIR+'/fixture.txt','r');
           return buildRangedFileResponse({file,totalSize:14,mimeType:'text/plain',rangeHeader:request.headers.get('range'),cacheControl:'no-store',signal:request.signal});
         }
-      }:undefined,owner:()=>globalThis.mcpTestOwner,config:()=>config,readCard:async()=>record,writeCard:async(_s,_c,value)=>{record=value;},authorizeTool:async()=>{},sendMessage:async(_s,_r,_c,_guard,files)=>{turns++;receivedImages=files??[];},disposeDocument:removeMcpAppDocument});
+      }:undefined,owner:()=>globalThis.mcpTestOwner,config:()=>config,readCard:async()=>record,writeCard:async(_s,_c,value)=>{record=value;},authorizeTool:async()=>{pageApprovals++;if(approvalGate)await approvalGate;},sendMessage:async(_s,_r,_c,_guard,files)=>{turns++;receivedImages=files??[];},disposeDocument:removeMcpAppDocument});
       setMcpAppFileReader((id,token,request)=>host.readPluginFile(id,token,request));
       if(process.env.CINDY_MCP_APP_TEST_METRICS==='1'){
         setMcpAppsHost(host);registerAppServer(config.id,()=>config);
@@ -365,6 +365,20 @@ try {
         await wait(async()=> (await host.modelContext('task')).text.includes('88'));assert.equal(turns,0);
         stage='App tool call';await inner().executeJavaScript("document.querySelector('#refresh').click()");
         await wait(()=>inner().executeJavaScript("window.rawApp.result.structuredContent.metrics.threshold===88&&window.rawApp.result.structuredContent.metrics.refreshes===1"));assert.equal(turns,0);
+        if(pluginMode){
+          for(const trigger of ['click','script']){
+            let approve;approvalGate=new Promise(resolve=>{approve=resolve;});
+            const before=pageApprovals;
+            if(trigger==='click')await inner().executeJavaScript("document.querySelector('#refresh').click()");
+            else await inner().executeJavaScript("window.scriptApprovalResult=null;void window.rawApp.request('tools/call',{name:'refresh_metrics',arguments:{threshold:88}}).then(result=>{window.scriptApprovalResult=result;})");
+            await wait(()=>pageApprovals===before+1);
+            assert.equal(await inner().executeJavaScript('window.rawApp.result.structuredContent.metrics.refreshes'),trigger==='click'?1:2);
+            if(trigger==='script')assert.equal(await inner().executeJavaScript('window.scriptApprovalResult'),null);
+            approvalGate=undefined;approve();
+            await wait(()=>inner().executeJavaScript(trigger==='click'?'window.rawApp.result.structuredContent.metrics.refreshes===2':'window.scriptApprovalResult?.structuredContent.metrics.refreshes===3'));
+          }
+          console.log('PLUGIN_PAGE_APPROVAL=passed (click and script both await Host approval before execution)');
+        }
         stage='ui/message';await inner().executeJavaScript("document.querySelector('#ask').click()");await wait(()=>turns===1);
         stage='display mode';await inner().executeJavaScript("document.querySelector('#mode').click()");await wait(()=>window.webContents.executeJavaScript("window.testState.mode==='fullscreen'"));
         assert.equal(await inner().executeJavaScript("window.rawApp.request('ui/request-display-mode',{mode:'pip'}).then(result=>result.mode)"),'fullscreen');

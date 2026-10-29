@@ -93,11 +93,14 @@ const requests = [
   ['prompts/list', {}, 'listPrompts', { prompts: [{ name: marker }] }],
 ] as const;
 
-async function fixture(caller = 'renderer:1') {
+async function fixture(caller = 'renderer:1', plugin = false) {
   let owner = {};
   let enabled = true;
   let visible = true;
-  const config = { id: 'example', url: 'https://mcp.example.invalid', transport: 'http' as const };
+  const config: AppServerConfig = { id: 'example', url: 'https://mcp.example.invalid', transport: 'http',
+    ...(plugin ? { plugin: { instance: 'fixture', revision: 'one', packageSha256: 'hash', title: 'Fixture',
+      trust: 'unverified', domains: [], assertCurrent() {}, createTransport() { throw new Error('unused'); } } } : {}),
+  };
   const card: McpAppRecord = {
     version: 1,
     serverId: config.id,
@@ -149,7 +152,7 @@ async function fixture(caller = 'renderer:1') {
   });
   // These cases exercise request completion, not the separate bounded teardown handshake.
   vi.spyOn(AppBridge.prototype, 'teardownResource').mockResolvedValue({});
-  const authorizeTool = vi.fn(async () => {});
+  const authorizeTool = vi.fn<import('../host.js').McpAppsHostDeps['authorizeTool']>(async () => {});
   const readCard = vi.fn(async () => {
     if (!visible) throw new Error('MCP_APP_CARD_UNAVAILABLE');
     return card;
@@ -538,7 +541,7 @@ describe('MCP App upstream result authorization', () => {
 
 // Real in-process server behind the real View handler: approval must finish before
 // a one-use page credential reaches main.js. Existing mocks cannot observe this boundary.
-it('treats a plugin App action as click intent while binding its card and task in Main', async () => {
+it('approves a plugin page call before binding its card and task in Main', async () => {
   const { createPluginAppTransport, pluginAppTool } = await import('../pluginServer.js');
   const calls: string[] = [];
   const tools = [{ name: 'open', description: 'Open' }, { name: 'save', description: 'Save' }];
@@ -552,7 +555,7 @@ it('treats a plugin App action as click intent while binding its card and task i
       call: async grant => { calls.push(`${grant.sessionId}/${grant.clientId}/${grant.tool}`); return { content: [{ type: 'text', text: 'saved' }] }; } }),
   } };
   const owner = {}, connection = new AppConnection(config), target = pluginAppTool('plugin', tools[0], ui);
-  const authorize = vi.fn(async () => { throw new Error('UNEXPECTED_APPROVAL'); });
+  const authorize = vi.fn(async () => {});
   const host = new McpAppsHost({ owner: () => owner, config: () => config, connection: () => connection,
     readCard: async () => ({ version: 1, serverId: config.id, serverRevision: appServerRevision(config), resourceUri: 'ui://form', tool: target, arguments: {} }),
     writeCard: async () => {}, sendMessage: async () => {}, authorizeTool: authorize,
@@ -574,7 +577,7 @@ it('treats a plugin App action as click intent while binding its card and task i
   await dispatch({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
   await dispatch({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'save' } });
   expect(await response(2)).toMatchObject({ result: { content: [{ text: 'saved' }] } });
-  expect(authorize).not.toHaveBeenCalled();
+  expect(authorize).toHaveBeenCalledOnce();
   expect(calls).toEqual(['task-a/card-a/save']);
 });
 
@@ -654,7 +657,7 @@ it.each(['complete', 'unmount'] as const)('keeps plugin page calls alive past 60
   const owner = {}, connection = new AppConnection(config);
   const host = new McpAppsHost({ owner: () => owner, config: () => config, connection: () => connection,
     readCard: async () => ({ version: 1, serverId: config.id, serverRevision: appServerRevision(config), resourceUri: 'ui://form', tool: pluginAppTool('pick-lifetime', tools[0], ui), arguments: {} }),
-    writeCard: async () => {}, sendMessage: async () => {}, authorizeTool: async () => { throw new Error('Unexpected approval'); },
+    writeCard: async () => {}, sendMessage: async () => {}, authorizeTool: async () => {},
   }); hosts.push(host);
   vi.spyOn(AppBridge.prototype, 'teardownResource').mockResolvedValue({});
   const doc = await host.open('renderer:1', 'task', 'card', {});
@@ -681,4 +684,21 @@ it.each(['complete', 'unmount'] as const)('keeps plugin page calls alive past 60
     const messages = (await host.poll('renderer:1', 'task', doc.viewId, 0)).map(event => event.message);
     expect(messages).toContainEqual(expect.objectContaining({ id: 1, result: { content: [{ type: 'text', text: 'selected' }] } }));
   }
+});
+
+// Unit: plugin page calls formerly bypassed all tool approval. Exercise the real
+// Host/AppBridge from local and device callers, with click-like and scripted input.
+// A denial must stop upstream dispatch even when the tool claims readOnlyHint.
+it.each(['renderer:1', 'device:phone'])('requires plugin tool approval before issuing a page ticket: %s', async caller => {
+  const f = await fixture(caller, true);
+  f.methods.tools.mockResolvedValue([{ ...tool, annotations: { readOnlyHint: true } }] as never);
+  f.methods.callTool.mockResolvedValue({ content: [] });
+  f.authorizeTool.mockRejectedValue(new Error('MCP_APP_TOOL_DENIED'));
+  for (const id of [70, 71]) {
+    await f.dispatch({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: tool.name,
+      arguments: {}, _meta: { trigger: id === 70 ? 'click' : 'script' } } });
+    await vi.waitFor(() => expect(f.outgoing).toContainEqual(expect.objectContaining({ id, error: expect.anything() })));
+  }
+  expect(f.authorizeTool).toHaveBeenCalledTimes(2);
+  expect(f.methods.callTool).not.toHaveBeenCalled();
 });

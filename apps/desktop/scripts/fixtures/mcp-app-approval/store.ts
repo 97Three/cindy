@@ -7,7 +7,8 @@ export function showApproval() {
 export const makerChatStore = {
   subscribe: (_id: string, listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener); },
   getSnapshot: () => state,
-  respondToPermission: (_id: string, _decision: unknown, requestId: string) => {
+  respondToPermission: (_id: string, decision: unknown, requestId: string) => {
+    (window as any).pageApprovalAnswer = { requestId, decision };
     state = { pendingAppPermissions: state.pendingAppPermissions.filter((item: any) => item.requestId !== requestId) };
     listeners.forEach(listener => listener());
   },

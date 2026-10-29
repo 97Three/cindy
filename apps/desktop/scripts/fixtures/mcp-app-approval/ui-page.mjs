@@ -16,7 +16,12 @@ export default {
     await panel.locator('summary').first().click();
     assert.deepEqual(await page.locator('[data-conversation]').boundingBox(), before, 'expanded parameters must not shrink conversation');
     await ui.capture('approval');
-    await panel.getByRole('button', { name: await ui.t('agentIsland.native.allowOnce'), exact: true }).first().click();
+    // The plugin-page policy now offers the same session-only page grant. Check
+    // the actual button response, not just that the panel disappears.
+    await panel.getByRole('button', { name: await ui.t('agentIsland.native.alwaysAllowForSession'), exact: true }).first().click();
+    assert.deepEqual(await page.evaluate(() => window.pageApprovalAnswer), {
+      requestId: 'first', decision: { behavior: 'allow', updatedPermissions: [{ destination: 'session' }] },
+    });
     assert.equal(await panel.locator('summary').count(), 1);
     await panel.getByRole('button', { name: await ui.t('agentIsland.native.deny'), exact: true }).click();
     await panel.waitFor({ state: 'hidden' });

@@ -4,7 +4,7 @@ import { realpathSync } from 'node:fs';
 import { activeOwnerScopeKey } from '../appSessionState.js';
 import { pluginUiDomains } from '@cindy/plugin-protocol';
 import { hasGhostUiPermission, type InstalledGhost } from '../../shared/ghost.js';
-import { installedGhostStoragePart } from '../../shared/pluginIdentity.js';
+import { deliveryNamespaceFields, installedGhostStoragePart } from '../../shared/pluginIdentity.js';
 import { resolveGhostContentPathSync } from '../cindy-brain/ghostContentTree.js';
 import { readBoundedFileNoFollowSync } from '../utils/readBoundedFile.js';
 import { createPluginAppTransport } from '../mcp-apps/pluginServer.js';
@@ -62,6 +62,8 @@ export function refreshPluginApps(
       url: '',
       transport: 'in-process',
       plugin: {
+        ghostId: ghost.manifest.id,
+        ...(ghost.namespaceState === 'pending' ? {} : deliveryNamespaceFields(ghost)),
         instance,
         revision,
         packageSha256,
