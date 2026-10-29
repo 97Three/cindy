@@ -2803,6 +2803,7 @@ async function fetchDirectLoopbackMcp(url: string, headers: Headers, body: strin
 class McpHttpClient {
   private nextId = 1;
   private sessionId: string | null = null;
+  needsReconnect = false;
   private readonly requestUrl: string;
   private readonly directLoopback: boolean;
   private readonly requestTimeoutMs: number;
@@ -2905,7 +2906,10 @@ class McpHttpClient {
       return await consume(res);
     } catch (error) {
       if (signal?.aborted) throw new McpBridgeError('request cancelled');
-      if (controller.signal.aborted) throw new McpBridgeError('request timed out');
+      if (controller.signal.aborted) {
+        this.needsReconnect = true;
+        throw new McpBridgeError('request timed out');
+      }
       if (error instanceof McpBridgeError) throw error;
       if (error instanceof SyntaxError) throw new McpBridgeError('invalid JSON response');
       // Only known non-secret error codes may cross the bridge. Never include
@@ -2915,6 +2919,9 @@ class McpHttpClient {
         'UND_ERR_BODY_TIMEOUT', 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT']);
       const err = error as { code?: unknown; cause?: { code?: unknown } } | null;
       const code = [err?.code, err?.cause?.code].find((value) => typeof value === 'string' && codes.has(value));
+      // A broken transport invalidates this connection, but never replays the
+      // request: a tool may have completed before its response was lost.
+      this.needsReconnect = true;
       throw new McpBridgeError('request failed' + (code ? ' (' + code + ')' : ''));
     } finally {
       clearTimeout(timeout);
@@ -2925,7 +2932,10 @@ class McpHttpClient {
   /** 按 SSE event 增量取当前 JSON-RPC response；server 保持流打开也不阻塞。 */
   private async readSseResponse(res: Response, id: number): Promise<any> {
     const reader = res.body?.getReader();
-    if (!reader) throw new McpBridgeError('invalid SSE response');
+    if (!reader) {
+      this.needsReconnect = true;
+      throw new McpBridgeError('invalid SSE response');
+    }
     const decoder = new TextDecoder();
     let buffered = '';
     const parseEvent = (eventText: string): any | null => {
@@ -2962,11 +2972,13 @@ class McpHttpClient {
           if (msg) return msg;
         }
         if (buffered.length > 1_048_576) {
+          this.needsReconnect = true;
           throw new McpBridgeError('invalid SSE response');
         }
         if (done) {
           const msg = parseEvent(buffered);
           if (msg) return msg;
+          this.needsReconnect = true;
           throw new McpBridgeError('invalid SSE response');
         }
       }
@@ -2980,6 +2992,7 @@ class McpHttpClient {
   private async readResponse(res: Response, id: number): Promise<any> {
     const contentType = res.headers.get('content-type') ?? '';
     if (!res.ok) {
+      if (res.status === 404 && this.sessionId) this.needsReconnect = true;
       // 远端错误体可能回显 Authorization / API key，绝不拼进 Pi stderr。
       void res.body?.cancel().catch(() => {});
       throw new McpBridgeError('HTTP ' + res.status);
@@ -3146,10 +3159,14 @@ class CindyMcpGateway {
   private readonly failedResults = new WeakMap<object, { content: object; details: unknown }>();
   private readonly tools = new Map<string, ConnectedMcpTool>();
   private readonly unavailableServers = new Map<string, string>();
+  private readonly clients = new Map<string, McpHttpClient>();
+  private readonly reconnectors = new Map<string, () => Promise<{ client: McpHttpClient; tools: any[] }>>();
+  private readonly reconnecting = new Map<string, Promise<void>>();
   /** 已披露工具：键为 server + NUL + tool，值为该工具当前 schema 的指纹。 */
   private readonly disclosedSchemas = new Map<string, string>();
   /** 本次调用跳过了权限询问（hook 未披露即放行）：按 toolCallId 记账，execute 见此标记一律回路标。 */
   private readonly permissionSkippedCalls = new Set<string>();
+  private readonly approvedDefinitions = new Map<string, string>();
   private disclosureNotePending = false;
   private botMemoryFacadeEnabled = false;
   private botHelperFacadeEnabled = false;
@@ -3239,6 +3256,11 @@ class CindyMcpGateway {
   }
 
   add(serverName: string, client: McpHttpClient, tools: any[]): void {
+    for (const [key, tool] of this.tools) {
+      if (tool.serverName === serverName) this.tools.delete(key);
+    }
+    this.clients.set(serverName, client);
+    this.unavailableServers.delete(serverName);
     for (const rawTool of tools) {
       if (!rawTool || typeof rawTool !== 'object' || typeof rawTool.name !== 'string' || !rawTool.name) {
         continue;
@@ -3264,6 +3286,38 @@ class CindyMcpGateway {
 
   markUnavailable(serverName: string, reason: string): void {
     this.unavailableServers.set(serverName, reason);
+  }
+
+  registerReconnect(serverName: string, connect: () => Promise<{ client: McpHttpClient; tools: any[] }>): void {
+    this.reconnectors.set(serverName, connect);
+  }
+
+  private needsRecovery(serverName: string): boolean {
+    return this.reconnectors.has(serverName)
+      && (this.unavailableServers.has(serverName) || this.clients.get(serverName)?.needsReconnect === true);
+  }
+
+  private async recover(serverName: string, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw new McpBridgeError('request cancelled');
+    if (!this.needsRecovery(serverName)) return;
+    let pending = this.reconnecting.get(serverName);
+    if (!pending) {
+      pending = this.reconnectors.get(serverName)!().then(({ client, tools }) => {
+        this.add(serverName, client, tools);
+      }).catch((error) => {
+        this.markUnavailable(serverName, safeMcpFailure(error));
+        throw new McpBridgeError('reconnect failed: ' + safeMcpFailure(error));
+      }).finally(() => { this.reconnecting.delete(serverName); });
+      this.reconnecting.set(serverName, pending);
+    }
+    // One handshake per server. Cancelling one waiter must not cancel another
+    // caller's recovery; connectServer retains its bounded startup deadline.
+    await new Promise<void>((resolve, reject) => {
+      const cancel = () => reject(new McpBridgeError('request cancelled'));
+      signal?.addEventListener('abort', cancel, { once: true });
+      pending!.then(resolve, reject).finally(() => signal?.removeEventListener('abort', cancel));
+      if (signal?.aborted) cancel();
+    });
   }
 
   resolveCall(input: unknown): ResolvedMcpGatewayCall | null {
@@ -3422,6 +3476,14 @@ class CindyMcpGateway {
   isSchemaDisclosed(call: ResolvedMcpGatewayCall): boolean {
     const key = mcpGatewayKey(call.tool.serverName, call.tool.name);
     return this.disclosedSchemas.get(key) === this.schemaFingerprint(call.tool);
+  }
+
+  approvalDefinition(call: ResolvedMcpGatewayCall): string {
+    return mcpGatewayKey(call.tool.serverName, call.tool.name) + ':' + this.schemaFingerprint(call.tool);
+  }
+
+  rememberApproval(toolCallId: unknown, definition: string): void {
+    if (typeof toolCallId === 'string' && toolCallId) this.approvedDefinitions.set(toolCallId, definition);
   }
 
   /**
@@ -3599,13 +3661,23 @@ class CindyMcpGateway {
       JSON.stringify(this.unavailable()).slice(0, 4_000);
   }
 
-  private async executeResolvedCall(resolved: ResolvedMcpGatewayCall, signal?: AbortSignal): Promise<{
+  private async executeResolvedCall(resolved: ResolvedMcpGatewayCall, signal?: AbortSignal, approvedDefinition?: string): Promise<{
     content: Array<Record<string, unknown>>;
     details: unknown;
     isError?: boolean;
   }> {
     let result: any;
     try {
+      if (this.needsRecovery(resolved.tool.serverName)) await this.recover(resolved.tool.serverName, signal);
+      const current = this.tools.get(mcpGatewayKey(resolved.tool.serverName, resolved.tool.name));
+      // Approval and disclosure happened against the original definition.
+      // Never execute a replacement definition under that earlier approval.
+      if (!current
+        || (approvedDefinition !== undefined && this.approvalDefinition({ ...resolved, tool: current }) !== approvedDefinition)
+        || (current !== resolved.tool && this.schemaFingerprint(current) !== this.schemaFingerprint(resolved.tool))) {
+        throw new McpBridgeError('tool definition changed; inspect it with cindy_mcp_list_tools and call again');
+      }
+      resolved = { ...resolved, tool: current };
       result = await resolved.tool.client.request('tools/call', {
         name: resolved.tool.name,
         arguments: resolved.helperCommand
@@ -3614,7 +3686,9 @@ class CindyMcpGateway {
     } catch (error) {
       throw new Error(
         'MCP tool ' + resolved.tool.serverName + '/' + resolved.tool.name + ' failed: ' +
-        safeMcpFailure(error) + (error instanceof McpBridgeError && error.invalidParams
+        safeMcpFailure(error) + (resolved.tool.client.needsReconnect
+          ? '. The request was not replayed; check whether the operation completed before retrying.' : '')
+        + (error instanceof McpBridgeError && error.invalidParams
           ? '. Expected args schema: ' + schemaHint(resolved.tool.inputSchema) : ''),
       );
     }
@@ -3634,8 +3708,13 @@ class CindyMcpGateway {
   }> {
     // 这次调用没问过权限（hook 判未披露时跳过）→ 一律回路标，不看披露状态。
     const permissionSkipped = this.consumePermissionSkipped(toolCallId);
+    const approvedDefinition = toolCallId ? this.approvedDefinitions.get(toolCallId) : undefined;
+    if (toolCallId) this.approvedDefinitions.delete(toolCallId);
     const resolved = this.resolveCall(params);
     if (!resolved) throw new Error(this.unknownCallMessage(params));
+    if (approvedDefinition !== undefined && this.approvalDefinition(resolved) !== approvedDefinition) {
+      throw new McpBridgeError('tool definition changed; inspect it with cindy_mcp_list_tools and call again');
+    }
     if (this.requiresNameEnvelope(resolved.tool) && typeof recordInput(resolved.args).name !== 'string') {
       // 该工具的 schema 自己声明了必填的字符串 name(即 Cindy 通用 call_tool 的 {name, args}
       // 信封), 而模型没给 —— 多半是把内层字段平铺进来了。工具名无法猜, 但正确形态可以一次
@@ -3671,7 +3750,7 @@ class CindyMcpGateway {
       );
       throw new Error(this.disclosureSignpost(resolved));
     }
-    return this.executeResolvedCall(resolved, signal);
+    return this.executeResolvedCall(resolved, signal, approvedDefinition);
   }
 
   private async executeDirectHelperTool(name: string, params: unknown, signal?: AbortSignal): Promise<{
@@ -3713,6 +3792,8 @@ class CindyMcpGateway {
   }
 
   register(pi: any, options: { botMemoryFacade?: boolean } = {}): void {
+    // Aborted turns may approve a call that Pi never executes.
+    pi.on?.('agent_end', () => { this.approvedDefinitions.clear(); });
     pi.on?.('tool_result', (event: any) => {
       const failure = this.failedResults.get(event.content) ?? this.failedResults.get(event.details);
       if (failure) {
@@ -4036,7 +4117,16 @@ class CindyMcpGateway {
         },
         additionalProperties: false,
       },
-      execute: async (_toolCallId: string, params: unknown) => this.listResult(params),
+      execute: async (_toolCallId: string, params: unknown, signal?: AbortSignal) => {
+        const server = recordInput(params).server;
+        if (typeof server === 'string' && this.needsRecovery(server)) {
+          try { await this.recover(server, signal); } catch (error) {
+            if (signal?.aborted) throw error;
+            // listResult reports the bounded, sanitized unavailable reason.
+          }
+        }
+        return this.listResult(params);
+      },
     });
 
     pi.registerTool({
@@ -5016,6 +5106,10 @@ export default async function cindyBridge(piApi: any) {
     }
     const permissionToolName = gatewayCall?.qualifiedName ?? event.toolName;
     const permissionInput = gatewayCall?.args ?? event.input ?? {};
+    // Capture before waiting: an earlier discovery in this batch can replace
+    // and disclose the catalog between this approval hook and execute().
+    const approvedDefinition = event.toolName === CINDY_MCP_CALL_TOOL && gatewayCall
+      ? mcpGateway.approvalDefinition(gatewayCall) : undefined;
     let decision: string | undefined;
     try {
       // input() is used as a private request/response envelope rather than a
@@ -5047,6 +5141,7 @@ export default async function cindyBridge(piApi: any) {
         reason: permissionDenialReason(decision),
       };
     }
+    if (approvedDefinition !== undefined) mcpGateway.rememberApproval(event.toolCallId, approvedDefinition);
     if (
       FILE_WRITE_BUILTINS.has(event.toolName)
       && writeTargetResolved !== null
@@ -5454,6 +5549,7 @@ export default async function cindyBridge(piApi: any) {
   // 全部 server 并行启动：每个 remote 有独立短预算，多个黑洞 provider 也只占一份
   // startup window，不会串行叠加到 Pi RPC 的 30s ready 超时。
   await Promise.all(servers.map(async (server) => {
+    mcpGateway.registerReconnect(server.name, () => connectServer(server, token));
     try {
       const connected = await connectServer(server, token);
       mcpGateway.add(server.name, connected.client, connected.tools);
