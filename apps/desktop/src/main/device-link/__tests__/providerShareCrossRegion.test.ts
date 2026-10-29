@@ -23,6 +23,9 @@ const state = vi.hoisted(() => ({
   localReceivedReads: 0,
   localReceivedGate: null as Promise<void> | null,
   endpointsGate: null as Promise<void> | null,
+  endpointHook: null as null | (() => Promise<void>),
+  identityHook: null as null | ((purpose: string) => Promise<void>),
+  cardOwners: [] as string[],
   userId: 'user-1',
   identityCards: [] as string[],
   invokes: [] as Array<{ target: string; channel: string }>,
@@ -43,7 +46,7 @@ vi.mock('../../authManager.js', () => ({
 }));
 vi.mock('../../clientEndpointsService.js', () => ({
   getClientEndpoint: () => LOCAL,
-  loadClientEndpointsForRealm: async () => { await state.endpointsGate; return {}; },
+  loadClientEndpointsForRealm: async () => { await state.endpointHook?.(); await state.endpointsGate; return {}; },
   getClientEndpointForRealm: (region: string) => (region === 'global' ? PEER : LOCAL),
 }));
 vi.mock('../../maker-host/outbound-fetch.js', () => ({ createOutboundHttpAgent: async () => undefined }));
@@ -73,6 +76,8 @@ vi.mock('../providerShareApi.js', () => ({
   },
   fetchIdentityCard: async (purpose: string, nonce: string) => {
     state.identityCards.push(purpose);
+    state.cardOwners.push(state.userId);
+    await state.identityHook?.(purpose);
     return `card:${purpose}:${nonce}`;
   },
   rethrowProviderShareError: (error: unknown) => { throw error; },
@@ -89,6 +94,7 @@ vi.mock('@cindy/device-link', async (importOriginal) => ({
     start() { this.record.started = true; }
     stop() { this.record.stopped = true; }
     async waitUntilOnline() {}
+    hasOfflineDirectPath() { return false; }
     isLinkReady() { return false; }
     async openLink() {}
     async invoke(target: string, request: { channel: string }) {
@@ -139,6 +145,9 @@ beforeEach(() => {
   state.localReceivedReads = 0;
   state.localReceivedGate = null;
   state.endpointsGate = null;
+  state.endpointHook = null;
+  state.identityHook = null;
+  state.cardOwners = [];
   state.userId = 'user-1';
   state.identityCards = [];
   state.invokes = [];
@@ -756,6 +765,77 @@ describe('cross-region provider share', () => {
     startProviderShareCrossRegion({ changed }, { userDataDir: dir });
     await vi.waitFor(() => expect(changed).toHaveBeenCalled());
     await vi.waitFor(() => expect(__testing.readMarkers()).toEqual({}));
+    expect(state.clients).toHaveLength(0);
+  });
+});
+
+// Unit regression for the 8c ALREADY_MEMBER recovery: public guest requests must
+// not issue/send another owner's card after an internal endpoint or identity await.
+// Existing cases switch during link resolution/HTTP, missing these inner boundaries.
+// Minimal input: one deferred boundary, owner replacement, then its late completion.
+// Only endpoint/card/server edges are fake; guest and cross-region control stay real.
+describe('cross-region identity request owner boundary', () => {
+  it.each([
+    { point: 'endpoint', switched: true },
+    { point: 'identity', switched: true },
+    { point: 'identity', switched: false },
+  ] as const)('keeps membership recovery scoped at $point (switched=$switched)', async ({ point, switched }) => {
+    const entered = deferred();
+    const resume = deferred();
+    let endpoints = 0;
+    state.endpointHook = async () => {
+      if (++endpoints === 3 && point === 'endpoint') { entered.resolve(); await resume.promise; }
+    };
+    state.identityHook = async purpose => {
+      if (purpose === 'share-session' && point === 'identity') { entered.resolve(); await resume.promise; }
+    };
+    state.responses.set('/preview', Object.assign(new Error('already a member'), { code: 'PROVIDER_SHARE_ALREADY_MEMBER' }));
+    state.responses.set('/session', { credential: CREDENTIAL, expiresAt: new Date(Date.now() + 86_400_000).toISOString(), shares: [share] });
+    startProviderShareGuest({ changed: vi.fn(), settled: vi.fn() }, { userDataDir: dir });
+    const result = previewProviderShare({ invitation: TOKEN, server: PEER }).catch(error => error);
+    await entered.promise;
+    if (switched) {
+      state.userId = 'user-2';
+      startProviderShareGuest({ changed: vi.fn(), settled: vi.fn() }, { userDataDir: dir });
+    }
+    resume.resolve();
+    expect(await result).toMatchObject({ code: 'PROVIDER_SHARE_ALREADY_MEMBER' });
+    expect(state.cardOwners).toEqual(point === 'endpoint' ? ['user-1'] : ['user-1', 'user-1']);
+    expect(state.calls.map(call => call.path.replace('/api/device-link/provider-shares/x', '')))
+      .toEqual(switched ? ['/preview'] : ['/preview', '/session']);
+    expect(state.clients).toHaveLength(switched ? 0 : 1);
+    expect(getCrossRegionReceived().map(item => item.shareId)).toEqual(switched ? [] : ['share-x']);
+  });
+
+  it.each([
+    { action: 'preview', point: 'endpoint' }, { action: 'preview', point: 'identity' },
+    { action: 'send', point: 'endpoint' }, { action: 'send', point: 'identity' },
+  ] as const)('rejects old-owner $action at its $point boundary', async ({ action, point }) => {
+    const entered = deferred();
+    const resume = deferred();
+    let endpoints = 0;
+    let cards = 0;
+    state.endpointHook = async () => {
+      if (++endpoints === (action === 'preview' ? 2 : 3) && point === 'endpoint') { entered.resolve(); await resume.promise; }
+    };
+    state.identityHook = async () => {
+      if (++cards === (action === 'preview' ? 1 : 2) && point === 'identity') { entered.resolve(); await resume.promise; }
+    };
+    state.responses.set('/preview', { ...share, state: 'unused', expiresAt: new Date(Date.now() + 60_000).toISOString() });
+    state.responses.set('/requests', { requestId: 'r1', status: 'pending', pairingCode: '0042', expiresAt: new Date().toISOString(), requestToken: TOKEN });
+    startProviderShareGuest({ changed: vi.fn(), settled: vi.fn() }, { userDataDir: dir });
+    const input = { invitation: TOKEN, server: PEER };
+    const result = (action === 'preview' ? previewProviderShare(input) : sendProviderShareRequest(input)).catch(error => error);
+    await entered.promise;
+    state.userId = 'user-2';
+    startProviderShareGuest({ changed: vi.fn(), settled: vi.fn() }, { userDataDir: dir });
+    resume.resolve();
+    expect(await result).toMatchObject({ code: 'DEVICE_LINK_NOT_CONNECTED' });
+    const issued = (action === 'send' ? 1 : 0) + (point === 'identity' ? 1 : 0);
+    expect(state.cardOwners).toEqual(Array.from({ length: issued }, () => 'user-1'));
+    expect(state.calls.map(call => call.path.replace('/api/device-link/provider-shares/x', '')))
+      .toEqual(action === 'preview' ? [] : ['/preview']);
+    expect(__testing.readMarkers()).toEqual({});
     expect(state.clients).toHaveLength(0);
   });
 });
