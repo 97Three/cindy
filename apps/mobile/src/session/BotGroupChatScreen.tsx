@@ -801,7 +801,9 @@ export function BotGroupTimeline({
       const posted = pending.find(row => row.chat?.messageId === message.id && row.chat.shareToMain?.state === 'sent')?.chat?.shareToMain;
       const shared = posted ? { messageId: posted.messageId ?? null, bySelf: true } : sharedReplies?.[message.id];
       const revealShare = () => onRevealShare?.(shared?.messageId ?? null);
-      const actions = <BotGroupMessageActions message={message} online={online} readOnly={!!group.archived || !!group.dissolvedAt}
+      const ownMessage = message.authorKind === 'user' && message.isSelf !== false
+        && (!message.threadShare || message.threadShare.status === 'available' && message.threadShare.sharedByAuthor);
+      const actions = <BotGroupMessageActions message={message} align={ownMessage ? 'right' : 'left'} online={online} readOnly={!!group.archived || !!group.dissolvedAt}
             onShareImage={onShareImage && (!message.threadShare || message.threadShare.status === 'available') ? () => onShareImage(message.id) : undefined}
             onQuote={onReply && isBotGroupMessageQuotable(message) ? () => onReply(message) : undefined}
             onThread={onOpenThread && !message.threadRootId ? () => onOpenThread(message) : undefined}
@@ -814,19 +816,19 @@ export function BotGroupTimeline({
         {!threadRootId && groupTime !== undefined ? <Text style={styles.time}>{formatBotMessageGroupTime(groupTime, i18n.language)}</Text> : null}
         {firstNew !== undefined && index === firstNew && firstNew > firstReply ? <View style={styles.newReplyBoundary}><View style={styles.newReplyLine} /><Text style={styles.newReplyDivider}>{t('groupChat.thread.newRepliesDivider')}</Text></View> : null}
         <CompanionEntering id={key} createdAt={message.createdAt} kind={message.authorKind === 'user' ? 'send' : 'reply'}>
-        <BotGroupTimelineItem footer={selectedImages ? undefined : <>
-        {!queued && onOpenThread && !message.threadRootId && !message.threadShare && !message.deleted ? <View style={[styles.messageFooter, styles.threadSummaryFooter]}>
+        <BotGroupTimelineItem footer={selectedImages || queued || message.kind !== 'message' || message.deleted ? undefined : <View style={[styles.messageFooter, ownMessage && styles.ownMessageFooter]}>
+        {onOpenThread && !message.threadRootId && !message.threadShare ?
           <BotGroupThreadEntry message={message} identityFor={identityFor} onPress={() => onOpenThread(message)} />
-        </View> : null}
-        {!queued && message.threadShare && !message.deleted ? <View style={[styles.messageFooter, styles.threadSummaryFooter]}>
+        : null}
+        {message.threadShare ?
           <BotGroupThreadEntry message={message} summary={messages.find(candidate => candidate.id === message.threadShare?.threadRootId) ?? message.threadShare}
             identityFor={identityFor} onPress={() => onOpenTopic?.(message.threadShare!.threadRootId, message.threadShare!.messageId)} />
-        </View> : null}
-        {!queued && message.kind === 'message' && !message.deleted ? actions : null}
-        {!queued && shared && message.kind === 'message' && !message.deleted ? <View style={styles.messageFooter}>
+        : null}
+        {actions}
+        {shared ?
           <BotGroupThreadPosted messageId={message.id} shared={shared} onPress={revealShare} />
-        </View> : null}
-        </>} topic={!!threadRootId} isRoot={isRoot} onRetrySource={onRetrySource} message={displayMessage} continued={continued} member={message.authorBotId ? memberById.get(message.authorBotId) : undefined}
+        : null}
+        </View>} topic={!!threadRootId} isRoot={isRoot} onRetrySource={onRetrySource} message={displayMessage} continued={continued} member={message.authorBotId ? memberById.get(message.authorBotId) : undefined}
           quoteDisplay={message.quote ? resolveBotGroupQuote(message.quote, messages) : undefined}
           onLocateQuote={message.quote && onLocateMessage ? () => onLocateMessage(message.quote!.messageId) : undefined}
           members={group.members} deviceId={deviceId} online={online} identityFor={identityFor} mentionLabels={mentionLabels}
@@ -901,7 +903,6 @@ function BotGroupTimelineItem({
   const { t } = useTranslation();
   const styles = useThemedStyles(makeStyles);
   const { colors: userBubbleColors } = useUserBubbleAppearance();
-  const [bubbleLeft, setBubbleLeft] = useState(0);
   if (message.kind === 'round-end') {
     return <BotGroupDivider testID="botGroup.roundEnd">
       <Text style={styles.dividerText}>{t('groupChat.timeline.roundEnded')}</Text>
@@ -946,14 +947,11 @@ function BotGroupTimelineItem({
             styles.userBubble,
             compact && styles.userBubbleCompact,
             userBubbleColors && { backgroundColor: userBubbleColors.background, borderColor: userBubbleColors.border },
-          ]} testID="botGroup.message.userBubble" onLayout={event => setBubbleLeft(event.nativeEvent.layout.x)}>
+          ]} testID="botGroup.message.userBubble">
             <BotGroupUserText content={content} mentionLabels={mentionLabels} />
           </View> : null}
         </View>
-        <View style={[styles.userFooter, !bubble && styles.attachmentFooter]}>
-          <View style={[styles.footerSpacer, { width: bubble ? bubbleLeft : 0 }]} />
-          <View style={[styles.footerContent, !bubble && styles.attachmentFooterContent]}>{shareFooter}{footer}</View>
-        </View>
+        {shareFooter}{footer}
       </View>
     </View>;
   }
@@ -1028,9 +1026,9 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   threadMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: spacing.sm },
   threadCaption: { color: colors.textTertiary, fontSize: typeScale.caption, lineHeight: lineHeight.caption, fontWeight: fontWeight.regular },
   threadEmpty: { color: colors.textSecondary, fontSize: typeScale.footnote, lineHeight: lineHeight.caption, fontWeight: fontWeight.regular, paddingVertical: spacing.sm },
-  messageFooter: { alignSelf: 'flex-start' },
-  threadSummaryFooter: { marginTop: -spacing.xs },
-  timeline: { flexGrow: 1, justifyContent: 'flex-end', gap: spacing.lg, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
+  messageFooter: { width: '100%', alignItems: 'flex-start' },
+  ownMessageFooter: { alignItems: 'flex-end' },
+  timeline: { flexGrow: 1, justifyContent: 'flex-end', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   item: { gap: spacing.lg },
   // Aligns the follow-up card with message text, past the 28pt avatar and its gap (1:1 reply geometry).
   indented: { paddingLeft: BOT_GROUP_MESSAGE_AVATAR_SIZE + REPLY_AVATAR_GAP },
@@ -1045,13 +1043,6 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   userColumn: { flex: 1, minWidth: 0, alignItems: 'flex-end', gap: spacing.xs },
   userMessageContent: { width: '100%', alignItems: 'flex-end', gap: spacing.xs },
   botMessageContent: { gap: spacing.xs },
-  // Give the summary its natural width first; only the alignment spacer shrinks
-  // when a short bubble leaves too little room to its right.
-  userFooter: { alignSelf: 'stretch', flexDirection: 'row' },
-  attachmentFooter: { justifyContent: 'flex-end' },
-  attachmentFooterContent: { alignItems: 'flex-end' },
-  footerSpacer: { flexShrink: 1 },
-  footerContent: { flexShrink: 0, maxWidth: '100%' },
   // The 1:1 user bubble (MessageRenderer userBubble): 86% wide, padding 12, compact 8/12.
   userBubble: { maxWidth: '86%', backgroundColor: colors.surfaceElevated, borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth,
     borderRadius: radius.container, padding: spacing.md },

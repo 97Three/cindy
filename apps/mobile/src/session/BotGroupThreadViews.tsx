@@ -27,7 +27,7 @@ export function BotGroupThreadEntry({ message, summary, identityFor, onPress }: 
   const threadPreview = summary?.threadPreview ?? message.threadPreview ?? message.threadShare?.threadPreview;
   const threadUnread = summary?.threadUnread ?? message.threadUnread ?? message.threadShare?.threadUnread;
   const responders = threadPreview?.responders ?? threadPreview?.replies ?? [];
-  return <ChatThreadSummary replyCount={replyCount} lastReplyAt={threadPreview?.replies.at(-1)?.createdAt}
+  return <ChatThreadSummary compact replyCount={replyCount} lastReplyAt={threadPreview?.replies.at(-1)?.createdAt}
     avatars={responders.slice(0, 3).map(reply => <BotGroupAvatar key={reply.id} deviceId="" online identity={identityFor(reply.authorBotId ?? '', reply.authorName)} size={iconSize.lg} />)}
     unread={threadUnread?.count ? t('groupChat.thread.newReplies', { count: threadUnread.count }) + (threadUnread.mentioned ? ` · ${t('groupChat.thread.mentioned')}` : '') : undefined}
     onPress={onPress} testID={`botGroup.thread.${message.id}`}
@@ -70,7 +70,8 @@ export function BotGroupThreadShare({ share, resolveMedia, resolveServerMedia, o
   </View>;
 }
 
-export function BotGroupMessageActions({ message, onQuote, onThread, onShare, onReveal, shared, online, readOnly, onShareImage }: {
+export function BotGroupMessageActions({ message, align = 'left', onQuote, onThread, onShare, onReveal, shared, online, readOnly, onShareImage }: {
+  align?: 'left' | 'right';
   onShareImage?: () => void;
   message: BotGroupMessageView; onQuote?: () => void; onThread?: () => void; onShare?: () => void; onReveal?: () => void;
   shared?: { messageId: string | null; bySelf: boolean }; online: boolean; readOnly: boolean;
@@ -79,6 +80,7 @@ export function BotGroupMessageActions({ message, onQuote, onThread, onShare, on
   const copyDisabled = message.threadShare ? message.threadShare.status !== 'available' : !message.content;
   const copy = () => { void Clipboard.setStringAsync(message.threadShare?.status === 'available' ? message.threadShare.content : message.content); };
   const actionId = `botGroup.thread.context.${message.id}.action`;
+  const buttonStyle = [styles.actionButton, align === 'right' ? styles.actionRight : styles.actionLeft];
   const options = [
     ...(onThread ? [{ id: 'thread', title: t(message.replyCount === 0 ? 'groupChat.thread.create' : 'groupChat.thread.open') }] : []),
     ...(onShare && !readOnly ? [{ id: 'share', title: t(shared?.bySelf ? 'groupChat.thread.showInGroup' : 'groupChat.thread.shareToGroup'), disabled: shared?.bySelf ? !shared.messageId : !online }] : []),
@@ -93,17 +95,17 @@ export function BotGroupMessageActions({ message, onQuote, onThread, onShare, on
     { id: 'message', options }];
   return <View style={styles.messageActions} testID={`botGroup.messageActions.${message.id}`}>
     <Pressable accessibilityRole="button" accessibilityLabel={t('groupChat.thread.copy')} disabled={copyDisabled}
-      accessibilityState={{ disabled: copyDisabled }} onPress={copy} style={styles.actionButton} testID={`${actionId}.copy`}>
+      accessibilityState={{ disabled: copyDisabled }} onPress={copy} style={buttonStyle} testID={`${actionId}.copy`}>
       <Copy size={iconSize.sm} color={copyDisabled ? colors.textTertiary : colors.textSecondary} />
     </Pressable>
     {onQuote ? <Pressable accessibilityRole="button" accessibilityLabel={t('message.renderer.reply')} disabled={readOnly}
-      accessibilityState={{ disabled: readOnly }} onPress={onQuote} style={styles.actionButton} testID={`${actionId}.quote`}>
+      accessibilityState={{ disabled: readOnly }} onPress={onQuote} style={buttonStyle} testID={`${actionId}.quote`}>
       <ChatReplyIcon size={iconSize.sm} color={readOnly ? colors.textTertiary : colors.textSecondary} />
     </Pressable> : null}
     <BotGroupMenu title={t('groupChat.thread.actions')} sections={sections}
       onSelect={select} testID={`botGroup.thread.context.${message.id}`}>
       {open => <Pressable accessibilityRole="button" accessibilityLabel={t('message.renderer.moreActions')}
-        onPress={open} style={styles.actionButton} testID={`botGroup.thread.more.${message.id}`}>
+        onPress={open} style={buttonStyle} testID={`botGroup.thread.more.${message.id}`}>
         <Ellipsis size={iconSize.sm} color={colors.textSecondary} />
       </Pressable>}
     </BotGroupMenu>
@@ -120,11 +122,13 @@ export function BotGroupThreadPosted({ messageId, shared, onPress }: {
 }
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   messageActions: { flexDirection: 'row', alignItems: 'center' },
-  actionButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  actionButton: { width: 44, height: 44, justifyContent: 'flex-start', paddingTop: spacing.sm },
+  actionLeft: { alignItems: 'flex-start' },
+  actionRight: { alignItems: 'flex-end' },
   entry: { minHeight: 44, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.sm },
   count: { fontSize: typeScale.bodySmall, lineHeight: lineHeight.bodySmall, fontWeight: fontWeight.medium, color: colors.textPrimary },
   note: { fontSize: typeScale.footnote, lineHeight: lineHeight.caption, fontWeight: fontWeight.regular, color: colors.textSecondary },
-  postedEntry: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: spacing.xs, paddingBottom: spacing.lg },
+  postedEntry: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   postedNote: { flexShrink: 1, fontSize: typeScale.caption, lineHeight: lineHeight.caption, fontWeight: fontWeight.regular, color: colors.textTertiary },
   share: { borderLeftWidth: 2, borderLeftColor: colors.border, paddingLeft: spacing.md, gap: spacing.sm },
 });
