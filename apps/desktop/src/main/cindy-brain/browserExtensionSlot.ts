@@ -72,13 +72,13 @@ export function mayInstallNativeHost(ghost: InstalledGhost, verified = true): bo
 }
 
 /** 「我的浏览器」只由官方 Cindy Chrome 提供;其它插件声明 pageControl 一律忽略(2026-10-30 决定)。 */
+/** The root instance of an official plugin id whose source was verified. */
+function isOfficialInstance(ghost: InstalledGhost, verified: boolean): boolean {
+  return verified && ghost.namespace == null && OFFICIAL_NATIVE_HOSTS.has(ghost.manifest.id);
+}
+
 export function mayProvidePageControl(ghost: InstalledGhost, verified = true): boolean {
-  return (
-    verified &&
-    ghost.manifest.browserExtension?.pageControl === true &&
-    ghost.namespace == null &&
-    OFFICIAL_NATIVE_HOSTS.has(ghost.manifest.id)
-  );
+  return ghost.manifest.browserExtension?.pageControl === true && isOfficialInstance(ghost, verified);
 }
 
 export interface BrowserExtensionSlotDeps {
@@ -401,6 +401,10 @@ export class GhostBrowserExtensionSlot {
             'paths' in req.payload
           )
             return fail('INVALID_REQUEST', 'upload by path is not available to plugins');
+          // Raw DevTools commands can make Chrome open any host path (DOM.setFileInputFiles) or read
+          // any page state, so only the verified official plugin may send them through the pipe.
+          if (req.action === 'cdp' && !isOfficialInstance(entry.ghost, this.deps.isVerifiedOfficial(entry.ghost)))
+            return fail('INVALID_REQUEST', 'raw DevTools commands are not available to this plugin');
           return (await entry.bridge.act(
             req.action,
             req.payload ?? {},

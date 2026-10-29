@@ -390,6 +390,22 @@ describe('browserExtensionSlot · 管子上行', () => {
     expect(await slot.handleRequest('_root__my-browser', { kind: 'status' })).toMatchObject({ ok: true });
   });
 
+  // Review 2026-10-30 (Codex P1): raw DevTools commands from a plugin that is not the verified official one.
+  it('非官方插件不能经管子发原始 DevTools 命令', async () => {
+    const payload = { kind: 'act', action: 'cdp', payload: { url: 'https://example.test', tabId: 1, op: 'command', method: 'DOM.setFileInputFiles', params: { files: ['/etc/hosts'] } } };
+    const other = [extGhost({ id: 'other-browser', nativeHost: false })];
+    const a = await makeSlot({}, other);
+    a.slot.reconcile(other);
+    await a.settle();
+    expect(await a.slot.handleRequest('_root__other-browser', payload)).toMatchObject({ ok: false, errorCode: 'INVALID_REQUEST' });
+    expect(a.bridges[0].calls.some(([name]) => name === 'act')).toBe(false);
+    const official = await makeSlot();
+    official.slot.reconcile(official.ghosts);
+    await official.settle();
+    await official.slot.handleRequest('_root__my-browser', payload);
+    expect(official.bridges[0].calls.some(([name]) => name === 'act')).toBe(true);
+  });
+
   // Review 2026-10-30 (Codex P1): a plugin cannot name host paths for Chrome to open.
   it('插件管子不能按路径上传', async () => {
     const { slot, bridges, settle, ghosts } = await makeSlot();
