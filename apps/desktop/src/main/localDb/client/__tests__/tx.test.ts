@@ -1270,6 +1270,43 @@ describe('db worker tx handlers', () => {
     },
   );
 
+  // Claude 首条消息 / 前面轮次都被停掉时没有续接点：软删、清原生会话 id 与交接标记
+  // 必须同一事务落地，否则下次发送会续接仍含被撤回消息的旧原生会话。
+  it.each([false, true])(
+    'rewind.commit clears the native session and stores the handoff marker when restarting (inline=%s)',
+    async (useInlineWorker) => {
+      await withClient(async (client) => {
+        await seedSession(client, 's1');
+        await client.exec('UPDATE sessions SET sdk_session_id = ? WHERE id = ?', ['sdk-old', 's1']);
+        await client.exec(
+          'INSERT INTO messages (id, client_id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)',
+          ['m1', 'c1', 's1', 'user', 'stopped', 100, 'm2', 'c2', 's1', 'user', 'target', 200],
+        );
+        const markerContent = JSON.stringify({ handoff: 'kept history', consumed: false, reason: 'message-rewind' });
+
+        await client.tx('rewind.commit', {
+          sessionId: 's1',
+          targetCreatedAt: 200,
+          targetMessageId: 'm2',
+          targetClientId: 'c2',
+          nativeContextReset: { markerId: 'mk', markerClientId: 'context-rebuild:mk', markerContent },
+          now: 999,
+        });
+
+        await expect(
+          client.query('SELECT id, role, content, created_at, rewind_at FROM messages ORDER BY created_at, id'),
+        ).resolves.toEqual([
+          { id: 'm1', role: 'user', content: 'stopped', created_at: 100, rewind_at: null },
+          { id: 'm2', role: 'user', content: 'target', created_at: 200, rewind_at: 999 },
+          { id: 'mk', role: 'context_rebuild', content: markerContent, created_at: 999, rewind_at: 999 },
+        ]);
+        await expect(
+          client.queryOne('SELECT sdk_session_id FROM sessions WHERE id = ?', ['s1']),
+        ).resolves.toEqual({ sdk_session_id: null });
+      }, { useInlineWorker });
+    },
+  );
+
   it.each([false, true])(
     'rewind.commit remaps surviving native fork anchors to the replacement thread (inline=%s)',
     async (useInlineWorker) => {

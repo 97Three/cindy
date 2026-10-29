@@ -647,6 +647,19 @@ describe('ClaudeCodeAgent runtime settings during rewind window', () => {
     await handle.close();
   });
 
+  // 宿主在没有可续接回复时只借原生检查点回滚文件,随后自己关闭会话;这里不能 close
+  // Query 或设续接点,否则同一 handle 上的下一次发送会去 resume 一个不存在的时点。
+  it('rolls back files only when the host restarts the native session', async () => {
+    const { handle, firstQuery } = await startRewindableSession();
+
+    await handle.commitRewindFiles?.('user-uuid-1', '', { rewindsToNativeThreadStart: true });
+
+    expect(firstQuery.rewindFiles).toHaveBeenCalledWith('user-uuid-1', { dryRun: false });
+    expect(firstQuery.close).not.toHaveBeenCalled();
+
+    await handle.close();
+  });
+
   it('uses the session provider route when the same model id has different windows', async () => {
     const configDir = await makeTempDir();
     process.env.CLAUDE_CONFIG_DIR = configDir;
