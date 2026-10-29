@@ -17,6 +17,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
+import { useInstalledGhosts } from '@/cindy-brain/useInstalledGhosts';
 import {
   Check,
   ChevronDown,
@@ -49,6 +51,7 @@ import { useAutomationSettingsRead } from './useAutomationSettingsRead';
 import { ComputerPermissionRow } from './ComputerPermissionRow';
 import { BrowserRealProfileSubsection } from './BrowserRealProfileSubsection';
 import {
+  RECOMMENDED_PAGE_CONTROL_PLUGIN_ID,
   REAL_PROFILE_READ_DENIED,
   type BrowserBackendHealth,
 } from '../../../shared/browserBackend';
@@ -449,6 +452,28 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
     },
     [setBackendConfig],
   );
+  const navigate = useNavigate();
+  const userBrowserPluginInstalled = useInstalledGhosts().some(
+    (ghost) => ghost.manifest.id === RECOMMENDED_PAGE_CONTROL_PLUGIN_ID,
+  );
+  // While "My browser" still lacks its plugin or extension, check again every few seconds so the
+  // guidance turns into "connected" as soon as the user finishes a step elsewhere.
+  useEffect(() => {
+    if (browserBackendKind !== 'user-browser' || browserBackendHealth?.status !== 'error') return;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      void window.electronAPI.browserBackend
+        ?.getHealth?.()
+        .then((next) => {
+          if (!cancelled && next?.active === 'user-browser') setBrowserBackendHealth(next);
+        })
+        .catch(() => {});
+    }, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [browserBackendKind, browserBackendHealth?.status]);
   const [useRealProfilePending, setUseRealProfilePending] = useState(false);
   const confirmDialog = useOptionalConfirmDialog();
   // Health can include an automatic embedded-browser recovery and therefore
@@ -1464,6 +1489,10 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
             health={browserBackendHealth}
             onSelect={(kind) => void handleSelectBackend(kind)}
             onRecover={() => void handleRecoverBrowserBackend()}
+            userBrowserPluginInstalled={userBrowserPluginInstalled}
+            onSetUpUserBrowser={() =>
+              navigate(`/plugins?market=${encodeURIComponent(RECOMMENDED_PAGE_CONTROL_PLUGIN_ID)}`)
+            }
           />
         ) : null}
         {browserBackendKind !== null ? (

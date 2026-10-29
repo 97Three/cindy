@@ -171,10 +171,15 @@ export class BrowserBackendHealthService {
     if (active === 'user-browser') {
       try {
         const status = await this.controller.call({ action: 'status' });
-        const connected = status.ok && (status.data as { connected?: unknown } | undefined)?.connected === true;
-        return connected
-          ? { active, status: 'ready', canRecover: false }
-          : { active, status: 'error', canRecover: false, reason: 'extension-disconnected' };
+        const data = status.data as { connected?: unknown; configured?: unknown } | undefined;
+        if (status.ok && data?.connected === true) return { active, status: 'ready', canRecover: false };
+        // No plugin provides page control (not installed or disabled) vs. plugin ready but no extension yet.
+        return {
+          active,
+          status: 'error',
+          canRecover: false,
+          reason: status.ok && data?.configured === false ? 'plugin-missing' : 'extension-disconnected',
+        };
       } catch (err) {
         this.logger.warn('user browser status probe failed', { err });
         return { active, status: 'error', canRecover: false, reason: 'extension-disconnected' };

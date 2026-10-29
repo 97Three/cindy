@@ -5255,7 +5255,8 @@
             "startFailed": "浏览器连接未能启动",
             "statusFailed": "无法检查浏览器连接状态",
             "recoveryFailed": "控制连接未能重建",
-            "extensionDisconnected": "没有已连接的浏览器扩展（安装并启用 Cindy Chrome 插件与扩展）"
+            "extensionDisconnected": "没有已连接的浏览器扩展（安装并启用 Cindy Chrome 插件与扩展）",
+            "pluginMissing": "还没有安装或启用 Cindy Chrome 插件"
           },
           "reconnect": "重新连接浏览器",
           "recover": "恢复浏览器",
@@ -5276,6 +5277,16 @@
         "userBrowser": {
           "title": "我的浏览器",
           "description": "Agent 通过 Cindy 扩展操作你正在使用的 Chrome / Edge，登录态现成；新页面开在单独的后台窗口，不打扰你正在看的页面。"
+        },
+        "userBrowserSetup": {
+          "installPluginTitle": "第 1 步：安装 Cindy Chrome 插件",
+          "enablePluginTitle": "第 1 步：启用 Cindy Chrome 插件",
+          "installExtensionTitle": "第 2 步：把 Cindy 扩展装进浏览器",
+          "pluginBody": "「我的浏览器」通过 Cindy Chrome 插件和它的浏览器扩展连接你的 Chrome / Edge。先在 Cindy 里装好插件，再按提示把扩展装进浏览器。",
+          "extensionBody": "在 Chrome 或 Edge 里安装 Cindy 扩展，装好后这里会自动变成已连接。已经装过？在浏览器的扩展管理里启用它，或点一下刷新。",
+          "installPlugin": "安装插件",
+          "enablePlugin": "去启用",
+          "installExtension": "安装浏览器扩展"
         }
       },
       "android": {

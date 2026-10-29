@@ -5255,7 +5255,8 @@
             "startFailed": "新しい制御プロセスを起動できませんでした",
             "statusFailed": "制御プロセスの状態確認に失敗しました",
             "recoveryFailed": "制御接続を再構築できませんでした",
-            "extensionDisconnected": "接続中のブラウザ拡張がありません（Cindy Chrome プラグインと拡張をインストール・有効化してください）"
+            "extensionDisconnected": "接続中のブラウザ拡張がありません（Cindy Chrome プラグインと拡張をインストール・有効化してください）",
+            "pluginMissing": "Cindy Chrome プラグインがインストールまたは有効化されていません"
           },
           "reconnect": "内蔵ブラウザを再接続",
           "recover": "内蔵ブラウザを復旧",
@@ -5276,6 +5277,16 @@
         "userBrowser": {
           "title": "自分のブラウザ",
           "description": "エージェントは Cindy 拡張経由で使用中の Chrome / Edge をログイン状態のまま操作します。新しいページは別のバックグラウンドウィンドウで開き、閲覧中のページには触れません。"
+        },
+        "userBrowserSetup": {
+          "installPluginTitle": "ステップ 1：Cindy Chrome プラグインをインストール",
+          "enablePluginTitle": "ステップ 1：Cindy Chrome プラグインを有効にする",
+          "installExtensionTitle": "ステップ 2：ブラウザに Cindy 拡張機能を追加",
+          "pluginBody": "「自分のブラウザ」は Cindy Chrome プラグインとそのブラウザ拡張機能を通じて Chrome / Edge に接続します。まず Cindy でプラグインをインストールし、案内に従って拡張機能を追加してください。",
+          "extensionBody": "Chrome または Edge に Cindy 拡張機能を追加すると、ここは自動的に「接続済み」になります。追加済みの場合は、ブラウザの拡張機能管理で有効にするか、再読み込みしてください。",
+          "installPlugin": "プラグインをインストール",
+          "enablePlugin": "有効にする",
+          "installExtension": "ブラウザ拡張機能を追加"
         }
       },
       "android": {

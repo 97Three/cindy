@@ -5255,7 +5255,8 @@
             "startFailed": "새 제어 프로세스를 시작하지 못했습니다",
             "statusFailed": "제어 프로세스 상태 확인에 실패했습니다",
             "recoveryFailed": "제어 연결을 다시 구성하지 못했습니다",
-            "extensionDisconnected": "연결된 브라우저 확장이 없습니다 (Cindy Chrome 플러그인과 확장을 설치하고 활성화하세요)"
+            "extensionDisconnected": "연결된 브라우저 확장이 없습니다 (Cindy Chrome 플러그인과 확장을 설치하고 활성화하세요)",
+            "pluginMissing": "Cindy Chrome 플러그인이 설치되지 않았거나 꺼져 있습니다"
           },
           "reconnect": "내장 브라우저 다시 연결",
           "recover": "내장 브라우저 복구",
@@ -5276,6 +5277,16 @@
         "userBrowser": {
           "title": "내 브라우저",
           "description": "에이전트가 Cindy 확장을 통해 사용 중인 Chrome / Edge를 로그인 상태 그대로 조작합니다. 새 페이지는 별도의 백그라운드 창에서 열려 보고 있는 페이지를 방해하지 않습니다."
+        },
+        "userBrowserSetup": {
+          "installPluginTitle": "1단계: Cindy Chrome 플러그인 설치",
+          "enablePluginTitle": "1단계: Cindy Chrome 플러그인 켜기",
+          "installExtensionTitle": "2단계: 브라우저에 Cindy 확장 추가",
+          "pluginBody": "내 브라우저는 Cindy Chrome 플러그인과 그 브라우저 확장을 통해 Chrome / Edge에 연결됩니다. 먼저 Cindy에서 플러그인을 설치한 뒤 안내에 따라 확장을 추가하세요.",
+          "extensionBody": "Chrome 또는 Edge에 Cindy 확장을 추가하면 이곳이 자동으로 연결됨으로 바뀝니다. 이미 추가했다면 브라우저의 확장 관리에서 켜거나 새로고침하세요.",
+          "installPlugin": "플러그인 설치",
+          "enablePlugin": "켜러 가기",
+          "installExtension": "브라우저 확장 추가"
         }
       },
       "android": {

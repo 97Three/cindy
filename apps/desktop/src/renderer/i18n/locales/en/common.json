@@ -5287,7 +5287,8 @@
             "startFailed": "the replacement controller could not start",
             "statusFailed": "the controller status check failed",
             "recoveryFailed": "the control connection could not be rebuilt",
-            "extensionDisconnected": "no browser extension is connected (install and enable the Cindy Chrome plugin and its extension)"
+            "extensionDisconnected": "no browser extension is connected (install and enable the Cindy Chrome plugin and its extension)",
+            "pluginMissing": "the Cindy Chrome plugin is not installed or turned on"
           },
           "reconnect": "Reconnect Browser",
           "recover": "Recover Browser",
@@ -5308,6 +5309,16 @@
         "userBrowser": {
           "title": "My browser",
           "description": "Agent operates the Chrome / Edge you are using through the Cindy extension, with your sign-ins. New pages open in a separate background window, so what you are viewing stays put."
+        },
+        "userBrowserSetup": {
+          "installPluginTitle": "Step 1: Install the Cindy Chrome plugin",
+          "enablePluginTitle": "Step 1: Turn on the Cindy Chrome plugin",
+          "installExtensionTitle": "Step 2: Add the Cindy extension to your browser",
+          "pluginBody": "My browser reaches your Chrome or Edge through the Cindy Chrome plugin and its browser extension. Install the plugin in Cindy first, then follow its prompt to add the extension.",
+          "extensionBody": "Add the Cindy extension in Chrome or Edge; this turns to connected on its own once it is in. Already added? Turn it on in the browser’s extension settings, or reload it.",
+          "installPlugin": "Install plugin",
+          "enablePlugin": "Turn on",
+          "installExtension": "Add browser extension"
         }
       },
       "android": {

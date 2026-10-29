@@ -5255,7 +5255,8 @@
             "startFailed": "瀏覽器連線未能啟動",
             "statusFailed": "無法檢查瀏覽器連線狀態",
             "recoveryFailed": "控制連線未能重建",
-            "extensionDisconnected": "沒有已連線的瀏覽器擴充功能（安裝並啟用 Cindy Chrome 插件與擴充功能）"
+            "extensionDisconnected": "沒有已連線的瀏覽器擴充功能（安裝並啟用 Cindy Chrome 插件與擴充功能）",
+            "pluginMissing": "尚未安裝或啟用 Cindy Chrome 插件"
           },
           "reconnect": "重新連線瀏覽器",
           "recover": "恢復瀏覽器",
@@ -5276,6 +5277,16 @@
         "userBrowser": {
           "title": "我的瀏覽器",
           "description": "Agent 透過 Cindy 擴充功能操作你正在使用的 Chrome / Edge，登入態現成；新頁面開在獨立的背景視窗，不打擾你正在看的頁面。"
+        },
+        "userBrowserSetup": {
+          "installPluginTitle": "第 1 步：安裝 Cindy Chrome 插件",
+          "enablePluginTitle": "第 1 步：啟用 Cindy Chrome 插件",
+          "installExtensionTitle": "第 2 步：把 Cindy 擴充功能裝進瀏覽器",
+          "pluginBody": "「我的瀏覽器」透過 Cindy Chrome 插件和它的瀏覽器擴充功能連接你的 Chrome / Edge。先在 Cindy 裡裝好插件，再依提示把擴充功能裝進瀏覽器。",
+          "extensionBody": "在 Chrome 或 Edge 裡安裝 Cindy 擴充功能，裝好後這裡會自動變成已連線。已經裝過？在瀏覽器的擴充功能管理裡啟用它，或點一下重新整理。",
+          "installPlugin": "安裝插件",
+          "enablePlugin": "前往啟用",
+          "installExtension": "安裝瀏覽器擴充功能"
         }
       },
       "android": {
