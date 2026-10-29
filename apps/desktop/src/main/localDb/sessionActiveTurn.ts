@@ -533,7 +533,11 @@ function notEmptyModelChangeMarker() {
   return sql`CASE
     WHEN ${messages.role} = 'assistant' AND ${messages.content} IN ('', '""')
       AND json_valid(${messages.agentMeta})
-    THEN CASE WHEN json_type(${messages.agentMeta}, '$.modelChange') = 'object' THEN 0 ELSE 1 END
+    THEN CASE WHEN json_type(${messages.agentMeta}, '$.modelChange') = 'object'
+      AND json_type(${messages.agentMeta}, '$.modelChange.fromModel') = 'text'
+      AND json_type(${messages.agentMeta}, '$.modelChange.toModel') = 'text'
+      AND json_type(${messages.agentMeta}, '$.modelChange.modelOnly') = 'true'
+    THEN 0 ELSE 1 END
     ELSE 1 END`;
 }
 

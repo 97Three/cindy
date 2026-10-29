@@ -165,7 +165,8 @@ controller／进程内；重启后没有 live handle 时不凭估算换窗。Orc
 工具副作用时，host 才会对失败的 user 消息做一次 wire-only replay；有副作用或分类不确定时必须
 fail closed。compact 失败触发的换窗同样 fail closed，不得自动 replay 已有副作用的用户消息。
 模型切换产生的空 assistant 分隔记录不属于助手产出：自动换窗、手动重试与恢复检查点的
-进展统计均排除它；有正文的记录、无有效切模标记的空记录和工具操作仍保留原保护。
+进展统计均排除它。有效标记必须符合 `turnModelChange.ts` 的生产者合同：`fromModel` / `toModel`
+均为字符串且 `modelOnly: true`；有正文的记录、无有效切模标记的空记录和工具操作仍保留原保护。
 PI 的 `pi-prompt-timeout` 是唯一保留的 timeout 交接入口；Claude Code／Codex 的普通
 timeout 不得触发自动换窗或 replay。Codex 当前没有与 Claude `AutoCompactController` 对等的 host
 自动 `/compact` 注入路径；未来若增加，仍须遵守同一评估和交接边界。Codex 订阅远端压缩若因

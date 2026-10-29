@@ -1674,8 +1674,18 @@ describe('createContextOverflowRollover', () => {
   // Exercise the recovery entry point: only metadata may be ignored, never output.
   it.each([
     ['', { modelChange: { fromModel: 'gpt-6-sol', toModel: 'gpt-6-astra', modelOnly: true } }, true],
-    ['Already sent the approval.', { modelChange: { fromModel: 'gpt-6-sol', toModel: 'gpt-6-astra' } }, false],
+    ['Already sent the approval.', { modelChange: { fromModel: 'gpt-6-sol', toModel: 'gpt-6-astra', modelOnly: true } }, false],
     ['', null, false],
+    ['', { modelChange: {} }, false],
+    ['', { modelChange: { toModel: 'gpt-6-astra', modelOnly: true } }, false],
+    ['', { modelChange: { fromModel: 'gpt-6-sol', modelOnly: true } }, false],
+    ['', { modelChange: { fromModel: 'gpt-6-sol', toModel: 'gpt-6-astra' } }, false],
+    ['', { modelChange: { fromModel: 1, toModel: 'gpt-6-astra', modelOnly: true } }, false],
+    ['', { modelChange: { fromModel: 'gpt-6-sol', toModel: null, modelOnly: true } }, false],
+    ['', { modelChange: { fromModel: 'gpt-6-sol', toModel: 'gpt-6-astra', modelOnly: false } }, false],
+    ['', { modelChange: { fromModel: 'gpt-6-sol', toModel: 'gpt-6-astra', modelOnly: 1 } }, false],
+    ['', { modelChange: { fromModel: 'gpt-6-sol', toModel: 'gpt-6-astra', modelOnly: 'true' } }, false],
+    ['', { modelChange: [] }, false],
   ])('recovers remote compact failure only for a pure model marker (%j)', async (content, agentMeta, expected) => {
     const deps = makeDeps([
       msg('user', 'Continue the pending work', 'u1'),
