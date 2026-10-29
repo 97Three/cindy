@@ -40,12 +40,17 @@ interface NewGoalDialogProps {
   creationRecoveryBusy?: boolean;
 }
 
+interface GoalCreationError {
+  message: string;
+  pickerAuthorization: boolean;
+}
+
 export function NewGoalDialog({ sessionId, open, onOpenChange, onCreate, initialObjective, onCreated, creationRecovery, creationRecoveryBusy = false }: NewGoalDialogProps): React.ReactElement {
   const { t } = useTranslation();
   const [objective, setObjective] = useState('');
   const [limits, setLimits] = useState<GoalLimitValues>(DEFAULT_GOAL_LIMITS);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<GoalCreationError | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -61,6 +66,14 @@ export function NewGoalDialog({ sessionId, open, onOpenChange, onCreate, initial
     // initialObjective 只在打开瞬间取一次(打开前父组件已设好),不随后续变化覆盖用户编辑,
     // 故依赖仅 [open]。
   }, [open]);
+
+  useEffect(() => {
+    if (creationRecovery) {
+      // The parent can publish recovery after this dialog's async catch ran.
+      // Discard its handled picker error so returning to editing cannot reveal it.
+      setError((current) => current?.pickerAuthorization ? null : current);
+    }
+  }, [creationRecovery, error?.pickerAuthorization]);
 
   const trimmed = objective.trim();
 
@@ -79,10 +92,10 @@ export function NewGoalDialog({ sessionId, open, onOpenChange, onCreate, initial
     } catch (err) {
       // The recovery notice explains the handled picker error. A later retry
       // can fail for another reason while that notice is still visible.
-      const handledPickerError = Boolean(
-        creationRecovery && isWritableDirectoryGrantErrorCode(extractIpcError(err)?.code),
-      );
-      setError(handledPickerError ? null : err instanceof Error ? err.message : t('goal.newGoalDialog.failed'));
+      setError({
+        message: err instanceof Error ? err.message : t('goal.newGoalDialog.failed'),
+        pickerAuthorization: isWritableDirectoryGrantErrorCode(extractIpcError(err)?.code),
+      });
     } finally {
       setSaving(false);
     }
@@ -134,9 +147,9 @@ export function NewGoalDialog({ sessionId, open, onOpenChange, onCreate, initial
           />
           <GoalAdvancedLimits value={limits} onChange={setLimits} />
           {creationRecovery}
-          {error && (
+          {error && !(error.pickerAuthorization && creationRecovery) && (
             <div className="text-12" style={{ color: 'var(--error-fg)' }}>
-              {error}
+              {error.pickerAuthorization ? t('goal.newGoalDialog.failed') : error.message}
             </div>
           )}
           <div className="flex justify-end gap-2">

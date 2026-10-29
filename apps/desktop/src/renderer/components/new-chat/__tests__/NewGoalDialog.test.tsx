@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createIpcError } from '../../../../shared/ipc-errors';
 import { NewGoalDialog } from '../NewGoalDialog';
@@ -29,4 +30,28 @@ it('shows a new goal creation error even while directory recovery remains visibl
   expect(await screen.findByText('Collaboration policy is still loading')).toBeTruthy();
   expect(screen.getByText('Folders reselected')).toBeTruthy();
   expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Keep the original goal');
+});
+
+// #7395 macOS acceptance: Main rejects an expired grant, then the parent adds
+// the recovery notice in the same failed submit. The existing case starts with
+// that notice already present, so it misses this render timing. Component/unit.
+it('does not expose a handled picker error when recovery appears during creation', async () => {
+  function Harness() {
+    const [recovering, setRecovering] = useState(false);
+    return <NewGoalDialog open onOpenChange={vi.fn()} initialObjective="Original goal"
+      onCreate={async () => {
+        setRecovering(true);
+        throw createIpcError('WRITABLE_DIRECTORY_AUTHORIZATION_REQUIRED', 'Raw picker error');
+      }}
+      creationRecovery={recovering
+        ? <button type="button" onClick={() => setRecovering(false)}>Clear recovery</button>
+        : undefined} />;
+  }
+  render(<Harness />);
+  fireEvent.click(await screen.findByRole('button', { name: 'goal.newGoalDialog.start' }));
+  expect(await screen.findByRole('button', { name: 'Clear recovery' })).toBeTruthy();
+  await waitFor(() => expect(screen.queryByText(/Raw picker error/)).toBeNull());
+  fireEvent.click(screen.getByRole('button', { name: 'Clear recovery' }));
+  expect(screen.queryByText(/Raw picker error/)).toBeNull();
+  expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Original goal');
 });
