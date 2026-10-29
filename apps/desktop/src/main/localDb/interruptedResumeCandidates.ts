@@ -2,6 +2,7 @@
  * 启动「继续上次中断的任务」弹窗的数据源。
  *
  * 中断判定完全复用 listInterruptedPendingRows(startedAt > endedAt 且早于本进程启动),
+ * 并额外纳入伙伴的主对话、历史与委派任务(它们不在普通任务列表,但同样会被中断),
  * 这里只为每个中断会话补两项展示素材:
  *  - interruptedAt:中断那一轮最后一条落库消息的时间(崩溃时刻无从得知,最后一次
  *    落库是最接近的可观察值);该轮没有任何落库消息时回退到 turn 开始时间;
@@ -47,7 +48,7 @@ function parseToolUse(raw: string | null): InterruptedTurnToolUse | null {
 export async function listInterruptedResumeCandidateRows(): Promise<
   InterruptedResumeCandidateRow[]
 > {
-  const pending = await listInterruptedPendingRows();
+  const pending = await listInterruptedPendingRows({ includeBotTasks: true });
   if (pending.length === 0) return [];
   const db = getDbClient().drizzle;
   return Promise.all(

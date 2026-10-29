@@ -49,7 +49,7 @@
  * turn 主流程。
  */
 
-import { and, desc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 
 import { getDbClient } from './client/current';
 import { listCindyMakePendingFailureSessionIds } from './cindyMakeAttention';
@@ -57,7 +57,7 @@ import {
   getSessionInterruptionBootAt,
   setSessionInterruptionBootAtForTests,
 } from './sessionInterruptionBoot';
-import { messages, sessions } from './schema';
+import { botSessionLinks, messages, sessions } from './schema';
 import { createLogger } from '../logger';
 import { DESKTOP_TASK_LIST_SESSION_SOURCES } from '../../shared/sessionSource.js';
 import { boundedSummary } from '../maker-ipc/recoveryCoordinator.js';
@@ -375,19 +375,32 @@ export function _setBootAtMsForTests(ms: number): void {
  * 启动首拉消费它(见下方两条腿消费周期的说明);但 startedAt < bootAt 的守卫让它
  * 在任何时刻调用都不会把运行中的会话算进来,批量处置因此也可以安全复用。
  */
-export async function listInterruptedPendingRows(): Promise<
-  { sessionId: string; startedAt: number }[]
-> {
+export async function listInterruptedPendingRows(
+  options: { includeBotTasks?: boolean } = {},
+): Promise<{ sessionId: string; startedAt: number }[]> {
   const db = getDbClient().drizzle;
+  // 只统计桌面 sidebar 可见来源(含 feishu/slack 等 IM 渠道)——
+  // 不可见来源的红点无处展示也无法清除。
+  const listedSource = inArray(sessions.source, DESKTOP_TASK_LIST_SESSION_SOURCES);
   const rows = await db
     .select({ id: sessions.id, startedAt: sessions.activeTurnStartedAt })
     .from(sessions)
     .where(
       and(
         eq(sessions.status, 'active'),
-        // 只统计桌面 sidebar 可见来源(含 feishu/slack 等 IM 渠道)——
-        // 不可见来源的红点无处展示也无法清除。
-        inArray(sessions.source, DESKTOP_TASK_LIST_SESSION_SOURCES),
+        options.includeBotTasks
+          ? or(
+              listedSource,
+              // 伙伴的主对话、历史与委派任务有自己的页面,可以继续;群专线与 IM 专线
+              // 是隐藏专线,由群聊 / 渠道收口,不单独提示。
+              and(
+                eq(sessions.source, 'bot'),
+                sql`EXISTS (SELECT 1 FROM ${botSessionLinks}
+                  WHERE ${botSessionLinks.sessionId} = ${sessions.id}
+                    AND ${botSessionLinks.role} IN ('canonical', 'history', 'delegation'))`,
+              ),
+            )
+          : listedSource,
         // 插件后台隐藏任务不在侧栏展示，红点无处展示也无法清除。
         isNull(sessions.hiddenAt),
         gt(sessions.activeTurnStartedAt, sql`COALESCE(${sessions.lastTurnEndedAt}, 0)`),

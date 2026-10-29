@@ -78,6 +78,17 @@ describe('sessionActiveTurn', () => {
       CREATE INDEX idx_messages_rewind_at ON messages (rewind_at);
       CREATE INDEX idx_messages_active_error_tail ON messages (session_id, created_at)
         WHERE role = 'error' AND rewind_at IS NULL;
+
+      CREATE TABLE bot_session_links (
+        id TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        profile_version INTEGER NOT NULL DEFAULT 1,
+        role TEXT NOT NULL,
+        route_key TEXT,
+        created_at INTEGER NOT NULL,
+        archived_at INTEGER
+      );
     `);
     const db = drizzle(dbHandle, { schema });
     const client: DbClient = {
@@ -548,6 +559,32 @@ describe('sessionActiveTurn', () => {
         lastToolUse: { toolName: 'Bash', input: { command: 'pnpm test' } },
       },
     ]);
+  });
+
+  it('offers interrupted companion tasks for resume but keeps hidden lanes and red dots out', async () => {
+    const { listInterruptedResumeCandidateRows } = await import('../interruptedResumeCandidates.js');
+    const { listInterruptedPendingSessionIds } = await import('../sessionActiveTurn.js');
+    const client = createTestDbClient();
+    const startedAt = Date.now() - 10_000;
+    await seedSession(client, 's-desktop', { startedAt });
+    for (const role of ['canonical', 'history', 'delegation', 'group', 'channel']) {
+      await seedSession(client, `bot-${role}`, { startedAt, source: 'bot' });
+      await client.exec(
+        'INSERT INTO bot_session_links (id, bot_id, session_id, role, created_at) VALUES (?, ?, ?, ?, ?)',
+        [`link-${role}`, 'bot-1', `bot-${role}`, role, startedAt],
+      );
+    }
+    // 没有伙伴关联的 bot 来源会话无处打开,不提示。
+    await seedSession(client, 'bot-unlinked', { startedAt, source: 'bot' });
+
+    expect((await listInterruptedResumeCandidateRows()).map((r) => r.sessionId).sort()).toEqual([
+      'bot-canonical',
+      'bot-delegation',
+      'bot-history',
+      's-desktop',
+    ]);
+    // 侧栏红点不展示伙伴任务,口径不变。
+    expect(await listInterruptedPendingSessionIds()).toEqual(['s-desktop']);
   });
 
   it('excludes plugin background tasks from both red-dot legs', async () => {
