@@ -526,9 +526,11 @@ describe('group timeline', () => {
     expect(all('botGroup.notice')[0]?.textContent).not.toContain(`groupChat.notice.runtimeFailure.${runtimeFailureCode}.details`);
   });
 
-  it('keeps computer setup guidance inside details in a thread', async () => {
-    await render(group({ messages: [message('auth-failure', 1, { kind: 'notice', authorKind: 'system',
-      authorName: 'Bot', noticeCode: 'member-failed', runtimeFailureCode: 'AUTH_REQUIRED' })] }), 'ready', 'thread-root');
+  // #7769: model-switch advice must retain its computer location after disclosure.
+  it.each(['AUTH_REQUIRED', 'RATE_LIMITED', 'UPSTREAM_OVERLOADED', 'RUNTIME_TIMEOUT'] as const)(
+    'keeps computer setup guidance inside thread details: %s', async runtimeFailureCode => {
+    await render(group({ messages: [message('failure', 1, { kind: 'notice', authorKind: 'system',
+      authorName: 'Bot', noticeCode: 'member-failed', runtimeFailureCode })] }), 'ready', 'thread-root');
     const notice = all('botGroup.notice')[0]!;
     expect(notice.textContent).not.toContain('groupChat.notice.runtimeFailureSetupHint');
     const toggle = [...notice.querySelectorAll('button')].find(button => button.textContent === 'session.tail.showErrorDetails')!;
