@@ -1005,6 +1005,49 @@ describe("remote desktop controls", () => {
     mounted = false;
     expect(fixture.playback).toHaveBeenLastCalledWith(false);
   });
+  // Unit: a reserved PiP transition skips the initial background handler; all
+  // failed exits must still lock and disable recovery when protection is on.
+  it.each(["failure", "timeout", "reject", "close"])(
+    "locks after protected background PiP preparation ends with %s", async (outcome) => {
+      fixture.nativeMedia = true;
+      fixture.idleSupported = true;
+      act(() => root.render(<RemoteDesktopScreen />));
+      await connect();
+      await nativePresentation("pipCapability", { supported: true });
+      act(() => button("operations").click());
+      await act(async () => button("smallWindow").click());
+      let grant!: (value: unknown) => void;
+      let reject!: (cause: Error) => void;
+      const original = fixture.invoke.getMockImplementation()!;
+      fixture.invoke.mockImplementation((...args) =>
+        args[2][0].op === "presentation" && args[2][0].enabled
+          ? new Promise((resolve, fail) => { grant = resolve; reject = fail; })
+          : original(...args),
+      );
+      await nativePresentation("presentationStarting");
+      await nativePresentation("presentation", { active: true });
+      await act(async () => {
+        AppState.currentState = "background";
+        fixture.appState!("background");
+      });
+      expect(requests().filter((r) => r.op === "stop")).toHaveLength(0);
+      if (outcome === "failure") await nativePresentation("presentationFailed");
+      if (outcome === "timeout") await act(async () => vi.advanceTimersByTimeAsync(4000));
+      if (outcome === "reject") await act(async () => reject(new Error("denied")));
+      if (outcome === "close") await nativePresentation("presentation", { active: false });
+      expect(requests().filter((r) => r.op === "stop")).toEqual([
+        { op: "stop", lease: "lease", lockScreen: true },
+      ]);
+      await act(async () => grant({}));
+      await act(async () => {
+        AppState.currentState = "active";
+        fixture.appState!("active");
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(requests().filter((r) => r.op === "start")).toHaveLength(1);
+      expect(sent().filter((m) => m.type === "pipPolicy" && m.authorized)).toHaveLength(0);
+    },
+  );
   it("prepares native video playback even when the host has no audio", async () => {
     fixture.nativeMedia = true;
     fixture.systemAudio = false;
@@ -3519,6 +3562,53 @@ describe("remote desktop controls", () => {
     expect(requests().filter((r) => r.op === "stop")).toHaveLength(0);
     await act(async () => vi.advanceTimersByTimeAsync(3000));
     expect(requests().filter((r) => r.op === "start").at(-1)).toMatchObject({ resume: true, idleTimeoutMinutes: 5 });
+  });
+  // Unit: backgrounding before start returns must retain the same lock intent
+  // as a connected viewer; ordinary late-lease cleanup would disable host expiry.
+  it("locks a late start reply after protected background exit without reopening", async () => {
+    fixture.idleSupported = true;
+    let finish!: (value: unknown) => void;
+    const original = fixture.invoke.getMockImplementation()!;
+    fixture.invoke.mockImplementation((...args) =>
+      args[2][0].op === "start"
+        ? new Promise((resolve) => { finish = resolve; })
+        : original(...args),
+    );
+    await act(async () => fixture.message!({ nativeEvent: { data: '{"type":"ready"}' } }));
+    expect(requests().filter((r) => r.op === "start")).toHaveLength(1);
+    await act(async () => {
+      AppState.currentState = "background";
+      fixture.appState!("background");
+    });
+    await act(async () => finish({ lease: "late", display, controlling: true }));
+    expect(requests().filter((r) => r.op === "stop")).toEqual([
+      { op: "stop", lease: "late", lockScreen: true },
+    ]);
+    await act(async () => {
+      AppState.currentState = "active";
+      fixture.appState!("active");
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(requests().filter((r) => r.op === "start")).toHaveLength(1);
+  });
+  // Unit: saved-password preparation previously preceded the host's resume
+  // refusal and could unlock a host that had already ended the protected lease.
+  it.each(["linux", "darwin"])("does not auto-unlock %s while recovering a protected connection", async (platform) => {
+    fixture.hostPlatform = platform;
+    fixture.idleSupported = true;
+    await connect();
+    expect(fixture.maybeUnlock).toHaveBeenCalledOnce();
+    const original = fixture.invoke.getMockImplementation()!;
+    fixture.invoke.mockImplementation((...args) => {
+      if (args[2][0].op === "heartbeat") return Promise.reject(new Error("DESKTOP_LEASE_EXPIRED"));
+      if (args[2][0].op === "start" && args[2][0].resume)
+        return Promise.reject(new Error("DESKTOP_STOPPED"));
+      return original(...args);
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(requests().filter((r) => r.op === "start").at(-1)).toMatchObject({ resume: true });
+    expect(fixture.maybeUnlock).toHaveBeenCalledOnce();
+    expect(host.textContent).toContain("remoteDesktop.hostDisconnected");
   });
   it("reads an explicit never override before starting a protected-capable host", async () => {
     act(() => root.unmount());

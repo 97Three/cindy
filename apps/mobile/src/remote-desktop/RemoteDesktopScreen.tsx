@@ -1025,9 +1025,8 @@ export function RemoteDesktopSession({
         setBusy(false);
       }
       const lockScreen = Boolean(
-        previous &&
-        ((exiting && exitLock.current) ||
-          (forceLock && capsRef.current?.value.lockOnExit === true)),
+        (exiting && exitLock.current) ||
+          (forceLock && capsRef.current?.value.lockOnExit === true),
       );
       return viewerSession
         .current!.stop(lockScreen, preserveLease)
@@ -1312,7 +1311,9 @@ export function RemoteDesktopSession({
               capsRef.current = { deviceId, value: result };
               setHostCaps({ deviceId, value: result });
               // A window view never unlocks the computer: it shows a window on an unlocked desktop.
-              if (!handoff && supportsAutoUnlock(result.platform)) {
+              // Automatic recovery must never unlock before the host can reject resume.
+              // A deliberate new connection may still use the saved password.
+              if (!resuming && !handoff && supportsAutoUnlock(result.platform)) {
                 // Linux capture may be unavailable until its locker releases the session.
                 if (result.platform === "linux") {
                   return securityRef.current.maybeUnlock(async () => {
@@ -1498,6 +1499,17 @@ export function RemoteDesktopSession({
     },
     [stop],
   );
+  const endBackground = (exiting = false) => {
+    if (idleTimeoutPolicy.current > 0 && capsRef.current?.value.idleLock) {
+      recovery.current.enabled = false;
+      void stopRef.current(false, exiting, true);
+      setError("backgroundDisconnected");
+    } else pause(exiting);
+  };
+  const pausePresentation = (exiting = false) => {
+    if (AppState.currentState === "background") endBackground(exiting);
+    else pause(exiting);
+  };
   const leave = async (returnToSource = navigation.current.onBack) => {
     if (leaving.current) return;
     leaving.current = true;
@@ -1618,11 +1630,7 @@ export function RemoteDesktopSession({
         !pipPrepared.current
       ) {
         securityRef.current.resetConnectionAttempt();
-        if (idleTimeoutPolicy.current > 0 && capsRef.current?.value.idleLock) {
-          recovery.current.enabled = false;
-          void stopRef.current(false, false, true);
-          setError("backgroundDisconnected");
-        } else pause();
+        endBackground();
       } else if (state === "active" && active.current) {
         send({ type: "resume" });
         restoreInlinePresentationRef.current();
@@ -2171,7 +2179,7 @@ export function RemoteDesktopSession({
         ) {
           // A window closed before its host handoff completed. Retire the lease
           // so a late ACK cannot leave the host in background-viewing mode.
-          pause(!focusedRef.current);
+          pausePresentation(!focusedRef.current);
           if (!focusedRef.current) navigation.current.onEnded?.();
           break;
         }
@@ -2197,7 +2205,8 @@ export function RemoteDesktopSession({
           !restoringPresentation.current
         ) {
           recovery.current.enabled = false;
-          void stop(false, true);
+          if (AppState.currentState === "background") endBackground(true);
+          else void stop(false, true);
           navigation.current.onEnded?.();
         } else if (!presentation.current) {
           restoreInlinePresentationRef.current();
@@ -2207,7 +2216,7 @@ export function RemoteDesktopSession({
             !NativeRemoteDesktopView &&
             AppState.currentState === "background"
           )
-            pause();
+            endBackground();
         }
         break;
       case "presentationRestore":
@@ -2278,11 +2287,10 @@ export function RemoteDesktopSession({
         setSettingNotice(t("remoteDesktop.pipUnavailable"));
         setControlPage("controls");
         setOperations(true);
-        if (AppState.currentState === "background") pause();
-        if (!focusedRef.current) {
-          void stop(false, true);
-          navigation.current.onEnded?.();
-        }
+        if (AppState.currentState === "background")
+          endBackground(!focusedRef.current);
+        else if (!focusedRef.current) void stop(false, true);
+        if (!focusedRef.current) navigation.current.onEnded?.();
         break;
       case "videoFrameReady":
         if (mediaAttempt.current === message.attemptId)
@@ -2624,7 +2632,7 @@ export function RemoteDesktopSession({
       ) {
         leaving.current = true;
         setIsLeaving(true);
-        pause(true);
+        pausePresentation(true);
         navigation.current.onEnded?.();
       }
       return;
@@ -2669,7 +2677,7 @@ export function RemoteDesktopSession({
       setSettingNotice(t("remoteDesktop.pipUnavailable"));
       setControlPage("controls");
       setOperations(true);
-      pause(!focusedRef.current);
+      pausePresentation(!focusedRef.current);
       if (!focusedRef.current) navigation.current.onEnded?.();
     }, BACKGROUND_TRANSITION_TIMEOUT_MS);
     try {
@@ -2744,7 +2752,7 @@ export function RemoteDesktopSession({
       if (!NativeRemoteDesktopView && !videoSettingsRef.current.audio)
         void remotePresentation?.playback(false).catch(() => {});
       setSettingNotice(t("remoteDesktop.pipUnavailable"));
-      pause(!focusedRef.current);
+      pausePresentation(!focusedRef.current);
       if (!focusedRef.current) navigation.current.onEnded?.();
     } finally {
       finishTransition?.();

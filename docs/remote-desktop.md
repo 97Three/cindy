@@ -20,8 +20,12 @@ Desktop controller lock/suspend retires its viewer immediately and requests a ho
 lock. With idle protection enabled, Mobile backgrounding without PiP also ends the
 connection and requests a lock; temporary inactive states (such as biometric prompts)
 do not. PiP keeps the same host idle deadline. Neither path automatically reopens the
-remote desktop when the controller returns. If the exit request cannot arrive, the
-host's existing 12-second heartbeat expiry locks the protected lease. A transient
+remote desktop when the controller returns. The lock request is retained for any
+in-flight start reply. Background PiP failure or preparation timeout follows the
+same protected exit. Automatic Mobile recovery
+does not use a saved password; deliberate reconnects may still auto-unlock.
+If the exit request cannot arrive, the host's existing 12-second heartbeat expiry
+locks the protected lease. A transient
 media reconnect preserves the live host lease and its idle deadline until resume;
 failed recovery reaches heartbeat expiry instead of renewing the idle budget.
 Only this desktop lease ends: other Device Link tasks and channels remain intact.
