@@ -16,6 +16,7 @@ import type { createBotCapabilityService } from '../maker-ipc/botCapabilityServi
 import { getRoutineEngine, routineTools } from '../routines/service.js';
 import { taskActionRoutineRevision } from '../maker-ipc/taskActionAuthorization.js';
 import { join as pathJoin } from 'node:path';
+import { homedir } from 'node:os';
 import { and, eq, inArray } from 'drizzle-orm';
 
 import {
@@ -330,8 +331,12 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       getScheduleDefinition: async (id, hookInstallation) => {
         const schedule = await getScheduler().get(id);
         if (!schedule) return null;
-        const { name, prompt, persistentSession, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId } = schedule;
-        const definition = { id, name, prompt, persistentSession, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId };
+        const { name, prompt, persistentSession, useWorktree, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId } = schedule;
+        const preRunWorkingDir = preRunHook?.command?.trim()
+          ? (targetSessionId ? await resolveHookSessionWorkDir(targetSessionId) : undefined) ?? workingDir
+          : undefined;
+        const definition = { id, name, prompt, persistentSession, useWorktree, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId,
+          ...(preRunHook?.command?.trim() ? { preRunWorkingDir: preRunWorkingDir?.trim() ? preRunWorkingDir : homedir() } : {}) };
         if (!hookInstallation) return definition;
         let installWorkingDir = hookInstallation.workingDir;
         if (!installWorkingDir && executionMode !== 'script' && targetSessionId)

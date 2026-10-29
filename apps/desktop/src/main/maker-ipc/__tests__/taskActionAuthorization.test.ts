@@ -955,7 +955,7 @@ describe('teammate turn principal', () => {
     'waits for an exact decision before autonomous %s can execute shell commands', async tool => {
       const h = desktopFixture('automatic');
       live(h);
-      const definition = { id: 'script', name: 'Command check', prompt: '', executionMode: 'script' as const,
+      const definition = { id: 'script', name: 'Command check', prompt: '', useWorktree: false, executionMode: 'script' as const,
         workingDir: '/tmp/check', scriptConfig: { command: 'printf reviewed', capabilities: [] } };
       h.schedules.set('script', definition);
       const args = tool === 'schedule_run_now' ? { id: 'script' } : definition;
@@ -985,7 +985,7 @@ describe('teammate turn principal', () => {
     'requires the exact command-capable decision for autonomous Agent schedule %s', async variant => {
       const h = desktopFixture('automatic');
       live(h);
-      const definition = { id: 'agent', name: 'Agent work', prompt: 'Run the saved work',
+      const definition = { id: 'agent', name: 'Agent work', useWorktree: false, prompt: 'Run the saved work',
         workingDir: '/work', executionMode: 'agent' as const,
         ...(variant === 'detach' ? { targetSessionId: 'companion' } : {}) };
       h.schedules.set('agent', definition);
@@ -1012,10 +1012,101 @@ describe('teammate turn principal', () => {
     },
   );
 
+  // r4409663577: helper create starts Full Access without a directory override.
+  // Unit, real admission/effect: ordinary task sends must not mint silent authority.
+  it('confirms a new Full Access handoff without changing existing sends or inherited-permission creates', async () => {
+    const h = desktopFixture('automatic');
+    live(h, 'auto');
+    const request = helper('send_to_session', { message: 'Only reply to the test' });
+    const create = vi.fn(async () => 'created');
+    h.confirm.mockResolvedValue(false);
+    expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, create))).toContain('USER_CANCELLED');
+    expect(create).not.toHaveBeenCalled();
+    expect(h.confirm).toHaveBeenCalledWith('companion', request.tool, request.args,
+      { server: 'cindy_helper', risk: 'command', details: { execution: {
+        mode: 'agent', newTaskPermissionMode: 'bypassPermissions', workingDir: '/companion',
+      } } });
+    h.confirm.mockResolvedValue(true);
+    expect(await withToolCallAuthority(h.authorize, request, create)).toBe('created');
+    expect(create).toHaveBeenCalledTimes(1);
+    h.confirm.mockClear();
+    for (const args of [{ target_session_id: 'existing', message: 'Reply' },
+      { working_dir: '/other', message: 'Reply' }])
+      expect(await withToolCallAuthority(h.authorize, helper('send_to_session', args), create)).toBe('created');
+    expect(h.confirm).not.toHaveBeenCalled();
+    h.activeInput.ownerInput = true;
+    expect(await withToolCallAuthority(h.authorize, request, create)).toBe('created');
+    expect(h.confirm).not.toHaveBeenCalled();
+  });
+
+  // r4409987073: turning off isolation changes where a Full Access Agent writes.
+  // Unit, production admission: deny that change and expire a previously reviewed run.
+  it('confirms changed worktree isolation and expires a run when isolation changes', async () => {
+    const h = desktopFixture('automatic');
+    live(h);
+    const definition = { id: 'agent', name: 'Isolated', prompt: 'Owner work',
+      executionMode: 'agent' as const, workingDir: '/work', useWorktree: true };
+    h.schedules.set('agent', definition);
+    const request = { sessionId: 'companion', server: 'cindy_scheduler' as const, tool: 'schedule_update',
+      args: { id: 'agent', useWorktree: false } };
+    const effect = vi.fn(async () => 'changed');
+    h.confirm.mockResolvedValue(false);
+    expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, effect))).toContain('USER_CANCELLED');
+    expect(effect).not.toHaveBeenCalled();
+    expect(h.confirm).toHaveBeenCalledWith('companion', request.tool, request.args,
+      expect.objectContaining({ risk: 'command', details: expect.objectContaining({
+        schedule: expect.objectContaining({ useWorktree: true }),
+      }) }));
+    h.confirm.mockImplementation(async () => { definition.useWorktree = false; return true; });
+    expect(JSON.stringify(await withToolCallAuthority(h.authorize,
+      { ...request, tool: 'schedule_run_now', args: { id: 'agent' } }, effect))).toContain('AUTHORIZATION_EXPIRED');
+    expect(effect).not.toHaveBeenCalled();
+  });
+
+  // r4409828449: resume previously displayed only an ID, not the saved command.
+  // Unit, production admission/effect: show the definition and reject replacement.
+  it('shows and binds the saved script before resuming a paused schedule', async () => {
+    const h = desktopFixture('automatic');
+    live(h);
+    const definition = { id: 'paused', name: 'Paused command', useWorktree: false, prompt: '', executionMode: 'script' as const,
+      workingDir: '/work', scriptConfig: { command: 'printf reviewed', capabilities: [] } };
+    h.schedules.set('paused', definition);
+    const request = { sessionId: 'companion', server: 'cindy_scheduler' as const, tool: 'schedule_resume', args: { id: 'paused' } };
+    const resume = vi.fn(async () => 'resumed');
+    h.confirm.mockImplementation(async () => { definition.scriptConfig.command = 'printf replacement'; return true; });
+    expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, resume))).toContain('AUTHORIZATION_EXPIRED');
+    expect(resume).not.toHaveBeenCalled();
+    expect(h.confirm).toHaveBeenCalledWith('companion', request.tool, request.args,
+      { server: 'cindy_scheduler', risk: 'resume', details: { schedule: expect.objectContaining({
+        workingDir: '/work', scriptConfig: { command: 'printf reviewed', capabilities: [] },
+      }) } });
+    h.confirm.mockResolvedValue(true);
+    expect(await withToolCallAuthority(h.authorize, request, resume)).toBe('resumed');
+    expect(resume).toHaveBeenCalledTimes(1);
+  });
+
+  // r4409808139: the runner inherits the bound session's current hook directory.
+  // Unit, production admission: changing that effective directory invalidates approval.
+  it('binds manual hook execution to its resolved directory', async () => {
+    const h = desktopFixture('automatic');
+    live(h);
+    const definition = { id: 'bound', name: 'Bound hook', useWorktree: false, prompt: 'Owner work', executionMode: 'agent' as const,
+      targetSessionId: 'existing', workingDir: '/stale', preRunWorkingDir: '/actual',
+      preRunHook: { command: 'node relative.mjs' } };
+    h.schedules.set('bound', definition);
+    h.confirm.mockImplementation(async () => { definition.preRunWorkingDir = '/replacement'; return true; });
+    const execute = vi.fn(async () => 'executed');
+    const request = { sessionId: 'companion', server: 'cindy_scheduler' as const, tool: 'schedule_run_now', args: { id: 'bound' } };
+    expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, execute))).toContain('AUTHORIZATION_EXPIRED');
+    expect(execute).not.toHaveBeenCalled();
+    expect(h.confirm).toHaveBeenCalledWith('companion', request.tool, request.args,
+      expect.objectContaining({ details: { schedule: expect.objectContaining({ preRunWorkingDir: '/actual' }) } }));
+  });
+
   it('keeps an approved independent Agent schedule metadata edit ordinary', async () => {
     const h = desktopFixture('automatic');
     live(h);
-    h.schedules.set('agent', { id: 'agent', name: 'Agent work', prompt: 'Saved owner instruction',
+    h.schedules.set('agent', { id: 'agent', name: 'Agent work', useWorktree: false, prompt: 'Saved owner instruction',
       executionMode: 'agent', workingDir: '/work' });
     const request = { sessionId: 'companion', server: 'cindy_scheduler' as const, tool: 'schedule_update',
       args: { id: 'agent', name: 'Renamed', cronExpr: '0 9 * * *' } };
@@ -1026,7 +1117,7 @@ describe('teammate turn principal', () => {
   it.each(['script', 'agent'] as const)('expires a %s command decision when the saved schedule changes', async mode => {
     const h = desktopFixture('automatic');
     live(h);
-    h.schedules.set('script', { id: 'script', name: 'Command check', prompt: '', executionMode: mode,
+    h.schedules.set('script', { id: 'script', name: 'Command check', prompt: '', useWorktree: false, executionMode: mode,
       ...(mode === 'script' ? { scriptConfig: { command: 'printf reviewed', capabilities: [] } } : { prompt: 'Reviewed prompt' }) });
     h.confirm.mockImplementation(async () => {
       if (mode === 'script') h.schedules.get('script')!.scriptConfig!.command = 'printf replacement';
@@ -1050,7 +1141,7 @@ describe('teammate turn principal', () => {
     expect(h.confirm).toHaveBeenCalledTimes(2);
     h.confirm.mockClear();
     await call('schedule_create', { prompt: 'Remind me tomorrow', bindToCurrentSession: true });
-    h.schedules.set('prompt', { id: 'prompt', name: 'Reminder', prompt: 'Remind me tomorrow', executionMode: 'agent', targetSessionId: 'companion' });
+    h.schedules.set('prompt', { id: 'prompt', name: 'Reminder', useWorktree: false, prompt: 'Remind me tomorrow', executionMode: 'agent', targetSessionId: 'companion' });
     await call('schedule_update', { id: 'prompt', name: 'Updated reminder' });
     await call('schedule_run_now', { id: 'prompt' });
     expect(h.confirm).not.toHaveBeenCalled();
@@ -1082,7 +1173,7 @@ describe('teammate turn principal', () => {
   it('binds the scheduler hook installer decision to its actual schedule target', async () => {
     const h = desktopFixture('automatic');
     live(h);
-    const target = { id: 'bound', name: 'Bound check', prompt: 'Bound owner instruction', executionMode: 'agent' as const,
+    const target = { id: 'bound', name: 'Bound check', useWorktree: false, prompt: 'Bound owner instruction', executionMode: 'agent' as const,
       targetSessionId: 'child', workingDir: '/schedule', preRunHook: { command: 'node old.mjs' },
       hookInstallation: { workingDir: '/session', fallbackDir: '/fallback' } };
     h.schedules.set('bound', target);

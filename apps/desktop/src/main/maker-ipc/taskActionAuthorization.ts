@@ -116,8 +116,9 @@ export const SCHEDULER_TASK_ACTION_TOOLS: ReadonlySet<string> = new Set([
 
 export type TaskActionRisk = 'remove' | 'permission' | 'resume' | 'command' | 'authority';
 export type TaskActionScheduleDefinition = Pick<Schedule,
-  'id' | 'name' | 'prompt' | 'persistentSession' | 'executionMode' | 'scriptConfig' | 'preRunHook' | 'workingDir' | 'targetSessionId'> & {
+  'id' | 'name' | 'prompt' | 'persistentSession' | 'useWorktree' | 'executionMode' | 'scriptConfig' | 'preRunHook' | 'workingDir' | 'targetSessionId'> & {
     hookInstallation?: { workingDir?: string; fallbackDir: string };
+    preRunWorkingDir?: string;
   };
 export interface TaskActionConfirmation {
   server: string;
@@ -157,11 +158,20 @@ export function taskActionStartsIndependentAgent(call: Pick<Call, 'server' | 'to
       (!(typeof definition.targetSessionId === 'string' && definition.targetSessionId.trim()) && !bindsCurrent));
 }
 
+/** This existing helper creation path starts Full Access; directory overrides inherit
+ * the caller's permissions and existing-target sends keep their normal flow. */
+export function taskActionCreatesFullAccessTask(call: Pick<Call, 'server' | 'tool' | 'args'>): boolean {
+  const args = call.args as Record<string, unknown> | undefined;
+  return call.server === 'cindy_helper' && call.tool === 'send_to_session' &&
+    !args?.target_session_id && args?.working_dir === undefined;
+}
+
 /** A small, explicit risk list. Everything else follows the task's normal permissions. */
 export function taskActionRisk(call: Pick<Call, 'server' | 'tool' | 'args'>,
   facts?: { routineEnabled?: boolean; routinePrompt?: string; routineBuiltin?: boolean; routinePreRunCommand?: string; schedule?: TaskActionScheduleDefinition | null }): TaskActionRisk | undefined {
   const args = call.args && typeof call.args === 'object' && !Array.isArray(call.args)
     ? call.args as Record<string, unknown> : {};
+  if (taskActionCreatesFullAccessTask(call)) return 'command';
   // The local scheduler is a trusted MCP, but its script runner bypasses the
   // harness's shell approval. Classify the command effect, not all scheduler writes.
   if ((call.server === 'cindy_helper' || call.server === 'cindy_scheduler') &&
@@ -180,7 +190,7 @@ export function taskActionRisk(call: Pick<Call, 'server' | 'tool' | 'args'>,
   }
   if (taskActionStartsIndependentAgent(call, facts?.schedule) &&
     (call.tool !== 'schedule_update' ||
-      (['prompt', 'workingDir', 'executionMode', 'targetSessionId', 'persistentSession'] as const)
+      (['prompt', 'workingDir', 'useWorktree', 'executionMode', 'targetSessionId', 'persistentSession'] as const)
         .some(key => key in args && args[key] !== facts?.schedule?.[key]))) return 'command';
   if (call.tool === 'routine_run_now' && facts?.routinePreRunCommand?.trim()) return 'command';
   const routineHook = args.preRunHook;

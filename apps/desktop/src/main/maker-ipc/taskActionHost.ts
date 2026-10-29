@@ -21,6 +21,7 @@ import {
   DELEGATED_TASK_ACTIONS,
   taskActionRisk,
   taskActionStartsIndependentAgent,
+  taskActionCreatesFullAccessTask,
   type TaskActionConfirmation,
   type TaskActionTarget,
   type TaskActionRoutineSnapshot,
@@ -230,13 +231,14 @@ export function createDesktopTaskActionAuthorizer(deps: {
         // what a bare schedule ID will run, and a changed definition expires it.
         const helperInstallation = principal === 'autonomous' && runtimePermissionApplies &&
           call.server === 'cindy_helper' && call.tool === 'schedule_set_pre_run_hook';
-        const helperInstallDir = helperInstallation ? await deps.getSessionWorkDir(sessionId) : undefined;
+        const helperCreation = principal === 'autonomous' && runtimePermissionApplies && taskActionCreatesFullAccessTask(call);
+        const helperWorkDir = helperInstallation || helperCreation ? await deps.getSessionWorkDir(sessionId) : undefined;
         const hookInstallation = call.server === 'cindy_scheduler' && call.tool === 'schedule_set_pre_run_hook'
           ? { workingDir: typeof args.workingDir === 'string' ? args.workingDir : undefined } : undefined;
         const scheduleIdArg = hookInstallation ? args.scheduleId : args.id;
         const scheduleId = principal === 'autonomous' && runtimePermissionApplies &&
           (hookInstallation || call.server === 'cindy_scheduler' && (!args.device || args.device === 'local') &&
-            ['schedule_update', 'schedule_run_now'].includes(call.tool)) && typeof scheduleIdArg === 'string'
+            ['schedule_update', 'schedule_run_now', 'schedule_resume'].includes(call.tool)) && typeof scheduleIdArg === 'string'
           ? scheduleIdArg : undefined;
         const schedule = scheduleId ? await deps.getScheduleDefinition(scheduleId, hookInstallation) : undefined;
         const scheduleSignature = JSON.stringify(schedule);
@@ -369,7 +371,7 @@ export function createDesktopTaskActionAuthorizer(deps: {
             if (fingerprint !== taskActionFingerprint(call))
               throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
             await assertDeliveryCurrent();
-            if (helperInstallation && await deps.getSessionWorkDir(sessionId) !== helperInstallDir)
+            if ((helperInstallation || helperCreation) && await deps.getSessionWorkDir(sessionId) !== helperWorkDir)
               throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
             if (scheduleId && JSON.stringify(await deps.getScheduleDefinition(scheduleId, hookInstallation)) !== scheduleSignature)
               throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
@@ -386,10 +388,11 @@ export function createDesktopTaskActionAuthorizer(deps: {
           await scope.assertCurrent();
           const confirmed = await deps.confirm(sessionId, call.tool, structuredClone(call.args),
             { server: call.server, risk, ...(permissionTarget ? { details: permissionTarget.details }
-              : helperInstallation ? { details: { installation: { workingDir: helperInstallDir ?? null } } }
+              : helperInstallation ? { details: { installation: { workingDir: helperWorkDir ?? null } } }
+              : helperCreation ? { details: { execution: { mode: 'agent', newTaskPermissionMode: 'bypassPermissions', workingDir: helperWorkDir ?? null } } }
               : risk === 'command' && taskActionStartsIndependentAgent(call, schedule)
                 ? { details: { ...(schedule ? { schedule } : {}), execution: { mode: 'agent', newTaskPermissionMode: 'bypassPermissions' } } }
-              : risk === 'command' && schedule ? { details: { schedule } }
+              : schedule ? { details: { schedule } }
               : call.tool === 'routine_run_now' && routine?.details ? { details: routine.details } : {}) });
           if (!confirmed) {
             rejectedDecision = { ok: false, errorCode: 'USER_CANCELLED',
