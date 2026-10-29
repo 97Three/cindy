@@ -140,6 +140,47 @@ it('preserves interrupted runs on app exit instead of recording a provider-close
   expect(h.storage.runs.get(runId)?.status).toBe('interrupted');
 });
 
+// Review P1: stop can precede the first durable row. Exercise every await
+// boundary through the real tick/runNow entry, with gates instead of sleeps.
+it.each(['manual-get', 'manual-insert', 'automatic-claim', 'automatic-insert'] as const)(
+  'persists interrupted when app exit wins the %s pre-registration window', async (boundary) => {
+    const h = makeHarness();
+    await h.scheduler.start();
+    const schedule = await h.scheduler.create(baseInput);
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    const block = async () => { entered(); await held; };
+    if (boundary === 'manual-get') {
+      const get = h.storage.get.bind(h.storage);
+      vi.spyOn(h.storage, 'get').mockImplementationOnce(async (id) => { await block(); return get(id); });
+    } else if (boundary === 'automatic-claim') {
+      const claim = h.storage.claimDueFire.bind(h.storage);
+      vi.spyOn(h.storage, 'claimDueFire').mockImplementationOnce(async (id, at) => { await block(); return claim(id, at); });
+    } else {
+      const insert = h.storage.insertRun.bind(h.storage);
+      vi.spyOn(h.storage, 'insertRun').mockImplementationOnce(async (run) => { await block(); return insert(run); });
+    }
+    h.clock.setTo(schedule.nextFireAt!);
+    const automatic = boundary.startsWith('automatic');
+    const pending = automatic ? h.scheduler.tick() : h.scheduler.runNow(schedule.id);
+    const settled = pending.catch((error) => {
+      if (automatic) throw error;
+      expect(String(error)).toContain('scheduler stopped');
+    });
+    await ready;
+    await h.scheduler.stop({ interrupted: true });
+    expect(h.storage.runs.size).toBe(0);
+    release();
+    await settled;
+    expect([...h.storage.runs.values()]).toEqual([
+      expect.objectContaining({ status: 'interrupted', errorMsg: 'app restarted' }),
+    ]);
+    expect(h.runner.fire).not.toHaveBeenCalled();
+  },
+);
+
 it('waits for manual continuation after restart, then restores the same run and silence lookup', async () => {
   const storage = new InMemoryStorage();
   const clock = new FakeClock();

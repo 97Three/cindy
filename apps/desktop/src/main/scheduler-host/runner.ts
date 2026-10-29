@@ -11,6 +11,7 @@ import {
   type ScheduledModelSelectionLease,
 } from '../maker-ipc/scheduledModelSelection';
 import { CONTINUE_AFTER_APP_EXIT_PROMPT, UI_ACTION_TRIGGER_PREFIX } from '../../shared/interruptedTurn.js';
+import { withScheduleLock } from './scheduleLock';
 import {
   routinePermissionSnapshot,
   settledRoutinePermissionMismatch,
@@ -509,12 +510,14 @@ export class MakerScheduleRunner implements ScheduleRunner {
     enqueuePrompt: SchedulerQueueDeps['enqueuePrompt'],
   ): Promise<FireResult> {
     if (!this.deps.schedulerQueue) throw new Error('scheduler queue bridge not ready');
-    this.manualContinuationEnqueues.set(ctx.runId, enqueuePrompt);
-    try {
-      return await this.fire(schedule, ctx);
-    } finally {
-      this.manualContinuationEnqueues.delete(ctx.runId);
-    }
+    return withScheduleLock(schedule.id, ctx.signal, async () => {
+      this.manualContinuationEnqueues.set(ctx.runId, enqueuePrompt);
+      try {
+        return await this.fire(schedule, ctx);
+      } finally {
+        this.manualContinuationEnqueues.delete(ctx.runId);
+      }
+    });
   }
 
   /** scheduler-host/index.ts 在 startScheduler 内调一次，让 runner 反向 pause schedule */

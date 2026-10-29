@@ -400,7 +400,9 @@ export class Scheduler extends EventEmitter {
    * 跳过,否则会把用户已经看到的 failed 覆写回 success、并二次重排 nextFireAt。
    * 只存内存:进程重启后这些 run 行已是终态,不需要再记。
    */
-  private readonly abandonedRuns = new Set<string>();
+  // Keep the terminal reason in the existing fence so a row inserted after
+  // stop can be interrupted without overwriting a stall guard's failed run.
+  private readonly abandonedRuns = new Map<string, 'failed' | 'interrupted'>();
   /**
    * 排期补偿失败待重试的 schedule（key = scheduleId）。存储瞬时错误不能让一条活跃的
    * recurring 任务停摆到进程重启 —— 周期 DB sync 只重灌行、不会补 nextFireAt，僵尸清扫
@@ -550,7 +552,7 @@ export class Scheduler extends EventEmitter {
       ? [...this.inflightAttempts.values()].filter((run) =>
           run.phase !== 'finalizing' && !this.abandonedRuns.has(run.runId))
       : [];
-    for (const run of interrupted) this.abandonedRuns.add(run.runId);
+    for (const run of interrupted) this.abandonedRuns.set(run.runId, 'interrupted');
     // 切账号 / 进程退出前主动 abort 所有 in-flight —— 不然 runner 还在跑,事件流
     // 已断,run 行 stuck 在 'running'(心跳过期后由任一实例的清扫/start() 兜底,
     // 但当下的 agent 子进程仍在烧 token)。
@@ -787,9 +789,10 @@ export class Scheduler extends EventEmitter {
     // stop() 竞态守卫(codex review P1):前置 await(claimDueFire/insertRun)期间
     // stop() 会清掉 attempt,且此时还没有 controller 可 abort 本 continuation。恢复后
     // attempt 已不在账就不得再登记 controller/索引——悬挂登记会让停机后同实例的每次
-    // begin 都被不变量断言拦下。放弃本轮:刚插入的 run 行与其他 stop 释放的 run 同样
-    // 交给下次 start() 的僵尸清扫收敛成 interrupted,认领走崩溃恢复的既有归一路径。
+    // begin 都被不变量断言拦下。退出的更新可能早于 insertRun，必须在这里补落中断，
+    // 不能让立即重启后的 Continue 等心跳过期才找得到原 run。
     if (!this.inflightAttempts.has(runId)) {
+      await this.persistLateShutdownRun(runId, schedule.id);
       this.logger?.info?.('scheduler: attempt released during pre-register await (stopped); dropping fire', {
         schedulerInstanceId: this.schedulerInstanceId,
         processId: this.processId,
@@ -1136,6 +1139,7 @@ export class Scheduler extends EventEmitter {
     // update 期间 stop() 清掉 attempt 后不得再登记 controller/索引。runNow 契约上
     // 以抛错收场(调用方显式动作,静默吞掉会让"没跑"看起来像"跑了")。
     if (!this.inflightAttempts.has(runId)) {
+      await this.persistLateShutdownRun(runId, schedule.id);
       this.logger?.info?.('scheduler: attempt released during pre-register await (stopped); dropping runNow', {
         schedulerInstanceId: this.schedulerInstanceId,
         processId: this.processId,
@@ -2786,7 +2790,7 @@ export class Scheduler extends EventEmitter {
     // 条 run 已经从槽位记账和守卫视野里一起消失 —— 与第六轮修的 runner-finalization
     // 同一个坑,只是这次发生在强制收口自己的落库上。槽位统一由下面 finally 里的
     // finishInflightAttempt 释放;真卡住就留在账上,由 logStorageStall 持续暴露。
-    this.abandonedRuns.add(runId);
+    this.abandonedRuns.set(runId, 'failed');
     this.inflightControllers.delete(runId);
     this.transitionAttempt(attempt, 'finalizing', 'force-release');
     const set = this.inflightByschedule.get(scheduleId);
@@ -3037,11 +3041,17 @@ export class Scheduler extends EventEmitter {
     }
   }
 
-  /**
-   * 该 run 是否已被卡死守卫强制收口。命中说明 run 行早已落终态、schedule 已重排,
-   * 迟到 settle 的 fireOneInner / runNowInner 必须整体跳过收口动作(见 abandonedRuns)。
-   * 顺带清理集合条目 —— 迟到的那次调用是它最后一个消费者。
-   */
+  /** The original stop update may have preceded this run's insert. */
+  private async persistLateShutdownRun(runId: string, scheduleId: string): Promise<void> {
+    if (this.abandonedRuns.get(runId) !== 'interrupted') return;
+    await this.storage.updateRun(runId, {
+      status: 'interrupted', finishedAt: this.clock.now(), errorMsg: 'app restarted',
+    });
+    this.emitEvent({ type: 'changed', scheduleId });
+    this.abandonedRuns.delete(runId);
+  }
+
+  /** Skip a late terminal write after shutdown or forced stall release. */
   private consumeAbandonedRun(runId: string): boolean {
     if (!this.abandonedRuns.has(runId)) return false;
     this.abandonedRuns.delete(runId);

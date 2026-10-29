@@ -1,4 +1,5 @@
 import { assertSessionCreationCurrent, currentSessionCreationSignal } from '../localDb/sessionRuntimeCleanup.js';
+import { resumeInterruptedScheduleRun } from '../scheduler-host/index.js';
 import { readTaskDeliveryNote } from '../bot-autonomy/hub.js';
 import { setVoiceTaskDispatch, setVoiceCallMemoryReader } from '../voice-conversation/taskBridge.js';
 import { buildBotMemoryScopeKey, SessionCreationCleanupPendingError } from '@cindy/maker-core';
@@ -21805,7 +21806,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         let projection: ReturnType<typeof enqueueInput> | undefined;
         if (queued.text === CONTINUE_AFTER_APP_EXIT_PROMPT
           && !(deviceLinkInvoke && isAutomaticInputOriginKind(parsed.origin?.kind))) {
-          const { resumeInterruptedScheduleRun } = await import('../scheduler-host/index.js');
           assertCurrentInputGeneration();
           if (inputOwner !== getCurrentDbClientSnapshot()) throwIpcError('PRECONDITION_FAILED', 'Account changed before input');
           let didEnqueue!: () => void;
@@ -21813,14 +21813,24 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           const resumed = await resumeInterruptedScheduleRun(sid, async (req) => {
             assertCurrentInputGeneration();
             const clientId = queued.clientId;
-            const continuation = markManualSchedulerContinuation({ ...queued, origin: req.origin });
+            // Match normal scheduled input: Continue's UI default is false,
+            // but an interrupted scheduled turn inherits the saved plan mode.
+            // The runner still rechecks durable/live/queued values at dispatch.
+            const stored = req.inheritTargetPlanMode ? await getSessionFsSnapshot(sid) : null;
+            const continuation = markManualSchedulerContinuation({
+              ...queued, origin: req.origin,
+              createOpts: {
+                ...queued.createOpts,
+                ...(stored ? { planMode: stored.planModeEnabled === true } : {}),
+              },
+            });
             if (req.onDiscarded) schedulerQueuedPromptDiscardWatchers.set(clientId, req.onDiscarded);
             if (req.onPreparing) schedulerQueuedPromptPreparations.set(clientId, {
               onPreparing: req.onPreparing, onPreparationFailed: req.onPreparationFailed,
             });
             orcaInterAgentDispatcher.registerQueuedOrcaInterAgentAcceptedCallback(
               clientId,
-              () => req.onAccepted({ permissionMode: queued.createOpts.permissionMode, planMode: queued.createOpts.planMode }),
+              () => req.onAccepted({ permissionMode: continuation.createOpts.permissionMode, planMode: continuation.createOpts.planMode }),
               req.onAcceptedRollback,
             );
             try {
