@@ -393,7 +393,8 @@ export function createDesktopTaskActionAuthorizer(deps: {
               : risk === 'command' && taskActionStartsIndependentAgent(call, schedule)
                 ? { details: { ...(schedule ? { schedule } : {}), execution: { mode: 'agent', newTaskPermissionMode: 'bypassPermissions' } } }
               : schedule ? { details: { schedule } }
-              : call.tool === 'routine_run_now' && routine?.details ? { details: routine.details } : {}) });
+              : (call.tool === 'routine_run_now' || risk === 'resume') && routine?.details
+                ? { details: routine.details } : {}) });
           if (!confirmed) {
             rejectedDecision = { ok: false, errorCode: 'USER_CANCELLED',
               message: 'The action was not approved. Do not execute or retry it without a new request.' };

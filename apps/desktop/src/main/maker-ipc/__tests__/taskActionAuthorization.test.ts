@@ -1332,15 +1332,17 @@ describe('teammate turn principal', () => {
 
   // Same save API on helper and scheduler: only an existing disabled->enabled
   // transition is a resume; ordinary creation/editing remains unchanged.
+  // r4410276099: omitted hook parameters retain the saved command, which must be shown.
   it.each(['cindy_helper', 'cindy_scheduler'] as const)('asks for routine restoration through %s', async server => {
     const h = desktopFixture('automatic');
     live(h);
-    h.routines.set('saved', { enabled: false, revision: 3 });
+    h.routines.set('saved', { enabled: false, revision: 3, preRunCommand: 'node saved-check.mjs' });
     const request = { ...helper('routine_save', { botId: 'bot', id: 'saved', enabled: true }), server };
     expect(await withToolCallAuthority(h.authorize, request,
       async () => taskActionRoutineRevision('bot', 'saved'))).toBe(3);
     expect(h.confirm).toHaveBeenCalledWith('companion', 'routine_save', request.args,
-      { server, risk: 'resume' });
+      { server, risk: 'resume', details: { routine: { id: 'saved', enabled: false, revision: 3,
+        preRunCommand: 'node saved-check.mjs' } } });
     h.confirm.mockClear();
     h.routines.set('saved', { enabled: true, revision: 4 });
     expect(await withToolCallAuthority(h.authorize, request, async () => 'edited')).toBe('edited');
