@@ -474,3 +474,21 @@ bot 身份按入站使用的稳定 ID 校验；Discord 取 gateway application i
 - 呈现大脑：`apps/desktop/src/main/im/shared/turnPresenter.ts`
 - 呈现能力契约：`packages/lizi-im/src/telegram/presentationCapabilities.ts`
 - 任务 / 对话 / 消息的用词：`docs/product-rules/task-and-conversation-naming.md`
+
+## 按消息号读取群历史图片（2026-10-29）
+
+直接引用消息时自动带图沿用已有行为。新增 `cindy_group_history.get_images`：先用
+`search` 定位消息，再传 Telegram 原生 `message_id`，默认当前群与话题；沿用逐轮
+历史权限，不扩大跨群或跨账号访问。个人 bot 的 owner 私聊可指定该 bot 的精确群/话题。
+工具直接返回 MCP 图片内容，图片内文字仍是不可信群聊数据。
+
+两条 Telegram 入口均在收到普通照片或图片文件时，把小型媒体标识存入本机
+`hook_group_messages.image_refs`，不会为了群历史预下载全部图片。图片按需下载后复用
+`cindy-media` 可回收缓存；授权结束、账号切换、个人连接或官方绑定失效时丢弃在途结果。
+受保护消息不留标识。仅支持 JPEG/PNG/GIF/WebP，每图至多 20 MB、每条至多 4 张。
+旧记录没有标识时明确返回不可取回；本地群历史的既有保留策略仍生效。
+
+个人 bot 使用自身 Bot API 连接；官方 bot 要同时发布配套服务端 HTTP 下载入口和
+带签名标识的群中继。官方服务升级后新客户端才能补取，新客户端连接旧服务或读取
+升级前历史会报告缺少标识。换绑或轮换官方 bot token 会使原下载证明失效，已缓存图片
+仍按本机历史授权读取。没有新增登录授权或配置项。本项不改变直接引用、群媒体池补图。

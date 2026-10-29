@@ -39,7 +39,9 @@ const RESULT_MAX_CHARS = 50_000;
 /** 工具结果形状(MCP content block; 索引签名对齐 SDK CallToolResult)。 */
 interface SlackToolResult {
   [key: string]: unknown;
-  content: Array<{ type: 'text'; text: string }>;
+  content: Array<
+    { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
+  >;
   isError?: true;
 }
 
@@ -98,6 +100,43 @@ async function deliver(
   workingDir: string | undefined,
   assertCurrent: () => Promise<void>,
 ): Promise<SlackToolResult> {
+  // MCP images must reach the model as image blocks, not base64 JSON spilled to a file.
+  if (
+    outFile === undefined &&
+    data &&
+    typeof data === 'object' &&
+    'content' in data &&
+    Array.isArray(data.content)
+  ) {
+    const images = data.content
+      .filter((block: unknown): block is { type: 'image'; data: string; mimeType: string } => {
+        if (!block || typeof block !== 'object') return false;
+        const image = block as Record<string, unknown>;
+        return (
+          image.type === 'image' &&
+          typeof image.data === 'string' &&
+          image.data.length <= 7 * 1024 * 1024 &&
+          /^[A-Za-z0-9+/]*={0,2}$/.test(image.data) &&
+          typeof image.mimeType === 'string' &&
+          /^image\/(png|jpeg|gif|webp)$/.test(image.mimeType)
+        );
+      })
+      .slice(0, 4);
+    if (images.length) {
+      await assertCurrent();
+      const metadata = {
+        ...data,
+        content: data.content.filter((block: { type?: string }) => block?.type !== 'image'),
+      };
+      const summary = await deliver(metadata, undefined, workingDir, assertCurrent);
+      await assertCurrent();
+      return { ...summary, content: [...summary.content, ...images] };
+    }
+    if (data.content.some((block: { type?: string } | null) => block?.type === 'image')) {
+      await assertCurrent();
+      return errorResult('IMAGE_UNAVAILABLE', 'Slack 图片格式不支持或超过大小限制。');
+    }
+  }
   const text = JSON.stringify(data ?? null);
   if (outFile === undefined && text.length <= RESULT_MAX_CHARS) {
     return jsonResult({ ok: true, data });

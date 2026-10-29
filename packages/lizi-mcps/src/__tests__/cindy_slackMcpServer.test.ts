@@ -73,6 +73,37 @@ function tmpWorkdir(): string {
 }
 
 describe('cindy_slack MCP server', () => {
+  // Unit regression: the gateway previously serialized MCP image blocks into unreadable JSON.
+  it('returns large image blocks directly while preserving text metadata', async () => {
+    const data = Buffer.alloc(50_000, 1).toString('base64');
+    const { bridge } = makeBridge({
+      onCall: () => ({
+        ok: true,
+        result: {
+          content: [
+            { type: 'text', text: 'untrusted screenshot' },
+            { type: 'image', data, mimeType: 'image/png' },
+          ],
+        },
+      }),
+    });
+    const client = await connectServer({ getBridge: () => bridge });
+    try {
+      const result = await client.callTool({
+        name: 'slack_call_tool',
+        arguments: { name: 'cindy_get_message_images' },
+      });
+      expect(result.content).toContainEqual({
+        type: 'image',
+        data,
+        mimeType: 'image/png',
+      });
+      expect(JSON.stringify(firstText(result))).toContain('untrusted screenshot');
+      expect(JSON.stringify(firstText(result))).not.toContain(data);
+    } finally {
+      await client.close();
+    }
+  });
   it('工具面固定三个(slack_status / slack_list_tools / slack_call_tool)', async () => {
     const { bridge } = makeBridge();
     const client = await connectServer({ getBridge: () => bridge });

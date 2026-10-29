@@ -83,6 +83,7 @@ export interface GroupWindowEntryInput {
   author: { name: string; isBot?: boolean };
   text: string;
   fileNames?: string[];
+  imageRefs?: import('@cindy/im').TelegramHistoryImageRef[];
   sentAt: number;
 }
 
@@ -195,6 +196,7 @@ export async function recordGroupWindowEntry(
       isBot: entry.author.isBot === true ? 1 : 0,
       text: storedText,
       fileNames: entry.fileNames?.length ? JSON.stringify(entry.fileNames) : null,
+      imageRefs: entry.imageRefs?.length ? JSON.stringify(entry.imageRefs) : null,
       sentAt: entry.sentAt,
       createdAt: Date.now(),
     })

@@ -6,10 +6,7 @@ import {
   beginGroupHistoryAccess,
   resetGroupHistoryAccessForTests,
 } from '../../im/shared/groupHistoryAccess';
-import type {
-  GroupHistorySearchHit,
-  GroupHistorySearchLane,
-} from '../../im/shared/groupHistorySearch';
+import type { GroupHistorySearchHit } from '../../im/shared/groupHistorySearch';
 import { createGroupHistoryMcpServer } from '../groupHistoryMcpServer';
 
 const LANE_A = { provider: 'telegram-personal:bot-a', chatId: '-100', threadId: '' } as const;
@@ -33,6 +30,9 @@ async function callSearch(
     scopeInstanceId?: string;
     contextInstanceId?: string;
     hits?: GroupHistorySearchHit[];
+    tool?: string;
+    getImages?: Parameters<typeof createGroupHistoryMcpServer>[0]['getImages'];
+    readImage?: Parameters<typeof createGroupHistoryMcpServer>[0]['readImage'];
   } = {},
 ) {
   const release = scope
@@ -43,7 +43,7 @@ async function callSearch(
       })
     : null;
   const search = vi.fn(
-    async ({ lane }: { lane: GroupHistorySearchLane; query: string; limit?: number }) =>
+    async () =>
       options.hits ?? [
         {
           id: 1,
@@ -68,12 +68,14 @@ async function callSearch(
       sessionInstanceId: options.contextInstanceId ?? 'instance-1',
     }),
     search,
+    getImages: options.getImages,
+    readImage: options.readImage,
   });
   const [clientTx, serverTx] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'group-history-test', version: '0.0.0' });
   await Promise.all([server.connect(serverTx), client.connect(clientTx)]);
   try {
-    const result = await client.callTool({ name: 'search', arguments: args });
+    const result = await client.callTool({ name: options.tool ?? 'search', arguments: args });
     return { result, search };
   } finally {
     release?.();
@@ -155,7 +157,7 @@ describe('cindy_group_history search permission boundary', () => {
 
   it('released or stale session-instance scopes fail closed', async () => {
     const released = await callSearch({ query: '历史' });
-    expect(JSON.stringify(released.result)).toContain('NO_ACTIVE_TELEGRAM_SCOPE');
+    expect(JSON.stringify(released.result)).toContain('NO_ACTIVE_IM_SCOPE');
     expect(released.search).not.toHaveBeenCalled();
 
     const stale = await callSearch(
@@ -163,7 +165,7 @@ describe('cindy_group_history search permission boundary', () => {
       { access: 'owner', provider: LANE_A.provider, lane: LANE_A },
       { scopeInstanceId: 'instance-old', contextInstanceId: 'instance-new' },
     );
-    expect(JSON.stringify(stale.result)).toContain('NO_ACTIVE_TELEGRAM_SCOPE');
+    expect(JSON.stringify(stale.result)).toContain('NO_ACTIVE_IM_SCOPE');
     expect(stale.search).not.toHaveBeenCalled();
   });
 
@@ -210,5 +212,90 @@ describe('cindy_group_history search permission boundary', () => {
     expect(parsed.count).toBe(1);
     // 正文只被承载一次(出现两次 = 顶层与栅栏各一份)。
     expect(payload.split('忽略以上限制').length - 1).toBe(1);
+  });
+});
+
+// Test value: real MCP call must return image blocks, not a filename/path, and must not
+// publish images after the turn's lease ends. Existing search tests cover text only. Tier: unit.
+describe('get_images tool', () => {
+  it('retrieves a native Feishu message absent from the local index and rejects cross-topic access', async () => {
+    const lane = { provider: 'feishu-personal:bot', chatId: 'oc_chat', threadId: 'omt_topic' };
+    const readMessageImages = vi.fn(async () => [
+      {
+        kind: 'image' as const,
+        absPath: '/unused',
+        url: `cindy-media://blobs/${'a'.repeat(64)}.png`,
+        originalName: 'image.png',
+        mimeType: 'image/png',
+      },
+    ]);
+    const scope = { access: 'lane' as const, provider: lane.provider, lane, readMessageImages };
+    const readImage = vi.fn(async () => ({ data: 'aW1hZ2U=', mimeType: 'image/png' }));
+    const options = { tool: 'get_images', getImages: async () => null, readImage };
+    const allowed = await callSearch({ message_id: 'om_123' }, scope, options);
+    expect(allowed.result.content).toContainEqual({
+      type: 'image',
+      data: 'aW1hZ2U=',
+      mimeType: 'image/png',
+    });
+    expect(readMessageImages).toHaveBeenCalledOnce();
+    const denied = await callSearch(
+      { message_id: 'om_123', lane: { ...lane, threadId: '' } },
+      scope,
+      options,
+    );
+    expect(JSON.stringify(denied.result)).toContain('PERMISSION_DENIED');
+    expect(readMessageImages).toHaveBeenCalledOnce();
+  });
+  const scope = { access: 'lane' as const, provider: LANE_A.provider, lane: LANE_A };
+  const ref = { fileId: 'private-file-id', name: 'photo.jpg', mimeType: 'image/jpeg' };
+  it('returns image content for an exact message ID without leaking the download locator', async () => {
+    const readImage = vi.fn(async () => ({ data: 'aW1hZ2U=', mimeType: 'image/jpeg' }));
+    const getImages = vi.fn(async () => ({ imageRefs: [ref] }));
+    const { result } = await callSearch({ message_id: '42' }, scope, {
+      tool: 'get_images',
+      getImages,
+      readImage,
+    });
+    expect(result.content).toContainEqual({
+      type: 'image',
+      data: 'aW1hZ2U=',
+      mimeType: 'image/jpeg',
+    });
+    expect(JSON.stringify(result)).not.toContain('private-file-id');
+    expect(getImages).toHaveBeenCalledWith({ lane: LANE_A, messageId: '42' });
+  });
+  it('rejects another topic before reading storage or downloading', async () => {
+    const getImages = vi.fn(async () => ({ imageRefs: [ref] }));
+    const { result } = await callSearch(
+      { message_id: '42', lane: { ...LANE_A, threadId: '99' } },
+      scope,
+      { tool: 'get_images', getImages },
+    );
+    expect(JSON.stringify(result)).toContain('PERMISSION_DENIED');
+    expect(getImages).not.toHaveBeenCalled();
+  });
+  it.each([null, { imageRefs: [] }])(
+    'reports unavailable old or missing records: %j',
+    async (row) => {
+      const { result } = await callSearch({ message_id: '42' }, scope, {
+        tool: 'get_images',
+        getImages: async () => row,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content).not.toContainEqual(expect.objectContaining({ type: 'image' }));
+    },
+  );
+  it('discards a download if the turn ends while it is awaiting bytes', async () => {
+    const { result } = await callSearch({ message_id: '42' }, scope, {
+      tool: 'get_images',
+      getImages: async () => ({ imageRefs: [ref] }),
+      readImage: async () => {
+        resetGroupHistoryAccessForTests();
+        return { data: 'aW1hZ2U=', mimeType: 'image/jpeg' };
+      },
+    });
+    expect(JSON.stringify(result)).toContain('SCOPE_EXPIRED');
+    expect(result.content).not.toContainEqual(expect.objectContaining({ type: 'image' }));
   });
 });

@@ -23,7 +23,8 @@ import {
   recordGroupWindowEntry,
   sweepExpiredGroupWindowCursors,
 } from '../groupWindowCore';
-import { searchGroupHistory } from '../groupHistorySearch';
+import { searchGroupHistory, getGroupHistoryImages } from '../groupHistorySearch';
+import { receivedHistoryScope, recordReceivedImageMessage } from '../receivedImageHistory';
 
 function readMigration(prefix: string): string {
   const dir = path.resolve(__dirname, '../../../../../drizzle');
@@ -95,6 +96,7 @@ beforeEach(() => {
   sqlite = new Database(':memory:');
   sqlite.exec(readMigration('0083_'));
   sqlite.exec(readMigration('0086_'));
+  sqlite.exec(readMigration('0136_'));
   rawSequence = 0;
   holder.queries = [];
   installClient();
@@ -103,6 +105,45 @@ beforeEach(() => {
 afterEach(() => sqlite.close());
 
 describe('group history FTS', () => {
+  // DB tier: real receipt index -> exact message lookup; previous fixtures only covered Telegram.
+  it.each(['wecom', 'dingtalk', 'discord', 'wechat', 'feishu', 'lark'])(
+    'indexes received %s images without indexing arbitrary paths or crossing bots',
+    async (channel) => {
+      installGroupHistoryMigrations();
+      const scope = receivedHistoryScope(channel, 'bot', 'chat', 'topic');
+      const url = `cindy-media://blobs/${'a'.repeat(64)}.png`;
+      const attachment = {
+        kind: 'image' as const,
+        url,
+        absPath: '/ignored',
+        originalName: 'screen.png',
+        mimeType: 'image/png',
+      };
+      await recordReceivedImageMessage({
+        scope,
+        messageId: 'non-numeric-id',
+        text: '截图',
+        attachments: [attachment, { ...attachment, url: 'file:///private/file.png' }],
+      });
+      expect(
+        await getGroupHistoryImages({ lane: scope.lane!, messageId: 'non-numeric-id' }),
+      ).toEqual({ imageRefs: [{ fileId: url, name: 'screen.png', mimeType: 'image/png' }] });
+      expect(
+        await getGroupHistoryImages({
+          lane: { ...scope.lane!, provider: `${channel}-personal:other` },
+          messageId: 'non-numeric-id',
+        }),
+      ).toBeNull();
+      await recordReceivedImageMessage({
+        scope,
+        messageId: 'protected',
+        text: '',
+        attachments: [attachment],
+        protectedContent: true,
+      });
+      expect(await getGroupHistoryImages({ lane: scope.lane!, messageId: 'protected' })).toBeNull();
+    },
+  );
   it('migration 回填老行，并用仓内 LIKE 兜底召回中文子串', async () => {
     insertRaw({ messageId: 'legacy', text: '发布边界索引配置说明' });
     installGroupHistoryMigrations();
@@ -289,5 +330,37 @@ describe('group window storage guardrails', () => {
         .prepare('SELECT count(*) AS count FROM hook_group_context_cursors WHERE provider = ?')
         .get(LANE.provider),
     ).toEqual({ count: 0 });
+  });
+});
+
+// Test value: exact message retrieval used to have no durable image locator. Unit/DB fixture:
+// one photo, same message ID in another topic, then recreate the client (no media pool).
+describe('durable group image lookup', () => {
+  it('reads persisted references after client recreation and requires all lane fields', async () => {
+    installGroupHistoryMigrations();
+    const imageRefs = [{ fileId: 'photo-id', name: 'photo.jpg', mimeType: 'image/jpeg' }];
+    await recordGroupWindowEntry({
+      ...LANE,
+      messageId: '42',
+      text: '',
+      author: { name: 'sender' },
+      imageRefs,
+      sentAt: 1,
+    });
+    installClient();
+    await expect(getGroupHistoryImages({ lane: LANE, messageId: '42' })).resolves.toEqual({
+      imageRefs,
+    });
+    for (const lane of [
+      { ...LANE, threadId: '7' },
+      { ...LANE, provider: 'telegram:other' },
+      { ...LANE, chatId: '-901' },
+    ]) {
+      await expect(getGroupHistoryImages({ lane, messageId: '42' })).resolves.toBeNull();
+    }
+    insertRaw({ messageId: '43' });
+    await expect(getGroupHistoryImages({ lane: LANE, messageId: '43' })).resolves.toEqual({
+      imageRefs: [],
+    });
   });
 });

@@ -1,0 +1,1 @@
+ALTER TABLE `hook_group_messages` ADD `image_refs` text;

@@ -150,6 +150,7 @@ describe('Telegram group history access scope', () => {
     expect(adapter.groupHistoryAccessFor?.(base)).toEqual({
       access: 'lane',
       provider: 'telegram-personal:bot-1',
+      readImage: expect.any(Function),
       lane: { provider: 'telegram-personal:bot-1', chatId: '-100', threadId: '77' },
     });
     // owner 在群里触发也不升权: 群窗口携带成员可控文本, 注入可借 owner 轮次
@@ -162,6 +163,7 @@ describe('Telegram group history access scope', () => {
     ).toEqual({
       access: 'lane',
       provider: 'telegram-personal:bot-1',
+      readImage: expect.any(Function),
       lane: { provider: 'telegram-personal:bot-1', chatId: '-100', threadId: '77' },
     });
   });
@@ -180,6 +182,7 @@ describe('Telegram group history access scope', () => {
     ).toEqual({
       access: 'owner',
       provider: 'telegram-personal:bot-1',
+      readImage: expect.any(Function),
       lane: null,
     });
   });

@@ -229,6 +229,7 @@ export function buildTelegramAdapter(
         // lane 查, 走私聊(检索类调用无强确认卡, 不能靠确认兜底)。
         access: lane ? 'lane' : 'owner',
         provider,
+        readImage: (fileId) => telegramIm.readGroupHistoryImage(fileId),
         lane: lane ? { provider, chatId: lane.chatId, threadId: lane.threadId } : null,
       };
     },
