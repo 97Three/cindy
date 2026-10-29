@@ -395,6 +395,7 @@ export function findRememberedMode(
 
 /** Only transient connection errors may restart a viewer. Explicit stop wins. */
 export function remoteDesktopFailureKey(code: string): string | null {
+  if (/DESKTOP_INPUT_UNSUPPORTED/.test(code)) return "inputUnsupported";
   if (/DESKTOP_CONNECTION_TIMEOUT/.test(code)) return "connectionTimeout";
   if (/ACCESS_REVOKED/.test(code)) return "accessRevoked";
   if (/REMOTE_DISABLED/.test(code)) return "remoteDisabled";
