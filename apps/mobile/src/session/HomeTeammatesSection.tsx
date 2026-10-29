@@ -1,3 +1,5 @@
+import { TEAMMATE_AVATAR, resolveTeammateStatus } from '@cindy/maker-shared/teammate-status';
+import { TeammateStatusDot, useTeammateStatus } from './TeammateStatusDot';
 /**
  * 任务首页顶部的「伙伴」段（对照桌面 TeammatesSection.tsx 与 2026-10-24 手机「A+B 合一」定稿）：
  * 展开 = 伙伴行（CompanionListRow，默认 3 位，多了「显示全部」）；
@@ -31,8 +33,7 @@ import { BotGroupDuoAvatar, useBotGroupIdentities } from './BotGroupAvatars';
 import { OFFLINE_AVATAR_OPACITY } from './BotGroupList';
 import { botGroupMemberLinks } from './botGroupRemote';
 import { botGroupRoute } from './botGroupNavigation';
-import { COMPANION_ROW_AVATAR_SIZE, COMPANION_ROW_DOT_SIZE } from './CompanionListRow';
-import { CompanionPresenceRing } from './CompanionPresenceRing';
+import { COMPANION_ROW_AVATAR_SIZE } from './CompanionListRow';
 import { homeListStyles } from './HomeListVisuals';
 import { useHomeRoster } from './HomeRosterContext';
 import { DisclosureItem } from './listDisclosureTransition';
@@ -45,7 +46,7 @@ import { getHomeViewSession, useRetainedHomeState } from './homeViewSession';
 /** Desktop previews five in a 260px sidebar; three keeps the first screen of tasks on a phone. */
 export const HOME_TEAMMATE_PREVIEW_LIMIT = 3;
 /** Strip avatar: the row's 44 grows to 56 when the section folds. */
-const STRIP_AVATAR_SIZE = 56;
+const STRIP_AVATAR_SIZE = TEAMMATE_AVATAR.strip;
 /** One strip cell: the avatar plus 4pt on each side, so a 12/18 name fits under it. */
 const STRIP_CELL_WIDTH = STRIP_AVATAR_SIZE + spacing.sm;
 const SHOW_ALL_ROW_HEIGHT = 48;
@@ -244,13 +245,16 @@ function StripCell({ entry, online, connected, quiet, onPress }: StripCellProps)
     title={resolveRemoteText(display.title, i18n.language)} lastReplyAt={display.lastReplyAt}
     avatarKind={display.avatar?.kind} avatarValue={display.avatar?.value}
     avatarFallback={display.avatar?.fallbackText} avatarColor={display.avatar?.color}
+    sessionId={entry.row.item.links.flatMap(link => link.rel === 'conversation' && link.target.kind === 'session' ? [link.target.sessionId] : [])[0]} activityPhase={display.teammateActivity?.phase}
+    failed={display.status?.tone === 'warning' || display.status?.tone === 'critical'}
     connected={connected} quiet={quiet} working={online && !!display.generation} onPress={press} />;
 }
 
 const StripAvatar = memo(RemoteCompanionAvatar);
 const BotStripCell = memo(function BotStripCell({ deviceId, botId, title, lastReplyAt,
-  avatarKind, avatarValue, avatarFallback, avatarColor, connected, quiet, working, onPress }: {
+  avatarKind, avatarValue, avatarFallback, avatarColor, connected, quiet, working, onPress, sessionId, activityPhase, failed }: {
   deviceId: string; botId: string; title: string; lastReplyAt?: number;
+  sessionId?: string | null; activityPhase?: string; failed: boolean;
   avatarKind?: string; avatarValue?: string; avatarFallback?: string; avatarColor?: string;
   connected: boolean | null; quiet: boolean; working: boolean; onPress(): void;
 }) {
@@ -262,21 +266,22 @@ const BotStripCell = memo(function BotStripCell({ deviceId, botId, title, lastRe
   const readUnread = useCallback(() => isRemoteResourceUnread(user?.id ?? '', deviceId, botId, lastReplyAt),
     [user?.id, deviceId, botId, lastReplyAt]);
   const unread = useSyncExternalStore(subscribeRemoteResourceCache, readUnread);
+  const status = useTeammateStatus({ sessionId, deviceId, activities: activityPhase ? [{ phase: activityPhase }] : [],
+    online: connected, quietOffline: quiet, working, failed, unread });
   const avatar = useMemo(() => avatarKind === undefined ? undefined : {
     kind: avatarKind, value: avatarValue ?? '', fallbackText: avatarFallback ?? '', color: avatarColor,
   }, [avatarKind, avatarValue, avatarFallback, avatarColor]);
   const dimmed = connected === false && !quiet;
   const offline = dimmed ? t('devices.resources.hostOffline') : '';
   return <Pressable accessibilityRole="button" disabled={false} accessibilityState={{ disabled: false }}
-    accessibilityLabel={[title, offline, working ? t('groupChat.list.running') : '', unread ? t('devices.companions.unread') : ''].filter(Boolean).join(', ')}
+    accessibilityLabel={[title, offline, status !== 'idle' ? t(`devices.companions.avatarStatus.${status}`) : '', unread ? t('devices.companions.unread') : ''].filter(Boolean).join(', ')}
     onPress={onPress} style={({ pressed }) => [styles.cell, pressed && mobileInteractionStyles.pressed]}
     testID={`home.teammatesStrip.bot.${deviceId}.${botId}`}>
     <View style={styles.cellAvatar}>
       <View style={dimmed ? { opacity: OFFLINE_AVATAR_OPACITY } : undefined}>
         <StripAvatar avatar={avatar} deviceId={deviceId} name={title} online={connected === true} size={STRIP_AVATAR_SIZE} framed />
       </View>
-      <CompanionPresenceRing active={working} />
-      {unread ? <View style={styles.unreadRing} testID="home.teammatesStrip.unread"><View style={styles.unreadDot} /></View> : null}
+      <TeammateStatusDot status={status} />
     </View>
     <Text style={[styles.cellName, unread && styles.cellNameUnread]} numberOfLines={1}>{title}</Text>
   </Pressable>;
@@ -296,23 +301,23 @@ function GroupStripCell({ entry, online, connected, quiet, onPress }: StripCellP
   const unread = entry.kind === 'group' && row.chatUnread
     ? (mainUnread ? row.chatUnread.count : row.chatUnread.threadCount) > 0 : mainUnread;
   const working = online && !!display.generation;
+  const status = resolveTeammateStatus({ online, unread, working, activities: [display.teammateActivity] });
   const group = entry.kind === 'group';
   const dimmed = group ? !online : connected === false && !quiet;
   const offline = dimmed ? t('devices.resources.hostOffline') : '';
   return <Pressable accessibilityRole="button" disabled={group && !online} accessibilityState={{ disabled: group && !online }}
-    accessibilityLabel={[title, offline, working ? t('groupChat.list.running') : '', unread ? t('devices.companions.unread') : ''].filter(Boolean).join(', ')}
+    accessibilityLabel={[title, offline, status !== 'idle' ? t(`devices.companions.avatarStatus.${status}`) : '', unread ? t('devices.companions.unread') : ''].filter(Boolean).join(', ')}
     onPress={onPress} style={({ pressed }) => [styles.cell, pressed && mobileInteractionStyles.pressed]}
     testID={`home.teammatesStrip.${group ? 'group' : 'bot'}.${row.host.deviceId}.${row.item.ref.id}`}>
     <View style={styles.cellAvatar}>
       <View style={dimmed ? { opacity: OFFLINE_AVATAR_OPACITY } : undefined}>
         {group
-          ? <BotGroupDuoAvatar deviceId={row.host.deviceId} variant="strip" online={online} working={working}
+          ? <BotGroupDuoAvatar deviceId={row.host.deviceId} variant="strip" online={online}
             members={botGroupMemberLinks(row.item, i18n.language).map(member =>
               identityFor(member.botId, member.label, row.groupMembers?.find(identity => identity.botId === member.botId)))} />
           : <RemoteCompanionAvatar avatar={display.avatar} deviceId={row.host.deviceId} name={title} online={connected === true} size={STRIP_AVATAR_SIZE} framed />}
       </View>
-      {group ? null : <CompanionPresenceRing active={working} />}
-      {unread ? <View style={styles.unreadRing} testID="home.teammatesStrip.unread"><View style={styles.unreadDot} /></View> : null}
+      <TeammateStatusDot status={status} />
     </View>
     <Text style={[styles.cellName, unread && styles.cellNameUnread]} numberOfLines={1}>{title}</Text>
   </Pressable>;
@@ -337,9 +342,6 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     fontWeight: fontWeight.regular, textAlign: 'center' },
   cellNameUnread: { color: colors.textPrimary, fontWeight: fontWeight.medium },
   cellNameSpace: { height: lineHeight.caption },
-  // The row's 10pt unread dot in a 2pt page-colored ring (CompanionPresenceDot geometry).
-  unreadRing: { position: 'absolute', right: 0, bottom: 0, padding: 2, borderRadius: radius.pill, backgroundColor: colors.surface },
-  unreadDot: { width: COMPANION_ROW_DOT_SIZE, height: COMPANION_ROW_DOT_SIZE, borderRadius: radius.pill, backgroundColor: colors.botUnread },
   addCircle: { borderRadius: radius.pill, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.borderStrong, alignItems: 'center', justifyContent: 'center' },
   addCircleStrip: { width: STRIP_AVATAR_SIZE, height: STRIP_AVATAR_SIZE },
   addCircleRow: { width: COMPANION_ROW_AVATAR_SIZE, height: COMPANION_ROW_AVATAR_SIZE },

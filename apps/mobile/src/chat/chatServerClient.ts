@@ -1,3 +1,4 @@
+import { teammateChatActivity, type TeammateActivity } from '@cindy/maker-shared/teammate-status';
 import { inferBotTemplatePresetId } from '@cindy/maker-shared/bot-template-preset';
 import { createConversationListState } from '@cindy/maker-shared/chatConversationList';
 import type { ChatHistory } from '@cindy/maker-shared/chat-history';
@@ -112,7 +113,7 @@ function joinedMemberName(message: ChatMessage): string | undefined {
 }
 
 /** Empty device identity means a server-owned conversation, never a fictitious computer. */
-export function chatRoomRow(room: ChatRoom, snapshot?: ChatSnapshot, selfId?: string): HostedRemoteCollectionItem {
+export function chatRoomRow(room: ChatRoom, snapshot?: ChatSnapshot, selfId?: string, activity?: TeammateActivity): HostedRemoteCollectionItem {
   const members = snapshot?.members.filter(member => member.state === 'joined') ?? [];
   const last = latestBotGroupMessage(snapshot?.messages ?? []);
   const joinedName = last && joinedMemberName(last);
@@ -134,6 +135,7 @@ export function chatRoomRow(room: ChatRoom, snapshot?: ChatSnapshot, selfId?: st
     ref: { collectionId: 'bot-groups', kind: 'bot-group', id: room.id },
     revision: String(room.head ?? room.revision), display: { title: room.name,
       subtitle,
+      ...(activity ? { teammateActivity: activity } : {}),
       ...(snapshot ? { preview } : {}),
       timestamp: botGroupActivityAt({ createdAt: Date.parse(room.created_at), lastMessage: last ? { createdAt: Date.parse(last.createdAt) } : null }),
       lastReplyAt: snapshot && selfId ? chatLastReplyAt(snapshot.messages, selfId) : undefined },
@@ -457,6 +459,22 @@ export function createChatServerClient(request: ChatRequest, personalList = crea
     },
     /** Main-timeline messages of any room kind (a companion's room is `direct`), newest first. */
     history,
+    /** Read-only roster state; independent of message heads because an approval can arrive silently. */
+    async rosterActivity(roomId: string, snapshot: ChatSnapshot): Promise<TeammateActivity | undefined> {
+      const room = chatId(roomId);
+      const results = await Promise.allSettled([
+        request<ChatExecution[]>(`/conversations/${room}/executions`),
+        request<Array<{ status: string }>>(`/conversations/${room}/plans`),
+      ]);
+      // Older servers can lack these reads. Never manufacture a result from an ordinary unread message.
+      if (results.some(result => result.status === 'rejected')) return undefined;
+      const executions = results[0].status === 'fulfilled' ? results[0].value : [];
+      const plans = results[1].status === 'fulfilled' ? results[1].value : [];
+      if (!Array.isArray(executions) || !Array.isArray(plans)) return undefined;
+      const last = latestBotGroupMessage(snapshot.messages);
+      return teammateChatActivity({ executions, plans, archived: snapshot.room.archived,
+        lastMessageAt: last ? Date.parse(last.createdAt) : 0 });
+    },
     async snapshot(roomId: string, metadata = false): Promise<ChatSnapshot> {
       const stored = await cache();
       if (stored) { stored.invalidate(roomId, metadata); return stored.snapshot<ChatSnapshot>(chatId(roomId)); }

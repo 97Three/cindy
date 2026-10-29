@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({ cloudRefresh: vi.fn(async () => {}), cloudError: n
   cloudActor: null as null | { id: string }, createOptions: null as any, collapsed: false, unread: false,
   cacheRevision: 0, cacheListeners: new Set<() => void>(), unreadIds: new Set<string>(),
   stripRenders: [] as string[], avatarRenders: [] as string[], identityReads: 0 }));
+vi.mock('@/session/remoteSessionStore', () => ({ remoteSessionStore: { subscribe: () => () => {}, getPendingInteractions: () => [], getSessionLiveActivity: () => null } }));
 vi.mock('react-native', () => ({
   View: ({ children, testID }: any) => el('div', { 'data-testid': testID }, children),
   ScrollView: ({ children, testID }: any) => el('div', { 'data-testid': testID }, children),
@@ -135,14 +136,14 @@ it('uses server read receipts and thread unread state in the collapsed group str
   groups.items = [group];
   await render(0);
   const cell = () => byId('home.teammatesStrip.group.host.group');
-  expect(cell()?.querySelector('[data-testid="home.teammatesStrip.unread"]')).not.toBeNull();
+  expect(cell()?.querySelector('[data-testid="teammate.status.unread"]')).not.toBeNull();
   h.unread = true;
   group.chatUnread = { count: 0, threadCount: 0 };
   await render(0);
-  expect(cell()?.querySelector('[data-testid="home.teammatesStrip.unread"]')).toBeNull();
+  expect(cell()?.querySelector('[data-testid="teammate.status.unread"]')).toBeNull();
   group.chatUnread = { count: 2, threadCount: 0 };
   await render(0);
-  expect(cell()?.querySelector('[data-testid="home.teammatesStrip.unread"]')).not.toBeNull();
+  expect(cell()?.querySelector('[data-testid="teammate.status.unread"]')).not.toBeNull();
 });
 
 // PR #7079: unit-tier component coverage of the cloud/group routes that bypass the teammate hook.
@@ -192,12 +193,12 @@ it('keeps a 50-companion strip quiet through ten refreshes and updates only the 
   expect(h.identityReads).toBe(0);
   await act(async () => { h.unreadIds.add('bot17'); h.cacheRevision++; h.cacheListeners.forEach(listener => listener()); });
   expect(h.stripRenders).toEqual(['home.teammatesStrip.bot.host.bot17']);
-  expect(byId('home.teammatesStrip.bot.host.bot17')?.querySelector('[data-testid="home.teammatesStrip.unread"]')).not.toBeNull();
+  expect(byId('home.teammatesStrip.bot.host.bot17')?.querySelector('[data-testid="teammate.status.unread"]')).not.toBeNull();
   expect(h.avatarRenders).toHaveLength(0);
   h.stripRenders = [];
   await act(async () => { h.unreadIds.clear(); h.cacheRevision++; h.cacheListeners.forEach(listener => listener()); });
   expect(h.stripRenders).toEqual(['home.teammatesStrip.bot.host.bot17']);
-  expect(byId('home.teammatesStrip.bot.host.bot17')?.querySelector('[data-testid="home.teammatesStrip.unread"]')).toBeNull();
+  expect(byId('home.teammatesStrip.bot.host.bot17')?.querySelector('[data-testid="teammate.status.unread"]')).toBeNull();
   expect(h.avatarRenders).toHaveLength(0);
   h.stripRenders = [];
   latest[17] = { ...latest[17], item: { ...latest[17].item, display: {

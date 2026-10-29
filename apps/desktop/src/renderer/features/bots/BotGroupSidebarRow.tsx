@@ -1,3 +1,5 @@
+import { TeammateStatusDot } from './TeammateStatusDot';
+import { groupTeammateStatus } from './teammateRosterStatus';
 /**
  * 统一伙伴列表里的群聊行，和伙伴私聊共同按最新消息排序。
  *
@@ -197,7 +199,9 @@ export function BotGroupSidebarRow({
           : 'text-[var(--sidebar-nav-text)] hover:bg-sidebar-item-hover',
       )}
     >
-      <BotGroupSidebarAvatar members={group.members} selected={selected} />
+      <span className="relative shrink-0"><BotGroupSidebarAvatar members={group.members} selected={selected} />
+        <TeammateStatusDot status={groupTeammateStatus(group, bots, islandActivity, unread > 0)} selected={selected} />
+      </span>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="min-w-0 truncate text-14 leading-5" title={group.name}>{group.name}</span>

@@ -1,9 +1,10 @@
 import type { KeyboardEventHandler, MouseEventHandler, ReactNode } from 'react';
-import { AlertTriangle, Pin } from 'lucide-react';
+import { Pin } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { BotAvatar } from './BotAvatar';
-import { BotConnectionStatus } from './BotConnectionStatus';
+import { TeammateStatusDot } from './TeammateStatusDot';
+import type { TeammateStatus } from '@cindy/maker-shared/teammate-status';
 import { CindyDevicePicker } from './CindyDevicePicker';
 import type { CindyDeviceOption } from './cindyDeviceRoster';
 import { formatBotUnreadBadge } from './botListDisplay';
@@ -13,6 +14,7 @@ export function CindyDeviceRow({
   current,
   options,
   selected,
+  status,
   subtitle,
   timestamp,
   typing,
@@ -25,6 +27,7 @@ export function CindyDeviceRow({
   current: CindyDeviceOption;
   options: readonly CindyDeviceOption[];
   selected: boolean;
+  status: TeammateStatus;
   subtitle: ReactNode;
   timestamp: string;
   typing?: boolean;
@@ -57,12 +60,8 @@ export function CindyDeviceRow({
         aria-label={`${bot.name} · ${current.label}`}
       />
       <span className="pointer-events-none relative flex shrink-0">
-        <BotAvatar bot={bot} size="md" />
-        <BotConnectionStatus
-          online={current.online}
-          connectionKnown={'deviceId' in bot ? bot.connectionKnown : undefined}
-          deviceName={current.label}
-        />
+        <BotAvatar bot={bot} size="row" />
+        <TeammateStatusDot status={status} selected={selected} />
       </span>
       <div className="pointer-events-none relative grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2.5 gap-y-0.5">
         <span className="flex min-w-0 items-center gap-2">
@@ -89,13 +88,6 @@ export function CindyDeviceRow({
                 'enabled:[&:not([aria-disabled=true])]:hover:[--button-face-bg:color-mix(in_srgb,currentColor_10%,transparent)] enabled:[&:not([aria-disabled=true])]:active:[--button-face-bg:color-mix(in_srgb,currentColor_16%,transparent)]',
             )}
           />
-          {'needsAttention' in bot && bot.needsAttention ? (
-            <AlertTriangle
-              size={13}
-              aria-label={t('bots.list.needsAttention')}
-              className="shrink-0 text-[var(--warning-fg)]"
-            />
-          ) : null}
         </span>
         <span className={cn('min-h-4 min-w-10 justify-self-end whitespace-nowrap text-right text-11 tabular-nums', mutedClass)}>{timestamp}</span>
         <span
