@@ -104,3 +104,20 @@ describe('enterprise discounted reference money', () => {
       tokens, pricing, context, sdkCostDelta: 99 }).money).toBeNull();
   });
 });
+
+// Regression: Pi-only BYOK has no generic or Claude Code price key. Existing managed tests
+// used Claude Code; resolveTurnCost must use the actual engine and preserve its old default. Tier: unit.
+it('prices a Pi-only enterprise model using its Pi quote', () => {
+  const piOnly: ByokModel = { ...model, currency: 'USD', costDiscount: 0.2,
+    agents: ['pi'], perAgent: { pi: { wireProtocol: 'openai-completions' } } };
+  const request = {
+    rawModel: piOnly.id,
+    tokens: { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 0, cacheCreateTokens: 0 },
+    pricing: buildByokPricing([provider(piOnly)]),
+    context: { providerId: 'byok-a', billingRoute: 'provider-api', accessKind: 'managed', region: 'global' } as const,
+  };
+  const money = resolveTurnCost({ ...request, agent: 'pi' }).money;
+  expect(money?.amount).toBeCloseTo(6.4);
+  expect(money).toMatchObject({ kind: 'value-estimate', currency: 'USD', approximate: true });
+  expect(resolveTurnCost(request).money).toBeNull();
+});

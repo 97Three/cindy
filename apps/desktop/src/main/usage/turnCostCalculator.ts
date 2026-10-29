@@ -2,7 +2,7 @@
  * 单轮费用计算。定价先看实际 billing route，再看模型；模型名不再决定来源。
  */
 
-import { isByokProviderId } from '@cindy/model-providers';
+import { isByokProviderId, type AgentKind } from '@cindy/model-providers';
 import type { CindyRegion } from '@cindy/maker-shared/brand-identity';
 
 import { gatewayLedgerCurrency, getModelPriceQuote } from '../../shared/modelPriceQuote.js';
@@ -276,13 +276,14 @@ export function computePriceQuoteTurnMoney(
 
 export function resolveTurnCost(args: {
   rawModel: string;
+  agent?: AgentKind;
   tokens: TurnTokenDeltas;
   sdkCostDelta?: number;
   pricing: ModelPricingCatalog | null | undefined;
   context: TurnPricingContext;
   segments?: readonly TurnUsageSegment[];
 }): TurnCostResolution {
-  const { rawModel, tokens, sdkCostDelta, pricing, context, segments } = args;
+  const { rawModel, agent = 'claude-code', tokens, sdkCostDelta, pricing, context, segments } = args;
   const model = normalizeModelIdForPricing(rawModel);
 
   // An explicit provider API route is authoritative. User-defined providers may legitimately
@@ -319,7 +320,7 @@ export function resolveTurnCost(args: {
 
   const providerQuote =
     context.billingRoute === 'provider-api'
-      ? getModelPriceQuote(pricing, context.providerId, model, 'claude-code')
+      ? getModelPriceQuote(pricing, context.providerId, model, agent)
       : undefined;
   if (context.accessKind === 'managed') {
     return {
