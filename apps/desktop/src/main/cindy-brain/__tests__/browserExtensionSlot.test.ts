@@ -369,6 +369,20 @@ describe('browserExtensionSlot · 管子上行', () => {
     expect(again.sent.some(([, payload]) => (payload as { name?: string }).name === 'browser-extension-policy-request')).toBe(false);
   });
 
+  // Review 2026-10-30 (Codex P1): a plugin cannot name host paths for Chrome to open.
+  it('插件管子不能按路径上传', async () => {
+    const { slot, bridges, settle, ghosts } = await makeSlot();
+    slot.reconcile(ghosts);
+    await settle();
+    const refused = await slot.handleRequest('_root__my-browser', {
+      kind: 'act',
+      action: 'upload',
+      payload: { url: 'https://example.test', tabId: 1, selector: 'input', paths: ['/etc/hosts'] },
+    });
+    expect(refused).toMatchObject({ ok: false, errorCode: 'INVALID_REQUEST' });
+    expect(bridges[0].calls.some(([name]) => name === 'act')).toBe(false);
+  });
+
   // Review 2026-10-30 (Codex P1): a manifest that merely claims the official id must not get the native
   // host, My browser or saved pairings.
   it('未核验来源的包不装 native host、不接管「我的浏览器」、不继承配对', async () => {

@@ -669,6 +669,23 @@ describe('UserBrowserBackend · 读取与动作', () => {
     }
   });
 
+  // Review 2026-10-30 (Codex P1): an abbreviated profile that matches two connections must not pick one.
+  it('缩写的 profile 匹配多个连接时拒绝,精确 id 优先', async () => {
+    const fake = fakeControl({
+      clients: ['client-aaaa1111', 'client-aaaa2222', 'client-aaaa'],
+      tabs: { 'client-aaaa': [{ id: 1, url: 'https://b.test/' }] },
+    });
+    const b = backend(fake.control);
+    expect(await call(b, { action: 'open', url: 'https://b.test/', profile: 'client-aaa' })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining('匹配多个'),
+    });
+    expect(await call(b, { action: 'open', url: 'https://b.test/', profile: 'client-aaaa' })).toMatchObject({
+      ok: true,
+      data: { browser: 'client-aaaa' },
+    });
+  });
+
   it('按需调试:PDF 交给扩展;未授权时告诉模型请用户在已打开的说明页里确认', async () => {
     const fake = fakeControl({ version: '0.4.43' });
     let granted = false;

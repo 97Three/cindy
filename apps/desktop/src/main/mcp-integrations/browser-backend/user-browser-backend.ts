@@ -412,7 +412,20 @@ export class UserBrowserBackend implements BrowserBackend {
         result: actionFailed(action, DISCONNECTED_MESSAGE, 'BROWSER_RUNTIME_UNAVAILABLE'),
       };
     if (profile) {
-      const found = clients.find((c) => c.id === profile || c.id.startsWith(profile));
+      // An exact id wins; an abbreviation must match exactly one connection, or the action could land in
+      // another signed-in browser.
+      const exact = clients.filter((c) => c.id === profile);
+      const matches = exact.length ? exact : clients.filter((c) => c.id.startsWith(profile));
+      if (matches.length > 1)
+        return {
+          ok: false,
+          result: actionFailed(
+            action,
+            `浏览器连接 ${profile} 匹配多个连接,请写得更完整;用 profiles 查看当前连接`,
+            'BROWSER_RUNTIME_INVALID_REQUEST',
+          ),
+        };
+      const found = matches[0];
       if (!found)
         return {
           ok: false,
@@ -1309,6 +1322,14 @@ export class UserBrowserBackend implements BrowserBackend {
         data: bytes.toString('base64'),
         mimeType: UPLOAD_MIME[path.extname(file).toLowerCase()] ?? '',
       });
+    }
+    if (byPath) {
+      // Chrome opens the files by path itself (no transfer bound), so this is the one place the check
+      // and the read are apart. Check again just before handing the paths over to keep that gap small;
+      // accepted trade-off (2026-10-30): the debugger route is weaker than reading the bytes here.
+      const again = await resolveUploadFiles(paths, roots);
+      if (again.some((file, i) => file !== paths[i]))
+        return actionFailed(req.action, '上传文件在检查后发生了变化,请重试', 'BROWSER_RUNTIME_INVALID_REQUEST');
     }
     const ref = req.inputRef ?? req.ref;
     const job = await this.pageJob(gate.control, record, 'upload', {

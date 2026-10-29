@@ -373,6 +373,15 @@ export class GhostBrowserExtensionSlot {
           };
         }
         case 'act':
+          // Uploads by path are Cindy's own: the task's folder boundary and approval were checked by
+          // the host before it asked Chrome to read the file. A plugin cannot name host paths.
+          if (
+            req.action === 'upload' &&
+            req.payload &&
+            typeof req.payload === 'object' &&
+            'paths' in req.payload
+          )
+            return fail('INVALID_REQUEST', 'upload by path is not available to plugins');
           return (await entry.bridge.act(
             req.action,
             req.payload ?? {},
