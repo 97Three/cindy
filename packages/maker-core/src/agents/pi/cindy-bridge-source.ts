@@ -2930,7 +2930,10 @@ class McpHttpClient {
   /** 按 SSE event 增量取当前 JSON-RPC response；server 保持流打开也不阻塞。 */
   private async readSseResponse(res: Response, id: number): Promise<any> {
     const reader = res.body?.getReader();
-    if (!reader) throw new McpBridgeError('invalid SSE response');
+    if (!reader) {
+      this.needsReconnect = true;
+      throw new McpBridgeError('invalid SSE response');
+    }
     const decoder = new TextDecoder();
     let buffered = '';
     const parseEvent = (eventText: string): any | null => {
@@ -2967,11 +2970,13 @@ class McpHttpClient {
           if (msg) return msg;
         }
         if (buffered.length > 1_048_576) {
+          this.needsReconnect = true;
           throw new McpBridgeError('invalid SSE response');
         }
         if (done) {
           const msg = parseEvent(buffered);
           if (msg) return msg;
+          this.needsReconnect = true;
           throw new McpBridgeError('invalid SSE response');
         }
       }
@@ -3159,6 +3164,7 @@ class CindyMcpGateway {
   private readonly disclosedSchemas = new Map<string, string>();
   /** 本次调用跳过了权限询问（hook 未披露即放行）：按 toolCallId 记账，execute 见此标记一律回路标。 */
   private readonly permissionSkippedCalls = new Set<string>();
+  private readonly approvedDefinitions = new Map<string, string>();
   private disclosureNotePending = false;
   private botMemoryFacadeEnabled = false;
   private botHelperFacadeEnabled = false;
@@ -3470,6 +3476,14 @@ class CindyMcpGateway {
     return this.disclosedSchemas.get(key) === this.schemaFingerprint(call.tool);
   }
 
+  approvalDefinition(call: ResolvedMcpGatewayCall): string {
+    return mcpGatewayKey(call.tool.serverName, call.tool.name) + ':' + this.schemaFingerprint(call.tool);
+  }
+
+  rememberApproval(toolCallId: unknown, definition: string): void {
+    if (typeof toolCallId === 'string' && toolCallId) this.approvedDefinitions.set(toolCallId, definition);
+  }
+
   /**
    * Sorted, prompt-ready server/tool names worth re-surfacing after compaction:
    * only tools that still exist AND whose stored fingerprint still matches the
@@ -3645,7 +3659,7 @@ class CindyMcpGateway {
       JSON.stringify(this.unavailable()).slice(0, 4_000);
   }
 
-  private async executeResolvedCall(resolved: ResolvedMcpGatewayCall, signal?: AbortSignal): Promise<{
+  private async executeResolvedCall(resolved: ResolvedMcpGatewayCall, signal?: AbortSignal, approvedDefinition?: string): Promise<{
     content: Array<Record<string, unknown>>;
     details: unknown;
     isError?: boolean;
@@ -3656,7 +3670,9 @@ class CindyMcpGateway {
       const current = this.tools.get(mcpGatewayKey(resolved.tool.serverName, resolved.tool.name));
       // Approval and disclosure happened against the original definition.
       // Never execute a replacement definition under that earlier approval.
-      if (!current || (current !== resolved.tool && this.schemaFingerprint(current) !== this.schemaFingerprint(resolved.tool))) {
+      if (!current
+        || (approvedDefinition !== undefined && this.approvalDefinition({ ...resolved, tool: current }) !== approvedDefinition)
+        || (current !== resolved.tool && this.schemaFingerprint(current) !== this.schemaFingerprint(resolved.tool))) {
         throw new McpBridgeError('tool definition changed; inspect it with cindy_mcp_list_tools and call again');
       }
       resolved = { ...resolved, tool: current };
@@ -3690,8 +3706,13 @@ class CindyMcpGateway {
   }> {
     // 这次调用没问过权限（hook 判未披露时跳过）→ 一律回路标，不看披露状态。
     const permissionSkipped = this.consumePermissionSkipped(toolCallId);
+    const approvedDefinition = toolCallId ? this.approvedDefinitions.get(toolCallId) : undefined;
+    if (toolCallId) this.approvedDefinitions.delete(toolCallId);
     const resolved = this.resolveCall(params);
     if (!resolved) throw new Error(this.unknownCallMessage(params));
+    if (approvedDefinition !== undefined && this.approvalDefinition(resolved) !== approvedDefinition) {
+      throw new McpBridgeError('tool definition changed; inspect it with cindy_mcp_list_tools and call again');
+    }
     if (this.requiresNameEnvelope(resolved.tool) && typeof recordInput(resolved.args).name !== 'string') {
       // 该工具的 schema 自己声明了必填的字符串 name(即 Cindy 通用 call_tool 的 {name, args}
       // 信封), 而模型没给 —— 多半是把内层字段平铺进来了。工具名无法猜, 但正确形态可以一次
@@ -3727,7 +3748,7 @@ class CindyMcpGateway {
       );
       throw new Error(this.disclosureSignpost(resolved));
     }
-    return this.executeResolvedCall(resolved, signal);
+    return this.executeResolvedCall(resolved, signal, approvedDefinition);
   }
 
   private async executeDirectHelperTool(name: string, params: unknown, signal?: AbortSignal): Promise<{
@@ -3769,6 +3790,8 @@ class CindyMcpGateway {
   }
 
   register(pi: any, options: { botMemoryFacade?: boolean } = {}): void {
+    // Aborted turns may approve a call that Pi never executes.
+    pi.on?.('agent_end', () => { this.approvedDefinitions.clear(); });
     pi.on?.('tool_result', (event: any) => {
       const failure = this.failedResults.get(event.content) ?? this.failedResults.get(event.details);
       if (failure) {
@@ -5091,6 +5114,10 @@ export default async function cindyBridge(piApi: any) {
     }
     const permissionToolName = gatewayCall?.qualifiedName ?? event.toolName;
     const permissionInput = gatewayCall?.args ?? event.input ?? {};
+    // Capture before waiting: an earlier discovery in this batch can replace
+    // and disclose the catalog between this approval hook and execute().
+    const approvedDefinition = event.toolName === CINDY_MCP_CALL_TOOL && gatewayCall
+      ? mcpGateway.approvalDefinition(gatewayCall) : undefined;
     let decision: string | undefined;
     try {
       // input() is used as a private request/response envelope rather than a
@@ -5122,6 +5149,7 @@ export default async function cindyBridge(piApi: any) {
         reason: permissionDenialReason(decision),
       };
     }
+    if (approvedDefinition !== undefined) mcpGateway.rememberApproval(event.toolCallId, approvedDefinition);
     if (
       FILE_WRITE_BUILTINS.has(event.toolName)
       && writeTargetResolved !== null

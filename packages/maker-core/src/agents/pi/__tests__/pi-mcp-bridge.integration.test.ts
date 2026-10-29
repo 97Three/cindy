@@ -430,7 +430,7 @@ describe.skipIf(!piAvailable)('PiAgent × cindy-bridge (real pi + MCP bridge + p
   const modelRequestBodies: string[] = [];
   const modelRequests: Array<Record<string, unknown>> = [];
   const opaqueTurnCaptures: Array<{ sessionId: string; provider: string; cwd: string }> = [];
-  let recoveryMode: 'disconnect' | 'expired' = 'disconnect';
+  let recoveryMode: 'disconnect' | 'expired' | 'sse-eof' = 'disconnect';
   let recoveryWrites = 0;
   const recoveryCalls: string[] = [];
   const recoveryHandshakes: Array<string | string[] | undefined> = [];
@@ -472,6 +472,11 @@ describe.skipIf(!piAvailable)('PiAgent × cindy-bridge (real pi + MCP bridge + p
           if (body.params.arguments.text === 'write') {
             if (recoveryMode === 'expired') { res.writeHead(404).end(); return; }
             recoveryWrites++;
+            if (recoveryMode === 'sse-eof') {
+              res.writeHead(200, { 'content-type': 'text/event-stream' });
+              res.end('data: {"method":"notifications/progress"}\n\n');
+              return;
+            }
             res.destroy();
             return;
           }
@@ -1092,7 +1097,7 @@ describe.skipIf(!piAvailable)('PiAgent × cindy-bridge (real pi + MCP bridge + p
     }
   }
 
-  it.each(['disconnect', 'expired'] as const)('recovers MCP %s through real Pi without replaying a write', { timeout: 90_000 }, async (mode) => {
+  it.each(['disconnect', 'expired', 'sse-eof'] as const)('recovers MCP %s through real Pi without replaying a write', { timeout: 90_000 }, async (mode) => {
     recoveryMode = mode;
     recoveryWrites = 0;
     recoveryCalls.length = 0;
@@ -1104,7 +1109,7 @@ describe.skipIf(!piAvailable)('PiAgent × cindy-bridge (real pi + MCP bridge + p
     }, 'recovery', 'recover MCP transport', false, 'recovery-' + mode);
     expect(recoveryCalls).toEqual(['write', 'inspect']);
     expect(recoveryHandshakes).toEqual([undefined, undefined]);
-    expect(recoveryWrites).toBe(mode === 'disconnect' ? 1 : 0);
+    expect(recoveryWrites).toBe(mode === 'expired' ? 0 : 1);
     expect(approvals.filter(name => name === 'mcp__recovery__echo')).toHaveLength(2);
     expect(requestBodies.at(-1)).toContain('not replayed');
     expect(requestBodies.at(-1)).toContain('writes=' + recoveryWrites);
