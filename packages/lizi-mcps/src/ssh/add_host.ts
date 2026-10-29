@@ -32,9 +32,9 @@ export function registerSshAddHostTool(
       '认证只支持 ssh-agent（默认）或未加密的私钥文件，Cindy 不保存密码。' +
       PASSWORD_LOGIN_HINT,
     inputShape: {
-      alias: z.string().min(1).describe('主机别名（SSH Host 名），不能含空格或通配符，例如 "nas"'),
-      hostname: z.string().min(1).describe('IP 或域名'),
-      user: z.string().min(1).describe('登录用户名'),
+      alias: z.string().trim().min(1).describe('主机别名（SSH Host 名），不能含空格或通配符，例如 "nas"'),
+      hostname: z.string().trim().min(1).describe('IP 或域名'),
+      user: z.string().trim().min(1).describe('登录用户名'),
       port: z.number().int().min(1).max(65535).optional().describe('端口，默认 22'),
       authMethod: z
         .enum(['agent', 'key'])
@@ -48,6 +48,8 @@ export function registerSshAddHostTool(
       displayName: z.string().min(1).optional().describe('设置页显示的名称，默认同 alias'),
     },
     handler: async ({ alias, hostname, user, port, authMethod, identityFile, displayName }) => {
+      // 主机已写入、仅本地显示名／Agent Proxy 偏好没存上：主机可用，按已添加处理，不能让 Agent 重试。
+      let prefsWarning: string | undefined;
       try {
         await deps.addHost({
           id: alias,
@@ -66,6 +68,9 @@ export function registerSshAddHostTool(
             return errorPayload('HOST_ALREADY_EXISTS', `别名 "${alias}" 已存在。用 ssh_list_hosts 查看，或换一个别名。`);
           case 'INVALID_PARAMS':
             return errorPayload('INVALID_ARGS', `参数不合法：${detail}`);
+          case 'SSH_HOST_PREFS_WRITE_FAILED':
+            prefsWarning = '主机已添加，但显示名未能保存（检查本地存储权限）；无需重试添加。';
+            break;
           case 'SSH_CONFIG_RELOAD_REQUIRED':
             return errorPayload(
               'SSH_CONFIG_RELOAD_REQUIRED',
@@ -75,6 +80,7 @@ export function registerSshAddHostTool(
             return errorPayload('SSH_CONFIG_WRITE_FAILED', `添加主机失败：${detail}`);
         }
       }
+      const extra = prefsWarning ? { warning: prefsWarning } : {};
 
       let pool;
       try {
@@ -89,12 +95,13 @@ export function registerSshAddHostTool(
       }
       try {
         await deps.ensureReady(alias);
-        return okPayload({ added: true, connected: true, host: hostBrief(added() ?? before, deps) });
+        return okPayload({ added: true, connected: true, host: hostBrief(added() ?? before, deps), ...extra });
       } catch (err) {
         // 主机已保存（与设置页一致：连不上也保留），把试连结果交给 Agent 决定下一步。
         const classified = classifySshError(err, deps, added() ?? before);
         return okPayload({
           added: true,
+          ...extra,
           connected: false,
           host: hostBrief(added() ?? before, deps),
           connectError: { errorCode: classified.errorCode, hint: classified.hint },

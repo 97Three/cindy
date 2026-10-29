@@ -570,6 +570,38 @@ describe('ssh_add_host', () => {
     expect(connectError.hint).toContain('ssh-copy-id');
   });
 
+  it('trims the alias once, so the pool lookup and connect use the saved name', async () => {
+    const { deps, added, ensureReadyCalls } = makeAddDeps();
+    const { payload } = await callParsed(makeRegistry(deps), 'ssh_add_host', {
+      alias: ' nas ',
+      hostname: '192.168.68.51',
+      user: 'dash',
+    });
+    expect(added).toEqual([{ id: 'nas', hostname: '192.168.68.51', user: 'dash' }]);
+    expect(ensureReadyCalls).toEqual(['nas']);
+    expect(payload).toMatchObject({ added: true, connected: true });
+  });
+
+  it('treats a failed display-name save as an added host, not a failed add', async () => {
+    const hosts: SshHostSnapshotLike[] = [];
+    const { pool } = makeFakePool(hosts);
+    const { deps, ensureReadyCalls } = makeDeps(pool, {
+      addHost: async (input) => {
+        hosts.push(snapshot({ id: input.id, status: 'disconnected' }));
+        throw new Error('[SSH_HOST_PREFS_WRITE_FAILED] local preferences were not saved');
+      },
+    });
+    const { payload, isError } = await callParsed(makeRegistry(deps), 'ssh_add_host', {
+      alias: 'nas',
+      hostname: '192.168.68.51',
+      user: 'dash',
+    });
+    expect(isError).toBe(false);
+    expect(payload).toMatchObject({ added: true, connected: true });
+    expect(String(payload.warning)).toContain('无需重试');
+    expect(ensureReadyCalls).toEqual(['nas']);
+  });
+
   it('maps an existing alias to HOST_ALREADY_EXISTS without connecting', async () => {
     const { deps, ensureReadyCalls } = makeAddDeps({
       addHost: async () => {

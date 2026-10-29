@@ -1227,7 +1227,6 @@ export async function reloadRemoteSshConfig(): Promise<ReturnType<typeof current
   } catch (err) {
     log.warn('failed to reload SSH config', { error: String(err) });
   }
-  for (const host of getPool().list()) broadcastStatus(host);
   return currentRemoteSshListResult();
 }
 

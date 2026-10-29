@@ -18,7 +18,7 @@ export function registerSshReloadConfigTool(
     category: 'ssh',
     description:
       '重新读取这台电脑的 ~/.ssh/config（含 Include），刷新 Cindy 的 SSH 主机列表，等同设置页的刷新按钮。' +
-      '手动编辑过 SSH 配置后调用；返回刷新后的主机列表。',
+      '手动编辑过 SSH 配置后调用；返回刷新后的主机列表。已打开的设置页不会自动更新，需用户点刷新按钮。',
     inputShape: {},
     handler: async () => {
       try {
