@@ -797,6 +797,14 @@ export class UserBrowserBackend implements BrowserBackend {
           : undefined;
     if (!url) return actionFailed(req.action, 'url required', 'BROWSER_RUNTIME_INVALID_REQUEST');
     const existing = req.action === 'navigate' ? this.resolveTarget(req.targetId) : null;
+    // An explicit target that no longer resolves (closed, mistyped, or gone after a browser restart) is
+    // an error: navigating nothing and opening a new tab would let the agent think the old one moved.
+    if (req.action === 'navigate' && req.targetId && !existing)
+      return actionFailed(
+        req.action,
+        `标签页 ${req.targetId} 已不存在或已失效;用 tabs 重新选择 targetId`,
+        'BROWSER_RUNTIME_INVALID_REQUEST',
+      );
     const picked = this.pickClient(req.action, gate.control, req.profile ?? existing?.clientId);
     if (!picked.ok) return picked.result;
     const label = typeof req.label === 'string' ? req.label : undefined;

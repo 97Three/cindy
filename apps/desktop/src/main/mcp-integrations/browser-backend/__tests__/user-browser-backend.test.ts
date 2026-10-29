@@ -669,6 +669,19 @@ describe('UserBrowserBackend · 读取与动作', () => {
     }
   });
 
+  // Review 2026-10-30 (Codex P2): navigating an explicit targetId that no longer resolves must fail.
+  it('navigate 的显式 targetId 解析不了时报错,不新开页面', async () => {
+    const fake = fakeControl({ version: '0.4.56', tabs: { 'client-aaaaaaaa': [{ id: 1, url: 'https://a.test/' }] } });
+    const b = backend(fake.control);
+    await call(b, { action: 'tabs' });
+    const jobsBefore = fake.jobs.length;
+    expect(await call(b, { action: 'navigate', targetId: 'gone-tab', url: 'https://b.test/' })).toMatchObject({
+      ok: false,
+      message: expect.stringContaining('已不存在'),
+    });
+    expect(fake.jobs.length).toBe(jobsBefore);
+  });
+
   // Review 2026-10-30 (Codex P1): an abbreviated profile that matches two connections must not pick one.
   it('缩写的 profile 匹配多个连接时拒绝,精确 id 优先', async () => {
     const fake = fakeControl({
