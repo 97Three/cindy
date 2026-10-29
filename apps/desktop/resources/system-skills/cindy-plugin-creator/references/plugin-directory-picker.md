@@ -56,7 +56,7 @@ const picked = await cindy.pick({
 路径放进页面的工具结果**。宿主不给 View 注入本机路径。
 
 新版参数在旧宿主上会返回结构化 `{ok:false,...}`，请检查 `ok` 并提示升级；最低版本
-按页面能力的 `PLUGIN_UI_MIN_CINDY_VERSION` 打包下限声明（正式版号发布时确定）。
+按页面能力的 `PLUGIN_UI_MIN_CINDY_VERSION` 打包下限声明，即 `0.1.121-beta`。
 手机和远程查看端本期没有新的文件选择确认入口，请回到执行任务的电脑操作。
 
 ### 等待与取消（文件和目录共用）

@@ -16,6 +16,7 @@ import { resolveCanonicalSessionPath } from '@cindy/mcps';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   GHOST_MANIFEST_SUMMARY_MAX_CHARS,
+  PLUGIN_UI_MIN_CINDY_VERSION,
   PLUGIN_MEMBER_UPLOAD_MAX_ARCHIVE_BYTES,
   PLUGIN_MEMBER_UPLOAD_MAX_UNCOMPRESSED_BYTES,
   PLUGIN_MEMBER_UPLOAD_MAX_ZIP_ENTRIES,
@@ -2507,16 +2508,26 @@ describe('packGhostDir · manual 渐进披露手册', () => {
   });
 });
 
-// Production packer must include the approved static resource and enforce the
-// authoring floor; old generic pack cases have no ui declaration. Tier: unit.
+// Unit / §3.2: the real packer must include the page and enforce its first release.
+// Generic pack cases lack ui and do not distinguish a prerelease floor from a
+// stable-only floor. Minimal input: one HTML page, changing only minCindyVersion;
+// 0.1.121-beta and later must pack, earlier core versions must fail.
 it('packs the shared page, defaults its version floor, and rejects missing HTML or a low floor', async () => {
   const base = { ...GOOD_MANIFEST, schemaVersion: 3, slots: undefined,
     ui: { pages: { planner: { html: 'ui/planner.html' } }, tools: { do_thing: { page: 'planner' } } } };
   const dir = await makeSrcDir({ 'ghost.json': JSON.stringify(base), 'main.js': '/* fixture */', 'ui/planner.html': '<html>Planner</html>' });
   const result = await packGhostDir(dir);
-  expect(result).toMatchObject({ ok: true, manifest: { ui: base.ui, minCindyVersion: '9999.0.0' } });
-  await fs.promises.writeFile(path.join(dir, 'ghost.json'), JSON.stringify({ ...base, minCindyVersion: '0.1.0' }));
-  await expect(packGhostDir(dir)).resolves.toMatchObject({ ok: false, errorCode: 'MANIFEST_INVALID' });
+  expect(result).toMatchObject({ ok: true, manifest: { ui: base.ui, minCindyVersion: PLUGIN_UI_MIN_CINDY_VERSION } });
+  for (const [minCindyVersion, allowed] of [
+    ['0.1.121-beta', true], ['0.1.121-beta.1', true], ['0.1.121', true],
+    ['0.1.120', false], ['0.1.120-beta', false],
+  ] as const) {
+    await fs.promises.writeFile(path.join(dir, 'ghost.json'), JSON.stringify({ ...base, minCindyVersion }));
+    const packed = await packGhostDir(dir);
+    expect(packed, minCindyVersion).toMatchObject(allowed
+      ? { ok: true, manifest: { minCindyVersion } }
+      : { ok: false, errorCode: 'MANIFEST_INVALID' });
+  }
   await fs.promises.writeFile(path.join(dir, 'ghost.json'), JSON.stringify(base));
   await fs.promises.unlink(path.join(dir, 'ui/planner.html'));
   await expect(packGhostDir(dir)).resolves.toMatchObject({ ok: false });

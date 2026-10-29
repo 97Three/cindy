@@ -21,6 +21,10 @@ Codex 原生未必自行发送 MCP 取消；服务仍须限制长操作，并区
 
 ## 插件的交互页面
 
+首个支持版本为 `0.1.121-beta`（`PLUGIN_UI_MIN_CINDY_VERSION`）。声明交互页面的包须填写
+不低于它的 `minCindyVersion`；`0.1.121-beta.1`、`0.1.121` 满足，`0.1.120`、`0.1.120-beta` 不满足。
+该下限用于打包校验和市场兼容版本投影，不新增客户端安装闸门。
+
 插件继续通过 `ghost_info` / `ghost_call` 发现与执行 main.js 工具，不向 Agent 增加 MCP 服务。
 v3 顶层 `ui.pages` 声明包内静态 HTML、页面 CSP 和 `prefersBorder`，`ui.tools` 按原工具名
 引用页面并声明 `visibility`。多个工具可以共用资源；仅供页面的工具不出现在模型清单，

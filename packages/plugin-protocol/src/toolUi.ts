@@ -1,6 +1,6 @@
 import { validateCspDomains } from './appCsp.js';
-/** Authoring floor only; release engineering replaces this sentinel before publication. */
-export const PLUGIN_UI_MIN_CINDY_VERSION = '9999.0.0';
+/** First release with plugin pages; authoring floor, never a client install gate. */
+export const PLUGIN_UI_MIN_CINDY_VERSION = '0.1.121-beta';
 export interface GhostUiPage {
   html: string;
   csp?: { connectDomains?: string[]; resourceDomains?: string[]; frameDomains?: string[]; baseUriDomains?: string[] };

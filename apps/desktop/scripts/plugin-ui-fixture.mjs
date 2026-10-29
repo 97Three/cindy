@@ -4,7 +4,7 @@ import { RAW_APP_HTML } from './mcp-apps-raw-fixture.mjs';
 export async function pluginUiFixture(raw = false, allowed, probes = false) {
   const names = raw ? ['open_metrics', 'refresh_metrics'] : ['draft_form', 'create_application'];
   if (probes) names.push('file_probe');
-  const manifest = { schemaVersion: 3, minCindyVersion: '9999.0.0', id: raw ? 'ui-planner-raw' : 'ui-planner-sdk',
+  const manifest = { schemaVersion: 3, minCindyVersion: '0.1.121-beta', id: raw ? 'ui-planner-raw' : 'ui-planner-sdk',
     name: raw ? '原生协议交互页面' : 'SDK 交互页面', version: '1.0.0', kind: 'chip', entry: 'main.js',
     whenToUse: '演示标准 MCP Apps 交互页面，打开表单或指标页面',
     ...(allowed ? { network: { hosts: [new URL(allowed).hostname] } } : {}),
