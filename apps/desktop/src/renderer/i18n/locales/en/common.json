@@ -3624,7 +3624,7 @@
           "modelsAutoNote": "Available models are discovered after sign-in"
         },
         "advanced": {
-          "label": "Advanced (models / headers)"
+          "label": "Advanced connection settings"
         },
         "runtimeFill": {
           "action": "Fill other runtimes",

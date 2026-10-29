@@ -3594,7 +3594,7 @@
           "modelsAutoNote": "登录后自动获取可用模型"
         },
         "advanced": {
-          "label": "高级配置（模型 / 请求头）"
+          "label": "高级连接设置"
         },
         "runtimeFill": {
           "action": "填充其他 runtime",
