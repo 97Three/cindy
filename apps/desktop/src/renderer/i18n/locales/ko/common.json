@@ -3369,6 +3369,9 @@
       },
       "xd": {
         "title": "Cindy AI",
+        "personal": "개인",
+        "xdOrganization": "XD",
+        "organization": "조직",
         "subtitle": "모든 모델 · Claude Code / Codex 공용 · 토큰 단위로 잔액에서 차감",
         "modelLabel": "모든 모델",
         "billingLabel": "토큰 단위로 잔액에서 차감",
