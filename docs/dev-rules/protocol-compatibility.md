@@ -603,6 +603,15 @@ Chat Server 群消息投影（Desktop IPC 与 `bot-group-chat` 远程资源共�
 
 ## 手机直连群的设置管理
 
+### 同账号跨设备伙伴候选
+
+Desktop `chatServer.ownedBots` 返回账号所有可加入的伙伴；`botId` 表示 actor 的稳定 externalId，
+不再保证存在本机 Profile。可选 `avatar`、`homeDeviceId` 用于候选展示，旧调用方可忽略。
+建群仍提交 externalId，成员邀请仍提交 actorId；手机经电脑的 `create` / `add-member` /
+`set-members` 保留原 input，新主机允许缺少本地行但能在 ownedBots 中确认的 externalId，
+本机隐藏行继续拒绝。旧主机可能返回 MEMBER_UNAVAILABLE，手机保留错误，不伪报加入成功。
+没有新服务端路由、迁移或原生模块改动；加群不改变 homeDevice 或执行授权。
+
 ### 群解散与个人列表移除
 
 `GET /me` 明确声明 `groupLifecycleVersion: 1` / `conversationListStateVersion: 1` 才启用对应动作。

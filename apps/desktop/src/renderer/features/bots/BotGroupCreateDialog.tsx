@@ -1,5 +1,5 @@
 /**
- * 新建群聊：填群名称，选 2–6 位本机伙伴。
+ * 新建群聊：云端群可选择同账号各设备的伙伴；本地群沿用本机伙伴。
  *
  * 表单弹窗遵循 DESIGN.md §4 Dialog & Modal：无右上角 ×，点遮罩不关闭（误触不能丢掉
  * 填了一半的表单），Esc 与底部「取消」关闭，打开时聚焦群名称。成员数与群名长度由
@@ -29,7 +29,7 @@ function pickableBots(bots: readonly BotProfile[]): BotProfile[] {
 }
 
 /** Whether a teammate can join a group right now (shared with entry points outside this dialog). */
-export function isSelectable(bot: BotProfile): boolean {
+export function isSelectable(bot: Pick<BotProfile, 'status' | 'enabled'>): boolean {
   return (bot.status ?? 'active') === 'active' && bot.enabled !== false;
 }
 
@@ -45,12 +45,37 @@ export function BotGroupCreateDialog({
 }) {
   const { t } = useTranslation();
   const bots = useBotProfiles();
-  const candidates = useMemo(() => pickableBots(bots), [bots]);
-  const selectableCount = candidates.filter(isSelectable).length;
+  type Candidate = Pick<BotProfile, 'id' | 'name' | 'avatar' | 'status' | 'enabled'>;
+  const [cloudBots, setCloudBots] = useState<Candidate[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(true);
+  const [membersLoadFailed, setMembersLoadFailed] = useState(false);
   const [serverBacked, setServerBacked] = useState(false);
+  const candidates = useMemo(() => serverBacked ? cloudBots : pickableBots(bots), [bots, cloudBots, serverBacked]);
+  const selectableCount = candidates.filter(isSelectable).length;
   useEffect(() => {
     let disposed = false;
-    void botGroupApi()?.chatServer?.status().then(s => { if (!disposed) setServerBacked(s.enabled); }).catch(() => undefined);
+    const owner = getDataOwnerGeneration();
+    const current = () => !disposed && isDataOwnerGenerationCurrent(owner);
+    void (async () => {
+      try {
+        const api = botGroupApi()?.chatServer;
+        const status = await api?.status();
+        if (!current()) return;
+        setServerBacked(status?.enabled === true);
+        if (status?.enabled && api) {
+          const result = await api.ownedBots();
+          if (!current()) return;
+          if (!result.ok) throw new Error(result.errorCode);
+          setCloudBots(result.bots.flatMap(bot => bot.botId ? [{
+            id: bot.botId, name: bot.name, avatar: bot.avatar ?? '', status: 'active' as const, enabled: true,
+          }] : []));
+        }
+      } catch {
+        if (current()) setMembersLoadFailed(true);
+      } finally {
+        if (current()) setLoadingMembers(false);
+      }
+    })();
     return () => { disposed = true; };
   }, []);
   const minMembers = serverBacked ? 0 : BOT_GROUP_MIN_MEMBERS;
@@ -82,7 +107,7 @@ export function BotGroupCreateDialog({
 
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
-    if (busyRef.current) return;
+    if (busyRef.current || loadingMembers || membersLoadFailed) return;
     const trimmed = name.trim();
     const nameInvalid = trimmed.length === 0;
     const membersInvalid =
@@ -122,7 +147,7 @@ export function BotGroupCreateDialog({
   };
 
   const membersHint =
-    selectableCount < minMembers
+    membersLoadFailed ? t('bots.groupChat.create.failed') : selectableCount < minMembers
       ? t('bots.groupChat.create.notEnoughBots', { min: BOT_GROUP_MIN_MEMBERS })
       : undefined;
 
@@ -271,7 +296,7 @@ export function BotGroupCreateDialog({
                   {t('bots.cancel')}
                 </Button>
               </Dialog.Close>
-              <Button type="submit" variant="cta" palette="confirmation" size="lg" loading={busy}>
+              <Button type="submit" variant="cta" palette="confirmation" size="lg" loading={busy} disabled={loadingMembers || membersLoadFailed}>
                 {t('bots.groupChat.create.submit')}
               </Button>
             </div>

@@ -95,15 +95,17 @@ function BotGroupSettingsContent({ visible, group, host, identityFor, online, ac
   const nameDirty = useRef(false);
   const nameRevision = useRef(group.revision);
   const teammates = useHostTeammates(host, !management && visible && picking && !readOnly, serverManaged ? memberQuery : '');
-  const cloudCandidates = useCloudGroupCandidates(!!management && visible && picking && !readOnly);
-  const choices = management ? cloudCandidates.rows.filter(row => row.name.toLocaleLowerCase().includes(memberQuery.trim().toLocaleLowerCase()))
+  const cloudCandidates = useCloudGroupCandidates((!!management || serverManaged) && visible && picking && !readOnly);
+  const localChoices = teammates.rows.map(row => ({ id: row.item.ref.id, actorId: undefined as string | undefined, name: resolveRemoteText(row.item.display.title, i18n.language), avatar: row.item.display.avatar, avatarUrl: undefined as string | undefined }));
+  const cloudChoices = cloudCandidates.rows.filter(row => row.name.toLocaleLowerCase().includes(memberQuery.trim().toLocaleLowerCase()))
+    .filter(row => management || (row.externalId && row.homeDeviceId && row.homeDeviceId !== host.deviceId && !localChoices.some(local => local.id === row.externalId)))
     .map(row => {
       const avatar = chatMemberAvatar(row.avatar);
-      return { id: row.id, name: row.name, avatar: botGroupMemberAvatar({ ...avatar, name: row.name, avatarColor: '' }), avatarUrl: avatar.avatarUrl };
-    })
-    : teammates.rows.map(row => ({ id: row.item.ref.id, name: resolveRemoteText(row.item.display.title, i18n.language), avatar: row.item.display.avatar, avatarUrl: undefined }));
-  const candidatesLoading = management ? cloudCandidates.loading : teammates.loading;
-  const candidatesFailed = management ? cloudCandidates.failed : teammates.failed;
+      return { id: management ? row.id : row.externalId, actorId: row.id, name: row.name, avatar: botGroupMemberAvatar({ ...avatar, name: row.name, avatarColor: '' }), avatarUrl: avatar.avatarUrl };
+    });
+  const choices = management ? cloudChoices : [...localChoices, ...cloudChoices];
+  const candidatesLoading = cloudCandidates.loading || (!management && teammates.loading);
+  const candidatesFailed = cloudCandidates.failed || (!management && teammates.failed);
   const [description, setDescription] = useState(group.description ?? '');
   const [descriptionDirty, setDescriptionDirty] = useState(false);
   const descriptionRevision = useRef(group.revision);
@@ -122,7 +124,7 @@ function BotGroupSettingsContent({ visible, group, host, identityFor, online, ac
   const archivesGroup = (serverManaged && !leavesGroup) || management !== undefined;
   const canRemove = serverManaged || group.members.length > BOT_GROUP_MIN_MEMBERS;
   const canAdd = serverManaged || group.members.length < BOT_GROUP_MAX_MEMBERS;
-  const addable = choices.filter(row => !memberIds.includes(row.id));
+  const addable = choices.filter(row => !memberIds.includes(row.id) && !group.members.some(member => row.actorId && member.actorId === row.actorId));
   const permissionLocked = serverManaged && !canManageBotGroup(group);
   const unavailable = readOnly || permissionLocked || !online || !!lifecycleGroup.dissolvedAt;
   const locked = unavailable || busy !== null;

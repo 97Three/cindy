@@ -24,6 +24,7 @@ const h = vi.hoisted(() => ({
   inputs: {} as Record<string, any>,
   teammates: { rows: [] as any[], loading: false, failed: false },
   teammateQuery: '',
+  cloudRows: null as any[] | null,
   uuid: 0,
   scroll: null as any,
   scrollToEnd: vi.fn(),
@@ -224,7 +225,7 @@ vi.mock('@/session/useHostTeammates', () => ({ useHostTeammates: (_host: unknown
 vi.mock('@/session/useBotGroupChat', () => ({ useBotGroupChat: () => h.chat }));
 vi.mock('@/session/useBotGroupSettingsManagement', () => ({ useBotGroupSettingsManagement: () => h.management ?? ({
   group: undefined, editable: false, loading: false, reason: 'unavailable', act: vi.fn(), refresh: vi.fn(),
-}), useCloudGroupCandidates: () => ({ ...h.teammates, rows: h.teammates.rows.map(row => ({ id: row.item.ref.id, name: row.item.display.title, avatar: null })) }) }));
+}), useCloudGroupCandidates: () => ({ ...h.teammates, rows: h.cloudRows ?? h.teammates.rows.map(row => ({ id: row.item.ref.id, name: row.item.display.title, avatar: null })) }) }));
 
 vi.mock('@/hooks/useReduceMotion', () => ({ useReduceMotionEnabled: () => true }));
 vi.mock('@/session/CompanionPresenceRing', () => ({ CompanionPresenceRing: () => null }));
@@ -297,6 +298,7 @@ async function render(data: BotGroupRemoteChatData | null = group(), kind: 'read
 
 beforeEach(() => {
   h.management = null;
+  h.cloudRows = null;
   vi.clearAllMocks();
   h.uuid = 0; h.inputs = {}; h.teammateQuery = ''; h.teammates = { rows: [], loading: false, failed: false };
   h.appState = 'active'; h.appStateListeners.clear();
@@ -1410,6 +1412,22 @@ describe('group settings', () => {
     await render(data);
     await click('botGroup.settings.addable.bot-201');
     expect(h.chat.act).toHaveBeenLastCalledWith('add-member', { botId: 'bot-201', expectedRevision: 5 });
+  });
+
+  it('adds a companion from another computer through the host without duplicating existing actors', async () => {
+    const data = group({ serverBacked: true, supportsSettingsManagement: true, revision: 5 });
+    data.members[0] = { ...data.members[0], isOwned: true, role: 'owner' };
+    data.members[1] = { ...data.members[1], actorId: 'actor-existing' };
+    h.cloudRows = [
+      { id: 'actor-linux', externalId: 'linux-bot', name: 'Linux', avatar: null, homeDeviceId: 'linux' },
+      { id: 'actor-existing', externalId: 'existing-remote', name: 'Already joined', avatar: null, homeDeviceId: 'linux' },
+      { id: 'actor-hidden', externalId: 'hidden-local', name: 'Hidden local', avatar: null, homeDeviceId: 'mac' },
+    ];
+    await openSettings(data); await click('botGroup.settings.add');
+    expect(byId('botGroup.settings.addable.existing-remote')).toBeNull();
+    expect(byId('botGroup.settings.addable.hidden-local')).toBeNull();
+    await click('botGroup.settings.addable.linux-bot');
+    expect(h.chat.act).toHaveBeenLastCalledWith('add-member', { botId: 'linux-bot', expectedRevision: 5 });
   });
 
   it('deletes after the system confirmation, then leaves once the sheet has closed', async () => {
