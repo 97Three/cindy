@@ -25,7 +25,11 @@ const EXT = 'a'.repeat(32);
 const dirs: string[] = [];
 const servers: net.Server[] = [];
 afterEach(async () => {
-  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+  await Promise.all(
+    servers
+      .splice(0)
+      .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+  );
   await Promise.all(dirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
@@ -70,7 +74,9 @@ describe('native-binding', () => {
     expect(JSON.stringify(manifest)).not.toContain(n.token);
     // Windows reports its own permission bits (0o666); owner-only modes are a POSIX property.
     if (process.platform !== 'win32') {
-      expect((await fs.stat(path.join(root, 'connections', '18819.json'))).mode & 0o777).toBe(0o600);
+      expect((await fs.stat(path.join(root, 'connections', '18819.json'))).mode & 0o777).toBe(
+        0o600,
+      );
       expect((await fs.stat(root)).mode & 0o777).toBe(0o700);
     }
     expect(await fs.readFile(path.join(root, 'cindy-browser-native'), 'utf8')).toBe(
@@ -105,6 +111,41 @@ describe('native-binding', () => {
       JSON.parse(await fs.readFile(path.join(root, 'connections', `${port}.json`), 'utf8')).token,
     ).toBe(b.token);
     await b.close();
+  });
+
+  // Review 2026-10-30 (Codex P2): the shared manifest keeps the sources of every running Cindy.
+  it('keeps the extension ids of other running Cindys in the shared manifest', async () => {
+    const { binaryDir, profile, root } = await fixture();
+    const opts = {
+      hostName: 'com.example.browser',
+      binaryDir,
+      root,
+      profiles: [profile],
+      platform: 'darwin' as const,
+      arch: 'arm64',
+    };
+    const listen = async () => {
+      const server = net.createServer();
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      servers.push(server);
+      return (server.address() as net.AddressInfo).port;
+    };
+    const other = 'b'.repeat(32);
+    const first = createNativeBinding(opts);
+    const second = createNativeBinding(opts);
+    await first.install(await listen(), [EXT]);
+    await second.install(await listen(), [other]);
+    const manifest = JSON.parse(
+      await fs.readFile(
+        path.join(profile, 'NativeMessagingHosts', 'com.example.browser.json'),
+        'utf8',
+      ),
+    );
+    expect([...manifest.allowed_origins].sort()).toEqual(
+      ['chrome-extension://' + EXT + '/', 'chrome-extension://' + other + '/'].sort(),
+    );
+    await first.close();
+    await second.close();
   });
 
   // Review 2026-10-29: registrations were never withdrawn. Every Cindy on the account shares one,
@@ -160,7 +201,10 @@ describe('native-binding', () => {
     const deadPort = port === 65535 ? port - 1 : port + 1;
     const live = createNativeBinding(opts);
     await live.install(port, [EXT]);
-    await fs.writeFile(path.join(root, 'connections', `${deadPort}.json`), JSON.stringify({ token: 'x'.repeat(64) }));
+    await fs.writeFile(
+      path.join(root, 'connections', `${deadPort}.json`),
+      JSON.stringify({ token: 'x'.repeat(64) }),
+    );
     await live.close();
     await expect(fs.access(registration)).rejects.toThrow();
     await expect(fs.access(path.join(root, 'connections', `${deadPort}.json`))).rejects.toThrow();

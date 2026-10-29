@@ -155,7 +155,11 @@ export function createNativeBinding(options: NativeBindingOptions): NativeBindin
       for (const vendor of ['Google\\Chrome', 'Microsoft\\Edge', 'BraveSoftware\\Brave-Browser']) {
         await run!(
           reg,
-          ['DELETE', 'HKCU\\Software\\' + vendor + '\\NativeMessagingHosts\\' + options.hostName, '/f'],
+          [
+            'DELETE',
+            'HKCU\\Software\\' + vendor + '\\NativeMessagingHosts\\' + options.hostName,
+            '/f',
+          ],
           { windowsHide: true, timeout: 10000 },
         ).catch(() => undefined);
       }
@@ -176,6 +180,33 @@ export function createNativeBinding(options: NativeBindingOptions): NativeBindin
     }
   }
 
+  /**
+   * Extension ids of every running Cindy that shares this registration (release and dev builds, other
+   * plugin versions) plus our own: the shared manifest must keep all of their sources, or the last
+   * installer would cut the others' extensions off from the native host.
+   */
+  async function liveExtensionIds(ownPort: number, own: readonly string[]): Promise<string[]> {
+    const ids = new Set(own);
+    const dir = path.join(root, 'connections');
+    for (const name of (await fs.readdir(dir).catch(() => [])) as string[]) {
+      if (!name.endsWith('.json')) continue;
+      const port = Number(name.slice(0, -'.json'.length));
+      if (!Number.isInteger(port) || port <= 0 || port === ownPort || !(await portListening(port)))
+        continue;
+      try {
+        const saved = JSON.parse(await fs.readFile(path.join(dir, name), 'utf8')) as {
+          extensionIds?: unknown;
+        };
+        if (Array.isArray(saved.extensionIds))
+          for (const id of saved.extensionIds)
+            if (typeof id === 'string' && /^[a-p]{32}$/.test(id)) ids.add(id);
+      } catch {
+        // An unreadable file contributes nothing.
+      }
+    }
+    return [...ids];
+  }
+
   async function install(port: number, extensionIds: readonly string[]) {
     try {
       await privateDirectory(root);
@@ -183,7 +214,7 @@ export function createNativeBinding(options: NativeBindingOptions): NativeBindin
       // Claim the connection before touching the shared registration, so a binding closing at the
       // same time (plugin update, re-approval, account switch) still sees this one in use.
       config = path.join(root, 'connections', port + '.json');
-      await atomic(config, JSON.stringify({ token }));
+      await atomic(config, JSON.stringify({ token, extensionIds: [...extensionIds] }));
       const binaryName = 'cindy-browser-native' + (platform === 'win32' ? '.exe' : '');
       const source = path.join(options.binaryDir, platform + '-' + arch, binaryName);
       const binary = path.join(root, binaryName);
@@ -196,7 +227,9 @@ export function createNativeBinding(options: NativeBindingOptions): NativeBindin
         description: 'Cindy browser automatic key binding',
         path: binary,
         type: 'stdio',
-        allowed_origins: extensionIds.map((id) => 'chrome-extension://' + id + '/'),
+        allowed_origins: (await liveExtensionIds(port, extensionIds)).map(
+          (id) => 'chrome-extension://' + id + '/',
+        ),
       };
       if (platform === 'win32') {
         const file = path.join(root, options.hostName + '.json');
@@ -248,7 +281,13 @@ export function createNativeBinding(options: NativeBindingOptions): NativeBindin
     if (!config) return;
     const data = await fs.readFile(config, 'utf8').catch(() => '');
     // 只删自己写的授权;同端口被另一实例接管时保留它的令牌。
-    if (data === JSON.stringify({ token })) await fs.rm(config, { force: true });
+    let saved: unknown;
+    try {
+      saved = (JSON.parse(data) as { token?: unknown }).token;
+    } catch {
+      saved = undefined;
+    }
+    if (saved === token) await fs.rm(config, { force: true });
     config = null;
     await unregisterIfUnused().catch(() => undefined);
   }
