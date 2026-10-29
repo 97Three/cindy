@@ -3,6 +3,7 @@ import { ScriptTarget, transpileModule } from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { AuthApiError as ClientAuthApiError } from '@cindy/auth-client';
 import { loginPreparingErrorState } from '../../shared/authIpc';
+import { linuxCredentialFailureFields } from '../linuxPasswordStore.js';
 import { mapLoginProvidersLoadFailure } from '../authStartupGate';
 
 // Execute the production login action and eligibility predicate without loading
@@ -34,10 +35,13 @@ function setup({
   }
   const previous = { step: 'verification-code', kind: 'email', identifier: 'user@example.invalid' };
   const backend = { available: !backendUnavailable };
+  const verifyCode = vi.fn(async () => ({ status: 'ok' }));
+  const requestCode = vi.fn(async () => undefined);
   const deps = {
     AuthApiError,
     loginPreparingErrorState,
-    createAuthClient: () => ({ verifyCode: vi.fn(async () => ({ status: 'ok' })) }),
+    linuxCredentialFailureFields,
+    createAuthClient: () => ({ verifyCode, requestCode }),
     acceptLoginOutcome: vi.fn(async () => {
       throw new AuthApiError(code);
     }),
@@ -71,6 +75,11 @@ function setup({
       if (code === 'CREDENTIAL_STORE_UNAVAILABLE') isCredentialEncryptionAvailable();
       return originalAccept(...args);
     };
+    function assertLoginFlowCurrent() {}
+    let discoveredMethods = [];
+    function reduceAuthFlow(state, event) {
+      return Object.assign({ step: 'code-requested' }, event);
+    }
     async function loadLoginProviders() {
       loginFlowState = { step: 'identifier', providers: {} };
       return loginFlowState;
@@ -86,6 +95,8 @@ function setup({
     ...new Function(...Object.keys(deps), compiled)(...Object.values(deps)),
     previous,
     backend,
+    verifyCode,
+    requestCode,
   };
 }
 
@@ -145,7 +156,12 @@ describe('credential failure during fresh sign-in', () => {
   });
 
   it('keeps the deadline in a terminal action error state for renderer reload', async () => {
-    const harness = setup({ code: 'RATE_LIMITED', retryAt: 1_800_000_000_000, initialError: true });
+    const harness = setup({
+      code: 'RATE_LIMITED',
+      retryAt: 1_800_000_000_000,
+      initialError: true,
+      backendUnavailable: false,
+    });
     const result = await harness.run({
       type: 'verify-code',
       kind: 'email',
@@ -156,7 +172,11 @@ describe('credential failure during fresh sign-in', () => {
   });
 
   it('passes the server cooldown without triggering credential recovery or dropping the form', async () => {
-    const harness = setup({ code: 'RATE_LIMITED', retryAt: 1_800_000_000_000 });
+    const harness = setup({
+      code: 'RATE_LIMITED',
+      retryAt: 1_800_000_000_000,
+      backendUnavailable: false,
+    });
     const result = await harness.run({
       type: 'verify-code',
       kind: 'email',
@@ -199,7 +219,7 @@ describe('credential failure during fresh sign-in', () => {
   it.each(['INVALID_CODE', 'NETWORK_ERROR'])(
     'keeps the form for %s without requesting process recovery',
     async (code) => {
-      const harness = setup({ code });
+      const harness = setup({ code, backendUnavailable: false });
       const result = await harness.run({
         type: 'verify-code',
         kind: 'email',
@@ -210,4 +230,56 @@ describe('credential failure during fresh sign-in', () => {
       expect(harness.needsRecovery()).toBe(false);
     },
   );
+
+  it('does not consume a verification code when encryption is unavailable', async () => {
+    const harness = setup();
+    const result = await harness.run({
+      type: 'verify-code',
+      kind: 'email',
+      identifier: 'user@example.invalid',
+      code: '123456',
+    });
+    expect(harness.verifyCode).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      success: false,
+      code: 'CREDENTIAL_STORE_UNAVAILABLE',
+      state: { step: 'error', code: 'CREDENTIAL_STORE_UNAVAILABLE', recoverTo: 'identifier' },
+    });
+  });
+
+  it('does not open the browser when encryption is unavailable', async () => {
+    const harness = setup();
+    const result = await harness.run({
+      type: 'start-browser',
+      kind: 'social',
+      providerOrConnectionId: 'google',
+      label: 'Google',
+    });
+    expect(result.code).toBe('CREDENTIAL_STORE_UNAVAILABLE');
+    expect(result.state).toEqual({
+      step: 'error',
+      code: 'CREDENTIAL_STORE_UNAVAILABLE',
+      recoverTo: 'identifier',
+    });
+  });
+
+  it('does not request a code when encryption is unavailable, but still does when it is available', async () => {
+    const blocked = setup();
+    const blockedResult = await blocked.run({
+      type: 'request-code',
+      kind: 'email',
+      identifier: 'user@example.invalid',
+    });
+    expect(blocked.requestCode).not.toHaveBeenCalled();
+    expect(blockedResult.code).toBe('CREDENTIAL_STORE_UNAVAILABLE');
+
+    const ready = setup({ backendUnavailable: false });
+    const readyResult = await ready.run({
+      type: 'request-code',
+      kind: 'email',
+      identifier: 'user@example.invalid',
+    });
+    expect(ready.requestCode).toHaveBeenCalledOnce();
+    expect(readyResult.success).toBe(true);
+  });
 });
