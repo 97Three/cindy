@@ -93,11 +93,25 @@ export function useModelImageInputOverride(target: ModelImageInputTarget | null)
 
   useEffect(() => {
     setState({ ...EMPTY, key, loading: stableTarget !== null, error: false });
+    let active = true;
+    let observedOwner = getDataOwnerGeneration();
+    const unsubscribeOwner = window.electronAPI?.onAuthStateChange?.(() => {
+      // AuthContext publishes the accepted owner fence synchronously while
+      // handling this push. Wait until every listener has seen the event.
+      queueMicrotask(() => {
+        if (!active || isDataOwnerGenerationCurrent(observedOwner)) return;
+        observedOwner = getDataOwnerGeneration();
+        pendingWrite.current = null;
+        void run();
+      });
+    });
     const unsubscribe = window.electronAPI?.maker?.onProvidersChanged?.(() => {
       void run();
     });
     void run();
     return () => {
+      active = false;
+      unsubscribeOwner?.();
       unsubscribe?.();
       generation.current += 1;
     };
