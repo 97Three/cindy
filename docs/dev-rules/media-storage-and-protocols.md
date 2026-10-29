@@ -183,6 +183,20 @@ Windows 使用 CF_HDROP，macOS 使用文件 URL 剪贴板，视频／GIF 均按
   路径校验和 Renderer 暴露面。
 - 默认不把媒体仓绝对路径直接暴露给 Renderer、插件或远端。跨边界传递使用托管 URL、
   受控 grant／deposit／ledger，或已有上传与远程媒体服务。
+- 当前任务的媒体检查直接走 Core `media(action: "inspect", url)`，不需要先揭示路径或让
+  用户另行口头同意检查。普通工具权限仍然适用；Host 校验当前账号、任务实例和该任务的
+  `session-attachment` 引用，读取后复核归属、清空代次与引用。只支持 `cindy-media://blobs/`
+  的本机受管副本，不根据外部地址、远程路径或其他任务的引用找文件。
+  同步生成与异步 poll 的成功图片结果在挂账后自动附最多两张预览；其余地址明确标为省略，
+  Agent 可按需 inspect。预览使用 MCP image 内容块，原图 URL 继续交付，预览字节不塞进
+  JSON 文字、不新建媒体副本或自动发到 IM。复用现有 140 KB 内联预算；失败只影响检查，
+  不改变生成成功状态，不引导重新付费生成。
+  图片最多读取 48 MiB；视频最多读取 64 MiB、一次最多四个非负秒数，省略时间取首帧。
+  视频由不可见、无 preload、禁止网络和权限的 Chromium 沙箱页面解码，无需外装 ffmpeg，
+  完成、失败或 20 秒超时后销毁；只传已核验字节，不开放文件路径或新协议。编解码支持以
+  当前 Electron 为准；抽帧不包含声音，不代表对白、口型或音画同步已经验收。
+  实现与回归见 `cindy-media/mediaInspection.ts`、`videoInspection.ts`、
+  `__tests__/mediaInspection.test.ts` 与 `packages/cindy-tools/src/__tests__/ghostMcp.test.ts`。
 - 唯一的路径揭示例外是：用户明确询问某个受管媒体地址在本机的存储位置时，Host 先用
   安全解析器核验为现存普通文件。Auto 档沿用实时审批负责人：原生审批已审核受管 URL
   及“向 Agent 返回该媒体的本机绝对路径并写入任务记录”这一效果时，不因安全解析而再调

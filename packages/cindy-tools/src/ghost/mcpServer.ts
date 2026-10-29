@@ -121,6 +121,7 @@ const D_MEDIA = [
   "插件已返回用户配置的 model_id/provider_id 时必须原样传给 prepare，再按目标 capability 走 prepare → request；provider_id 用于区分不同 Provider 下的同名模型。没有已配置模型时，先用 list_models 查询。Gateway 模型的 prepare 会由 Server 根据 model_id 返回 Guide，并在 Guide 不存在或不支持该 capability 时明确报错。",
   "异步任务的 request 返回 pending 时，再按 recommended_poll_after_ms 调 poll；同步任务会直接返回 xdt_image_urls / xdt_video_urls。",
   "Core 图片完成结果由当前 Agent 控制呈现：在最终回复中用返回的受管地址只嵌入展示一次，不要同时重复口播或再次附同一图片。",
+  "生成图片完成时会附带供模型检查的图片预览（批量最多两张），previews 按 image_index 对应后面的 image 内容；原图地址仍用于交付。检查当前任务已有成果可直接用 inspect + url，不需要另问用户或先取得本机路径。inspect 读取当前任务的 cindy-media:// 图片，或用 times_seconds 指定视频抽帧时间（秒，最多四个；省略取首帧）。预览仅供分析，不会自动发给用户。预览失败或省略不代表生成失败，不要因此重新付费生成；可按原地址再次 inspect。视频抽帧不含声音，不能据此声称已检查对白或音画同步。",
   "展示、改图和附件交接都直接使用 cindy-media:// / xdt-image:// / xdt-video:// 受管地址，不需要本地路径。仅当用户明确询问文件存储位置或本地路径时，才调用 resolve_local_path 并原样传入 url；此调用会把该受管媒体的本机绝对路径返回给 Agent 并写入任务记录。Host 按当前权限处理：Ask 需点击确认，Auto 由当前审批负责人审核，本地 Full Access 自动允许。不要假定稍后还会有确认卡；不要猜路径或扫描磁盘。",
   "模型 id、endpoint、Authorization 和 wire model 均由 Host 管理，不要写进 body，不要猜测或覆盖。",
   "Guide 缺失、能力不匹配或当前客户端不支持协议时，结果会带稳定 errorCode、retryable、outcomeKnown 和 allowedActions；可按 allowedActions 换模型、改用其它已授权工具或仍存在的旧链路，不要把 INTERNAL 当成协议能力结论。",
@@ -581,16 +582,17 @@ const MEDIA_CAPABILITIES = new Set<CindyMediaCapability>([
 export async function handleMedia(
   deps: CindyGhostsMcpDeps,
   input: {
-    action: "list_models" | "resolve_local_path" | "import_image" | "prepare" | "request" | "poll";
+    action: "list_models" | "resolve_local_path" | "inspect" | "import_image" | "prepare" | "request" | "poll";
     path?: string;
     capability?: CindyMediaCapability;
     url?: string;
+    times_seconds?: number[];
     provider_id?: string;
     model_id?: string;
     invocation_id?: string;
     body?: Record<string, unknown>;
   },
-): Promise<McpTextResult> {
+): Promise<McpGhostCallResult> {
   if (!deps.callMedia) {
     return textResult(
       {
@@ -614,6 +616,12 @@ export async function handleMedia(
         action: "list_models",
         ...(input.capability ? { capability: input.capability } : {}),
       });
+    } else if (input.action === "inspect") {
+      if (!input.url || (input.times_seconds !== undefined && (
+        !Array.isArray(input.times_seconds) || input.times_seconds.length < 1 || input.times_seconds.length > 4 ||
+        input.times_seconds.some((time) => !Number.isFinite(time) || time < 0)
+      ))) return textResult({ ok: false, errorCode: "INVALID_INPUT", message: "inspect 需要 url；times_seconds 须为 1–4 个非负有限秒数。" }, true);
+      result = await deps.callMedia({ action: "inspect", url: input.url, ...(input.times_seconds ? { timesSeconds: input.times_seconds } : {}) });
     } else if (input.action === "import_image") {
       if (!input.path?.trim()) return textResult({ ok: false, errorCode: "INVALID_INPUT", message: "import_image 必须提供 path。" }, true);
       result = await deps.callMedia({ action: "import_image", path: input.path });
@@ -681,7 +689,17 @@ export async function handleMedia(
         invocationId: input.invocation_id,
       });
     }
-    return textResult(result, result.ok === false);
+    // Pixels travel through MCP image blocks, never JSON text or delivery fields.
+    const { modelImages, ...metadata } = result;
+    const response: McpGhostCallResult = textResult(metadata, result.ok === false);
+    if (result.ok !== false && Array.isArray(modelImages)) {
+      for (const item of modelImages) {
+        if (item && typeof item.data === "string" && typeof item.mimeType === "string") {
+          response.content.push({ type: "image", data: item.data, mimeType: item.mimeType });
+        }
+      }
+    }
+    return response;
   } catch (err) {
     return textResult(
       {
@@ -1382,7 +1400,7 @@ export function createCindyGhostsMcpServer(
     D_MEDIA,
     {
       action: z
-        .enum(["list_models", "resolve_local_path", "import_image", "prepare", "request", "poll"])
+        .enum(["list_models", "resolve_local_path", "inspect", "import_image", "prepare", "request", "poll"])
         .describe("要执行的媒体调用阶段"),
       path: z.string().max(32768).optional().describe("import_image 时必填；实际存在的图片路径，相对路径按当前任务工作目录解析"),
       capability: z
@@ -1408,7 +1426,9 @@ export function createCindyGhostsMcpServer(
         .string()
         .max(4096)
         .optional()
-        .describe("resolve_local_path 时必填；原样传入 cindy-media://、xdt-image:// 或 xdt-video:// 受管地址。调用会向 Agent 返回该媒体的本机绝对路径并写入任务记录，仅在用户明确询问时使用；按当前权限审核，不保证另有确认卡"),
+        .describe("inspect 时传当前任务的 cindy-media:// 地址，直接返回图片或视频帧供模型检查。resolve_local_path 时传 cindy-media://、xdt-image:// 或 xdt-video://；仅用户明确询问存储位置时使用，会返回本机路径并按当前权限审核。"),
+      times_seconds: z.array(z.number().finite().nonnegative()).min(1).max(4).optional()
+        .describe("inspect 视频时可选的抽帧时间（秒）；省略取首帧。图片不传。只检查这些画面，不含声音。"),
       invocation_id: z
         .string()
         .max(128)

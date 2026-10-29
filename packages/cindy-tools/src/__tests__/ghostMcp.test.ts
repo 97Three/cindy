@@ -1193,6 +1193,31 @@ describe("cindy_ghosts · ghost_call(派活透传)", () => {
 });
 
 describe("cindy · media MCP 边界", () => {
+  // Regression: generated media URLs reached the model as text, without pixels.
+  // Entry: handleMedia; unit tier; existing media cases only checked JSON metadata.
+  it("returns preview pixels as image content while preserving the deliverable URL", async () => {
+    const url = 'cindy-media://blobs/image.png';
+    const result = await handleMedia(fakeDeps({ callMedia: async () => ({
+      ok: true, xdt_image_urls: [url],
+      modelImages: [{ data: 'AAAA', mimeType: 'image/png' }],
+      previews: [{ url, image_index: 0 }],
+    }) }), { action: 'poll', invocation_id: 'generated' });
+    expect(parsePayload(result)).toEqual({ ok: true, xdt_image_urls: [url], previews: [{ url, image_index: 0 }] });
+    expect(result.content[1]).toEqual({ type: 'image', data: 'AAAA', mimeType: 'image/png' });
+  });
+  it("routes inspection times without generation and excludes pixels from failed results", async () => {
+    const callMedia = vi.fn(async () => ({ ok: false, errorCode: 'MEDIA_NOT_IN_TASK', modelImages: [{ data: 'AAAA', mimeType: 'image/png' }] }));
+    const result = await handleMedia(fakeDeps({ callMedia }), { action: 'inspect', url: 'cindy-media://blobs/video.mp4', times_seconds: [0, 2] });
+    expect(callMedia).toHaveBeenCalledWith({ action: 'inspect', url: 'cindy-media://blobs/video.mp4', timesSeconds: [0, 2] });
+    expect(result.isError).toBe(true);
+    expect(result.content).toHaveLength(1);
+    expect(parsePayload(result)).toEqual({ ok: false, errorCode: 'MEDIA_NOT_IN_TASK' });
+    callMedia.mockClear();
+    for (const times_seconds of [[], [-1], [Infinity], [0, 1, 2, 3, 4]]) {
+      expect(parsePayload(await handleMedia(fakeDeps({ callMedia }), { action: 'inspect', url: 'cindy-media://blobs/video.mp4', times_seconds }))).toMatchObject({ errorCode: 'INVALID_INPUT' });
+    }
+    expect(callMedia).not.toHaveBeenCalled();
+  });
   it("imports existing screenshots without requiring a model or plugin", async () => {
     const callMedia = vi.fn(async () => ({ ok: true, xdt_image_urls: ['cindy-media://blobs/image.png'] }));
     const deps = fakeDeps({ callMedia });
