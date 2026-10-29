@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
  */
 
 import * as AlertDialog from '@radix-ui/react-alert-dialog';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { goalApiFor } from '@/lib/makerTransport';
@@ -34,9 +34,11 @@ interface NewGoalDialogProps {
    * (目标的默认文字来自 composer,创建成功后原文该清掉)。
    */
   onCreated?: () => void;
+  creationRecovery?: ReactNode;
+  creationRecoveryBusy?: boolean;
 }
 
-export function NewGoalDialog({ sessionId, open, onOpenChange, onCreate, initialObjective, onCreated }: NewGoalDialogProps): React.ReactElement {
+export function NewGoalDialog({ sessionId, open, onOpenChange, onCreate, initialObjective, onCreated, creationRecovery, creationRecoveryBusy = false }: NewGoalDialogProps): React.ReactElement {
   const { t } = useTranslation();
   const [objective, setObjective] = useState('');
   const [limits, setLimits] = useState<GoalLimitValues>(DEFAULT_GOAL_LIMITS);
@@ -61,7 +63,7 @@ export function NewGoalDialog({ sessionId, open, onOpenChange, onCreate, initial
   const trimmed = objective.trim();
 
   const save = async () => {
-    if (!trimmed) return;
+    if (!trimmed || saving || creationRecoveryBusy) return;
     setSaving(true);
     setError(null);
     try {
@@ -124,7 +126,8 @@ export function NewGoalDialog({ sessionId, open, onOpenChange, onCreate, initial
             }}
           />
           <GoalAdvancedLimits value={limits} onChange={setLimits} />
-          {error && (
+          {creationRecovery}
+          {error && !creationRecovery && (
             <div className="text-12" style={{ color: 'var(--error-fg)' }}>
               {error}
             </div>
@@ -143,7 +146,7 @@ export function NewGoalDialog({ sessionId, open, onOpenChange, onCreate, initial
               compact
               loading={saving}
               type="button"
-              disabled={saving || !trimmed}
+              disabled={saving || creationRecoveryBusy || !trimmed}
               onClick={() => {
                 void save();
               }}
