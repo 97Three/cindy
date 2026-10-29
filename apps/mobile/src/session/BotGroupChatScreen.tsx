@@ -374,7 +374,7 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId, messageId, n
         clientId: input.clientId,
         ...(quote ? { quote: { messageId: quote.messageId } } : {}),
         ...(input.division ? { division: true } : {}),
-        // Only a computer that declared `supportsAttachments` is offered any (see the composer).
+        // The active server/computer path declares attachment support (see the composer).
         ...(input.attachments.length > 0 ? { attachments: input.attachments } : {}),
       });
       if (quote) setReplyTo(current => current?.messageId === quote.messageId ? null : current);
@@ -521,7 +521,7 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId, messageId, n
       <BotGroupComposer onParticipate={mask.participate} maskIndicator={mask.state?.settings.companionId ? <GroupMaskStatus mask={mask} deviceId={deviceId} onPress={() => setMaskSettings(true)} /> : undefined} members={group.members} identityFor={identityFor} deviceId={deviceId} online={(chat.online || !!chat.canQueue) && !group.archived && !group.dissolvedAt}
         quoteMessageId={replyTo?.messageId} focusRequest={replyFocusRequest}
         running={group.round.status === 'running'} planState={botGroupComposerPlanState(openBotGroupPlan(group), group.replyMode)}
-        divisionSupported={!chat.server && (!group.singleSpeaker || group.supportsDivision === true)} attachmentsSupported={group.supportsAttachments === true} onSend={send} onStop={stop} />
+        divisionSupported={!chat.server && (!group.singleSpeaker || group.supportsDivision === true)} attachmentsSupported={group.supportsAttachments === true} uploadAttachment={chat.uploadAttachment} onSend={send} onStop={stop} />
     </KeyboardAvoidingView>;
   }
 
