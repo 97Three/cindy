@@ -1750,6 +1750,18 @@ function rewindCommit(readyDb, args) {
     payload.expectedClearedAt === undefined || payload.expectedClearedAt === null
       ? null
       : expectNumber(payload.expectedClearedAt, 'expectedClearedAt');
+  // Mirror worker/opHandlers/tx.ts: a Claude rewind without a prior reply
+  // clears the native session id and leaves a hidden context_rebuild marker.
+  const resetPayload = payload.nativeContextReset === undefined
+    ? null
+    : asRecord(payload.nativeContextReset, 'nativeContextReset');
+  const nativeContextReset = resetPayload
+    ? {
+        markerId: expectString(resetPayload.markerId, 'nativeContextReset.markerId'),
+        markerClientId: expectString(resetPayload.markerClientId, 'nativeContextReset.markerClientId'),
+        markerContent: expectString(resetPayload.markerContent, 'nativeContextReset.markerContent'),
+      }
+    : null;
   const rows = readyDb.prepare(
     'SELECT id, client_id, role, created_at, agent_meta, tool_use_id FROM messages WHERE session_id = ? AND rewind_at IS NULL',
   ).all(sessionId);
@@ -1826,7 +1838,17 @@ function rewindCommit(readyDb, args) {
       // so fail closed rather than expose work from a withdrawn branch.
       rewindParentlessSubagentTail.run(now, sessionId, targetCreatedAt);
     }
-    if (sdkSessionId) {
+    if (nativeContextReset) {
+      readyDb.prepare('UPDATE sessions SET user_send_at = ?, updated_at = ?, context_tokens = 0, context_window = 0, codex_plan_json = NULL, sdk_session_id = NULL, list_preview = NULL, list_preview_role = NULL, list_message_count = NULL WHERE id = ?').run(now, now, sessionId);
+      readyDb.prepare("INSERT INTO messages (id, client_id, session_id, role, content, created_at, rewind_at) VALUES (?, ?, ?, 'context_rebuild', ?, ?, ?)").run(
+        nativeContextReset.markerId,
+        nativeContextReset.markerClientId,
+        sessionId,
+        nativeContextReset.markerContent,
+        now,
+        now,
+      );
+    } else if (sdkSessionId) {
       readyDb.prepare('UPDATE sessions SET user_send_at = ?, updated_at = ?, context_tokens = 0, context_window = 0, codex_plan_json = NULL, sdk_session_id = ?, list_preview = NULL, list_preview_role = NULL WHERE id = ?').run(now, now, sdkSessionId, sessionId);
     } else {
       readyDb.prepare('UPDATE sessions SET user_send_at = ?, updated_at = ?, context_tokens = 0, context_window = 0, codex_plan_json = NULL, list_preview = NULL, list_preview_role = NULL WHERE id = ?').run(now, now, sessionId);

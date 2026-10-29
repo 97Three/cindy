@@ -2678,6 +2678,16 @@ function rewindCommit(db: Database.Database, args: unknown): void {
     payload.expectedClearedAt === undefined || payload.expectedClearedAt === null
       ? null
       : expectNumber(payload.expectedClearedAt, 'expectedClearedAt');
+  const nativeContextReset = payload.nativeContextReset === undefined
+    ? null
+    : (() => {
+        const reset = asRecord(payload.nativeContextReset, 'nativeContextReset');
+        return {
+          markerId: expectString(reset.markerId, 'nativeContextReset.markerId'),
+          markerClientId: expectString(reset.markerClientId, 'nativeContextReset.markerClientId'),
+          markerContent: expectString(reset.markerContent, 'nativeContextReset.markerContent'),
+        };
+      })();
   const rows = db
     .prepare(
       `SELECT id, client_id, role, created_at, agent_meta, tool_use_id
@@ -2777,7 +2787,25 @@ function rewindCommit(db: Database.Database, args: unknown): void {
       // work from the branch the user explicitly withdrew.
       rewindParentlessSubagentTail.run(now, sessionId, targetCreatedAt);
     }
-    if (sdkSessionId) {
+    if (nativeContextReset) {
+      db.prepare(
+        `UPDATE sessions
+           SET user_send_at = ?, updated_at = ?, context_tokens = 0, context_window = 0,
+               codex_plan_json = NULL, sdk_session_id = NULL,
+               list_preview = NULL, list_preview_role = NULL, list_message_count = NULL
+         WHERE id = ?`,
+      ).run(now, now, sessionId);
+      db.prepare(
+        "INSERT INTO messages (id, client_id, session_id, role, content, created_at, rewind_at) VALUES (?, ?, ?, 'context_rebuild', ?, ?, ?)",
+      ).run(
+        nativeContextReset.markerId,
+        nativeContextReset.markerClientId,
+        sessionId,
+        nativeContextReset.markerContent,
+        now,
+        now,
+      );
+    } else if (sdkSessionId) {
       db.prepare(
         `UPDATE sessions
            SET user_send_at = ?, updated_at = ?, context_tokens = 0, context_window = 0,
