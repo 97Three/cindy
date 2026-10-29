@@ -54,6 +54,41 @@ function Probe({ sessionId = 'task', enabled = true }: { sessionId?: string; ena
   return pending ? <McpSetupPrompt key={pending.requestId} request={pending} /> : null;
 }
 
+// A lost result must not turn an already saved configuration into another create.
+it.each(['saved', 'cancelled'] as const)('retries a failed %s result without saving credentials again', async status => {
+  api.resolveInteraction.mockRejectedValueOnce(new Error('test-only IPC failure'));
+  render(<McpSetupPrompt request={request} />);
+  const token = await screen.findByLabelText('settings.mcp.fields.token');
+  if (status === 'saved') fireEvent.change(token, { target: { value: 'test-invalid-token' } });
+  fireEvent.click(screen.getByRole('button', { name: status === 'saved' ? 'settings.mcp.save' : 'settings.mcp.cancel' }));
+  await screen.findByRole('alert');
+  expect(screen.queryByLabelText('settings.mcp.fields.token')).toBeNull();
+  let complete!: (value: { accepted: boolean }) => void;
+  api.resolveInteraction.mockReturnValueOnce(new Promise(resolve => { complete = resolve; }));
+  const retry = screen.getByRole('button', { name: 'commonUi.retry' });
+  fireEvent.click(retry);
+  fireEvent.click(retry);
+  expect(api.resolveInteraction).toHaveBeenCalledTimes(2);
+  expect(api.resolveInteraction.mock.calls[1]).toEqual(api.resolveInteraction.mock.calls[0]);
+  await act(async () => complete({ accepted: true }));
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(api.createCustomMcpServer).toHaveBeenCalledTimes(status === 'saved' ? 1 : 0);
+  expect(store).toHaveBeenCalledTimes(status === 'saved' ? 1 : 0);
+});
+
+it('can cancel result delivery after saving, and retires a request that has already expired', async () => {
+  api.resolveInteraction.mockRejectedValueOnce(new Error('test-only lost response'));
+  render(<McpSetupPrompt request={request} />);
+  await screen.findByLabelText('settings.mcp.fields.token');
+  fireEvent.click(screen.getByRole('button', { name: 'settings.mcp.save' }));
+  await screen.findByRole('alert');
+  api.resolveInteraction.mockResolvedValueOnce({ accepted: false });
+  fireEvent.click(screen.getByRole('button', { name: 'settings.mcp.cancel' }));
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  expect(api.resolveInteraction).toHaveBeenLastCalledWith(request.requestId, { kind: 'mcp_setup', status: 'cancelled' });
+  expect(api.createCustomMcpServer).toHaveBeenCalledOnce();
+});
+
 it('ignores other tasks, preserves typed input on repeated metadata, and dismisses the matching form', async () => {
   render(<Probe />);
   await act(async () => {});

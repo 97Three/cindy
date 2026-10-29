@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { McpServerDialog } from '@/components/settings/McpServerDialog';
 import { listCustomMcpServers } from '@/lib/customMcpServers';
 import { toast } from '@/lib/toast';
+import { Button } from '@/components/ui/button';
 import { getDataOwnerGeneration, isDataOwnerGenerationCurrent, isDataOwnerPushCurrent, type DataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 import type { McpSetupRequest } from '../../../shared/mcpSetup';
 
@@ -42,12 +43,27 @@ export function useMcpSetupRequest(sessionId: string | null, enabled: boolean): 
 export function McpSetupPrompt({ request }: { request: McpSetupRequest }) {
   const { t } = useTranslation();
   const [ids, setIds] = useState<string[] | null>(null);
+  const [failedResult, setFailedResult] = useState<{ serverId?: string } | null>(null);
+  const [finished, setFinished] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const finish = async (serverId?: string) => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
     try {
       await window.electronAPI.maker.resolveInteraction(request.requestId, {
         kind: 'mcp_setup', status: serverId ? 'saved' : 'cancelled', ...(serverId ? { serverId } : {}),
       });
-    } catch { toast.error(t('settings.mcp.toast.saveFailed')); }
+      // A rejected/expired request is also terminal; never recreate the saved MCP.
+      setFinished(true);
+    } catch {
+      setFailedResult({ serverId });
+      toast.error(t('settings.mcp.toast.saveFailed'));
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
   };
   useEffect(() => {
     let current = true;
@@ -60,6 +76,19 @@ export function McpSetupPrompt({ request }: { request: McpSetupRequest }) {
     });
     return () => { current = false; };
   }, [request.requestId]);
+  if (finished) return null;
+  if (failedResult) return <section role="alert"
+    className="w-full min-w-0 rounded-xl border border-[var(--border-default)] bg-[var(--surface-elevated)] p-4">
+    <p className="text-13 text-[var(--text-primary)]">
+      {t(failedResult.serverId ? 'settings.mcp.toast.created' : 'settings.mcp.toast.saveFailed')}
+    </p>
+    <div className="mt-4 flex flex-wrap justify-end gap-2.5">
+      <Button variant="secondary" size="lg" palette="confirmation" disabled={submitting}
+        onClick={() => { void finish(); }}>{t('settings.mcp.cancel')}</Button>
+      <Button variant="primary" size="lg" palette="confirmation" loading={submitting}
+        onClick={() => { void finish(failedResult.serverId); }}>{t('commonUi.retry')}</Button>
+    </div>
+  </section>;
   if (!ids) return null;
   return <McpServerDialog embedded proposal={request.proposal} existingIds={ids}
     onSaved={serverId => { void finish(serverId); }} onClose={() => { void finish(); }} />;

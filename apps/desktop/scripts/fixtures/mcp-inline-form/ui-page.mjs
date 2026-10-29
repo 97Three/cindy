@@ -12,6 +12,7 @@ export default {
     default: { about: 'The existing Settings form expanded in the message flow' },
     narrow: { about: 'Inline form at 320 px', viewport: { width: 320, height: 1100 } },
     invalid: { about: 'Original validation and focus in the embedded form' },
+    'result-error': { about: 'Saved configuration remains saved when result delivery fails; retry and cancel remain available' },
     settings: { about: 'Original modal remains a modal' },
     layout: { about: 'Production message scrollport carries the entire form; composer stays fixed', viewport: { width: 600, height: 600 } },
   },
@@ -22,6 +23,15 @@ export default {
     await region.waitFor();
     if (ui.case === 'settings') return;
     assert.equal(await page.getByRole('dialog').count(), 0);
+    if (ui.case === 'result-error') {
+      await page.getByLabel(await ui.t('settings.mcp.fields.name'), { exact: true }).fill('Example');
+      await page.getByLabel(await ui.t('settings.mcp.fields.url'), { exact: true }).fill('https://example.test/mcp');
+      await page.getByRole('button', { name: await ui.t('settings.mcp.save'), exact: true }).click();
+      await page.getByRole('alert').filter({ hasText: await ui.t('settings.mcp.toast.created') }).waitFor();
+      assert.equal(await page.getByRole('button', { name: await ui.t('commonUi.retry'), exact: true }).isEnabled(), true);
+      assert.equal(await page.getByRole('button', { name: await ui.t('settings.mcp.cancel'), exact: true }).isEnabled(), true);
+      return;
+    }
     if (ui.case === 'invalid') {
       await page.getByRole('button', { name: await ui.t('settings.mcp.save'), exact: true }).click();
       await page.getByText(await ui.t('settings.mcp.errors.nameRequired'), { exact: true }).waitFor();

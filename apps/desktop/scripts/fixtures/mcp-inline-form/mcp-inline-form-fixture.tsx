@@ -3,6 +3,7 @@ import { McpSetupPrompt } from '../../../src/renderer/components/new-chat/McpSet
 import { MessageStream } from '../../../src/renderer/components/chat/MessageStream';
 import { AppFrame, mountPage } from '../../ui-page/harness';
 
+let rejectResult = false;
 void mountPage({
   route: '/cc-agent/mcp-form-fixture',
   host: {
@@ -15,13 +16,17 @@ void mountPage({
       listCustomMcpServers: async () => ({ servers: [] }),
       createCustomMcpServer: async () => ({ ok: true }),
       refreshCustomMcpCodex: async () => ({ ok: true }),
-      resolveInteraction: async () => ({ accepted: true }),
+      resolveInteraction: async () => {
+        if (rejectResult) throw new Error('fixture result delivery unavailable');
+        return { accepted: true };
+      },
     },
     safeStorageStore: async () => true,
     safeStorageRemove: async () => true,
     safeStorageRead: async () => null,
   },
   render: context => {
+    rejectResult = context.case === 'result-error';
     const request = { kind: 'mcp_setup' as const, requestId: 'mcp-form-fixture', proposal: {} };
     const form = <McpSetupPrompt request={request} />;
     if (context.case === 'layout') return <AppFrame>
