@@ -229,7 +229,7 @@ function validateParityPayload(action: string, payload: BrowserExtensionJobPaylo
       (!Array.isArray(paths) ||
         !paths.length ||
         paths.length > 20 ||
-        paths.some((p) => !str(p, 4096) || !p || !(/^\//.test(p as string) || /^[A-Za-z]:[\\/]/.test(p as string))) ||
+        paths.some((p) => !str(p, 4096) || !p || !(/^\//.test(p as string) || /^[A-Za-z]:[\\/]/.test(p as string) || /^\\\\[^\\/]/.test(p as string))) ||
         (files != null && files.length !== paths.length))
     )
       throw new Error('upload paths must be 1–20 absolute file paths, one per file.');
