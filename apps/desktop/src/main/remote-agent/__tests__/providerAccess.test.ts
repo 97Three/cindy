@@ -121,7 +121,7 @@ describe('guest proxy binding for direct shares and same-account group relays', 
     });
     for (const kind of ['codex', 'pi', 'claude-code'] as const) {
       const id = kind === 'codex' ? rootId : bridgeId;
-      const binding = await binder({ kind, hostSessionId: `gpt-${kind}`, providerId: 'openai',
+      const binding = await binder({ kind, hostSessionId: `gpt-${kind}`, sessionId: `gpt-task-${kind}`, providerId: 'openai',
         controller: providerShareGuestPeer('share', 'alice', 'phone'), isCurrent: () => true });
       expect(binding?.modelIds).toEqual([id]);
       expect(await binding?.allowsModel?.(id)).toBe(true);
