@@ -950,9 +950,9 @@ function BotGroupTimelineItem({
             <BotGroupUserText content={content} mentionLabels={mentionLabels} />
           </View> : null}
         </View>
-        <View style={styles.userFooter}>
+        <View style={[styles.userFooter, !bubble && styles.attachmentFooter]}>
           <View style={[styles.footerSpacer, { width: bubble ? bubbleLeft : 0 }]} />
-          <View style={styles.footerContent}>{shareFooter}{footer}</View>
+          <View style={[styles.footerContent, !bubble && styles.attachmentFooterContent]}>{shareFooter}{footer}</View>
         </View>
       </View>
     </View>;
@@ -1048,6 +1048,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   // Give the summary its natural width first; only the alignment spacer shrinks
   // when a short bubble leaves too little room to its right.
   userFooter: { alignSelf: 'stretch', flexDirection: 'row' },
+  attachmentFooter: { justifyContent: 'flex-end' },
+  attachmentFooterContent: { alignItems: 'flex-end' },
   footerSpacer: { flexShrink: 1 },
   footerContent: { flexShrink: 0, maxWidth: '100%' },
   // The 1:1 user bubble (MessageRenderer userBubble): 86% wide, padding 12, compact 8/12.
