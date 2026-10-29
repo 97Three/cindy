@@ -1146,7 +1146,7 @@ describe('host-scoped Worker permissions', () => {
 
 describe('Orca task authority is independent of task creator', () => {
   const source = readFileSync(new URL('../register.ts', import.meta.url), 'utf8');
-  const helper = source.slice(source.indexOf('  const captureOrcaTaskAuthority ='), source.indexOf('  /**\n   * Delivery-scope authority'));
+  const helper = source.slice(source.indexOf('  const captureOrcaTaskAuthority ='), source.indexOf('  const captureOrcaDeliveryAuthority ='));
   const js = ts.transpileModule(`${helper}\nreturn captureOrcaTaskAuthority;`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 
   function capture(currentEpoch: () => object) {
