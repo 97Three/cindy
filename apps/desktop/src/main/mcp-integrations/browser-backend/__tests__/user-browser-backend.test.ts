@@ -682,6 +682,26 @@ describe('UserBrowserBackend · 读取与动作', () => {
     expect(fake.jobs.length).toBe(jobsBefore);
   });
 
+  // Review 2026-10-30 (Codex P1): a profile that disagrees with the tab's own connection must be refused.
+  it('navigate 的 targetId 与 profile 属于不同连接时拒绝', async () => {
+    const fake = fakeControl({
+      version: '0.4.56',
+      clients: ['client-aaaaaaaa', 'client-bbbbbbbb'],
+      tabs: { 'client-aaaaaaaa': [{ id: 1, url: 'https://a.test/' }], 'client-bbbbbbbb': [] },
+    });
+    const b = backend(fake.control);
+    const listed = (await call(b, { action: 'tabs', profile: 'client-aaaaaaaa' })) as {
+      data?: { tabs?: Array<{ targetId?: string }> };
+    };
+    const targetId = listed.data?.tabs?.[0]?.targetId;
+    expect(targetId).toBeTruthy();
+    const jobsBefore = fake.jobs.length;
+    expect(
+      await call(b, { action: 'navigate', targetId, profile: 'client-bbbbbbbb', url: 'https://c.test/' }),
+    ).toMatchObject({ ok: false, message: expect.stringContaining('不一致') });
+    expect(fake.jobs.length).toBe(jobsBefore);
+  });
+
   // Review 2026-10-30 (Codex P1): an abbreviated profile that matches two connections must not pick one.
   it('缩写的 profile 匹配多个连接时拒绝,精确 id 优先', async () => {
     const fake = fakeControl({

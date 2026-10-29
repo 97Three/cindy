@@ -807,6 +807,14 @@ export class UserBrowserBackend implements BrowserBackend {
       );
     const picked = this.pickClient(req.action, gate.control, req.profile ?? existing?.clientId);
     if (!picked.ok) return picked.result;
+    // The target tab belongs to one connection; a profile naming another would open the page there
+    // while the tab the agent meant never moves.
+    if (existing && existing.clientId !== picked.clientId)
+      return actionFailed(
+        req.action,
+        `标签页 ${req.targetId} 属于另一个浏览器连接,和 profile ${req.profile} 不一致;去掉 profile 或用 tabs 重新选择`,
+        'BROWSER_RUNTIME_INVALID_REQUEST',
+      );
     const label = typeof req.label === 'string' ? req.label : undefined;
     if (this.parity(gate.control, picked.clientId)) {
       // navigate 带 targetId:在原标签页跳转;否则新页开在 Cindy 自己的后台窗口,不碰用户的窗口。
