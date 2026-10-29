@@ -335,15 +335,15 @@ describe('interactive page consent', () => {
       expect.objectContaining({ key: 'ui:pages', detailKey: 'uiPageAccess', detailArgs: expect.objectContaining({ pages: 'planner', tools: 'open' }) }),
     ]) }) }));
   });
-  // Unit: the default-install exemption permits delivery, not a first UI grant.
+  // Unit: server default delivery is the approval authority for pages, too.
   // Existing default-install tests lacked ui; minimal input adds one page to an
-  // approved plugin whose receipt has no uiCapabilityApproved fact.
-  it.each([null, 'existing'] as const)('keeps default delivery from granting new pages (%s)', async receiver => {
+  // approved plugin whose old Host receipt has no uiCapabilityApproved fact.
+  it.each([null, 'existing'] as const)('grants default-delivered pages with the package approval (%s)', async receiver => {
     const next = pages(), previous = manifest(['api.weather.test']);
     const old = receiver === null ? null : installed(previous);
     const decision = await obtainGhostInstallConsent({ mode: 'exempt', reason: 'server-default-install' }, old, next, reviewedDigest);
     assertGhostInstallConsent(decision, old, next, reviewedDigest);
-    expect(confirmedUiCapability(decision, old, next)).toBeUndefined();
+    expect(confirmedUiCapability(decision, old, next)).toBe(true);
   });
   it.each(['page', 'domain', 'app-access'] as const)('requires consent when adding %s', async kind => {
     const base = pages(), next = structuredClone(base), old = { ...installed(base), uiCapabilityApproved: true as const };

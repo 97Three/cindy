@@ -10,6 +10,7 @@
  * 每条安装路径都必须显式交出一个策略：用户或 Agent 发起的安装走 `prompt`，后台自动
  * 更新走 `automatic`（需要确认就跳过，不替用户点头），只有服务端默认安装走 `exempt`。
  */
+import { pluginHasToolUi } from '@cindy/plugin-protocol';
 import type { GhostManifest, InstalledGhost } from '../../shared/ghost.js';
 import {
   evaluateGhostInstallConsent,
@@ -185,8 +186,11 @@ export function assertGhostInstallConsent(
   throwIpcError('PRECONDITION_FAILED', '插件内容在确认后发生了变化，请重新安装');
 }
 
-/** Only Main-confirmed interactive-page permission facts grant the new component. */
+/** Main-confirmed facts or the verified server default-delivery policy grant pages. */
 export function confirmedUiCapability(decision: GhostInstallConsentDecision, installed: InstalledGhost | null | undefined, next: GhostManifest): boolean | undefined {
+  if (decision.mode === 'exempt' && decision.reason === 'server-default-install') {
+    return pluginHasToolUi(next) ? true : undefined;
+  }
   if (decision.mode !== 'confirmed') return undefined;
   const facts = evaluateGhostInstallConsent(installed, next);
   const shown = facts?.kind === 'install' ? facts.permissions : facts?.added;
