@@ -952,6 +952,32 @@ describe('two-stage topic delivery boundaries', () => {
     await runner.run(); expect(store.getSnapshot()).toEqual([]);
     await runner.run(); expect(client.shareToMain).toHaveBeenCalledTimes(1);
   });
+  // #7847 review, integration: a deleted off-window share must not revoke the room
+  // or stop the next draft; an actual room rejection must still suspend both.
+  it.each(['MESSAGE_NOT_FOUND', 'CONVERSATION_NOT_FOUND'])('scopes a share receipt lookup rejection: %s', async code => {
+    const { store, client, runner, accessLost } = await setup();
+    await runner.run();
+    const row = store.getSnapshot()[0];
+    await store.update(row, { chat: { ...row.chat!, shareToMain: { state: 'sent', messageId: shared } } });
+    client.message = vi.fn(async () => { throw Object.assign(new Error(code), { status: 404, code }); });
+    await enqueueChatMessage(store, store.getAccountId(), id, { clientId: 'next-draft', text: 'Next',
+      mentions: { all: false, botIds: [] } }, 0);
+    await runner.run();
+    if (code === 'MESSAGE_NOT_FOUND') {
+      expect(accessLost).not.toHaveBeenCalled();
+      expect(store.getSnapshot()[0].chat?.shareToMain).toMatchObject({ state: 'unavailable', messageId: shared });
+      expect(store.getSnapshot().some(record => record.suspended)).toBe(false);
+      expect(client.send).toHaveBeenCalledTimes(2);
+      expect(peekChatMessages(id)).not.toBeNull();
+      await runner.run();
+      expect(client.message).toHaveBeenCalledTimes(1);
+      expect(client.shareToMain).not.toHaveBeenCalled();
+    } else {
+      expect(accessLost).toHaveBeenCalledWith(id);
+      expect(store.getSnapshot().every(record => record.suspended)).toBe(true);
+      expect(client.send).toHaveBeenCalledTimes(1);
+    }
+  });
   it.each([false, true])('keeps source unavailability local but permanently stops room revocation (room=%s)', async roomLost => {
     const { store, client, runner, accessLost } = await setup(); await runner.run();
     client.shareToMain.mockRejectedValue(roomLost ? Object.assign(new Error('CONVERSATION_NOT_FOUND'), { status: 403 }) : new Error('SHARE_UNAVAILABLE'));

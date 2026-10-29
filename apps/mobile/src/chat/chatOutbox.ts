@@ -1,7 +1,7 @@
 import type { BotGroupMessageView, BotGroupQuoteView } from '@cindy/maker-shared/botGroupChat';
 import type { DurableOutboxRecord, DurableOutboxStore } from '@/session/durableOutbox';
 import { buildOutboxItem } from '@/session/sessionOutbox';
-import { chatAccessLost, chatThreadMetadata, type ChatSendInput, type createChatServerClient } from './chatServerClient';
+import { chatAccessLost, chatRejection, chatThreadMetadata, type ChatSendInput, type createChatServerClient } from './chatServerClient';
 import { cacheChatMessages, peekChatMessages } from './chatMessageCache';
 
 export async function enqueueChatMessage(store: DurableOutboxStore, accountId: string, roomId: string,
@@ -112,9 +112,17 @@ export function createChatOutboxDelivery(deps: {
           guard();
           const sharedId = row.chat!.shareToMain?.state === 'sent' ? row.chat!.shareToMain.messageId : undefined;
           if (sharedId && !page.snapshot.messages.some(message => message.id === sharedId)) {
-            const shared = await client.message(room, sharedId);
-            guard();
-            page.snapshot = { ...page.snapshot, messages: [...page.snapshot.messages, shared] };
+            try {
+              const shared = await client.message(room, sharedId);
+              guard();
+              page.snapshot = { ...page.snapshot, messages: [...page.snapshot.messages, shared] };
+            } catch (error) {
+              if (!chatRejection(error, 404, 'MESSAGE_NOT_FOUND')) throw error;
+              guard();
+              row = await store.update(row, { chat: { ...row.chat!, shareToMain: { ...row.chat!.shareToMain!,
+                state: 'unavailable', error: 'SHARE_UNAVAILABLE' } } });
+              guard();
+            }
           }
           if (await cacheChatMessages(room, { version: 1, page, self, actors })) {
             guard(); await settleChatOutbox(store, room, new Set(page.messages.map(message => message.id)),
