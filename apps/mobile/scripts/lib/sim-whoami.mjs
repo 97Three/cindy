@@ -9,6 +9,7 @@ import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mobileClientBundleEnv } from "../../../../scripts/shared/client-endpoint-build-env.mjs";
 import { withLocalMobileRegionConfig } from "./mobile-dev-region.mjs";
+import { inspectMetroListeners, probeMetroOwnership } from "../sim-metro.mjs";
 
 const mobileDir = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SIMULATOR_UDID_PATTERN = /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/;
@@ -237,6 +238,50 @@ export function validateSimMetroIdentity({
   else if (currentRegion !== undefined && runningRegion !== currentRegion) code = 'target-region-stale';
   else if (envChanged || (currentEnvFingerprint !== undefined && runningEnvFingerprint !== currentEnvFingerprint)) code = 'target-env-stale';
   return { healthy: code === 'target-fresh', code };
+}
+
+/**
+ * Assemble the whoami Metro receipt and its start-hint decision. The CLI and
+ * unit tests use this same entry; only read-only process I/O is injectable.
+ */
+export function inspectSimMetroIdentity({
+  ports, expectedPort, worktreeRoot, expectedSource, region, envFingerprint,
+}, {
+  inspectListeners = inspectMetroListeners,
+  probeOwnership = probeMetroOwnership,
+  timedCheck = (_stage, run) => run(),
+} = {}) {
+  const probeErrors = [];
+  const metros = [];
+  let anyMetro = false;
+  let currentSourceOnExpectedPort = false;
+  const listeners = timedCheck("metro-listeners", () => inspectListeners(ports));
+  if (!listeners.healthy) probeErrors.push({ stage: "metro-listeners", code: listeners.code });
+  for (const port of ports) {
+    if (!listeners.pids[port]) continue;
+    const ownership = timedCheck(`metro-${port}`, () => probeOwnership(port, {
+      listenerPid: () => listeners.pids[port],
+      onProbeError: (error) => probeErrors.push({ port, ...error }),
+    }));
+    if (!ownership) continue;
+    const listener = classifySimMetroListener({
+      cwd: ownership.cwd, source: ownership.source, targetWorktree: worktreeRoot,
+    });
+    const identity = validateSimMetroIdentity({
+      listener, currentSource: expectedSource, runningSource: ownership.source,
+      currentRegion: region, runningRegion: ownership.region,
+      currentEnvFingerprint: envFingerprint, runningEnvFingerprint: ownership.envFingerprint,
+    });
+    anyMetro ||= listener.confirmed;
+    metros.push({ port, ...ownership, pid: Number(ownership.pid), worktree: listener.worktree,
+      isMetro: listener.confirmed, identity });
+    if (port === expectedPort) currentSourceOnExpectedPort = identity.healthy;
+  }
+  return {
+    healthy: currentSourceOnExpectedPort && probeErrors.length === 0,
+    anyMetro, currentSourceOnExpectedPort, metros, probeErrors,
+    canSuggestStart: !anyMetro && probeErrors.length === 0,
+  };
 }
 
 /**

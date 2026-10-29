@@ -31,8 +31,7 @@ import {
   formatMobileLocalConfigStatus,
 } from "./lib/mobile-local-config.mjs";
 import {
-  classifySimMetroListener,
-  validateSimMetroIdentity,
+  inspectSimMetroIdentity,
   extractSimMetroPortArgs,
   extractSimWhoamiUdidArgs,
   getSimulatorAppContainer,
@@ -41,11 +40,7 @@ import {
   selectBootedSimulator,
   simctlArgs,
 } from "./lib/sim-whoami.mjs";
-import {
-  gitSourceIdentity,
-  inspectMetroListeners,
-  probeMetroOwnership,
-} from "./sim-metro.mjs";
+import { gitSourceIdentity } from "./sim-metro.mjs";
 
 const PORTS = [8081, 8082, 8083, 8084, 8085, 8086];
 const mobileDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -201,46 +196,23 @@ if (!jsonOutput) {
 }
 
 if (!jsonOutput) console.log("\n==== Metro 端口归属(哪个端口 = 哪个 worktree)====");
-let anyMetro = false;
-let currentSourceOnExpectedPort = false;
-const metros = [];
-const listeners = timedCheck('metro-listeners', () => inspectMetroListeners(ports));
-let metroProbeFailed = !listeners.healthy;
-if (!listeners.healthy) {
-  probeErrors.push({ stage: 'metro-listeners', code: listeners.code });
-  console.error(`[whoami] ${listeners.code}；端口归属尚未确认，不能当作没有 Metro。`);
+const metro = inspectSimMetroIdentity({
+  ports, expectedPort, worktreeRoot, expectedSource, region, envFingerprint,
+}, { timedCheck });
+const { anyMetro, currentSourceOnExpectedPort, metros } = metro;
+probeErrors.push(...metro.probeErrors);
+for (const error of metro.probeErrors) {
+  console.error(error.stage === "metro-listeners"
+    ? `[whoami] ${error.code}；端口归属尚未确认，不能当作没有 Metro。`
+    : `[whoami] :${error.port} ${error.stage}: ${error.code}；进程身份检查未完成，请先排查该查询。`);
 }
-for (const port of ports) {
-  if (!listeners.pids[port]) continue;
-  const ownership = timedCheck(`metro-${port}`, () => probeMetroOwnership(port, {
-    listenerPid: () => listeners.pids[port],
-    onProbeError: (error) => {
-      metroProbeFailed = true;
-      probeErrors.push({ port, ...error });
-      console.error(`[whoami] :${port} ${error.stage}: ${error.code}；进程身份检查未完成，请先排查该查询。`);
-    },
-  }));
-  if (!ownership) continue;
-  const listener = classifySimMetroListener({
-    cwd: ownership.cwd, source: ownership.source, targetWorktree: worktreeRoot,
-  });
-  const verdict = validateSimMetroIdentity({
-    listener, currentSource: expectedSource, runningSource: ownership.source,
-    currentRegion: region, runningRegion: ownership.region,
-    currentEnvFingerprint: envFingerprint, runningEnvFingerprint: ownership.envFingerprint,
-  });
-  anyMetro ||= listener.confirmed;
-  metros.push({ port, ...ownership, pid: Number(ownership.pid), worktree: listener.worktree,
-    isMetro: listener.confirmed, identity: verdict });
-  if (!jsonOutput) console.log(`  :${port} pid ${ownership.pid} → ${listener.worktree || '(unknown)'}: ${verdict.code}`);
-  if (port === expectedPort) currentSourceOnExpectedPort = verdict.healthy;
-}
-
-if (!metroProbeFailed && !anyMetro && !jsonOutput)
+if (!jsonOutput) for (const entry of metros)
+  console.log(`  :${entry.port} pid ${entry.pid} → ${entry.worktree || '(unknown)'}: ${entry.identity.code}`);
+if (metro.canSuggestStart && !jsonOutput)
   console.log(
     `  (检查的端口上没发现 Metro;用 \`pnpm mobile:sim:start -- --port ${expectedPort}\` 启一个)`,
   );
-if (!currentSourceOnExpectedPort) healthy = false;
+if (!metro.healthy) healthy = false;
 
 // Devices outside the system set are not shown by Device Hub; Cindy's appear in its sidebar.
 const viewerStartedAt = Date.now();
