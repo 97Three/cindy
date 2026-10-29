@@ -268,7 +268,11 @@ export function createGroupHistoryMcpServer(deps: GroupHistoryMcpDeps): McpServe
         if (scope.readMessageImages && scope.lane && sameLane(scope.lane, target)) {
           const attachments = await scope.readMessageImages(message_id);
           if (!isCurrent()) return expired();
-          row = { imageRefs: receivedImageRefs(attachments) };
+          // Native history may omit an extensionless file that was verified as
+          // an image on receipt. Keep those account/lane-bound local references.
+          const refs = new Map((row?.imageRefs ?? []).map((ref) => [ref.fileId, ref]));
+          for (const ref of receivedImageRefs(attachments)) refs.set(ref.fileId, ref);
+          row = { imageRefs: [...refs.values()].slice(0, 4) };
         }
         if (!row)
           return result(

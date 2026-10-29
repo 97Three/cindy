@@ -220,6 +220,31 @@ describe('cindy_group_history search permission boundary', () => {
 // Test value: real MCP call must return image blocks, not a filename/path, and must not
 // publish images after the turn's lease ends. Existing search tests cover text only. Tier: unit.
 describe('get_images tool', () => {
+  // #7756 review: native Feishu lookup filters file names before MIME is known.
+  // Unit MCP entry: two already verified local images must survive empty/partial
+  // native results; overlapping managed URLs must not return duplicate images.
+  it.each([false, true])('keeps local images when native lookup is incomplete: %s', async (partial) => {
+    const lane = { provider: 'feishu-personal:bot', chatId: 'oc_chat', threadId: 'omt_topic' };
+    const localRefs = ['a', 'b'].map((hash) => ({
+      fileId: `cindy-media://blobs/${hash.repeat(64)}.png`,
+      name: 'screenshot',
+      mimeType: 'image/png',
+    }));
+    const readMessageImages = async () => partial ? [{
+      kind: 'image' as const, absPath: '/unused', url: localRefs[0].fileId,
+      originalName: 'screenshot', mimeType: 'image/png',
+    }] : [];
+    const readImage = vi.fn(async () => ({ data: 'aW1hZ2U=', mimeType: 'image/png' }));
+    const { result } = await callSearch({ message_id: 'om_file' }, {
+      access: 'lane', provider: lane.provider, lane, readMessageImages,
+    }, {
+      tool: 'get_images', getImages: async () => ({ imageRefs: localRefs }), readImage,
+    });
+    expect(result.isError).toBeUndefined();
+    expect((result.content as Array<{ type: string }>).filter(block => block.type === 'image')).toHaveLength(2);
+    expect(readImage).toHaveBeenNthCalledWith(1, expect.objectContaining({ ref: localRefs[0] }));
+    expect(readImage).toHaveBeenNthCalledWith(2, expect.objectContaining({ ref: localRefs[1] }));
+  });
   // #7756 review: exact-bot reader cannot serve a different bot's uncached file ID.
   // Unit MCP boundary; search tests cover cross-bot text, not image retrieval.
   it('rejects another bot before looking up even a cached image', async () => {
