@@ -27,7 +27,7 @@ vi.mock('react-i18next', async (original) => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }),
 }));
 vi.mock('@/components/chat/MarkdownRenderer', () => ({ MarkdownRenderer: ({ content }: { content: string }) => <div>{content}</div> }));
-vi.mock('../BotAvatar', () => ({ BotAvatar: () => null }));
+vi.mock('../BotAvatar', () => ({ BotAvatar: ({ bot }: { bot: { avatar?: string } }) => <span>{bot.avatar}</span> }));
 vi.mock('../botGroupStore', () => ({ refreshBotGroups: mocks.refresh }));
 vi.mock('@/lib/toast', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock('@/contexts/dataOwnerGeneration', () => ({
@@ -741,10 +741,16 @@ describe('chat interaction controls', () => {
   });
 
   it('creates and displays a copyable link in Strict Mode', async () => {
-    render(<StrictMode><ChatInviteButton groupId="room" /></StrictMode>);
+    render(<StrictMode><ChatInviteButton groupId="room" members={[
+      { botId: 'self', name: 'Alex', avatar: '👤', avatarColor: 'graphite', status: 'active', isSelf: true },
+      { botId: 'bot', name: 'Cindy', avatar: '🤖', avatarColor: 'violet', status: 'active' },
+    ]} /></StrictMode>);
     fireEvent.click(screen.getByRole('button', { name: k('invite') }));
-    fireEvent.click(screen.getByRole('button', { name: k('createLink') }));
     expect((await screen.findByRole('textbox', { name: k('inviteLink') }) as HTMLInputElement).value).toBe('cindy://chat-invite/test');
+    expect(mocks.createInvite).toHaveBeenCalledExactlyOnceWith({ groupId: 'room', clientId: expect.any(String) });
+    expect(screen.queryByRole('button', { name: k('createLink') })).toBeNull();
+    expect(screen.getByText('👤')).toBeTruthy();
+    expect(screen.queryByText('🤖')).toBeNull();
   });
 
   it.each([{ members: [] }, { members: [{ botId: 'namesake', name: 'Ann', status: 'active' as const }] }])('keeps a refused directed thread reply after the roster changes to %j', async ({ members }) => {

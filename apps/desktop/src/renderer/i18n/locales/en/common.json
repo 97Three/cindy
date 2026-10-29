@@ -3628,7 +3628,7 @@
           "modelsAutoNote": "Available models are discovered after sign-in"
         },
         "advanced": {
-          "label": "Advanced (models / headers)"
+          "label": "Advanced connection settings"
         },
         "runtimeFill": {
           "action": "Fill other runtimes",
@@ -3786,16 +3786,16 @@
           "defaultEffort": "Default reasoning effort",
           "defaultEffortHint": "The initial effort for new tasks. You can still adjust it within a task.",
           "contextLimit": "Context limit",
-          "contextLimitHint": "Applies to all available engines for this model. Edit in whole K (1 K = 1,000 tokens); untouched values retain their precision. Saved changes apply to subsequent runs without interrupting a response. Actual capacity remains subject to the model service’s limits.",
+          "contextLimitHint": "Enter tokens directly, or use K or M (for example, 1000000 or 1M). Applies to all available engines for this model on subsequent runs. Actual capacity is still limited by the model service.",
           "contextLimitLocalMillionHint": "Native 256K (262,144 tokens), with optional expansion to 1M (1,000,000). If the service is running, restart it under Manage Service to apply changes; if stopped, they apply on next use. Longer inputs need more memory and take longer to process.",
-          "contextLimitAria": "Context limit (thousands of tokens)",
+          "contextLimitAria": "Context limit (tokens, K or M)",
           "compaction": {
             "title": "Automatic Compaction",
             "hint": "Compact context at the selected usage percentage. Lower values compact earlier; engine limits still apply.",
             "default": "{{pct}}% (Default)",
             "timing": "Applies to all available engines for this model and source on subsequent runs, without interrupting a response."
           },
-          "contextLimitRoute": "Current {{tokens}} tokens · 1 K = 1,000 tokens",
+          "contextLimitRoute": "Current {{tokens}} tokens",
           "contextLimitOverWindow": "Above the provider’s declared window; requests may fail.",
           "restoreDefault": "Restore default",
           "engines": "Engine support",
@@ -3822,7 +3822,7 @@
           "close": "Close",
           "maxOutput": "Maximum output",
           "catalogCapabilities": "Capabilities declared in the catalog",
-          "contextInvalid": "Enter a whole number from {{min}} to 100,000 K.",
+          "contextInvalid": "Enter {{min}}–{{max}} tokens; K and M are also accepted.",
           "contextWriteFailed": "Not saved. Please retry.",
           "contextMixed": "Existing harness settings differ. Editing or resetting applies to all harnesses.",
           "inputModalities": "Input types",
@@ -10671,8 +10671,10 @@
         "reactorsUnavailable_one": "Name unavailable for {{count}} more member",
         "reactorsUnavailable_other": "Names unavailable for {{count}} more members",
         "invite": "Invite to group",
+        "groupCreated": "Group Chat Created",
+        "inviteFriends": "Invite friends to join and work with your teammate.",
+        "generatingLink": "Generating invitation link…",
         "join": "Join group",
-        "inviteDescription": "People who accept the invitation join the group and can read its chat history.",
         "revokeLink": "Revoke this link",
         "revokeDescription": "This link will stop accepting new members. Other invitation links and existing members are unaffected.",
         "revokedLink": "This invitation link has been revoked.",

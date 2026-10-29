@@ -1,4 +1,5 @@
 import { RemoveChatFromListButton } from './RemoveChatFromListButton';
+import { ChatInviteDialog } from './ChatInviteDialog';
 import { useThreadPanelResize } from './useThreadPanelResize';
 import { cn } from '@/lib/utils';
 /**
@@ -192,9 +193,25 @@ function isAttachmentDrag(event: DragEvent): boolean {
 
 export function BotGroupChatView() {
   const { groupId } = useParams();
-  const { search } = useLocation();
-  const direct = new URLSearchParams(search).get('conversationKind') === 'direct';
-  return <BotGroupChatContent key={`${groupId}:${direct}`} groupId={groupId ?? ''} direct={direct} />;
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [createdInvite, setCreatedInvite] = useState<{ groupId: string; owner: ReturnType<typeof getDataOwnerGeneration> } | null>(null);
+  const createdGroup = useBotGroupSummary(createdInvite?.groupId ?? null);
+  const direct = new URLSearchParams(location.search).get('conversationKind') === 'direct';
+  useEffect(() => {
+    if (!groupId || direct || location.state?.createdGroupInvite !== groupId) {
+      setCreatedInvite(current => current?.groupId !== groupId || direct ? null : current);
+      return;
+    }
+    setCreatedInvite({ groupId, owner: getDataOwnerGeneration() });
+    // Consume the one-off intent so Back, Forward or a refresh cannot create another link.
+    navigate(location.pathname + location.search, { replace: true, state: { ...location.state, createdGroupInvite: null } });
+  }, [groupId, direct, location.state, location.pathname, location.search, navigate]);
+  return <>
+    <BotGroupChatContent key={`${groupId}:${direct}`} groupId={groupId ?? ''} direct={direct} />
+    {createdInvite !== null && createdInvite.groupId === groupId && !direct && isDataOwnerGenerationCurrent(createdInvite.owner)
+      ? <ChatInviteDialog key={groupId} groupId={groupId} created members={createdGroup?.members} onClose={() => setCreatedInvite(null)} /> : null}
+  </>;
 }
 
 function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boolean }) {
@@ -746,7 +763,7 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
           </span>
         </button>
         <div className="ml-auto flex shrink-0 items-center">
-          {headerGroup.serverBacked && headerGroup.canInvite && <ChatInviteButton groupId={headerGroup.id} />}
+          {headerGroup.serverBacked && headerGroup.canInvite && <ChatInviteButton key={headerGroup.id} groupId={headerGroup.id} members={members} />}
           {!direct && <Tip text={settingsLabel}>
             <button
               type="button"
