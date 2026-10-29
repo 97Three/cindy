@@ -197,8 +197,11 @@ describe('native-binding', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     servers.push(server);
     const port = (server.address() as net.AddressInfo).port;
-    // Nothing listens on this port any more.
-    const deadPort = port === 65535 ? port - 1 : port + 1;
+    // A port that was just listened on and released: nothing listens on it any more.
+    const closed = net.createServer();
+    await new Promise<void>((resolve) => closed.listen(0, '127.0.0.1', resolve));
+    const deadPort = (closed.address() as net.AddressInfo).port;
+    await new Promise<void>((resolve) => closed.close(() => resolve()));
     const live = createNativeBinding(opts);
     await live.install(port, [EXT]);
     await fs.writeFile(
