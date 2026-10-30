@@ -90,9 +90,9 @@ function routableModels(provider: ProviderView, kind: AgentKind): CatalogModel[]
 
 /** Do not expose route URLs, auth or the whole provider config through model discovery. */
 function modelDetails(model: CatalogModel): NonNullable<OrcaWorkerProviderSnapshot['modelDetailsByModel']>[string] {
-  const { description, contextWindow, efforts, defaultEffort, supportsFastMode,
+  const { description, contextWindow, efforts, defaultEffort, effortsUnknown, supportsFastMode,
     supportsUltrafastMode, supportsToolCalls, cost, currency, costDiscount, displayPricing } = model;
-  return { description, contextWindow, efforts, defaultEffort, supportsFastMode,
+  return { description, contextWindow, efforts, defaultEffort, effortsUnknown, supportsFastMode,
     supportsUltrafastMode, supportsToolCalls, cost, currency, costDiscount, displayPricing };
 }
 

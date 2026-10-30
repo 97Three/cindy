@@ -77,7 +77,7 @@ export interface OrcaWorkerProviderSnapshot {
   access?: ProviderAccess;
   /** Non-secret picker metadata for automation model discovery, scoped to this source. */
   modelDetailsByModel?: Readonly<Record<string, Pick<CatalogModel,
-    'description' | 'contextWindow' | 'efforts' | 'defaultEffort' | 'supportsFastMode'
+    'description' | 'contextWindow' | 'efforts' | 'defaultEffort' | 'effortsUnknown' | 'supportsFastMode'
     | 'supportsUltrafastMode' | 'supportsToolCalls' | 'cost' | 'currency' | 'costDiscount' | 'displayPricing'
   >>>;
   /**

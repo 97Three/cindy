@@ -173,28 +173,28 @@ describe('Orca provider routing snapshot wiring', () => {
 describe('localAvailableModels (#6970)', () => {
   // Automation model discovery previously discarded pricing/effort data before it
   // reached tools. Same-id routes must retain their own rates; no credentials cross.
-  it('preserves source-specific prices and runtime choices for local and remote automation discovery', async () => {
+  it.each(['claude-code', 'codex', 'pi'] as const)('preserves source-specific prices and known/unknown efforts for %s automation discovery', async (agent) => {
     const base = BUNDLED_CATALOG.providers.find(p => p.id === 'xd')!;
     const seed = base.models.pi![0]!;
     const catalog: Catalog = { ...BUNDLED_CATALOG, providers: [
-      { ...base, id: 'first', access: { kind: 'api' }, models: { pi: [{ ...seed, id: 'same',
+      { ...base, id: 'first', access: { kind: 'api' }, models: { [agent]: [{ ...seed, id: 'same',
         cost: { input: 0, output: 0.5 }, currency: 'USD', efforts: ['low'], defaultEffort: 'low',
         route: { baseUrl: 'https://private.invalid', wireProtocol: 'openai-chat' },
       }] } },
-      { ...base, id: 'second', access: { kind: 'subscription', product: 'test' }, models: { pi: [{ ...seed, id: 'same',
-        cost: undefined, currency: undefined, efforts: ['medium'], defaultEffort: 'medium',
+      { ...base, id: 'second', access: { kind: 'subscription', product: 'test' }, models: { [agent]: [{ ...seed, id: 'same',
+        cost: undefined, currency: undefined, efforts: [], defaultEffort: null, effortsUnknown: true,
       }] } },
     ] };
     const views = buildRegistry(catalog, { first: true, second: true });
     const routing = await readOrcaWorkerProviderRoutingContext({
       providerService: { listProviders: vi.fn(async () => views) }, getCatalog: () => catalog,
     });
-    const local = localAvailableModels([{ id: 'same', displayName: 'Same' }], routing.availability.pi,
-      routing.resolveDefaultProviderIdForModel, 'pi');
-    for (const models of [local, deviceAvailableModels(views, 'pi')]) {
+    const local = localAvailableModels([{ id: 'same', displayName: 'Same' }], routing.availability[agent],
+      routing.resolveDefaultProviderIdForModel, agent);
+    for (const models of [local, deviceAvailableModels(views, agent)]) {
       expect(models[0]?.providers).toMatchObject([
         { id: 'first', access: { kind: 'api' }, modelDetails: { cost: { input: 0, output: 0.5 }, currency: 'USD', efforts: ['low'] } },
-        { id: 'second', access: { kind: 'subscription' }, modelDetails: { cost: undefined, efforts: ['medium'] } },
+        { id: 'second', access: { kind: 'subscription' }, modelDetails: { cost: undefined, efforts: [], defaultEffort: null, effortsUnknown: true } },
       ]);
       expect(JSON.stringify(models)).not.toContain('private.invalid');
     }
