@@ -797,7 +797,7 @@ describe('chat interaction controls', () => {
       { botId: 'ann-chris', name: 'Ann', status: 'active' as const, avatar: '', avatarColor: '' },
       { botId: 'ann-dana', name: 'Ann', status: 'active' as const, avatar: '', avatarColor: '' },
       { botId: 'bo', name: 'Bo', status: 'active' as const, avatar: '', avatarColor: '' },
-      { botId: 'gone', name: 'Annie', status: 'left' as const, avatar: '', avatarColor: '' },
+      { botId: 'gone', name: 'Annie', status: 'missing' as const, avatar: '', avatarColor: '' },
     ];
     const renderThread = () => {
       mocks.reply.mockResolvedValue({ ok: true, messageId: 'reply' });
