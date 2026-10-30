@@ -14910,6 +14910,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     send: async (pluginId, taskId, clientId, text, guard, validateTarget, delivery, images = [], options) => {
       guard();
       const snapshot = getCurrentDbClientSnapshot();
+      if (!snapshot) throw new Error('HOST_NOT_READY');
       const assertCurrent = () => { guard(); if (snapshot !== getCurrentDbClientSnapshot()) throw new Error('PERMISSION_DENIED'); };
       const name = sanitizeSourceName(getInstalledGhostName(pluginId));
       const sourcePlugin = { pluginId, ...(name ? { name } : {}) };
@@ -14949,9 +14950,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             throw new Error('DELIVERY_UNCERTAIN');
           }
         }
+        // Explicit bot delegation keeps its registered scope and existing intent;
+        // ordinary plugin messages contribute their text to normal task review.
+        const receipt = await createPluginTargetStore(snapshot.client, assertCurrent).getById(clientId);
+        await validate();
         const result = await sendToSessionInternal({ targetSessionId: taskId, clientId, message: message.text,
           pastedTextRanges: message.pastedTextRanges, files,
-          autoReviewUserText: text, forceQueue: true,
+          autoReviewUserText: receipt?.delegation ? { kind: 'delegated-continuation' } : text, forceQueue: true,
           resumeWithStoredPermissionMode: true,
           inheritTargetPlanMode: true,
           sourcePlugin,
