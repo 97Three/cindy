@@ -2821,7 +2821,11 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
   it('waits for slow resume and publishes only the session identity confirmed by get_state', async () => {
     const resumeFile = path.join(cwd, 'slow-resume.jsonl');
     writeFileSync(resumeFile, '{}');
-    knobs.getStateSessionFile = resumeFile;
+    // get_state 必须返回一个**不同**的有效身份：如果它与入参 resumeSessionId 同值，
+    // 「跳过身份确认、直接把 resume 参数当最终 id」的实现也能把这条用例跑绿。
+    const confirmedFile = path.join(cwd, 'confirmed-resume.jsonl');
+    writeFileSync(confirmedFile, '{}');
+    knobs.getStateSessionFile = confirmedFile;
     let releaseSwitch!: () => void;
     knobs.switchSessionGate = new Promise<void>((resolve) => { releaseSwitch = resolve; });
     const onInvalidResumeSession = vi.fn(async () => true);
@@ -2835,16 +2839,21 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
       return handle;
     });
 
+    // 慢恢复期间必须仍在等：恢复专属预算给了 switch_session，且启动还没resolve。
     await vi.waitFor(() => expect(knobs.requestOptions).toContainEqual({
       commandType: 'switch_session',
       timeoutMs: 60_000,
     }));
     expect(startupSettled).toBe(false);
-    expect(knobs.requestOptions).not.toContainEqual(expect.objectContaining({ timeoutMs: 60_000, commandType: 'get_state' }));
 
     releaseSwitch();
     const handle = await startup;
-    expect(handle.id).toBe(resumeFile);
+    // 发布的是 get_state 确认回来的身份，不是调用方传进来的恢复参数。
+    expect(knobs.requests).toContain('get_state');
+    expect(handle.id).toBe(confirmedFile);
+    // 恢复专属预算只给 switch_session；get_state 仍走默认预算，不为它顺手放宽。
+    // 这两条断言放在释放之后才有意义 —— 释放前 get_state 还没发出。
+    expect(knobs.requestOptions).not.toContainEqual(expect.objectContaining({ timeoutMs: 60_000, commandType: 'get_state' }));
     expect(onInvalidResumeSession).not.toHaveBeenCalled();
     await handle.close();
   });

@@ -424,6 +424,7 @@ import {
 import { VoiceInputPointerHintLayer } from '@/voice-input/VoiceInputPointerHintLayer';
 import {
   createComposerLongPressVoiceGesture,
+  isComposerLongPressVoiceReady,
   type ComposerLongPressVoiceGesture,
 } from '@/voice-input/composerLongPressGesture';
 import { requestRendererMicrophonePermission } from '@/voice-input/startGuards';
@@ -631,6 +632,8 @@ interface ChatInputProps {
   onWorkingDirChange?: (dir: string | null) => void;
   /** When true, the input is disabled (e.g. during streaming). */
   disabled?: boolean;
+  /** Block submissions while a draft-local picker is open, without locking typing. */
+  sendBlocked?: boolean;
   /** Freeze model/provider/effort/permission controls for audit-only tasks. */
   settingsLocked?: boolean;
   /** When true, shows Stop button instead of Send button. */
@@ -1272,6 +1275,7 @@ export function ChatInput({
   onFastModeChange,
   onWorkingDirChange,
   disabled: disabledProp,
+  sendBlocked = false,
   settingsLocked: settingsLockedProp = false,
   isStreaming = false,
   isAgentBusy,
@@ -3741,7 +3745,7 @@ export function ChatInput({
     };
   }, []);
 
-  // 长按输入框语音输入默认开启，手动配置可关闭。按住鼠标
+  // 长按输入框语音输入默认开启，手动配置可关闭；麦克风未授权时长按与提示都不生效。按住鼠标
   // 左键不动片刻即开始录音,松开结束。按下由输入框的 onMouseDown 接入(要读
   // detail 才能排除双击);移动/松开挂在 window 上。真正开始录音后再指针捕获,
   // 拖出窗口松开也能停;等待期间不捕获,免得打断选字。
@@ -3751,7 +3755,7 @@ export function ChatInput({
   useEffect(() => {
     setComposerVoiceHoverHintReady(false);
     if (!composerVoiceHovered) return;
-    const timer = setTimeout(() => setComposerVoiceHoverHintReady(true), 500);
+    const timer = setTimeout(() => setComposerVoiceHoverHintReady(isComposerLongPressVoiceReady()), 500);
     return () => clearTimeout(timer);
   }, [composerVoiceHovered]);
   const [composerVoiceHolding, setComposerVoiceHolding] = useState(false);
@@ -3952,6 +3956,7 @@ export function ChatInput({
     // 提及 / 粘贴文本 / 引用这类 chip 自带点击与拖拽行为,不在上面起手。
     const atom = target.closest('[contenteditable="false"]');
     if (atom && atom !== editorElement && editorElement.contains(atom)) return;
+    if (!isComposerLongPressVoiceReady()) return;
     gesture.press({ x: event.clientX, y: event.clientY });
   }, []);
 
@@ -5504,7 +5509,7 @@ export function ChatInput({
   const dispatchSend = useCallback(
     async (deliveryMode: MessageDeliveryMode = 'queue') => {
       if (!editor) return;
-      if (disabled || sessionModelLoading) return;
+      if (disabled || sendBlocked || sessionModelLoading) return;
       if ((folderTransfers.hasPending || waitingForFoldersRef.current) &&
           (!(await waitForFolders()) || editor.isDestroyed)) return;
       // React 的 disabled 状态可能尚未完成下一帧渲染；同步读协调器兜住点击、快捷键、
@@ -6362,6 +6367,7 @@ export function ChatInput({
     [
       editor,
       disabled,
+      sendBlocked,
       sessionModelLoading,
       waitForFolders,
       folderTransfers.hasPending,
@@ -9177,13 +9183,13 @@ export function ChatInput({
   const [voiceReleaseToSendActive, setVoiceReleaseToSendActive] = useState(false);
   const sendButtonDisabled = queueEditActive
     ? Boolean(
-        disabled || waitingForFolders ||
+        disabled || sendBlocked || waitingForFolders ||
           sendDispatchInFlight ||
           voiceBusyOnCurrentComposer ||
           (!hasMessage && !hasPreparedOrPendingAttachments),
       )
     : Boolean(
-    disabled || sessionModelLoading || waitingForFolders ||
+    disabled || sendBlocked || sessionModelLoading || waitingForFolders ||
     // 空態:当前 agent 无已连接来源 → Send 禁用(设计 Q7NYAD「send 置灰」),引导用户先去连接来源。
     (!makeNeedsNoModel && !canAttemptBaselineRecovery && noConnectedSource) ||
     // 会话显式选中的来源已断开 → Send 禁用(trigger 同步显示「已断开」错误态说明原因)。
