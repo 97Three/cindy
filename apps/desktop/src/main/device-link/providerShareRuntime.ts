@@ -1,4 +1,5 @@
 import { isProviderShareMemberBudget } from '../../shared/providerShareBudget.js';
+import { CONTROLLED_MODEL_CATALOG_CHANGED } from '../../shared/controlledModelCatalog.js';
 import { readMemberBudgetStatus, supportsMemberBudget } from './providerShareBudgetRuntime.js';
 import { isRemoteAgentLimitsPatch } from '../../shared/remoteAgentLimits.js';
 import { supportsSubscriptionFastPolicy, unifiedModelKeyId } from '@cindy/model-providers';
@@ -412,9 +413,13 @@ export function startProviderShareRuntime(broadcast: Broadcast, options: { invok
     },
   }, { readWatchedShares: readInvoke ? (hostDeviceId) => readProviderManagementShares(readInvoke, hostDeviceId) : undefined });
   startProviderShareGuest({
-    catalogChanged(deviceId) { emit(DEVICE_LINK_PUSH.REMOTE_PUSH, { deviceId, channel: 'maker:provider:changed', payload: {} }); },
+    catalogChanged(deviceId) {
+      emit(DEVICE_LINK_PUSH.REMOTE_PUSH, { deviceId, channel: 'maker:provider:changed', payload: {} });
+      emit(CONTROLLED_MODEL_CATALOG_CHANGED, {});
+    },
     changed(received) {
       emit(PROVIDER_SHARE_IPC.RECEIVED_CHANGED, received);
+      emit(CONTROLLED_MODEL_CATALOG_CHANGED, {});
     },
     settled(state, preview) {
       emit(PROVIDER_SHARE_IPC.SETTLED, { state, preview });
@@ -442,6 +447,7 @@ export function stopProviderShareRuntime(): void {
   stopProviderShareGuest();
   emit(PROVIDER_SHARE_IPC.OWNED_CHANGED, null);
   emit(PROVIDER_SHARE_IPC.RECEIVED_CHANGED, [] satisfies ProviderShareReceived[]);
+  emit(CONTROLLED_MODEL_CATALOG_CHANGED, {});
 }
 
 // ─── 命令 ───────────────────────────────────────────────────────

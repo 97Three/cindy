@@ -1085,6 +1085,8 @@ import {
 } from './orcaRemoteWorkerHost.js';
 import { createOrcaRemoteWorkers, invokeDeviceValue, type OrcaRemoteWorkers } from './orcaRemoteWorkers.js';
 import { listWorkerAgentLocations, readWorkerAgentLocations } from './workerAgentLocations.js';
+import { createControlledModelCatalogReader } from './controlledModelCatalog.js';
+import { CONTROLLED_MODEL_CATALOG_CHANNEL } from '../../shared/controlledModelCatalog.js';
 import {
   ORCA_EXECUTION_DEVICES_CHANNEL,
   ORCA_REMOTE_WORKER_BRIDGE_CHANNEL,
@@ -10289,6 +10291,41 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   };
 
   const makerSessionRegistry = createElectronIpcHandlerRegistry();
+  // A picker reads several source catalogs concurrently. Share only the in-flight
+  // directory request within one account; retain no authorization snapshot.
+  let controlledLocationsRead: {
+    owner: ReturnType<typeof getCurrentDbClientSnapshot>;
+    promise: ReturnType<typeof readWorkerAgentLocations>;
+  } | undefined;
+  const readControlledCatalog = createControlledModelCatalogReader({
+    assertCaller: () => {
+      const caller = getDeviceLinkInvokeContext();
+      if (!caller || caller.sharedTask) throwIpcError('PRECONDITION_FAILED', 'Same-account remote control required');
+    },
+    captureOwner: () => {
+      const owner = getCurrentDbClientSnapshot();
+      return () => {
+        if (!owner || getCurrentDbClientSnapshot() !== owner) {
+          throwIpcError('PRECONDITION_FAILED', 'Model catalog account changed');
+        }
+      };
+    },
+    locations: () => {
+      const owner = getCurrentDbClientSnapshot();
+      if (controlledLocationsRead?.owner === owner) return controlledLocationsRead.promise;
+      const promise = readWorkerAgentLocations().finally(() => {
+        if (controlledLocationsRead?.promise === promise) controlledLocationsRead = undefined;
+      });
+      controlledLocationsRead = { owner, promise };
+      return promise;
+    },
+    invoke: async (deviceId, channel, args, assertOwner) => {
+      const result = await remoteBackgroundInvoke(deviceId, channel, args, { preSend: assertOwner });
+      if (!result.ok) throwIpcError('PRECONDITION_FAILED', 'Model source is currently unavailable');
+      return result.result;
+    },
+  });
+  makerSessionRegistry.handle(CONTROLLED_MODEL_CATALOG_CHANNEL, (_event, request) => readControlledCatalog(request));
   registerMakerSessionCreateHandler<Session>(makerSessionRegistry, {
     // CREATE_SESSION 同样先走 remote ensure:remote draft (尤其 collab
     // lead) 的 SSH 重连 / agent 安装 / codex daemon MCP 注入必须先于

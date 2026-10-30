@@ -307,6 +307,7 @@ const CORE_INVOKE_CHANNELS: readonly string[] = [
   // 供应商分享(只读):被控电脑收到的、别人分享给它的供应商目录(经被控电脑代读，手机读不到
   // 另一个账号的电脑)。只回显示用字段，供手机模型列表的远程供应商区域使用。
   'maker:provider-share:received-catalogs', // PROVIDER_SHARE_RECEIVED_CATALOGS_CHANNEL
+  'maker:model-catalog:read', // Same-account task-host discovery + fixed read-only catalog/readiness operations.
   // Git safety 设置(只读):远程 Codex Rewind 入口必须按被控端是否会创建 safety snapshot
   // 决定显隐。SET/RESET 不放行,控制端不能改被控端全局偏好。
   'maker:git-safety:get',
@@ -756,6 +757,7 @@ export const PUSH_FORWARD_ALLOWLIST: ReadonlySet<string> = new Set([
   'maker:history-work-patch',
   // Device-level runtime Agent roster changes; controllers refresh their local availability cache.
   'maker:agents:changed',
+  'maker:model-catalog:changed',
   // Host-owned resource provider 的通用失效通知；payload 只含 collection/ref/revision。
   REMOTE_RESOURCE_CHANGED_CHANNEL,
   'maker:status-changed',
