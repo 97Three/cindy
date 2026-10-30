@@ -43,7 +43,7 @@
      - 悬停 / 拖拽:`{ kind: "hover", ref }` / `{ kind: "drag", startRef, endRef }`
    - 需要操作后观察时，在 `act` / `open` / `navigate` / `upload` 加 `afterSnapshot:{}`，一次调用就返回动作结果和正文默认最多 4000 字符的精简快照（`maxChars` 可调，最高 20000）。已看过页面结构、只需继续表单时可用 `afterSnapshot:{selector:"已确认的区域选择器"}`，避免每次重读整页。后置快照不保证异步页面已加载完；需要的信息还未出现时，等待具体内容再补读。
    - `ref` 必须取自**最近一次** snapshot（含返回的 `afterSnapshot`）。导航 / 弹窗 / 提交后页面变了，先观察再继续，别用旧 ref。`afterSnapshot.ok:false` 只表示后续读取失败；顶层 `ok:true` 表示动作已经成功，只补读页面，不重做提交或上传。没带后置快照、快照被截断或内容不足时，再按需单独 snapshot。
-   - 别盲等。需要等待用 `{ kind: "wait", ... }`(等 `loadState` / `textGone` / `timeoutMs`),不要靠反复重试空转。
+   - 别盲等。需要等待用 `{ kind: "wait", ... }`，优先指定页面就绪条件（`text` / `textGone` / `selector` / `url` / `loadState`）；确需固定等待时用 `timeMs`。`timeoutMs` 只是等待上限，不能单独作为等待条件。不要靠反复重试空转。
 
 5. **遇阻塞停下来报告**
    - 撞到登录墙 / 验证码 / 2FA / 需要人工授权时:**停下来如实告诉用户**当前页面状态 + 需要他做什么,不要反复尝试或假装能绕过。
