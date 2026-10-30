@@ -24,6 +24,7 @@ import { assertBotTaskCoordination, classifySessionMessagePurpose, coordinationI
 import type { BotTaskCoordination, SessionMessagePurpose } from '../../shared/botTaskCoordination.js';
 import { openSession, setSessionOpeningModelAdmission } from '../localDb/sessionOpening.js';
 import { createPluginTaskReviewResolver } from './pluginTaskReviewContext.js';
+import { createPluginTargetReviewLoader } from '../cindy-brain/pluginTargetReview.js';
 import { isPluginTaskPermissionAllowed, assertPluginTaskResult, createPluginTaskService, isTeamPlanLabelLockedByReceipt, readPluginTaskPlanReceipt, PluginTaskError, type PluginTaskService } from './pluginTaskService.js';
 import { assertPluginWorkerDirectoryScope, resolvePluginWorkerDirectory } from './pluginWorkerDirectory.js';
 import { PluginWriteAccessGate } from './pluginWriteAccessGate.js';
@@ -45,6 +46,7 @@ import {
   setPluginTaskUninstaller,
   setPluginTaskRelocator,
   pluginTargetAuthorizationRevision,
+  pluginDelegationAuthorizationRevision,
   isPluginTaskAuthorized,
   getPluginTaskDefaults,
   // #5529：PR 侧的授权候选解析仍要这个可空查询。
@@ -3663,6 +3665,7 @@ initGhostSetupCoordinator({
     }),
   executeInlineAction: executeGhostSetupInlineAction,
   timeoutMessage: () => t('newChat.pluginSetup.timeout'),
+  cancelledMessage: () => t('newChat.pluginSetup.cancelled'),
   logger: log,
 });
 
@@ -6174,8 +6177,9 @@ const interruptProductTurn = createProductTurnFailureFinalizer({
   gate: deferredProductTurnFailureGate,
   isCurrentOwner: isCurrentProductTurnFailureOwner,
   commitActivity: (sessionId) => sessionListActivityTracker.commit(sessionId),
-  interrupt: async (sessionId, owner) => {
-    if (owner) notePluginTaskLifecycle(service => service.settle(sessionId, owner.originalExecution ?? owner, 'failed'));
+  settlePluginTasks: (sessionId, execution, inputClientIds) =>
+    settlePluginTaskTerminal(sessionId, execution, 'failed', undefined, inputClientIds),
+  interrupt: async (sessionId) => {
     await interruptUpstreamMergeTurn(sessionId);
   },
 });
@@ -6225,10 +6229,23 @@ function cleanupClosedSessionRuntime(session: WiredSession): void {
 // Keep holder reads live, including reads after an awaited pricing/persistence
 // operation. Capturing these services when wiring a Session would freeze the
 // pre-initialization or previous runtime value for later events.
-const sessionEventDependencies: SessionEventDependencies = {
-  onPluginTaskTerminal: (sessionId, execution, outcome, outputMessageId) => {
+const settlePluginTaskTerminal: NonNullable<SessionEventDependencies['onPluginTaskTerminal']> =
+  (sessionId, execution, outcome, outputMessageId, inputClientIds) => {
     notePluginTaskLifecycle(service => service.settle(sessionId, execution, outcome, outputMessageId));
-  },
+    for (const inputClientId of inputClientIds ?? []) {
+      const snapshot = getCurrentDbClientSnapshot();
+      if (snapshot) {
+        const store = createPluginTargetStore(snapshot.client, () => {
+          if (getCurrentDbClientSnapshot() !== snapshot) throw new Error('PERMISSION_DENIED');
+        });
+        void store.settle(inputClientId, sessionId, { ...execution, outcome, outputMessageId })
+          .catch(() => log.warn('Plugin target terminal receipt could not be saved'));
+      }
+    }
+  };
+
+const sessionEventDependencies: SessionEventDependencies = {
+  onPluginTaskTerminal: settlePluginTaskTerminal,
   onSuccessfulProductTurn: finishProductTurn,
   onUnsuccessfulProductTurn: interruptProductTurn,
   deferUnsuccessfulProductTurn: (owner) => deferredProductTurnFailureGate.defer(owner),
@@ -14885,6 +14902,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     }
   };
   setPluginTaskHandler(handlePluginTask);
+  let pluginTargetReviewReady = false;
   setPluginTargetAdapter({
     prepareInvocation: preparePluginInvocation,
     acceptInvocation: acceptPluginInvocation,
@@ -14897,6 +14915,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       });
     },
     approvalRevision: pluginTargetAuthorizationRevision,
+    delegationRevision: pluginDelegationAuthorizationRevision,
+    delegationReviewAvailable: () => pluginTargetReviewReady,
     candidates: listPluginTargetCandidates,
     session: resolvePluginTargetSession,
     assertCreatePermission: (pluginId, permissionMode) => {
@@ -14972,6 +14992,18 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         await awaitAgentInputQueueSnapshotPersistence(taskId);
         return 'queue';
       });
+    },
+    deliverySettled: async (taskId, clientId, guard) => {
+      guard();
+      await inputCoordinator.ensureQueueRestored(taskId);
+      guard();
+      // Cancellation has durably fenced future acceptance. Only an idle runtime
+      // with no restored queued input can acknowledge completion of withdrawal.
+      const queue = inputCoordinator.getQueueControlSnapshot(taskId);
+      return !maker.getSession(taskId)?.isTurnRunning() &&
+        !inputCoordinator.getAcceptedInputProvenance(taskId) &&
+        !queue.pendingQueue.some(item => item.clientId === clientId) &&
+        !queue.steeringQueueClientIds.includes(clientId);
     },
     withdraw: async (taskId, clientId, guard) => {
       guard();
@@ -18362,7 +18394,28 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     await drainPersistQueue();
     return listMessagesForAgentHandoff(sessionId, null, undefined, 'authorization');
   };
+  const loadPluginTargetReview = createPluginTargetReviewLoader({
+    owner: getCurrentDbClientSnapshot,
+    drain: drainPersistQueue,
+    assertDelivery: assertPluginTargetQueuedDelivery,
+    approvalRevision: pluginDelegationAuthorizationRevision,
+    permissionCeiling: pluginId => getPluginTaskDefaults(pluginId)?.permissionMode,
+    activeInput: sessionId => {
+      const input = inputCoordinator.getAcceptedInputProvenance(sessionId);
+      const session = maker.getSession(sessionId);
+      const ids = inputCoordinator.getActiveInputClientIds(sessionId);
+      if (!input || !session?.isTurnRunning() || input.autoResume || input.retrySourceClientId ||
+          input.authoredText !== undefined || input.delegatedRequest ||
+          inputCoordinator.isActiveInputAccountScoped(sessionId) ||
+          inputCoordinator.getActiveInputClientId(sessionId) !== input.clientId ||
+          ids.length !== 1 || ids[0] !== input.clientId) return null;
+      return { clientId: input.clientId, generation: inputCoordinator.getGeneration(sessionId),
+        instanceId: session.instanceId, turnGeneration: session.getTurnGeneration() };
+    },
+  });
   setAutoReviewContextResolver(createPluginTaskReviewResolver(async sessionId => {
+    const targetReview = await loadPluginTargetReview(sessionId);
+    if (targetReview) return targetReview;
     const epoch = getCurrentDbClientSnapshot();
     if (!epoch) throw new Error('Task storage unavailable');
     const db = epoch.client.drizzle;
@@ -18457,6 +18510,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       historyComplete: true,
     };
   }));
+
+  pluginTargetReviewReady = true;
 
   const {
     sendToAgentAccepted: sendToAgentAcceptedUnlocked,

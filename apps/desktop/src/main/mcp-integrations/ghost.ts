@@ -2338,6 +2338,7 @@ export function getCindyGhostsMcpDeps(
           },
         };
       }
+      const callId = randomUUID();
       const attachmentUrls = [...new Set(attachments ?? [])];
       if (attachmentUrls.length > 0) {
         const grant = await grantAttachmentUrls({
@@ -2380,6 +2381,7 @@ export function getCindyGhostsMcpDeps(
         if (dirConfirm.isCurrent) handoffChecks.push(dirConfirm.isCurrent);
         if (handoffExpired()) return handoffDenied;
         const deposited = getDirDepositVault().deposit({
+          callId,
           ghostId: installedGhostStoragePart(target),
           dirAbs: dirConfirm.userGranted ? dirConfirm.approvedRealPath : dir,
           workdirAbs: sessionWorkdir,
@@ -2517,7 +2519,6 @@ export function getCindyGhostsMcpDeps(
       // 中可 card-update)→ finalize(问"这单供过卡吗",开晚到宽限窗)→
       // 真供过卡才把 xdt_card_id 注入 result(mcpServer 提升到顶层,renderer
       // 据此配对取卡;没供过 = 结果零变化,模型永远看不到内部 UUID)。
-      const callId = randomUUID();
       const cardService = getGhostCardService();
       const callSessionContext = resolveSessionContext();
       cardService.registerCall(callId, {

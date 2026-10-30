@@ -94,7 +94,7 @@ import { PluginDownloadSlot } from './downloadSlot.js';
 import { createDownloader } from '../downloader/index.js';
 import { handlePluginTaskRequest, type PluginTaskHandler } from './taskSlot.js';
 import { PluginTargetSlot, type PluginTargetAdapter } from './pluginTargetSlot.js';
-import { ensurePluginTaskApproval, hasPluginTaskApproval, hasPluginTargetApproval, PluginTaskApprovalGate } from './taskCapability.js';
+import { ensurePluginTaskApproval, hasPluginTaskApproval, hasPluginTargetApproval, hasPluginDelegationApproval, PluginTaskApprovalGate } from './taskCapability.js';
 import {
   registerGhostCardRemoteProvider,
   persistGhostCardWithRemoteChange,
@@ -131,10 +131,10 @@ import { isDeepStrictEqual } from 'node:util';
 import type { GhostInstallConsentFacts } from '../../shared/ghostInstallConsent.js';
 
 const taskApprovalGate = new PluginTaskApprovalGate();
-function requestPluginTaskApproval(id: string, isCurrent: () => boolean, confirm: (facts: GhostInstallConsentFacts) => Promise<boolean>, explicit = false, capability: 'tasks' | 'targets' = 'tasks'): Promise<boolean> {
+function requestPluginTaskApproval(id: string, isCurrent: () => boolean, confirm: (facts: GhostInstallConsentFacts) => Promise<boolean>, explicit = false, capability: 'tasks' | 'targets' | 'delegation' = 'tasks'): Promise<boolean> {
   const ghost = findGhostForInstanceId(id);
   if (!isCurrent()) return Promise.resolve(false);
-  if ((capability === 'targets' ? hasPluginTargetApproval : hasPluginTaskApproval)(ghost)) return Promise.resolve(true);
+  if ((capability === 'delegation' ? hasPluginDelegationApproval : capability === 'targets' ? hasPluginTargetApproval : hasPluginTaskApproval)(ghost)) return Promise.resolve(true);
   const owner = getActiveDataOwnerPushStamp();
   const manager = getGhostManager();
   const revision = ghostInstallApprovalToken(ghost?.approval);
@@ -2289,6 +2289,11 @@ export function pluginTargetAuthorizationRevision(id: string): string | null {
   return hasPluginTargetApproval(ghost) ? pluginTaskAuthorizationRevision(id) : null;
 }
 
+export function pluginDelegationAuthorizationRevision(id: string): string | null {
+  const ghost = findGhostForInstanceId(id);
+  return hasPluginDelegationApproval(ghost) ? pluginTaskAuthorizationRevision(id) : null;
+}
+
 // Undefined means this plugin opted out of its Host task card. Saved settings
 // remain on disk, but are neither read nor used for that plugin at runtime.
 export function getPluginTaskDefaults(id: string) {
@@ -2439,6 +2444,8 @@ export function getGhostNodeRuntimeBroker(): GhostNodeRuntimeBroker {
       ownerScope: ghostOwnerScope,
       readSecret: (ghostId, secretKey) => readGhostSecret(ghostId, secretKey),
       secretSaved: ghostSecretSaved,
+      authenticatedFetch: (ghostId, request, authorization, assertCurrent, signal) =>
+        getGhostNetworkSlot().handleAuthenticatedNodeFetch(ghostId, request, authorization, assertCurrent, signal),
       resolveOauthSecret: async (ghostId, secretKey, accountId) => {
         const ghost = findGhostForInstanceId(ghostId);
         const source = ghost
@@ -6251,7 +6258,7 @@ export function getGhostNetworkSlot(): GhostNetworkSlot {
       },
       // 目录上传:凭 ghost_call 目录过户发放的一次性票据取货(dirDeposit
       // 票据库单例,与过户端同一本账)。
-      takeDirDeposit: (ghostId, token) => getDirDepositVault().take(ghostId, token),
+      takeDirDeposit: (ghostId, token, callId) => getDirDepositVault().take(ghostId, token, callId),
       // 下行落盘(as:'file'):凭 save 票据把响应字节写进主 agent 过户的
       // workdir 目录(saveDeposit 票据库单例,与过户端同一本账)。
       writeSaveDeposit: (ghostId, token, fileName, bytes) =>
@@ -7253,6 +7260,7 @@ async function installAndDockLocked(
     taskCapabilityApproved: confirmedTaskCapability(opts.consent.decision, installedBefore, opts.consent.manifest),
     targetCapabilityApproved: confirmedTaskCapability(opts.consent.decision, installedBefore, opts.consent.manifest, 'targets'),
     uiCapabilityApproved: confirmedUiCapability(opts.consent.decision, installedBefore, opts.consent.manifest),
+    delegationCapabilityApproved: confirmedTaskCapability(opts.consent.decision, installedBefore, opts.consent.manifest, 'delegation'),
     initiallyEnabled: opts.enable ?? false,
     expectedPackageSha256: opts.expectedPackageSha256,
     ...(opts.trustOverride ? { trustOverride: opts.trustOverride } : {}),
@@ -7437,6 +7445,7 @@ async function updateLocalGhostPackageLocked(
           taskCapabilityApproved: confirmedTaskCapability(consent, previousGhost, inspected.manifest),
           targetCapabilityApproved: confirmedTaskCapability(consent, previousGhost, inspected.manifest, 'targets'),
           uiCapabilityApproved: confirmedUiCapability(consent, previousGhost, inspected.manifest),
+          delegationCapabilityApproved: confirmedTaskCapability(consent, previousGhost, inspected.manifest, 'delegation'),
           expectedPackageSha256,
           expectedInstalledApproval,
           installOrigin: installOrigin ?? 'manual',
@@ -7934,6 +7943,7 @@ async function installOrUpdateMarketGhostPackageLocked(
           taskCapabilityApproved: confirmedTaskCapability(expected.consent, installed, inspected.manifest),
           targetCapabilityApproved: confirmedTaskCapability(expected.consent, installed, inspected.manifest, 'targets'),
           uiCapabilityApproved: confirmedUiCapability(expected.consent, installed, inspected.manifest),
+          delegationCapabilityApproved: confirmedTaskCapability(expected.consent, installed, inspected.manifest, 'delegation'),
           expectedPackageSha256: inspected.packageSha256,
           expectedInstalledApproval: expected.expectedInstalledApproval!,
           ...(previousRelId ? { simulatorPreviousRelId: previousRelId } : {}),
@@ -9158,6 +9168,13 @@ export function registerGhostIpc(): void {
       if (type === 'targets-request' && findGhostForInstanceId(id)?.manifest.agent?.targets !== true) {
         return { ok: false, error: { code: 'PERMISSION_DENIED', message: 'PERMISSION_DENIED', retryable: false } };
       }
+      const wantsDelegation = type === 'targets-request' &&
+        (payload as { kind?: unknown })?.kind === 'send' &&
+        (payload as { delegation?: unknown })?.delegation !== undefined;
+      // Do not ask for task/target grants for an execution path this build cannot run.
+      if (wantsDelegation && !pluginTargetSlot.supportsDelegationExecution()) {
+        return { ok: false, error: { code: 'UNSUPPORTED_CAPABILITY', message: 'UNSUPPORTED_CAPABILITY', retryable: false } };
+      }
       const confirmCapability = (facts: GhostInstallConsentFacts) => {
         const pageId = (payload as { mobilePageId?: string }).mobilePageId;
         if (pageId) {
@@ -9184,6 +9201,15 @@ export function registerGhostIpc(): void {
         }
       } catch {
         return { ok: false, error: { code: 'PERMISSION_DENIED', message: 'PERMISSION_DENIED', retryable: false } };
+      }
+      if (wantsDelegation) {
+        try {
+          if (!await requestPluginTaskApproval(id, isCurrent, confirmCapability, false, 'delegation')) {
+            return { ok: false, error: { code: 'PERMISSION_DENIED', message: 'PERMISSION_DENIED', retryable: false } };
+          }
+        } catch {
+          return { ok: false, error: { code: 'PERMISSION_DENIED', message: 'PERMISSION_DENIED', retryable: false } };
+        }
       }
       const revision = pluginTargetAuthorizationRevision(id);
       const assertAuthorized = () => {

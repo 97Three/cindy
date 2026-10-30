@@ -129,6 +129,7 @@ export interface GhostInstallReceipt {
   taskCapabilityApproved?: true;
   targetCapabilityApproved?: true;
   uiCapabilityApproved?: true;
+  delegationCapabilityApproved?: true;
   schemaVersion: typeof RECEIPT_SCHEMA_VERSION;
   id: string;
   /** Missing is a pre-namespace receipt. null is root; a string is an organization. */
@@ -1270,6 +1271,7 @@ export function createGhostInstallReceipt(input: {
   taskCapabilityApproved?: true;
   targetCapabilityApproved?: true;
   uiCapabilityApproved?: true;
+  delegationCapabilityApproved?: true;
   manifest: GhostManifest;
   localeResources: Record<string, GhostManifestLocaleResource>;
   enabled: boolean;
@@ -1303,6 +1305,7 @@ export function createGhostInstallReceipt(input: {
     ...(input.uiCapabilityApproved === true ? { uiCapabilityApproved: true as const } : {}),
     ...(input.taskCapabilityApproved === true ? { taskCapabilityApproved: true as const } : {}),
     ...(input.targetCapabilityApproved === true ? { targetCapabilityApproved: true as const } : {}),
+    ...(input.delegationCapabilityApproved === true ? { delegationCapabilityApproved: true as const } : {}),
     ...(input.packageSha256 ? { packageSha256: input.packageSha256 } : {}),
     ...(input.iconDataUrl ? { iconDataUrl: input.iconDataUrl } : {}),
     ...(input.installOrigin !== undefined ? { installOrigin: input.installOrigin } : {}),
@@ -1517,6 +1520,7 @@ function validateReceipt(
       ...(value.uiCapabilityApproved === true ? { uiCapabilityApproved: true as const } : {}),
       ...(value.taskCapabilityApproved === true ? { taskCapabilityApproved: true as const } : {}),
       ...(value.targetCapabilityApproved === true ? { targetCapabilityApproved: true as const } : {}),
+      ...(value.delegationCapabilityApproved === true ? { delegationCapabilityApproved: true as const } : {}),
       ...(typeof value.packageSha256 === 'string' ? { packageSha256: value.packageSha256 } : {}),
       ...(typeof value.iconDataUrl === 'string' ? { iconDataUrl: value.iconDataUrl } : {}),
       ...(installOrigin !== undefined ? { installOrigin } : {}),

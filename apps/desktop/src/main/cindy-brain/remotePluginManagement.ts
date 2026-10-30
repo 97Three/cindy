@@ -119,6 +119,7 @@ export function projectManagedGhost(g: InstalledGhost): InstalledGhost {
     ...(g.uiCapabilityApproved === true ? { uiCapabilityApproved: true as const } : {}),
     taskCapabilityApproved: g.taskCapabilityApproved,
     targetCapabilityApproved: g.targetCapabilityApproved,
+    delegationCapabilityApproved: g.delegationCapabilityApproved,
     oauthScopeStale: g.oauthScopeStale,
     oauthAuthorizationExpired: g.oauthAuthorizationExpired,
   };
