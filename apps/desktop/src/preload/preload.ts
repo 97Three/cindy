@@ -1156,6 +1156,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     runNow: (botId: string, id: string) => ipcRenderer.invoke('routines:run-now', botId, id),
     history: (botId: string, id: string) => ipcRenderer.invoke('routines:history', botId, id),
     sources: () => ipcRenderer.invoke('routines:sources'),
+    deliveryTargets: (botId: string) => ipcRenderer.invoke('routines:delivery-targets', botId),
     nightlyLearning: {
       get: (botId: string): Promise<import('../shared/botNightlyLearning').NightlyLearningView> =>
         ipcRenderer.invoke('routines:nightly-learning:get', botId),

@@ -1,3 +1,4 @@
+import { setRoutineResultDispatch } from '../routines/deliveryDispatch.js';
 import { assertSessionCreationCurrent, currentSessionCreationSignal } from '../localDb/sessionRuntimeCleanup.js';
 import { readTaskDeliveryNote } from '../bot-autonomy/hub.js';
 import { setVoiceTaskDispatch, setVoiceCallMemoryReader } from '../voice-conversation/taskBridge.js';
@@ -13316,6 +13317,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
 
   setBotInvitationWelcomeDispatch(dispatchBotSessionMessage);
   setVoiceTaskDispatch(dispatchBotSessionMessage);
+  setRoutineResultDispatch(dispatchBotSessionMessage);
   setVoiceCallMemoryReader(async botId =>
     (await maker.makerMemory?.getStore(buildBotMemoryScopeKey(botId)))?.getIndex() ?? '');
 

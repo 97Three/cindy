@@ -2030,7 +2030,8 @@ describe('Scheduler', () => {
     h.scheduler.on('session-bound', (e) => events.push(e));
     h.scheduler.on('silenced', (e) => events.push(e));
     h.scheduler.on('completed', (e) => events.push(e));
-    const { runId } = await h.scheduler.runNow(sch.id);
+    const { runId, silenced } = await h.scheduler.runNow(sch.id);
+    expect(silenced).toBe(true);
     const runs = await h.scheduler.listRuns(sch.id);
 
     expect(runs[0].id).toBe(runId);
@@ -2058,7 +2059,8 @@ describe('Scheduler', () => {
     const events: unknown[] = [];
     h.scheduler.on('notified', (e) => events.push(e));
     h.scheduler.on('completed', (e) => events.push(e));
-    const { runId } = await h.scheduler.runNow(sch.id);
+    const { runId, silenced } = await h.scheduler.runNow(sch.id);
+    expect(silenced).not.toBe(true);
     const runs = await h.scheduler.listRuns(sch.id);
 
     expect(runs[0].id).toBe(runId);
