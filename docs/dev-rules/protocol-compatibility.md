@@ -39,6 +39,34 @@ RESET_REQUIRED 跳过的通知可能含主力迁移的 `actor.changed`，因此�
 服务端重放时直接引用，media id 有效期 24 小时。回归见 `hook-control/__tests__/xMediaRelay.test.ts`、
 `outbound.test.ts`、`dispatcher.test.ts` 与协议包的 `protocol-x-media.test.ts`。
 
+## 任务顶栏 PR 汇总与关联管理
+
+`git-context:pr-status` 的成功结果可选追加 `checks`，包含当前 head 的检查总数、失败、
+通过、进行中与跳过／中立数；缺字段或 null 表示不可用，旧客户端忽略。沿用 60 秒缓存、
+在途合并和前台 90 秒刷新；客户端请求过期数据时等待本次刷新，不额外增加轮询。
+每个 PR 仍只调用一次 REST 与一次 GraphQL。评论只读取原有前 100 条的解决状态，
+存在下一页时将未解决数标为不可用，不为数量汇总额外翻页。
+
+新增同账号 `git-context:pr-refs:manage` 接收任务 id 与 list/add/remove/restore/pin/unpin/reorder，
+只管理任务关联，不修改 GitHub。`reorder` 的 ids 必须覆盖同一固定组的全部 active 行，
+不得重复、跨任务或包含已移除行；重写 priority 与 manuallyAdded，不改 schema。该管理通道
+尚未发布，以 reorder 替代 prioritize；两端随本分支一起更新，旧已发布主机仍走不支持分支。新增链接经宿主 GitHub PR API 验证后保存；共享任务访客
+不在此通道的授权范围。旧主机拒绝新通道时明确显示不支持，既有 PR 查看与跳转照常工作。
+SSH 任务继续在保存任务的 Desktop 管理关联；无需工作目录文件访问或服务端改动。
+只读 review 任务可查看关联列表并打开 PR，不提供管理写操作。
+Mobile 继续消费既有引用与状态，暂不新增管理界面。
+官方与自建中转均沿用通用 invoke 转发，新增通道只在客户端宿主 allowlist 判定，
+不改变签名、帧格式或连接恢复，无需更新中转内核。已运行共享客户端测试
+`pnpm --filter @cindy/device-link test`、自建中转测试
+`pnpm --filter @cindy/device-link-relay test`，以及真实互通验证
+`pnpm --filter @cindy/device-link-relay run interop`。
+
+`session_pr_refs` 增量保存固定、优先顺序、手动添加与移除标记；自动提取不会清除用户的
+移除决定，恢复需显式操作。已有行按原先最近提及排序，固定最多三条。
+手动操作成功后主动使该任务的远程引用缓存失效；其他控制端沿用前台 90 秒刷新，不新增 push topic、连接恢复或请求重放。降级旧客户端会忽略
+新增管理字段，因此旧客户端可能重新显示已移除的引用；记录保留，重新升级后恢复选择。
+验证入口：`sessionPrManagement.test.ts`、`gitContextPrStatusService.test.ts`、`GitContextBadge.test.tsx`。
+
 ## 设置页中我分享的供应商
 
 Desktop 的本机分享命令与既有同账号供应商管理通道增量支持 `shared-provider-ids`，
@@ -3113,7 +3141,7 @@ Mobile 对所有预创建恢复记录（含未收到创建回包的 `reserved`�
 - 新客户端请求 `/api/model-catalog/catalog?registrySchemaVersion=3`。V1/V2 继续可读；Server 任意版本缺少某条原生协议时，使用 Cindy 本地声明。V3 的明确协议修正、显式 null 与退役优先；删除字段或遗漏规则不再清空本地协议知识，撤销须用精确条目的 null／retired 表达。仅原生协议作此字段级补全，价格、窗口、可用性与完整目录的 revision、LKG、冲突拒绝仍用既有策略。
 - Server 支持 V3 后，仅给明确请求 V3 的客户端返回 nativeApi/nativeApiRules；无参数／V1／V2 请求必须返回旧版本并去掉新字段，ETag 按实际响应格式隔离。不得直接把 V3 制品目录原样发送给旧客户端。
 - UI 的 CatalogModel.nativeApi 是主进程按实际 provider/model 投影的结果。Pi 的 piApi 是执行配置，不能反过来当作模型原生协议。界面只展示简短的协议名、原生支持／兼容模式，不展示目录实现与抓包说明。
-- 默认开关按原生协议与 Harness/出站协议比较：兼容路径默认关闭；已有用户显式偏好优先。逐引擎服务端显式 defaultEnabled 保留策展覆盖能力。Google 原生模型推荐 Pi，Messages 推荐 Claude Code，Responses 推荐 Codex，Chat Completions 推荐 Pi；推荐必须在可用候选内。
+- 默认开关按原生协议与 Harness/出站协议比较：兼容路径默认关闭；已有用户显式偏好优先。逐引擎服务端显式 defaultEnabled 保留策展覆盖能力。Google 原生模型推荐 Pi，Messages 推荐 Claude Code，Responses 推荐 Codex，Chat Completions 推荐 Pi；推荐必须在可用候选内。（2026-10-30 起，目录 `recommendedAgents` 有声明时优先，此协议推断只作兜底，见下文「推荐引擎下发」。）
 - 此客户端改动不代表 Server 已部署 V3。发布目录前须验证旧客户端降级、新客户端 V3、更新/撤销/冲突与相应 ETag 四项；不能只修改 bundled 数据宣布线上生效。
 
 ### Cindy 本地协议声明的维护（2026-09-05）
@@ -4240,6 +4268,18 @@ targets.get 按本插件 requestKey 查询原收据；settled 自然终态由原
 RemoteResourceDisplay 与 BotGroupSummary 可选携带 `teammateActivity: { phase }`。宿主从现有运行、待确认、完成、错误状态投影，Desktop/iOS/Android 共用状态优先级。生成文案、确认权限、已读回执均保持原有路径。旧控制端忽略字段；新控制端连接旧宿主时回退已有 generation、确认快照及普通未读，不把缺失状态推断成完成。
 
 字段位于现有 Remote Resource 的业务 payload 内，不改握手、签名、顶层帧、relay 路由或重连逻辑；官方与自建中转都沿用通用加密转发，无需中转升级。群直连复用现有 executions/plans 只读接口，不修改服务端；旧服务器缺少接口时保留普通列表。
+
+## 推荐引擎下发（`registryRecommendedAgents`，2026-10-30）
+
+- Registry V6 新增可选 `recommendedAgents`：`{ providerId, modelIdPrefix?, agent }` 规则表，正本在 Server
+  `source/registry/recommended-agents.json`。已发布的 V6 解析器拒绝未知字段，所以它走独立能力位：
+  新客户端请求带 `registryRecommendedAgents=1`；Server 对未带该参数的请求（含旧 V6 客户端）去掉字段，
+  ETag 按实际响应隔离。V1–V5 投影一律不含此字段。
+- 客户端只把它当建议：解析后投影成 `CatalogModel.recommendedAgent`，用于默认选中引擎；不改变模型成员、
+  可见性与用户已换过的引擎。推荐的引擎在该来源只能走本地兼容转换时不采用，回退到协议推断。
+- 离线回退：升级后首次请求失败时，仍可读取升级前按旧 URL（不带新能力位，或 V5）缓存的 last-known-good
+  快照；此时没有推荐表，按协议推断兜底，不报错。
+- 字段位于目录 HTTP 响应内，不涉及 device-link、relay 或远控 wire；手机端经现有活动目录投影拿到结果。
 
 ## Desktop 话题回复附件
 
