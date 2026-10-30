@@ -3,7 +3,7 @@
   "id": "interactive-planner",
   "name": "交互计划示例",
   "version": "1.0.0",
-  "minCindyVersion": "0.1.121-beta",
+  "minCindyVersion": "0.1.122-beta",
   "entry": "main.js",
   "command": "interactive-planner",
   "whenToUse": "演示交互页面里的计划表单，打开页面并修改计划标题",

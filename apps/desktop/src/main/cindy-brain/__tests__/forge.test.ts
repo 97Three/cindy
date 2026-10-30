@@ -2528,7 +2528,7 @@ describe('packGhostDir · manual 渐进披露手册', () => {
 // Unit / §3.2: the real packer must include the page and enforce its first release.
 // Generic pack cases lack ui and do not distinguish a prerelease floor from a
 // stable-only floor. Minimal input: one HTML page, changing only minCindyVersion;
-// 0.1.121-beta and later must pack, earlier core versions must fail.
+// 0.1.122-beta and later must pack; 0.1.121 shipped without UI support and must fail.
 it('packs the shared page, defaults its version floor, and rejects missing HTML or a low floor', async () => {
   const base = { ...GOOD_MANIFEST, schemaVersion: 3, slots: undefined,
     mcpApps: { ui: { resources: [{
@@ -2539,7 +2539,8 @@ it('packs the shared page, defaults its version floor, and rejects missing HTML 
   const result = await packGhostDir(dir);
   expect(result).toMatchObject({ ok: true, manifest: { mcpApps: base.mcpApps, minCindyVersion: PLUGIN_UI_MIN_CINDY_VERSION } });
   for (const [minCindyVersion, allowed] of [
-    ['0.1.121-beta', true], ['0.1.121-beta.1', true], ['0.1.121', true],
+    ['0.1.122-beta', true], ['0.1.122-beta.1', true], ['0.1.122', true],
+    ['0.1.121-beta', false], ['0.1.121', false],
     ['0.1.120', false], ['0.1.120-beta', false],
   ] as const) {
     await fs.promises.writeFile(path.join(dir, 'ghost.json'), JSON.stringify({ ...base, minCindyVersion }));

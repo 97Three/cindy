@@ -4,7 +4,7 @@
   "name": "交互能力示例",
   "command": "acme-ui-showcase",
   "version": "1.0.0",
-  "minCindyVersion": "0.1.121-beta",
+  "minCindyVersion": "0.1.122-beta",
   "kind": "chip",
   "entry": "main.js",
   "whenToUse": "用户要查看交互页面、文件或后端能力时，调用 open_showcase；旧卡片由 legacy_cards / image_card 展示。",

@@ -25,7 +25,7 @@
   // (仅检查插件启用状态与 tools 声明)。除非你的插件完全靠 panel 或 subscribe 驱动,
   // 否则请始终声明一个 command。
   "tools": [ /* 见 §3；下方 open_planner 必须在此声明 */ ],
-  // 可选交互页面，完整示例见 §4.23；需要 minCindyVersion >= 0.1.121-beta
+  // 可选交互页面，完整示例见 §4.23；需要 minCindyVersion >= 0.1.122-beta
   "mcpApps": { "ui": {
     "resources": [{ "uri": "ui://planner/v1", "file": "ui/page.html" }],
     "tools": { "open_planner": { "resourceUri": "ui://planner/v1" } }

@@ -48,7 +48,7 @@
 ```
 
 调用 `ghost_forge_scaffold` 后会生成本节页面和 open_planner / save_plan 工具，原模板工具保留。
-该选项在开发构建也能推导 `0.1.121-beta` 下限；显式最低版本不得低于它。不加该选项时沿用原模板版本规则。
+该选项在开发构建也能推导 `0.1.122-beta` 下限；显式最低版本不得低于它。不加该选项时沿用原模板版本规则。
 
 把下面三个文件按路径保存，直接用 `ghost_forge_pack` 打包。它只在本次运行的内存里暂存标题，
 不写文件、不联网。可复制源码也在 [examples/interactive-pages/minimal](examples/interactive-pages/minimal/ghost.json)。
@@ -61,7 +61,7 @@
   "id": "interactive-planner",
   "name": "交互计划示例",
   "version": "1.0.0",
-  "minCindyVersion": "0.1.121-beta",
+  "minCindyVersion": "0.1.122-beta",
   "entry": "main.js",
   "command": "interactive-planner",
   "whenToUse": "演示交互页面里的计划表单，打开页面并修改计划标题",
@@ -367,7 +367,7 @@ ResourceLink。宿主弹系统另存为框、净化文件名；不代页面下�
 
 ### 安装、升级和多端
 
-声明 `mcpApps.ui` 的包要求 `minCindyVersion >= 0.1.121-beta`，beta.1 和稳定版均满足。
+声明 `mcpApps.ui` 的包要求 `minCindyVersion >= 0.1.122-beta`，beta.1 和稳定版均满足。
 这是打包门槛和市场兼容投影，不是客户端安装闸门。旧 Host 保留未知顶层 `mcpApps`，只返回文字，
 不识别 app-only visibility；不能依靠旧 Host 隐藏工具。升级后，缺 `uiCapabilityApproved` 的
 普通插件仍可用原工具，只不读未批准页面，可从任务提示条或详情手动确认，无需重装。

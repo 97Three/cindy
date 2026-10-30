@@ -787,16 +787,16 @@ describe('Forge session workdir gate', () => {
 
   // Production tool entry must select the published UI floor on dev builds, while
   // keeping the existing no-UI version policy unchanged. Minimal input: withUi in 0.0.0.
-  it.each([undefined, '0.1.121-beta', '0.1.121-beta.1', '0.1.121', '0.1.120'])(
+  it.each([undefined, '0.1.122-beta', '0.1.122-beta.1', '0.1.122', '0.1.121-beta', '0.1.121', '0.1.120'])(
     'resolves the optional UI scaffold floor for %s', async minCindyVersion => {
       appVersionMock.mockReturnValue('0.0.0');
       const response = await makeDeps().forgeScaffold({ dir: path.join(WORKDIR, 'new-plugin'), template: 'plain', id: 'new-plugin', name: 'New plugin', withUi: true, minCindyVersion });
-      if (minCindyVersion === '0.1.120') {
+      if (minCindyVersion === '0.1.120' || minCindyVersion === '0.1.121-beta' || minCindyVersion === '0.1.121') {
         expect(response).toMatchObject({ ok: false, errorCode: 'INVALID_INPUT' });
         expect(scaffoldGhostDirMock).not.toHaveBeenCalled();
       } else {
         expect(response).toMatchObject({ ok: true });
-        expect(scaffoldGhostDirMock).toHaveBeenCalledWith(expect.objectContaining({ withUi: true, minCindyVersion: minCindyVersion ?? '0.1.121-beta' }), expect.any(Object));
+        expect(scaffoldGhostDirMock).toHaveBeenCalledWith(expect.objectContaining({ withUi: true, minCindyVersion: minCindyVersion ?? '0.1.122-beta' }), expect.any(Object));
       }
     },
   );

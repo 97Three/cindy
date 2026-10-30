@@ -1,7 +1,7 @@
 import { isSafeGhostRelativePath } from './internal/ghostPath.js';
 import { validateCspDomains } from './appCsp.js';
 /** First release with plugin pages; authoring floor, never a client install gate. */
-export const PLUGIN_UI_MIN_CINDY_VERSION = '0.1.121-beta';
+export const PLUGIN_UI_MIN_CINDY_VERSION = '0.1.122-beta';
 export interface GhostUiResource {
   uri: string;
   file: string;

@@ -1448,7 +1448,7 @@ export function createCindyGhostsMcpServer(
         .describe(
           "起步模板:普通插件 / Agent 交互卡 / 普通 Node 服务 / stdio MCP",
         ),
-      withUi: z.boolean().optional().describe("可选：叠加 MCP Apps 交互页面，最低版本不低于 0.1.121-beta"),
+      withUi: z.boolean().optional().describe("可选：叠加 MCP Apps 交互页面，最低版本不低于 0.1.122-beta"),
       id: z.string().describe("插件 id:小写字母、数字、连字符，1–32 位"),
       name: z.string().describe("给用户看的插件名称"),
       description: z

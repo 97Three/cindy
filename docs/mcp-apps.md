@@ -21,8 +21,8 @@ Codex 原生未必自行发送 MCP 取消；服务仍须限制长操作，并区
 
 ## 插件的交互页面
 
-首个支持版本为 `0.1.121-beta`（`PLUGIN_UI_MIN_CINDY_VERSION`）。声明交互页面的包须填写
-不低于它的 `minCindyVersion`；`0.1.121-beta.1`、`0.1.121` 满足，`0.1.120`、`0.1.120-beta` 不满足。
+首个支持版本为 `0.1.122-beta`（`PLUGIN_UI_MIN_CINDY_VERSION`）。声明交互页面的包须填写
+不低于它的 `minCindyVersion`；`0.1.122-beta.1`、`0.1.122` 满足，`0.1.121`、`0.1.121-beta` 不满足。
 该下限用于打包校验和市场兼容版本投影，不新增客户端安装闸门。
 
 插件继续通过 `ghost_info` / `ghost_call` 发现与执行 main.js 工具，不向 Agent 增加 MCP 服务。
