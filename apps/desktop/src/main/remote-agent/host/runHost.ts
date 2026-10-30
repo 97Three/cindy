@@ -718,7 +718,8 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
   const guestDigest = (scope: string) => createHash('sha256').update(scope).digest('hex').slice(0, 32);
   let guestIndex: Promise<Map<string, GuestSessionRecord>> | null = null;
   let guestIndexWrite: Promise<void> = Promise.resolve();
-  const directRunStarts = new WeakMap<Run, { work: Promise<void>; disposal?: Promise<void> }>();
+  const runStarts = new WeakMap<Run, Promise<void>>();
+  const runDisposals = new Map<Run, Promise<void>>();
   const directGuestLocks = new Map<string, {
     tail: Promise<void>;
     forgets: Map<string, Promise<unknown>>;
@@ -2365,9 +2366,12 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     // (finishRun rejects reverse requests), then drain startup's last writes.
     // Startup never acquires the guest lock. Keep it in runs until it drains,
     // and coalesce sweep/dispose calls instead of accumulating pending waits.
-    const startup = directRunStarts.get(run);
-    if (startup) return startup.disposal ??= startup.work.then(() => disposeRunFiles(run));
-    return disposeRunFiles(run);
+    const pending = runDisposals.get(run);
+    if (pending) return pending;
+    const work = (runStarts.get(run) ?? Promise.resolve()).then(() => disposeRunFiles(run));
+    runDisposals.set(run, work);
+    void work.then(() => runDisposals.delete(run), () => runDisposals.delete(run));
+    return work;
   }
 
   async function disposeRunFiles(run: Run): Promise<void> {
@@ -2723,6 +2727,7 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
   let forgetRetrying: Promise<void> | null = null;
   let forgetRetryAgain = false;
   let disposed = false;
+  let disposal: Promise<void> | undefined;
 
   /**
    * 逐台请组内电脑忘掉已删除的受邀者(见 GuestSessionRecord.forgetPending)：通知到的划掉，都通知到的登记删掉；
@@ -3273,6 +3278,7 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
           if (providerId && deps.providerAccess && !deps.providerAccess.isAllowed(providerId, controller, payload.options.model, payload.sessionId)) {
             failProviderNotAllowed();
           }
+          if (disposed) fail('REMOTE_AGENT_UNAVAILABLE', 'remote agent host has been disposed');
           assertRunCapacity(controller);
         } catch (error) {
           reserved?.release();
@@ -3317,18 +3323,20 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
           run.hostSessionId = hostSessionIdFor(controller, payload.sessionId);
           run.imageDeliveryEpoch = payload.imageDeliveryEpoch;
           const load = reserved;
-          void recordGuestSession(controller, undefined, run.hostSessionId, [])
+          const starting = recordGuestSession(controller, undefined, run.hostSessionId, [])
             .then(() => startRelay(run, payload, member, { fresh: !payload.options.resumeSessionId, avoid, ...(load ? { load } : {}) }))
             .catch(async (error) => {
               load?.release();
               append(run, { t: 'start-failed', error: relayErrorInfoFrom(error) });
               await finishRun(run, 'start-failed', 'navigation', false);
             });
+          runStarts.set(run, starting);
+          void starting;
         } else {
           // 组为受邀者的全新任务选中了本机这一台：本机起不来时与组内电脑一样换下一台。
           if (groupRouted && !payload.options.resumeSessionId) run.groupFreshStart = { avoid };
           const starting = startRun(run, payload);
-          if (directLocked) directRunStarts.set(run, { work: starting });
+          runStarts.set(run, starting);
           void starting;
         }
         return {};
@@ -3533,16 +3541,24 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     runCount(): number {
       return [...runs.values()].filter((run) => run.closedAt === undefined).length;
     },
-    dispose(): void {
+    dispose(): Promise<void> {
+      if (disposal) return disposal;
       if (sweepTimer) clearInterval(sweepTimer);
       sweepTimer = null;
       disposed = true;
       if (forgetRetryTimer) clearTimeout(forgetRetryTimer);
       forgetRetryTimer = null;
       // 退出前尽力收尾：影子工作目录含同步过去的项目与个人说明，不能留到下次启动。
-      for (const run of runs.values()) {
-        void finishForHostStop(run, 'app-quit').then(() => disposeRun(run));
-      }
+      const stopping = [...runs.values()].map(run =>
+        finishForHostStop(run, 'app-quit').then(() => disposeRun(run)),
+      );
+      // A sweep removes its run from the map before its filesystem cleanup ends.
+      disposal = Promise.allSettled([...stopping, ...runDisposals.values()]).then(results => {
+        for (const result of results) {
+          if (result.status === 'rejected') deps.log?.warn('remote agent disposal failed', { error: String(result.reason) });
+        }
+      });
+      return disposal;
     },
   };
 }
