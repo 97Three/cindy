@@ -13839,6 +13839,20 @@
       }
     },
     "draft": {
+      "directoryRecovery": {
+        "required": "일부 연결 폴더를 다시 승인해야 합니다. 연결 폴더 {{count}}개를 모두 차례로 다시 선택하세요",
+        "changed": "연결 폴더가 변경되었습니다. 확인한 후 연결 폴더 {{count}}개를 모두 다시 선택하세요",
+        "unavailable": "연결 폴더에 접근할 수 없습니다. 폴더나 시스템 권한을 확인하거나 편집으로 돌아가 해당 폴더를 제거하세요",
+        "selecting": "폴더 다시 선택 중 {{index}}/{{count}}: {{directory}}",
+        "cancelled": "폴더 다시 선택을 취소했습니다. 프롬프트와 연결 폴더는 유지됩니다",
+        "mismatch": "선택한 폴더가 원래 폴더와 다릅니다. 폴더 목록은 변경되지 않았습니다",
+        "failed": "폴더 다시 선택을 완료하지 못했습니다. 프롬프트와 연결 폴더는 유지됩니다",
+        "ready": "폴더를 다시 선택했습니다. 작업을 다시 보내세요",
+        "readyGoal": "폴더를 다시 선택했습니다. 목표를 다시 만드세요",
+        "reselect": "폴더 다시 선택",
+        "cancel": "폴더 다시 선택 취소",
+        "edit": "편집으로 돌아가기"
+      },
       "createSessionFailed": "세션 생성에 실패했습니다. 다시 시도하세요",
       "piRemoteUnsupported": "Pi는 로컬에서만 실행되어 SSH 원격 호스트를 사용할 수 없습니다. 이 호스트를 사용하려면 Claude 또는 Codex로 전환하세요.",
       "localWorktreeCleanupPending": "이전 로컬 worktree 세션 정리가 아직 완료되지 않았습니다. 정리가 끝난 후 다시 시도하세요.",

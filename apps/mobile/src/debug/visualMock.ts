@@ -23,7 +23,7 @@ import type {
 } from '@/device-link/mobileMakerTransport';
 import { remoteSessionStore } from '@/session/remoteSessionStore';
 import { pluginVisualFixture } from '@/debug/pluginVisualFixture';
-import { teammateVisualFixture, teammateVisualReplyAt, VISUAL_TEAMMATE_SESSION_ID } from '@/debug/teammateVisualFixture';
+import { teammateVisualFixture, teammateVisualReplyAt, VISUAL_TEAMMATE_SESSION_ID, VISUAL_TEAMMATE_THREAD_ROOT_ID, visualTeammateThreads } from '@/debug/teammateVisualFixture';
 import { markdownPreviewFixture } from '@/debug/markdownPreviewFixture';
 import type { InputProjection, PendingInteraction, RemoteMessage, RemoteSession } from '@/session/types';
 
@@ -315,7 +315,12 @@ async function visualMockInvoke<T = unknown>(
       return { version: 1, messages: first >= 0 && last >= first ? rows.slice(first, last + 1) : [], hasMore: false, nextCursor: null } as T;
     }
     case 'local-db:messages:view-intent': return undefined as T;
-    case 'local-db:messages:around-client-id':
+    case 'local-db:messages:around-client-id': {
+      const rows = visualMockMessages(String(args[0]));
+      const index = rows.findIndex(row => row.clientId === args[1]);
+      const radius = Math.max(0, Number((args[2] as { radius?: number } | undefined)?.radius ?? 0));
+      return (index < 0 ? [] : rows.slice(Math.max(0, index - radius), index + radius + 1)) as T;
+    }
     case 'local-db:messages:list':
       return visualMockMessages(String(args[0] ?? VISUAL_MOCK_SESSION_ID)) as T;
     case 'local-db:messages:view': {
@@ -556,7 +561,8 @@ function catalogSession(row: UiMockSessionRow): RemoteSession {
 
 function visualMockSession(id: string): RemoteSession {
   if (id === 'visual-teammate-process') return { ...visualMockSession('ui-mock-rich-answer'), id, source: 'bot', title: 'Cindy' };
-  if (id === VISUAL_TEAMMATE_SESSION_ID || id.startsWith(`${VISUAL_TEAMMATE_SESSION_ID}:`)) return {
+  if (id === VISUAL_TEAMMATE_SESSION_ID || id.startsWith(`${VISUAL_TEAMMATE_SESSION_ID}:`)
+    || [...visualTeammateThreads.values()].some(thread => thread.sessionId === id)) return {
     ...visualMockSession('ui-mock-rich-answer'), id, source: 'bot', title: 'Cindy · 演示群任务',
   };
   return visualMockSessions('all').find((session) => session.id === id) ?? visualMockSessions()[0];
@@ -593,12 +599,19 @@ function visualMockMessages(sessionId: string): RemoteMessage[] {
     message(sessionId, 'fixture-note3', 'assistant', '任务与 PR 的信息已核对，正在整理摘要。', -40000, { agentMeta: { assistantPhase: 'commentary' } }),
     message(sessionId, 'fixture-result', 'assistant', '任务与 PR 的进展已整理，需要跟进的两项工作已列出。', -30000, { agentMeta: { assistantPhase: 'final_answer', turnCompleted: true } }),
   ];
+  const topic = [...visualTeammateThreads.values()].find(thread => thread.sessionId === sessionId);
+  if (topic) return topic.replyCount ? [
+    message(sessionId, 'visual-topic-user', 'user', '把移动端和群聊的话题入口统一起来。', -180_000),
+    message(sessionId, 'visual-topic-reply', 'assistant', '两处都会使用堆叠头像，回复数和时间保持同一字号。', -120_000),
+  ] : [];
   if (sessionId === VISUAL_TEAMMATE_SESSION_ID || sessionId.startsWith(`${VISUAL_TEAMMATE_SESSION_ID}:`)) {
     const rows = visualMockMessages('ui-mock-rich-answer');
-    return rows.map((row, index) => ({
+    const messages = rows.map((row, index) => ({
       ...row, id: `${sessionId}-${row.id}`, clientId: `${sessionId}-${row.clientId}`, sessionId,
       createdAt: new Date(teammateVisualReplyAt(sessionId) - (rows.length - 1 - index) * 1_000).toISOString(),
     }));
+    return sessionId === VISUAL_TEAMMATE_SESSION_ID ? [...messages,
+      message(sessionId, VISUAL_TEAMMATE_THREAD_ROOT_ID, 'assistant', '我们在话题里确认移动端样式，主聊天继续处理其他事情。', -300_000)] : messages;
   }
   if (sessionId === VISUAL_MOCK_SESSION_ID) {
     return SHARED_REMOTE_CONTROL_FIXTURE.rawMessages.map((message) => ({

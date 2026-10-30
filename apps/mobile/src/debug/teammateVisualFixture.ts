@@ -17,6 +17,8 @@ import { BOT_GROUP_CHAT_PRIMITIVE, BOT_GROUP_REMOTE_COLLECTION_ID, BOT_GROUP_REM
  */
 const TEAMMATES = 'teammates';
 export const VISUAL_TEAMMATE_SESSION_ID = 'visual-teammate-session';
+export const VISUAL_TEAMMATE_THREAD_ROOT_ID = 'visual-teammate-topic-root';
+export const visualTeammateThreads = new Map([[VISUAL_TEAMMATE_THREAD_ROOT_ID, { sessionId: 'visual-teammate-topic', replyCount: 2 }]]);
 const MINUTE = 60_000;
 const teammates: ReadonlyArray<{ id: string; name: string; preview: string; minutesAgo: number; avatar: RemoteCollectionItem['display']['avatar']; working?: boolean; phase?: string; following?: string[] }> = [
   { id: 'cindy-default', name: 'Cindy', preview: '登录页窄窗口的错位已经修好，截图放在任务里了。', minutesAgo: 2,
@@ -65,6 +67,22 @@ export function teammateVisualFixture(channel: string, args: unknown[], now = FI
     const ids = bot?.id === 'cindy-default' ? ['visual-running', `${UI_MOCK_ID_PREFIX}rich-answer`]
       : bot?.id === 'visual-bot-lizi' ? [`${UI_MOCK_ID_PREFIX}english`, `${UI_MOCK_ID_PREFIX}archived`] : [];
     return { ok: true, delegations: ids.map(childSessionId => ({ requestingBotId: bot!.id, childSessionId })) };
+  }
+  if (channel === 'local-db:bots:get' && teammates.some(bot => bot.id === args[0])) return {
+    id: args[0], canonicalSessionId: VISUAL_TEAMMATE_SESSION_ID, dmThreadsSupported: true,
+    sessions: [{ id: VISUAL_TEAMMATE_SESSION_ID, role: 'canonical', status: 'active' },
+      ...[...visualTeammateThreads].map(([rootClientId, thread]) => ({ id: thread.sessionId, role: 'thread', status: 'active',
+        threadRoot: { rootSessionId: VISUAL_TEAMMATE_SESSION_ID, rootClientId } }))],
+  };
+  if (channel === 'local-db:bots:dm-thread:list') return [...visualTeammateThreads].filter(([, thread]) => thread.replyCount).map(([rootClientId, thread]) => ({
+    ...thread, rootSessionId: VISUAL_TEAMMATE_SESSION_ID, rootClientId, lastReplyAt: now - MINUTE * 2, lastAssistantAt: now - MINUTE * 2, createdAt: now - MINUTE * 5,
+  }));
+  if (channel === 'local-db:bots:dm-thread:ensure') {
+    const root = (args[0] as { rootClientId: string }).rootClientId;
+    const previous = visualTeammateThreads.get(root);
+    const thread = previous ?? { sessionId: `visual-teammate-topic-${visualTeammateThreads.size}`, replyCount: 0 };
+    visualTeammateThreads.set(root, thread);
+    return { ok: true, sessionId: thread.sessionId, created: !previous };
   }
   if (channel === REMOTE_RESOURCE_MANIFEST_CHANNEL) return {
     protocolVersion: REMOTE_RESOURCE_PROTOCOL_VERSION,
