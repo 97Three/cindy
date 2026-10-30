@@ -7889,8 +7889,9 @@
         "usesExplanation": "Cumulative shared tool calls across all releases in the authorized audience. Your calls below count only this account on this computer."
       },
       "contribution": {
-        "unreadReview": "New review result",
+        "unreadReview": "New plugin result",
         "viewReviewResult": "View review result for {{version}}",
+        "viewMarketResult": "View Market Result",
         "anonymous": "Publish anonymously",
         "anonymousHint": "Hide public attribution for the entire plugin. When disabled, each version shows the original author’s name saved when it was submitted.",
         "anonymousAuthorOnly": "Only the original author can change this",
@@ -7986,6 +7987,7 @@
           "rejected": "Returned",
           "enabled": "Published",
           "disabled": "Unlisted",
+          "archived": "Archived",
           "current_changed": "Community Version Changed",
           "revoked": "Version Revoked",
           "cancelled": "Cancelled"

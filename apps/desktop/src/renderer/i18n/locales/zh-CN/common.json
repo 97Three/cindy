@@ -7857,8 +7857,9 @@
         "usesExplanation": "当前共享范围内各版本累计的工具调用次数。下方个人调用仅统计本机当前账户，口径不同。"
       },
       "contribution": {
-        "unreadReview": "有新的审核结果",
+        "unreadReview": "有新的处理结果",
         "viewReviewResult": "查看 {{version}} 审核结果",
+        "viewMarketResult": "查看市场处理结果",
         "anonymous": "匿名发布",
         "anonymousHint": "对整款插件隐藏公开署名，可随时修改。关闭后显示各版本提审时保存的原作者昵称。",
         "anonymousAuthorOnly": "仅原作者可修改",
@@ -7954,6 +7955,7 @@
           "rejected": "已退回",
           "enabled": "已上架",
           "disabled": "已下架",
+          "archived": "已归档",
           "current_changed": "市场版本已切换",
           "revoked": "版本已撤销",
           "cancelled": "已取消"

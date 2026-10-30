@@ -7857,8 +7857,9 @@
         "usesExplanation": "目前共享範圍內各版本累計的工具呼叫次數。下方個人呼叫僅統計本機目前帳戶，口徑不同。"
       },
       "contribution": {
-        "unreadReview": "有新的審核結果",
+        "unreadReview": "有新的處理結果",
         "viewReviewResult": "查看 {{version}} 審核結果",
+        "viewMarketResult": "查看市場處理結果",
         "anonymous": "匿名發布",
         "anonymousHint": "隱藏整款插件的公開署名，可隨時修改。關閉後顯示各版本送審時儲存的原作者暱稱。",
         "anonymousAuthorOnly": "僅原作者可修改",
@@ -7954,6 +7955,7 @@
           "rejected": "已退回",
           "enabled": "已上架",
           "disabled": "已下架",
+          "archived": "已封存",
           "current_changed": "市場版本已切換",
           "revoked": "版本已撤銷",
           "cancelled": "已取消"
