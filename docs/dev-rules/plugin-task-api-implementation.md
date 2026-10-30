@@ -344,6 +344,19 @@ DB 中下一条输入的 armed 值为 false 不代表原生执行已退出 Plan�
 此能力供同时声明并获批 `agent.tasks` 与 `agent.targets` 的插件使用；投递沿用目标任务权限，不授予读取历史、修改配置或停止其他任务的权限。
 静态检查与单元测试不等于真实 AI 执行的联调验收，不得把 accepted 当成完成。
 
+## 只读查看项目任务（增量接口，尚未发布）
+
+`cindy.observe` 的作者契约见 `FORGE_GUIDE` §4.11.8。入口 `observe-request` 在 `cindy-brain/index.ts` 守门，
+请求解析在 `pluginObserveSlot.ts`，数据在 `maker-ipc/pluginObserveTasks.ts`。
+- 要求 `agent.observe: true`，不依赖 tasks；单列 `agent:observe`，需 Host receipt 的 `observeCapabilityApproved`。
+  安装/更新只记录实际展示的确认；同能力更新保留批准，移除声明后不保留。首次调用经 `requestPluginTaskApproval(..., 'observe')` 复用既有确认。
+- 任务可见范围复用投递目标的普通任务筛选（本机、非隐藏、非伙伴、非 review、非 Worker），另含已归档、排除对话与已删除；
+  项目按 `projectKeyComparisonKey` 匹配已登记且存在的目录，worktree 归入原项目。每次最多 200 条。
+- 状态取 `readCanonicalSessionActivity` + `resolveSessionRightStatus`，与侧边栏、MCP 同一读模型；只返回元数据。
+- `openTask` 先复核任务属于可列出范围，再复核批准后以 `openMainWindowSession(..., { focus: 'if-active' })` 打开。
+- 每次请求固定 owner generation、逻辑页与批准 revision，读取后复核；变化返回 `PERMISSION_DENIED` 并丢弃结果。
+  仅本机 Desktop 逻辑页，Mobile 页面返回 `UNSUPPORTED_CAPABILITY`，不新增 device-link 透传。
+
 ### 消息图片附件
 
 `tasks.send` 与 `targets.send` 支持 `attachments?: Array<{base64:string,name?:string}>`。
