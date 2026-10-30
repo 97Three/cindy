@@ -510,7 +510,12 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
           && shown.group.historyRevision === payload.historyRevision) {
           deltaVersion++;
           setState(previous => previous.kind === 'ready' && previous.group.historyRevision === payload.historyRevision
-            ? { ...previous, group: { ...previous.group,
+            ? { ...previous,
+              // A single confirmed row proves no coverage between it and the previous page.
+              // Preserve that page's boundary across every delta until a full read reconciles it.
+              latestPageCeiling: previous.latestPageCeiling
+                ?? previous.group.messages.reduce((max, message) => Math.max(max, message.sequence), Number.NEGATIVE_INFINITY),
+              group: { ...previous.group,
               messages: mergeBotGroupMessages(previous.group.messages, payload.messages!.filter(message => !message.threadRootId)) } }
             : previous);
         }

@@ -363,6 +363,29 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('BotGroupChatView', () => {
+  // Renderer integration: isolated confirmed deltas must not conceal a missing page after reconnect.
+  it('keeps a skipped message reachable by pagination after multiple deltas overtake a full page', async () => {
+    const page = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, index) =>
+      msg({ id: `gap-${from + index}`, sequence: from + index, content: `Gap sample ${from + index}` }));
+    const initial = detail({ historyRevision: 'live', messages: page(1, 3), hasMoreBefore: false });
+    mocks.getBotGroup.mockResolvedValue({ ok: true, group: initial });
+    renderView(); await screen.findByText('Gap sample 1');
+    let finish!: (value: unknown) => void;
+    mocks.getBotGroup.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
+      .mockResolvedValue({ ok: true, group: detail({ ...initial, messages: page(5, 7), hasMoreBefore: true }) });
+    act(() => { for (const push of mocks.pushes) push({ groupId: 'g1', change: 'messages', historyRevision: 'live', messages: page(6, 6) }); });
+    await screen.findByText('Gap sample 6');
+    act(() => { for (const push of mocks.pushes) push({ groupId: 'g1', change: 'messages', historyRevision: 'live', messages: page(7, 7) }); });
+    await screen.findByText('Gap sample 7');
+    await act(async () => finish({ ok: true, group: initial }));
+    await screen.findByText('Gap sample 5');
+    mocks.getBotGroup.mockResolvedValueOnce({ ok: true, group: detail({ ...initial, messages: page(2, 4), hasMoreBefore: true }) });
+    fireEvent.click(await screen.findByRole('button', { name: 'bots.groupChat.timeline.loadEarlier' }));
+    await screen.findByText('Gap sample 4');
+    expect(mocks.getBotGroup.mock.lastCall?.[1]).toMatchObject({ beforeSequence: 5 });
+    expect(screen.getAllByText('Gap sample 7')).toHaveLength(1);
+  });
+
   // Unit: an authenticated main-chat delta used to wait for the full room IPC
   // (read state, plans and executions). A late full read must not erase that delta.
   it.each([false, true])('renders committed messages during a full refresh and preserves revocation (revoked: %s)', async revoked => {
