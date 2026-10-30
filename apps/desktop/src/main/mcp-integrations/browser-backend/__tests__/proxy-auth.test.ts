@@ -570,6 +570,30 @@ describe('BrowserProxyAuthCoordinator', () => {
     await coordinator.dispose();
   });
 
+  it('starts when an already-running worker cannot be prepared, closing only that worker', async () => {
+    const cdp = await createFakeCdp({
+      startupTargets: [
+        { targetId: 'page-1', type: 'page' },
+        { targetId: 'worker-1', type: 'worker' },
+      ],
+      failFetchEnableForSession: 'session-for-worker-1',
+    });
+    const coordinator = new BrowserProxyAuthCoordinator({
+      mode: 'proxied',
+      server: 'http://proxy.test:8080',
+      username: 'user',
+      password: 'password',
+    }, { warn: vi.fn() });
+
+    await expect(coordinator.start(cdp.cdpUrl)).resolves.toBeUndefined();
+    expect(cdp.commands).toContainEqual(expect.objectContaining({
+      method: 'Target.closeTarget',
+      params: { targetId: 'worker-1' },
+    }));
+    expect(cdp.commands).not.toContainEqual(expect.objectContaining({ method: 'Browser.close' }));
+    await coordinator.dispose();
+  });
+
   it('still tears the browser down when a failed worker cannot be closed', async () => {
     const cdp = await createFakeCdp({
       failFetchEnableForSession: 'session-worker',

@@ -544,7 +544,15 @@ export class BrowserProxyAuthCoordinator {
     };
     for (const target of targets.targetInfos ?? []) {
       if (target.targetId && isNetworkCapableTargetType(target.type)) {
-        await this.attach(target.targetId);
+        try {
+          await this.attach(target.targetId);
+        } catch (error) {
+          // Same containment as the live attach path: a worker that cannot be
+          // gated is closed alone; startup only fails if that also fails.
+          if (!isWorkerTargetType(target.type)) throw error;
+          this.logger.warn('browser proxy authentication could not prepare a new browser target');
+          await this.command('Target.closeTarget', { targetId: target.targetId });
+        }
       }
     }
     // CDP messages are ordered on the browser WebSocket. A final command acts
