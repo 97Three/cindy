@@ -1,4 +1,7 @@
 import { BotGroupProcess } from './BotGroupProcess';
+import { useGroupPersonalMask } from './useGroupPersonalMask';
+import { GroupMaskAvatar, GroupMaskStatus, GroupMaskSettingsSheet, GroupMaskCatchupSheet } from './GroupMaskControls';
+import type { ChatMaskMention } from '@cindy/maker-shared/botGroupChat';
 import { deviceDisplayName } from '@/device-link/deviceName';
 import { pendingChatMessage } from '@/chat/chatOutbox';
 import { useDelayedConnectionNotice } from '@/components/ConnectionNoticeOverlay';
@@ -137,6 +140,9 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId, messageId, n
   const identity = useBotGroupIdentities(deviceId);
   const resolveMedia = useBotGroupRemoteMedia(deviceId);
   const [settings, setSettings] = useState(false);
+  const [maskSettings, setMaskSettings] = useState(false), [catchup, setCatchup] = useState(false);
+  const openMaskAfterSettings = useRef(false), locateAfterCatchup = useRef<ChatMaskMention | null>(null);
+  const [readTarget, setReadTarget] = useState(messageId ?? '');
   const [replyTo, setReplyTo] = useState<BotGroupQuoteView | null>(null);
   const [replyFocusRequest, setReplyFocusRequest] = useState(0);
   const leaveAfterSettings = useRef(false);
@@ -157,6 +163,7 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId, messageId, n
   const jumpAttempts = useRef(0);
   const messagePositions = useRef(new Map<string, number>());
   const group = chat.state.kind === 'ready' ? chat.state.group : null;
+  const mask = useGroupPersonalMask(groupId, deviceId, !!group?.serverBacked && group.conversationKind !== 'direct' && (!deviceId || group.supportsPersonalMask === true), chat.act, group);
   const focused = useIsFocused();
   const [foreground, setForeground] = useState(() => AppState.currentState === 'active');
   const previewVisibility = useScrollViewMessageVisibility(
@@ -247,6 +254,7 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId, messageId, n
     stickToBottom.current = false;
     jumpAttempts.current = 0;
     setJumpTarget(id);
+    setReadTarget(id);
   }, []);
   useEffect(() => { if (messageId) locateMessage(messageId); }, [messageId, notificationResponse, locateMessage]);
   const positionAtMessage = useCallback((id: string, y: number) => {
@@ -260,6 +268,19 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId, messageId, n
     const timer = setTimeout(() => setHighlightId(''), 2000);
     return () => clearTimeout(timer);
   }, [highlightId]);
+  useEffect(() => {
+    if (!readTarget || catchup || !focused || !foreground || !mask.mentions.some(m => m.messageId === readTarget)) return;
+    let acknowledged = false;
+    const read = () => {
+      if (acknowledged || !previewVisibility.isVisible(readTarget)) return;
+      acknowledged = true;
+      mask.markRead([readTarget]);
+      setReadTarget('');
+    };
+    const unsubscribe = previewVisibility.subscribe(readTarget, read);
+    read();
+    return unsubscribe;
+  }, [readTarget, catchup, focused, foreground, previewVisibility, mask.markRead, mask.mentions]);
   const loadForJump = useRef(false);
   const [jumpPass, setJumpPass] = useState(0);
   useEffect(() => {
@@ -480,23 +501,25 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId, messageId, n
         onError={message => { if (message) Alert.alert(message); }} />
       </ScrollView>
       </MessageListVisibilityContext.Provider>
-      {newMessageCount > 0 ? <View style={styles.newMessages} accessibilityLiveRegion="polite">
-        <CompanionFadeIn play distance={spacing.xs}>
+      {newMessageCount > 0 || mask.mentions.length > 0 ? <View style={styles.newMessages} accessibilityLiveRegion="polite">
+        {mask.mentions.length > 0 ? <MainWindowActionButton density="compact" style={styles.newMessagesButton} action={{
+          label: `@ · ${mask.mentions.length}`, accessibilityLabel: t('groupChat.mask.catchup.title'), testID: 'botGroup.mentions', onPress: () => setCatchup(true),
+        }} /> : null}
+        {newMessageCount > 0 ? <CompanionFadeIn play distance={spacing.xs}>
           <MainWindowActionButton density="compact" style={styles.newMessagesButton} action={{
             label: t('groupChat.timeline.newMessages', { count: newMessageCount }),
             accessibilityLabel: t('message.renderer.newMessagesToBottom'),
             testID: 'botGroup.newMessages',
             onPress: () => { stickToBottom.current = true; scrollRef.current?.scrollToEnd({ animated: false }); },
           }} />
-        </CompanionFadeIn>
+        </CompanionFadeIn> : null}
       </View> : null}
       </View>
       {replyTo ? <View style={styles.replyDraft}>
         <View style={styles.flex}><BotGroupQuote display={resolveBotGroupQuote(replyTo, group.messages)} onPress={() => locateMessage(replyTo.messageId)} /></View>
         <MainWindowActionButton density="compact" action={{ label: t('message.quote.remove'), onPress: () => setReplyTo(null), testID: 'botGroup.cancelReply' }} />
       </View> : null}
-
-      <BotGroupComposer members={group.members} identityFor={identityFor} deviceId={deviceId} online={(chat.online || !!chat.canQueue) && !group.archived && !group.dissolvedAt}
+      <BotGroupComposer onParticipate={mask.participate} maskIndicator={mask.state?.settings.companionId ? <GroupMaskStatus mask={mask} deviceId={deviceId} onPress={() => setMaskSettings(true)} /> : undefined} members={group.members} identityFor={identityFor} deviceId={deviceId} online={(chat.online || !!chat.canQueue) && !group.archived && !group.dissolvedAt}
         quoteMessageId={replyTo?.messageId} focusRequest={replyFocusRequest}
         running={group.round.status === 'running'} planState={botGroupComposerPlanState(openBotGroupPlan(group), group.replyMode)}
         divisionSupported={!chat.server && (!group.singleSpeaker || group.supportsDivision === true)} attachmentsSupported={group.supportsAttachments === true} uploadAttachment={chat.uploadAttachment} onSend={send} onStop={stop} />
@@ -517,10 +540,20 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId, messageId, n
       {body}
     </>}
     {group && !direct ? <BotGroupSettingsSheet readOnly={chat.server} visible={settings} group={group} host={host} identityFor={identityFor} online={chat.online}
+      onMask={mask.state ? () => { openMaskAfterSettings.current = true; setSettings(false); } : undefined}
       act={actFromSettings} onClose={() => setSettings(false)}
       onRefresh={chat.reload}
-      onClosed={() => { if (leaveAfterSettings.current) { leaveAfterSettings.current = false; leave(); } }}
+      onClosed={() => { if (openMaskAfterSettings.current) { openMaskAfterSettings.current = false; setMaskSettings(true); } if (leaveAfterSettings.current) { leaveAfterSettings.current = false; leave(); } }}
       onDeleted={onGroupDeleted} /> : null}
+    <GroupMaskSettingsSheet visible={maskSettings && !!mask.state} mask={mask} onClose={() => setMaskSettings(false)} />
+    <GroupMaskCatchupSheet visible={catchup && !!mask.state} mask={mask} onClose={() => setCatchup(false)}
+      onLocate={mention => { locateAfterCatchup.current = mention; setCatchup(false); }} onClosed={() => {
+        const mention = locateAfterCatchup.current; locateAfterCatchup.current = null;
+        if (!mention) return;
+        if ((mention.threadRootId ?? '') === (threadRootId ?? '')) locateMessage(mention.messageId);
+        else router.push({ pathname: '/companions/groups/[groupId]', params: { groupId, deviceId, deviceName,
+          messageId: mention.messageId, ...(mention.threadRootId ? { threadRootId: mention.threadRootId } : {}) } } as never);
+      }} />
   </SafeAreaView>;
 }
 
@@ -700,6 +733,7 @@ function BotGroupTimelineItem({
           <BotGroupUserText content={message.content} mentionLabels={mentionLabels} />
         </View> : null}
       </View>
+      {message.maskAttribution ? <GroupMaskAvatar {...message.maskAttribution} deviceId={deviceId} /> : null}
     </View>;
   }
   // Server plans retain the human creator as author, but the card belongs to its organizer.
@@ -708,10 +742,10 @@ function BotGroupTimelineItem({
   const author = isPlanCard
     ? identityFor(plan?.organizerBotId ?? '', organizer?.name || plan?.organizerName || '')
     : identityFor(message.authorBotId ?? '', message.authorName || member?.name || '');
-  if (isPlanCard) continued = false;
+  if (isPlanCard || message.maskAttribution) continued = false;
   return <View style={[styles.botRow, continued && styles.botRowContinued]} testID={isPlanCard ? 'botGroup.message.plan' : 'botGroup.message.bot'}>
     {continued ? <View style={styles.avatarSpacer} /> : <View style={styles.avatarSlot}>
-      <BotGroupAvatar deviceId={deviceId} identity={author} size={BOT_GROUP_MESSAGE_AVATAR_SIZE} online={online} />
+      {message.maskAttribution ? <GroupMaskAvatar {...message.maskAttribution} deviceId={deviceId} /> : <BotGroupAvatar deviceId={deviceId} identity={author} size={BOT_GROUP_MESSAGE_AVATAR_SIZE} online={online} />}
     </View>}
     <View style={styles.botColumn}>
       {continued ? null : <View style={styles.authorRow}>

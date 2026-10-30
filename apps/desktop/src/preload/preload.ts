@@ -6367,6 +6367,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('maker:bot-direct-message-thread:get', threadId, viewerBotId),
     onBotDirectMessageChanged: fanOutBotDirectMessageChanged,
     chatServer: {
+      mask: (input: Parameters<NonNullable<import('../shared/botGroupChat').ChatServerApi['mask']>>[0]) =>
+        ipcRenderer.invoke('maker:chat-server:mask', input),
+      mentions: (input: Parameters<NonNullable<import('../shared/botGroupChat').ChatServerApi['mentions']>>[0]) =>
+        ipcRenderer.invoke('maker:chat-server:mentions', input),
       manage: (input: Parameters<import('../shared/botGroupChat').ChatServerApi['manage']>[0]): ReturnType<import('../shared/botGroupChat').ChatServerApi['manage']> =>
         ipcRenderer.invoke('maker:chat-server:manage', input),
       ownedBots: (): ReturnType<import('../shared/botGroupChat').ChatServerApi['ownedBots']> =>

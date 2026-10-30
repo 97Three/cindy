@@ -5712,14 +5712,15 @@
           "showDetails": "자세히 보기",
           "check": {
             "checking": "서버를 확인하는 중…",
+            "checkingHint": "서버에 연결해 시스템, 포트, 기존 서비스를 확인하는 중입니다.",
+            "idle": "서버를 선택하면 배포할 수 있는지 먼저 확인합니다.",
             "ready": "배포할 수 있습니다",
             "blocked": "자동으로 배포할 수 없습니다",
             "recheck": "다시 확인",
             "direct": "80·443 포트가 비어 있어 중계가 직접 사용합니다.",
             "nginx": "서버의 기존 Nginx를 통해 연결하고, 기존 사이트는 그대로 둡니다.",
             "mine": "이 컴퓨터에서 배포한 중계가 이미 있습니다. 그대로 업데이트하며, 참여한 기기에는 영향이 없습니다.",
-            "other": "이 컴퓨터가 배포하지 않은 중계가 있습니다. 배포하면 삭제되고, 그 중계에 참여한 기기는 다시 참여해야 합니다.",
-            "cleanup": "먼저 {{server}}의 끝나지 않은 배포를 정리합니다."
+            "other": "이 컴퓨터가 배포하지 않은 중계가 있습니다. 배포하면 삭제되고, 그 중계에 참여한 기기는 다시 참여해야 합니다."
           },
           "running": {
             "deploy": "서버에 배포하는 중…",
@@ -5727,7 +5728,7 @@
             "uninstall": "서버에서 제거하는 중…"
           },
           "done": {
-            "deploy": "배포를 마쳤습니다. 이제 이 컴퓨터는 서버의 중계를 사용합니다. 기기 추가로 휴대폰과 다른 컴퓨터를 참여시키세요.",
+            "deploy": "배포를 마쳤습니다. 연결 경로에서 전환하면 기기를 추가할 수 있습니다.",
             "upgrade": "서버의 중계를 {{version}}(으)로 업그레이드했습니다.",
             "uninstall": "서버에서 중계를 제거했습니다"
           },
@@ -5751,7 +5752,6 @@
             "nginx-rollback": "배포를 완료하지 못했습니다. 이전 Nginx 설정을 복원하고 있습니다…"
           },
           "steps": {
-            "cleanup": "기존 서버 {{server}} 정리",
             "connect": "서버에 연결",
             "check": "서버 확인",
             "runtime": "실행 환경 설치",
@@ -5786,6 +5786,10 @@
           "deployingStep": "{{step}}…",
           "viewProgress": "진행 상황 보기",
           "resume": "배포 계속",
+          "rename": "이름 변경",
+          "renameHint": "이 컴퓨터에 표시되는 이름만 바뀝니다. 서버와 참여한 기기에는 원래 이름이 그대로 표시됩니다.",
+          "renameSave": "저장",
+          "renameCancel": "취소",
           "statusChecking": "확인하는 중…",
           "statusOnline": "온라인",
           "statusOffline": "연결 안 됨",
@@ -5800,14 +5804,15 @@
             "label": "배포 단계",
             "form": "서버 선택",
             "deploy": "배포",
-            "done": "기기 추가"
+            "done": "완료"
           },
           "running": "{{server}}에 배포하는 중…",
           "backgroundHint": "창을 닫아도 배포는 계속됩니다",
           "background": "백그라운드에서 계속",
           "doneTitle": "{{name}} 배포를 마쳤습니다",
-          "doneHint": "이제 이 컴퓨터는 이 중계를 사용합니다. 휴대폰으로 스캔하거나, 링크를 다른 컴퓨터에 보내 참여시키세요.",
-          "doneLater": "나중에 연결 경로에서도 기기를 추가할 수 있습니다",
+          "doneHint": "이 컴퓨터는 아직 현재 경로를 사용합니다. 이 경로 사용을 눌러 전환한 뒤 휴대폰과 다른 컴퓨터를 추가하세요.",
+          "doneLater": "나중에 연결 경로에서도 전환할 수 있습니다",
+          "use": "이 경로 사용",
           "finish": "완료"
         },
         "manage": {
@@ -10233,6 +10238,72 @@
       "threadClosed": "이번 동료 간 대화가 끝났습니다 · 보기 전용"
     },
     "groupChat": {
+      "mask": {
+        "toolAccess": "도구 권한",
+        "catchup": {
+          "title": "나를 멘션한 메시지",
+          "me": "나",
+          "markAll": "모두 읽음으로 표시",
+          "empty": "읽지 않은 멘션이 없습니다",
+          "thread": "스레드",
+          "main": "그룹 채팅",
+          "answered": "대신 답변함"
+        },
+        "title": "AI 대신 답장 모드",
+        "settings": "AI 대신 답장 설정",
+        "companion": "내 파트너",
+        "choose": "파트너 선택",
+        "enabled": "자동 대신 답장",
+        "triggerLabel": "작동 방식",
+        "resumeAfter": "부재 후 재개",
+        "start": "시작 시간",
+        "end": "종료 시간",
+        "startManual": "지금 시작",
+        "stop": "대신 답장 중지",
+        "todos": "나와 관련된 할 일 정리",
+        "digestLabel": "요약 받기",
+        "saving": "저장 중…",
+        "saveError": "저장하지 못했어요. 기존 설정이 유지됩니다. 다시 시도해 주세요.",
+        "retry": "다시 시도",
+        "loading": "설정 불러오는 중…",
+        "takeover": "직접 답장",
+        "resume": "AI 대신 답장 재개",
+        "status": {
+          "enabled": "활성",
+          "paused": "일시 중지",
+          "off": "꺼짐",
+          "offline": "오프라인",
+          "waiting": "대기 중",
+          "unbound": "미설정"
+        },
+        "detail": {
+          "paused": "이 대화를 직접 이어받았어요",
+          "off": "자동 대신 답장 꺼짐",
+          "offline": "답장 일시 중지 · 컴퓨터 오프라인",
+          "waiting": "수동 시작 대기",
+          "unbound": "파트너 미선택",
+          "enabled": "파트너가 대신 답장할 준비가 됐어요"
+        },
+        "trigger": {
+          "always": "항상 활성화",
+          "manual": "수동 작동",
+          "scheduled": "예약 작동"
+        },
+        "digest": {
+          "daily": "매일",
+          "manual": "수동"
+        },
+        "minutes": "{{count}}분",
+        "presence": "직접 참여 중 · 부재 {{minutes}}분 후 재개",
+        "scheduledWait": "{{time}}에 시작",
+        "attribution": "{{name}}가 {{owner}} 대신 답장했어요",
+        "digestNow": "지금 정리",
+        "digestWorking": "정리 중…",
+        "digestSent": "파트너 채팅으로 보냈어요",
+        "digestFailed": "정리하지 못했어요. 다시 시도하세요.",
+        "digestEmpty": "새로 정리할 내용이 없어요",
+        "joinSetup": "참여 후 AI 대신 답장 설정"
+      },
       "migrationPending": "이전 기록 일부가 아직 업로드되지 않았습니다. 자동으로 다시 시도하며 채팅은 계속 사용할 수 있습니다.",
       "memberSeparator": ", ",
       "ownerOf": "{{name}}의 소유자",
