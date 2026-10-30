@@ -609,6 +609,7 @@ import { initHeartbeatService } from './heartbeatService';
 import { registerRemoteDesktopIpc } from './remote-desktop';
 import { initAnalyticsSettingsService, noteAuthColdStartState } from './analyticsSettingsService';
 import { initLogUploadService, scheduleStartupBackfill } from './log-upload';
+import { initPerformanceTraceService } from './performance-trace';
 import { createOpenLogsMenuItem, openLogsDirectory } from './logSupport';
 import { WindowManualDragController } from './windowManualDrag';
 import { loadWindowsTaskbarNative } from './windowsTaskbarNative';
@@ -1252,6 +1253,10 @@ configureRoutineHost({
   ensureRoutineSession: ensureBotRoutineLaneSession,
   closeRoutineSession: async (sessionId) => {
     await getMakerIfReady()?.closeSession(sessionId);
+  },
+  // fresh 任务未被派发即回收：复用普通任务同一条删除写入（不另起并行写链）。
+  deleteRoutineSession: async (sessionId) => {
+    await patchSessionMetaInDb(sessionId, { status: 'deleted' });
   },
   getScheduler: getSchedulerIfInitialized,
   getScheduleStorage,
@@ -3088,6 +3093,10 @@ function installApplicationMenu(
       label: labels.helpMenu,
       submenu: [
         createOpenLogsMenuItem(),
+        {
+          label: labels.performanceTrace,
+          click: () => dispatchApplicationMenuCommand(mainWindow, 'open-performance-trace'),
+        },
         { type: 'separator' },
         {
           label: labels.help,
@@ -9920,6 +9929,7 @@ app.on('ready', async () => {
   // log-upload:settings-get 决定入口可用性;更重要的是崩溃即时路径要在
   // onFatalShutdown 上就位,否则 createWindow 之后立刻崩的那一次拿不到标记。
   initLogUploadService();
+  initPerformanceTraceService(() => mainWindowRef);
   // Local profiles bypass authManager's cloud claim path. Await the same
   // asynchronous PID provenance scan before the first BrowserWindow exists so
   // sidebar's synchronous legacy migration reads can consume an exact proof.
@@ -10083,11 +10093,18 @@ onQuit(
   },
   'sync',
 );
+let schedulerQuit: Promise<void> | undefined;
 onQuit(
   'session-active-turn-freeze',
   () => {
     suspendUsageLimitWaits();
     freezeSessionActiveTurnMarkers();
+    // Fence scheduler completion before process reapers / Maker close emit
+    // terminal events. Keep the write alive until the async quit phase drains.
+    schedulerQuit = getSchedulerIfInitialized()?.stop({ interrupted: true });
+    void schedulerQuit?.catch((error) => {
+      createSchedulerLogger('scheduler-host').error?.('scheduler quit persistence failed', error);
+    });
   },
   'sync',
 );
@@ -10264,6 +10281,7 @@ onQuit(
 onQuit(
   'shutdown-maker',
   async () => {
+    await schedulerQuit?.catch(() => {});
     // Not try/finally: a rejection here can predate `maker.shutdown` entirely
     // (see `makerShutdownSettled`), so it must not read as "the parent is down".
     const { piSessionFailures } = await shutdownMaker();

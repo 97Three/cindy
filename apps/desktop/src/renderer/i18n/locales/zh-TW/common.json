@@ -12781,6 +12781,7 @@
       "piTransportClosed": "遠端 Pi 連線已中斷（SSH 通道關閉）。遠端任務仍在執行，重新連線後可以繼續。",
       "piManagerUnavailable": "遠端 Pi 管理器未就緒，請稍後重試；若持續失敗請到「設定 → 遠端機器」重新安裝 Pi。",
       "piBundledNodeMissing": "遠端缺少執行環境（Node.js）。請到「設定 → 遠端機器」展開該主機，先在 Claude Code 或 Codex 列點擊「安裝」（會附帶 Node.js），再建立 Pi 任務。",
+      "remoteCompactEncryptedContent": "整理上下文失敗：模型無法讀取歷史中的加密內容。自動接續未完成，可重試恢復。",
       "contextOverflow": "這則訊息本身已超過模型上下文上限，無法在目前 Agent 中自動換窗繼續。請縮短輸入或去掉過大附件後再試。",
       "attachmentAccessDeniedTitle": "Cindy 無法讀取來源附件，訊息未傳送。",
       "attachmentAccessDeniedRecovery": "請將檔案另存到「下載」或其他可存取的資料夾，移除原附件，再用附件按鈕加入副本後傳送。"
@@ -18473,5 +18474,30 @@
       "provider": "API 供應商",
       "unknown": "未記錄渠道"
     }
+  },
+  "performanceTrace": {
+    "title": "效能追蹤",
+    "start": "開始錄製",
+    "stop": "停止錄製",
+    "description": "開始後重複出現卡頓的操作，再停止錄製。60 秒後自動結束。本機軌跡可能包含路徑等敏感資訊。",
+    "localScope": "僅記錄目前電腦，不包含其他電腦和手機。",
+    "recording": "正在錄製 · {{seconds}} 秒",
+    "saving": "正在儲存錄製…",
+    "result": "效能報告",
+    "previous": "查看上次報告",
+    "previousResult": "上次效能報告",
+    "previousSummary": "上次錄製：{{time}}，共 {{seconds}} 秒。",
+    "resultDescription": "提交完整的效能報告、CPU 取樣檔案、Chromium 軌跡及填寫的說明，用於排查卡頓。上傳前會移除可識別的憑證、電子郵件地址等敏感資訊，檔案仍可能包含本機路徑和效能標記。本機原始檔案保留 7 天。",
+    "summary": "已錄製 {{seconds}} 秒。",
+    "partial": "部分資料未能擷取或已達上限，現有記錄已保留。",
+    "note": "當時在做什麼？（選填）",
+    "submit": "提交報告",
+    "keepLocal": "查看本機檔案",
+    "close": "關閉",
+    "new": "重新錄製",
+    "uploaded": "效能報告檔案已上傳。報告編號：{{id}}。回報問題時請附上此編號。",
+    "unavailable": "目前版本未設定報告上傳位址。可開啟本機檔案，交給支援人員。",
+    "consent": "請先在設定中同意隱私權政策，再提交報告。本機檔案已保留。",
+    "failed": "操作未完成，請重試或查看本機檔案。"
   }
 }

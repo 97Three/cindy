@@ -12782,6 +12782,7 @@
       "piTransportClosed": "远端 Pi 连接已中断（SSH 通道关闭）。远端任务仍在运行，重新连接后可以继续。",
       "piManagerUnavailable": "远端 Pi 管理器未就绪，请稍后重试；若持续失败请到「设置 → 远端机器」重新安装 Pi。",
       "piBundledNodeMissing": "远端缺少运行环境（Node.js）。请到「设置 → 远端机器」展开该主机，先在 Claude Code 或 Codex 行点击「安装」（会附带 Node.js），再创建 Pi 任务。",
+      "remoteCompactEncryptedContent": "整理上下文失败：模型无法读取历史中的加密内容。自动接续未完成，可重试恢复。",
       "contextOverflow": "这条消息本身已经超过模型上下文上限，没法在当前 Agent 里自动换窗继续。请缩短输入或去掉超大附件后再试。",
       "attachmentAccessDeniedTitle": "Cindy 无法读取源附件，消息未发送。",
       "attachmentAccessDeniedRecovery": "请将文件另存到“下载”或其他可访问的文件夹，移除原附件，再用附件按钮添加副本后发送。"
@@ -18473,5 +18474,30 @@
       "provider": "API 供应商",
       "unknown": "未记录渠道"
     }
+  },
+  "performanceTrace": {
+    "title": "性能跟踪",
+    "start": "开始录制",
+    "stop": "停止录制",
+    "description": "开始后重复出现卡顿的操作，再停止录制。60 秒后自动结束。本地轨迹可能包含路径等敏感信息。",
+    "localScope": "仅记录当前电脑，不包含其他电脑和手机。",
+    "recording": "正在录制 · {{seconds}} 秒",
+    "saving": "正在保存录制…",
+    "result": "性能报告",
+    "previous": "查看上次报告",
+    "previousResult": "上次性能报告",
+    "previousSummary": "上次录制：{{time}}，共 {{seconds}} 秒。",
+    "resultDescription": "提交完整的性能报告、CPU 采样文件、Chromium 轨迹和填写的说明，用于排查卡顿。上传前会抹除可识别的凭证、邮箱等敏感信息，文件仍可能包含本地路径和性能标记。本地原始文件保留 7 天。",
+    "summary": "已录制 {{seconds}} 秒。",
+    "partial": "部分数据未能采集或已达到上限，现有记录已保留。",
+    "note": "当时在做什么？（选填）",
+    "submit": "提交报告",
+    "keepLocal": "查看本地文件",
+    "close": "关闭",
+    "new": "重新录制",
+    "uploaded": "性能报告文件已上传。报告编号：{{id}}。反馈问题时请附上此编号。",
+    "unavailable": "当前版本未配置报告上传地址。可打开本地文件，交给支持人员。",
+    "consent": "请先在设置中同意隐私政策，再提交报告。本地文件已保留。",
+    "failed": "操作未完成，请重试或查看本地文件。"
   }
 }
