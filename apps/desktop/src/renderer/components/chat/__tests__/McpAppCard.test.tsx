@@ -357,9 +357,10 @@ it.each(['light', 'dark'])('keeps the live App mounted while entering and leavin
   }
 });
 
-// unit: regression for resize feedback. Minimum input: eight height changes at fixed
-// width. Old ResizeObserver echoes context every time, inducing another autoResize.
-it.each(['rising', 'oscillating'])('ignores height-only observations and bounds a %s feedback loop without closing the View', async pattern => {
+// unit: #7924 / 4422987779. The real card must follow incremental content growth
+// without echoing height-only context; the old test misclassified eight growing
+// notifications as feedback. Alternating sizes and the 5000px cap remain bounded.
+it.each(['rising', 'oscillating'])('follows %s sizes without echoing height-only context or closing the View', async pattern => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
   vi.stubGlobal('matchMedia', () => ({ matches: false }));
@@ -382,7 +383,11 @@ it.each(['rising', 'oscillating'])('ignores height-only observations and bounds 
       controller.message({ method: 'ui/notifications/size-changed', params: { height: pattern === 'rising' ? 400 + i * 30 : 400 + (i % 2) * 30 } }); resize();
     });
     expect(controller.context).not.toHaveBeenCalled();
-    expect(container.querySelector('iframe')?.parentElement?.style.height).toBe('400px');
+    expect(container.querySelector('iframe')?.parentElement?.style.height).toBe(pattern === 'rising' ? '670px' : '400px');
+    if (pattern === 'rising') {
+      await act(async () => controller.message({ method: 'ui/notifications/size-changed', params: { height: 350 } }));
+      expect(container.querySelector('iframe')?.parentElement?.style.height).toBe('350px');
+    }
     expect(controller.close).not.toHaveBeenCalled();
     const frameRoot = container.querySelector('iframe')!.parentElement!;
     Object.defineProperty(frameRoot, 'clientWidth', { configurable: true, value: 500 });

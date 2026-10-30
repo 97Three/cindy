@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { acquireGhostDepositLock } from './ghostDepositQuota.js';
 import { GHOST_CINDY_DEPOSIT_MAX_BYTES, GHOST_CINDY_DEPOSIT_QUOTA_BYTES, type GhostPipePickResult } from '../../shared/ghost.js';
 import { sniffMediaMime, additionalMp3BytesNeeded } from '../cindy-media/sniffMediaMime.js';
 import { supportedMime } from '../cindy-media/blobStore.js';
@@ -82,29 +83,33 @@ export async function importPickedFiles(deps: PickedFilesDeps, ghostId: string, 
           files.push({ name, size: stat.size, mimeType, ref: saved.ref, sha256: saved.sha256 });
         } else {
           if (!mediaMime || !supportedMime(mediaMime)) return failure({ ok: false, errorCode: 'UNSUPPORTED', message: '媒体库只收按字节识别的图片、视频、音频或 glb' });
-          const used = await deps.usageBytes(ghostId);
-          input.assertCurrent();
-          if (used + stat.size > GHOST_CINDY_DEPOSIT_QUOTA_BYTES) return failure({ ok: false, errorCode: 'TOO_LARGE', message: '插件媒体寄存已达配额', limitBytes: GHOST_CINDY_DEPOSIT_QUOTA_BYTES });
-          const temp = await fs.mkdtemp(path.join(deps.tempRoot, 'cindy-pick-'));
+          const release = await acquireGhostDepositLock(ghostId);
           try {
-            const staging = path.join(temp, 'media');
-            const out = await fs.open(staging, 'wx', 0o600);
-            try {
-              for await (const chunk of chunks()) {
-                await out.writeFile(chunk);
-                progress?.(completed + read, undefined, '正在导入文件');
-              }
-            } finally { await out.close(); }
             input.assertCurrent();
-            const staged = await fs.open(staging, 'r');
+            const used = await deps.usageBytes(ghostId);
+            input.assertCurrent();
+            if (used + stat.size > GHOST_CINDY_DEPOSIT_QUOTA_BYTES) return failure({ ok: false, errorCode: 'TOO_LARGE', message: '插件媒体寄存已达配额', limitBytes: GHOST_CINDY_DEPOSIT_QUOTA_BYTES });
+            const temp = await fs.mkdtemp(path.join(deps.tempRoot, 'cindy-pick-'));
             try {
-              const actualPrefix = Buffer.alloc(prefix.length);
-              await staged.read(actualPrefix, 0, actualPrefix.length, 0);
-              if (sniffMediaMime(actualPrefix) !== mediaMime) throw new Error('FILE_CHANGED');
-            } finally { await staged.close(); }
-            const saved = await deps.deposit(ghostId, staging, mediaMime, input.assertCurrent);
-            files.push({ name, size: stat.size, mimeType, ref: saved.url });
-          } finally { await fs.rm(temp, { recursive: true, force: true }); }
+              const staging = path.join(temp, 'media');
+              const out = await fs.open(staging, 'wx', 0o600);
+              try {
+                for await (const chunk of chunks()) {
+                  await out.writeFile(chunk);
+                  progress?.(completed + read, undefined, '正在导入文件');
+                }
+              } finally { await out.close(); }
+              input.assertCurrent();
+              const staged = await fs.open(staging, 'r');
+              try {
+                const actualPrefix = Buffer.alloc(prefix.length);
+                await staged.read(actualPrefix, 0, actualPrefix.length, 0);
+                if (sniffMediaMime(actualPrefix) !== mediaMime) throw new Error('FILE_CHANGED');
+              } finally { await staged.close(); }
+              const saved = await deps.deposit(ghostId, staging, mediaMime, input.assertCurrent);
+              files.push({ name, size: stat.size, mimeType, ref: saved.url });
+            } finally { await fs.rm(temp, { recursive: true, force: true }); }
+          } finally { release(); }
         }
         completed += stat.size;
         input.assertCurrent();

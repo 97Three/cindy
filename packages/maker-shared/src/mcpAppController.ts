@@ -259,7 +259,7 @@ export function mcpAppFailureKey(error: unknown): 'mcpApps.updateRequired' | 'mc
 export { MCP_APPS_INVOKE };
 
 export const MCP_APP_MAX_HEIGHT = 5_000;
-/** Bound feedback loops (100vh + autoResize, or alternating scrollbar layouts).
+/** Bound oscillating layouts; ordinary content growth uses only the height cap.
  * A width change starts a new layout; a lock otherwise lasts for this View. */
 export class McpAppHeightGuard {
   private samples: Array<{ height: number; at: number }> = [];
@@ -280,10 +280,9 @@ export class McpAppHeightGuard {
     if (!previous || previous.height !== height) this.samples.push({ height, at: now });
     if (this.samples.length >= 8) {
       const recent = this.samples.slice(-8).map(sample => sample.height);
-      const rising = recent.every((h, i) => i === 0 || h > recent[i - 1]);
       const oscillating = recent.slice(2).every((h, i) =>
         (h - recent[i + 1]) * (recent[i + 1] - recent[i]) < 0);
-      if (rising || oscillating) {
+      if (oscillating) {
         this.locked = recent[0];
         this.onLock();
         return this.locked;

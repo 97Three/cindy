@@ -274,7 +274,7 @@ SDK 对应 `app.getHostContext()` / `app.onhostcontextchanged`。`theme` 是 lig
 用 SDK `autoResize` 或标准 `ui/notifications/size-changed` 上报真实内容高度。
 内联高度为 80–5000 像素；超出或宿主锁高后在卡片内滚动。不要把 `100vh` 和 autoResize
 一起用，也不要层层套固定高度滚动容器：宿主分配高度被当成新内容高度，会反复追涨。
-短时间连续增高或振荡会锁高，宽度变化后再测量。内容多时请求全屏：
+连续增高受 5000 像素上限约束；短时间振荡会锁高，宽度变化后再测量。内容多时请求全屏：
 
 ```js
 await app.requestDisplayMode({ mode: 'fullscreen' });
