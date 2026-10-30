@@ -424,6 +424,7 @@ import {
 import { VoiceInputPointerHintLayer } from '@/voice-input/VoiceInputPointerHintLayer';
 import {
   createComposerLongPressVoiceGesture,
+  isComposerLongPressVoiceReady,
   type ComposerLongPressVoiceGesture,
 } from '@/voice-input/composerLongPressGesture';
 import { requestRendererMicrophonePermission } from '@/voice-input/startGuards';
@@ -3744,7 +3745,7 @@ export function ChatInput({
     };
   }, []);
 
-  // 长按输入框语音输入默认开启，手动配置可关闭。按住鼠标
+  // 长按输入框语音输入默认开启，手动配置可关闭；麦克风未授权时长按与提示都不生效。按住鼠标
   // 左键不动片刻即开始录音,松开结束。按下由输入框的 onMouseDown 接入(要读
   // detail 才能排除双击);移动/松开挂在 window 上。真正开始录音后再指针捕获,
   // 拖出窗口松开也能停;等待期间不捕获,免得打断选字。
@@ -3754,7 +3755,7 @@ export function ChatInput({
   useEffect(() => {
     setComposerVoiceHoverHintReady(false);
     if (!composerVoiceHovered) return;
-    const timer = setTimeout(() => setComposerVoiceHoverHintReady(true), 500);
+    const timer = setTimeout(() => setComposerVoiceHoverHintReady(isComposerLongPressVoiceReady()), 500);
     return () => clearTimeout(timer);
   }, [composerVoiceHovered]);
   const [composerVoiceHolding, setComposerVoiceHolding] = useState(false);
@@ -3955,6 +3956,7 @@ export function ChatInput({
     // 提及 / 粘贴文本 / 引用这类 chip 自带点击与拖拽行为,不在上面起手。
     const atom = target.closest('[contenteditable="false"]');
     if (atom && atom !== editorElement && editorElement.contains(atom)) return;
+    if (!isComposerLongPressVoiceReady()) return;
     gesture.press({ x: event.clientX, y: event.clientY });
   }, []);
 
