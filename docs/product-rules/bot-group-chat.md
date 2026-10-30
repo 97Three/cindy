@@ -216,7 +216,8 @@ Chat Server 声明 `capabilities.groupSingleSpeaker: 1` 时，服务器群按下
   提示尽可能说明原因和解决办法：图片能力、模型可用性、认证、限流、额度、网络和超时分别本地化，
   未知错误给出重新发送和查看日志的建议；原始错误、私人路径、响应正文和凭证不进入群聊。
   运行终态以 `sdkError`、`errorStatus`、`usageLimit` 等结构化信号及既有确定性额度判定分类；
-  Codex 的 `codexErrorInfo` 额度、预算与认证标签优先于消息文字，连接／流断开标签归为网络错误。
+  Codex 的 `codexErrorInfo` 额度、预算与认证标签优先于消息文字，连接／流断开标签归为网络错误；
+  但请求级 `httpConnectionFailed` 带明确非 408 的 4xx 业务拒绝时归为运行错误，不提示网络或 Proxy 故障。
   会话无事件与上游响应空闲看门狗的标准 reason（包括 bridge 变体）归为运行超时。
   Pi prompt RPC 超时复用原生恢复的同一信号判定，标准 `pi-prompt-timeout` reason 也归为运行超时。
   创建专线返回 `NO_MODEL` 时归为模型不可用；本地普通群、分工与服务器执行复用同一分类，提示配置可用模型。
