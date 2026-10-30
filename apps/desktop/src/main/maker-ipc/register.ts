@@ -15225,7 +15225,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       broadcastSessionCreated(sessionId);
       return sessionId;
     },
-    focusSession: (sessionId) => openMainWindowSession(sessionId),
+    focusSession: (sessionId) => openMainWindowSession(sessionId, { focus: 'if-active' }),
   });
 
   // 排队项会进 pendingQueue projection, 经 Electron IPC 结构化克隆发给 renderer,
@@ -23248,13 +23248,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             `model "${model}" is unavailable from provider "${actualProviderId ?? 'default'}"`,
           );
         }
-        if (
-          internalOptions.source === 'user' &&
-          atomicSelection.effort === null &&
-          catalogModel.efforts.length > 0
-        ) {
-          throwIpcError('INVALID_PARAMS', `effort "null" is unavailable for model "${model}"`);
-        }
+        // Null means unspecified: resolve the target model's default/first effort
+        // before staging or applying the selection, including queued-send replay.
         const axes = resolveSessionRuntimeAxes({
           model: catalogModel,
           effort: atomicSelection.effort,
