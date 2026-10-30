@@ -66,6 +66,18 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('BotGroupCreateDialog', () => {
+  it('retries a failed roster request without losing the group name', async () => {
+    mocks.status.mockResolvedValue({ enabled: true });
+    mocks.ownedBots.mockRejectedValueOnce(new Error('Network unavailable'))
+      .mockResolvedValueOnce({ ok: true, bots: [{ actorId: 'actor-linux', botId: 'linux', name: 'Linux' }] });
+    render(<BotGroupCreateDialog onOpenChange={vi.fn()} onCreated={vi.fn()} />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Keep my group name' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'commonUi.retry' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Linux' }));
+    expect(screen.getByRole('textbox')).toHaveProperty('value', 'Keep my group name');
+    fireEvent.click(screen.getByRole('button', { name: 'bots.groupChat.create.submit' }));
+    await waitFor(() => expect(mocks.createBotGroup).toHaveBeenCalledWith({ name: 'Keep my group name', botIds: ['linux'] }));
+  });
   it('creates with an owned companion that only exists on another computer', async () => {
     mocks.status.mockResolvedValue({ enabled: true });
     mocks.ownedBots.mockResolvedValue({ ok: true, bots: [{ actorId: 'actor-linux', botId: 'linux', name: 'Linux' }] });

@@ -47,6 +47,7 @@ export function BotGroupCreateDialog({
   const [cloudBots, setCloudBots] = useState<Candidate[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(!privateChatBotId);
   const [membersLoadFailed, setMembersLoadFailed] = useState(false);
+  const [membersLoadAttempt, setMembersLoadAttempt] = useState(0);
   const [serverBacked, setServerBacked] = useState(false);
   const candidates = useMemo(() => serverBacked ? cloudBots : pickableBots(bots), [bots, cloudBots, serverBacked]);
   const selectableCount = candidates.filter(isSelectable).length;
@@ -76,7 +77,7 @@ export function BotGroupCreateDialog({
       }
     })();
     return () => { disposed = true; };
-  }, [privateChatBotId]);
+  }, [privateChatBotId, membersLoadAttempt]);
   const minMembers = privateChatBotId ? 1 : serverBacked ? 0 : BOT_GROUP_MIN_MEMBERS;
   const [name, setName] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -284,6 +285,15 @@ export function BotGroupCreateDialog({
                 ) : null}
                 <div id="bot-group-create-members-feedback" className="text-12 leading-snug">
                   {membersHint ? <p className="text-[var(--form-field-hint)]">{membersHint}</p> : null}
+                  {membersLoadFailed ? (
+                    <Button type="button" variant="secondary" size="sm" onClick={() => {
+                      setMembersLoadFailed(false);
+                      setLoadingMembers(true);
+                      setMembersLoadAttempt(attempt => attempt + 1);
+                    }}>
+                      {t('commonUi.retry')}
+                    </Button>
+                  ) : null}
                   <p aria-live="polite" className="text-[var(--error-fg)]">
                     {membersError
                       ? t('bots.groupChat.create.minMembers', { min: BOT_GROUP_MIN_MEMBERS })
