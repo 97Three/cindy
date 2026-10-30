@@ -168,10 +168,20 @@ export class PerformanceTraceController {
       try {
         await this.deps.save(report);
       } catch (error) {
+        if (!this.isCurrent()) {
+          this.report = null;
+          this.emit(idle());
+          return this.snapshot();
+        }
         // Preserve the in-memory result so reveal/upload can retry saving it.
         report.partial = true;
         this.emit({ phase: 'ready', partial: true, durationMs: report.durationMs });
         throw error;
+      }
+      if (!this.isCurrent()) {
+        this.report = null;
+        this.emit(idle());
+        return this.snapshot();
       }
       this.emit({ phase: 'ready', durationMs: report.durationMs, partial: report.partial });
       return this.snapshot();

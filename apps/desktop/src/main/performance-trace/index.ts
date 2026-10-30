@@ -1,11 +1,10 @@
-import { app, BrowserWindow, ipcMain, shell, type WebContents } from 'electron';
+import { app, ipcMain, shell, type BrowserWindow, type WebContents } from 'electron';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {
   PERFORMANCE_TRACE_CHANNEL,
   PERFORMANCE_TRACE_EVENTS_CHANNEL,
-  PERFORMANCE_TRACE_STATE_CHANNEL,
 } from '../../shared/performanceTrace';
 import {
   activeOwnerScopeKey,
@@ -23,7 +22,7 @@ import { uploadPerformanceTraceReport } from '../log-upload';
 import { generateUploadCode } from '../log-upload/uploadCode';
 import { PerformanceTraceController, type TraceCapture } from './controller';
 import { beginNativeTrace } from './capture';
-import { createTraceCommandHandler } from './ipc';
+import { createTraceCommandHandler, createTraceStatePublisher } from './ipc';
 import { readTraceArtifacts } from './artifacts';
 import { cleanupTraceReports, startTraceRetention } from './retention';
 
@@ -49,14 +48,10 @@ export function initPerformanceTraceService(getMainWindow: () => BrowserWindow |
       platform: process.platform,
       arch: process.arch,
     }),
-    changed: (state) => {
-      if (
-        source &&
-        !source.isDestroyed() &&
-        isTrustedAppRendererWindow(BrowserWindow.fromWebContents(source))
-      )
-        source.send(PERFORMANCE_TRACE_STATE_CHANNEL, state);
-    },
+    changed: createTraceStatePublisher({
+      getMainWindow,
+      isTrustedWindow: isTrustedAppRendererWindow,
+    }),
     save: async (report) => {
       const dir = directory(report.reportId);
       await mkdir(dir, { recursive: true });

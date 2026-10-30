@@ -1,7 +1,24 @@
-import type { IpcMainInvokeEvent } from 'electron';
+import type { BrowserWindow, IpcMainInvokeEvent } from 'electron';
+import {
+  PERFORMANCE_TRACE_STATE_CHANNEL,
+  type PerformanceTraceState,
+} from '../../shared/performanceTrace';
 import { isIpcError } from '../../shared/ipc-errors';
 import { throwIpcError } from '../utils/ipcValidate';
 import type { PerformanceTraceController } from './controller';
+
+/** Status follows the current trusted main window; capture ownership stays with its source. */
+export function createTraceStatePublisher(deps: {
+  getMainWindow(): BrowserWindow | null;
+  isTrustedWindow(window: BrowserWindow): boolean;
+}) {
+  return (state: PerformanceTraceState): void => {
+    const window = deps.getMainWindow();
+    if (!window || window.isDestroyed() || !deps.isTrustedWindow(window)) return;
+    if (!window.webContents.isDestroyed())
+      window.webContents.send(PERFORMANCE_TRACE_STATE_CHANNEL, state);
+  };
+}
 
 export function createTraceCommandHandler(deps: {
   controller: PerformanceTraceController;
@@ -41,6 +58,8 @@ export function createTraceCommandHandler(deps: {
       if (command !== 'start' && !deps.isSource(event))
         throwIpcError('PRECONDITION_FAILED', 'Use the window that started this recording');
       if (command === 'start') {
+        if (!deps.isMainWindow(event))
+          throwIpcError('PRECONDITION_FAILED', 'Start recording from the main window');
         if (!controller.canStart()) throwIpcError('PRECONDITION_FAILED', 'Recording is busy');
         deps.selectSource(event);
         return await controller.start();

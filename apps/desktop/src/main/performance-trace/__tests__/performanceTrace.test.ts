@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PerformanceTraceController, type TraceControllerDeps } from '../controller';
 import { projectCpuProfile, projectTraceEvent, type TraceReport } from '../report';
 import { measureTraceOperation, setTraceOperationObserver } from '../measure';
-import { createTraceCommandHandler } from '../ipc';
-import type { IpcMainInvokeEvent } from 'electron';
+import { createTraceCommandHandler, createTraceStatePublisher } from '../ipc';
+import type { BrowserWindow, IpcMainInvokeEvent } from 'electron';
+import { PERFORMANCE_TRACE_STATE_CHANNEL } from '../../../shared/performanceTrace';
 import { submitPerformanceReport } from '../upload';
 import type { LogUploadMeta } from '../../log-upload/types';
 import { randomBytes } from 'node:crypto';
@@ -22,8 +23,10 @@ import { cleanupTraceReports, startTraceRetention, TRACE_RETENTION_MS } from '..
  * Minimal new failure: a missing chunk/marker, failed final request, or secret in a raw profile.
  * Renderer recovery gap: a completed report retains a destroyed sender; the replacement main
  * window must be able to reveal/upload it without allowing active or cross-owner takeover.
+ * Review gaps: owner changes during summary save, replacement window during auto-stop,
+ * and a trusted secondary renderer invoking start directly (unit, deferred I/O/windows).
  * Tier: unit, injected clocks/network/profilers; bounded files in an isolated OS temp directory.
- * Standalone Vitest run: 0.885s on Windows (2026-10-30); test execution 297ms.
+ * Standalone Vitest run: 0.629s on Windows (2026-10-30); test execution 162ms.
  */
 function fixture() {
   let now = 1000,
@@ -62,6 +65,96 @@ afterEach(() => {
 });
 
 describe('performance recording', () => {
+  it.each([false, true])(
+    'discards a report when ownership changes during saving (save fails: %s)',
+    async (fails) => {
+      const f = fixture();
+      let finish!: () => void;
+      let entered!: () => void;
+      const saving = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      vi.mocked(f.deps.save).mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            finish = () => (fails ? reject(new Error('save failed')) : resolve());
+            entered();
+          }),
+      );
+      await f.controller.start();
+      const stopping = f.controller.stop();
+      await saving;
+      f.owner('bob:2');
+      finish();
+      expect((await stopping).phase).toBe('idle');
+      // A discarded result must not merely be hidden by snapshot's owner filter.
+      f.owner('alice:1');
+      expect(f.controller.snapshot()).toMatchObject({ phase: 'idle', reportId: null });
+      await expect(f.controller.reveal()).rejects.toThrow('PRECONDITION_FAILED');
+      await expect(f.controller.upload('')).rejects.toThrow('PRECONDITION_FAILED');
+      expect(f.deps.reveal).not.toHaveBeenCalled();
+      expect(f.deps.upload).not.toHaveBeenCalled();
+    },
+  );
+
+  it('publishes automatic stop completion to the replacement main window without moving the capture', async () => {
+    const f = fixture();
+    const originalSend = vi.fn(),
+      replacementSend = vi.fn();
+    let destroyed = false,
+      trusted = true;
+    const original = {
+      isDestroyed: () => destroyed,
+      webContents: { isDestroyed: () => destroyed, send: originalSend },
+    } as unknown as BrowserWindow;
+    const replacement = {
+      isDestroyed: () => false,
+      webContents: { isDestroyed: () => false, send: replacementSend },
+    } as unknown as BrowserWindow;
+    let current: BrowserWindow | null = original;
+    const publish = createTraceStatePublisher({
+      getMainWindow: () => current,
+      isTrustedWindow: () => trusted,
+    });
+    f.deps.changed = publish;
+    let finish!: () => void;
+    f.stop.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ profiles: [], partial: true });
+        }),
+    );
+    await f.controller.start();
+    destroyed = true;
+    current = replacement;
+    // Native capture calls close on source destruction. The new renderer can
+    // mount while it is saving; it needs a later push without another IPC command.
+    const closing = f.controller.close();
+    expect(f.controller.snapshot().phase).toBe('saving');
+    expect(replacementSend).toHaveBeenLastCalledWith(
+      PERFORMANCE_TRACE_STATE_CHANNEL,
+      expect.objectContaining({ phase: 'saving' }),
+    );
+    finish();
+    await closing;
+    expect(replacementSend).toHaveBeenLastCalledWith(
+      PERFORMANCE_TRACE_STATE_CHANNEL,
+      expect.objectContaining({ phase: 'ready', reportId: 'ABCD-EFGH', partial: true }),
+    );
+    expect(originalSend).toHaveBeenCalledTimes(2); // starting, recording only
+    expect(f.deps.begin).toHaveBeenCalledOnce();
+    expect(f.deps.upload).not.toHaveBeenCalled();
+    replacementSend.mockClear();
+    trusted = false;
+    publish(f.controller.snapshot());
+    current = original; // destroyed windows are never recipients
+    trusted = true;
+    publish(f.controller.snapshot());
+    current = null;
+    publish(f.controller.snapshot());
+    expect(replacementSend).not.toHaveBeenCalled();
+    expect(originalSend).toHaveBeenCalledTimes(2);
+  });
   // Session invalidation fires before the new generation is committed. The callback passed
   // to native startup must already reject this old operation at that boundary.
   it('invalidates pending startup and discards the capture without saving across accounts', async () => {
@@ -332,6 +425,35 @@ describe('performance report retention', () => {
 });
 
 describe('report boundary', () => {
+  it('rejects start from a trusted secondary window without replacing the current report', async () => {
+    const f = fixture();
+    const main = {} as IpcMainInvokeEvent,
+      secondary = {} as IpcMainInvokeEvent;
+    let source: IpcMainInvokeEvent | null = null;
+    const handler = createTraceCommandHandler({
+      controller: f.controller,
+      authorize: () => {},
+      isSource: (event) => event === source,
+      isSourceDestroyed: () => false,
+      isMainWindow: (event) => event === main,
+      selectSource: (event) => {
+        source = event;
+      },
+      showFolder: vi.fn(async () => {}),
+    });
+    await expect(handler(secondary, 'start', undefined)).rejects.toThrow('PRECONDITION_FAILED');
+    expect(source).toBeNull();
+    expect(f.deps.begin).not.toHaveBeenCalled();
+    await handler(main, 'start', undefined);
+    await handler(main, 'stop', undefined);
+    const report = f.controller.snapshot();
+    await expect(handler(secondary, 'start', undefined)).rejects.toThrow('PRECONDITION_FAILED');
+    expect(source).toBe(main);
+    expect(f.controller.snapshot()).toEqual(report);
+    expect(f.deps.begin).toHaveBeenCalledOnce();
+    await handler(main, 'upload', '');
+    expect(f.deps.upload).toHaveBeenCalledOnce();
+  });
   it('checks sender authorization and recording window before starting or reading files', async () => {
     const f = fixture();
     let source = false;
@@ -377,13 +499,14 @@ describe('report boundary', () => {
       const original = {} as IpcMainInvokeEvent;
       const replacement = {} as IpcMainInvokeEvent;
       let source = original;
+      let main = original;
       let destroyed = false;
       const handler = createTraceCommandHandler({
         controller: f.controller,
         authorize: () => {},
         isSource: (event) => event === source,
         isSourceDestroyed: () => destroyed,
-        isMainWindow: (event) => event === replacement,
+        isMainWindow: (event) => event === main,
         selectSource: (event) => {
           source = event;
           destroyed = false;
@@ -395,6 +518,7 @@ describe('report boundary', () => {
       // Reloading the same WebContents already works without transferring ownership.
       await handler(original, 'show-local', undefined);
       destroyed = true;
+      main = replacement;
       const state = await handler(replacement, command, undefined);
       expect(state.phase).toBe('ready');
       expect(state.reportId).toBe('ABCD-EFGH');
