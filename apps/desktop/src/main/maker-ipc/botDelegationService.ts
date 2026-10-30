@@ -231,6 +231,8 @@ export interface BotDelegationServiceDeps {
 
 /** Start one tracked Cindy Session task from a persistent Bot task. */
 export interface SessionTaskInput {
+  /** Resolved project from the model-facing tool; null explicitly means projectless. */
+  projectDir?: string | null;
   /** One task only; the catalog id includes source and Harness. */
   modelSelection?: TaskModelSelection;
   callerSessionId: string;
@@ -2429,6 +2431,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     useWorktree?: boolean;
     session: {
       workingDir: string;
+      projectDir?: string | null;
       model: string;
       effort?: string;
       fastMode?: boolean | 'ultrafast';
@@ -2444,6 +2447,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     childSessionId: string;
     status: 'queued' | 'running' | 'failed';
     deadlineAt: number;
+    workingDir: string;
+    workspaceKind: 'project' | 'dialogue';
   }>> => {
     // The execution caller remains the parent, including a group lane: work started from a
     // group stays in that group (bot-group-chat.md §10). Its card, confirmations and result
@@ -2453,13 +2458,17 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     const delegationId = createId();
     let childSessionId = resolveBusinessSessionId(undefined);
     if (input.useWorktree) {
+      if (!input.session.workingDir) return { ok: false, errorCode: 'INVALID_WORKING_DIR',
+        message: '不绑项目的任务使用 use_worktree 时需要指定 working_dir。' };
       if (!deps.prepareWorktree) return { ok: false, errorCode: 'WORKTREE_UNAVAILABLE', message: 'Task worktree creation is unavailable' };
       const prepared = await deps.prepareWorktree(input.session.workingDir);
       if (!prepared.ok) return { ok: false, errorCode: 'WORKTREE_UNAVAILABLE', message: prepared.message };
       childSessionId = prepared.sessionId;
-      input.session = { ...input.session, workingDir: prepared.workingDir, workspaceKind: 'project' };
+      input.session = { ...input.session, workingDir: prepared.workingDir,
+        workspaceKind: input.session.projectDir === null ? 'dialogue' : 'project' };
     }
     let creationCommitted = false;
+    let createdWorkingDir = input.session.workingDir;
     let permissionMode: ReturnType<typeof permissionModeOrAsk>;
     let isCreationPermissionCurrent!: () => boolean;
     let plan!: BotDelegationPlanSnapshot;
@@ -2512,6 +2521,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
           return { permissionMode, parentSessionId };
         },
       }, async (childRow, assertCurrent) => {
+        createdWorkingDir = childRow.workingDir ?? input.session.workingDir;
         // Model admission and Git preparation yield after initial admission.
         // Reuse openSession's final commit boundary; never persist a revoked grant.
         await input.caller.groupAuthority?.refresh();
@@ -2523,6 +2533,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
             id: childRow.id,
             title: childRow.title,
             workingDir: childRow.workingDir ?? null,
+            projectDir: childRow.projectDir,
             workspaceKind: childRow.workspaceKind,
             model: childRow.model,
             effort: childRow.effort,
@@ -2640,6 +2651,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       childSessionId,
       status: dispatchResult.status,
       deadlineAt: plan.limits.deadlineAt,
+      workingDir: createdWorkingDir,
+      workspaceKind: input.session.workspaceKind ?? 'dialogue',
     };
   };
 
@@ -2650,6 +2663,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     input: SessionTaskInput,
   ): Promise<BotDelegationResult<{
     modelRoute: BotModelRoute;
+    workingDir: string;
+    workspaceKind: 'project' | 'dialogue';
     /**
      * `group`: the card, confirmations and result stay in the group this was started from.
      * `private`: started from an old local-only group, which cannot carry them; they go to the
@@ -2749,7 +2764,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
           message: 'working_dir 必须是已存在的绝对路径',
         };
       }
-    } else {
+    } else if (input.projectDir !== null) {
       workingDir = await ensureBotWorkspaceDir(
         ownerScopedUserDataPath(),
         caller.botId,
@@ -2774,7 +2789,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       useWorktree: input.useWorktree,
       session: {
         workingDir,
-        workspaceKind: input.workingDir?.trim() ? 'project' : 'dialogue',
+        projectDir: input.projectDir,
+        workspaceKind: input.projectDir === null ? 'dialogue' : input.workingDir?.trim() ? 'project' : 'dialogue',
         model: taskRuntime.model,
         agentDeviceId: taskRuntime.agentDeviceId ?? null,
         ...(taskRuntime.effort ? { effort: taskRuntime.effort } : {}),
@@ -2797,6 +2813,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       childSessionId: started.childSessionId,
       status: started.status,
       deadlineAt: started.deadlineAt,
+      workingDir: started.workingDir,
+      workspaceKind: started.workspaceKind,
       ...(completionDestination ? { completionDestination } : {}),
       modelRoute: {
         harness: taskRuntime.agentKind === 'codex' ? 'codex' : taskRuntime.agentKind === 'pi' ? 'pi' : 'claude',
@@ -3298,6 +3316,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         title: sessions.title,
         workingDir: sessions.workingDir,
         worktreePath: sessions.worktreePath,
+        projectDir: sessions.projectDir,
         workspaceKind: sessions.workspaceKind,
         model: sessions.model,
         effort: sessions.effort,
@@ -3388,6 +3407,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
           id: childSessionId,
           title: oldChild.title,
           workingDir: oldChild.workingDir,
+          projectDir: oldChild.projectDir,
           workspaceKind: oldChild.workspaceKind,
           model: oldChild.model,
           effort: oldChild.effort,
@@ -3643,7 +3663,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     }
     const [child] = row.childSessionId
       ? await getDbClient().drizzle
-        .select({ title: sessions.title, status: sessions.status, workingDir: sessions.workingDir, workspaceKind: sessions.workspaceKind })
+        .select({ title: sessions.title, status: sessions.status, workingDir: sessions.workingDir, projectDir: sessions.projectDir, workspaceKind: sessions.workspaceKind })
         .from(sessions)
         .where(eq(sessions.id, row.childSessionId))
         .limit(1)
@@ -3684,6 +3704,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         status: sessionTaskViewStatus(row),
         control: taskControlView(row),
         working_dir: child?.workingDir ?? null,
+        project_path: child?.projectDir ?? (child?.workspaceKind === 'project' ? child.workingDir : null),
         workspace_kind: child?.workspaceKind ?? null,
         queue,
         queue_error: queueError,
