@@ -12,6 +12,7 @@ import {
   type MenubarSubscriptionInput,
 } from '../snapshot';
 import { buildMenubarUiStrings, createMenubarTranslate, fillTemplate } from '../strings';
+import { buildUsageWidgetSnapshot } from '../widgetSnapshot';
 
 const NOW = Date.UTC(2026, 9, 11, 3, 0, 0);
 const HOUR = 3_600_000;
@@ -293,4 +294,26 @@ it('projects Kimi monthly windows as remaining percentages with their real perio
   })]));
   expect(view.sources[0]).toMatchObject({ value: '65', valueUnit: '%', fill: 0.65 });
   expect(JSON.stringify(view.details.kimi)).toContain('Monthly Coding');
+});
+
+// iPhone widgets show the panel's tubes only: rows without a level stay out, and the reset
+// time travels with each tube so the widget can keep the countdown current between refreshes.
+describe('buildUsageWidgetSnapshot', () => {
+  it('keeps measured sources in panel order with their logo and reset time', () => {
+    const payg: MenubarSourceInput = { kind: 'payg', id: 'glm', providerId: 'glm', logoSvg: '', name: 'GLM', billing: 'api' };
+    const view = buildMenubarView(input([codex('alpha', 30), payg, codex('beta', 95)]));
+    const snapshot = buildUsageWidgetSnapshot(view, NOW, (key) => rawMainString(key, 'en'));
+    expect(snapshot?.sources.map((s) => [s.id, s.logo, s.value, s.level, s.resetsAtMs])).toEqual([
+      ['alpha', 'codex', '70', 'normal', NOW + 3 * DAY],
+      ['beta', 'codex', '5', 'warn', NOW + 3 * DAY],
+    ]);
+    expect(snapshot?.usage.days).toHaveLength(30);
+    expect(snapshot?.usage.days.at(-1)).toBe(view.usage.days.at(-1));
+    expect(snapshot?.strings['durationShort.daysHours']).toContain('{{d}}');
+  });
+
+  it('has nothing to show behind the sign-in gate', () => {
+    const view = buildMenubarView({ ...input([]), gate: 'sign-in' });
+    expect(buildUsageWidgetSnapshot(view, NOW, () => null)).toBeNull();
+  });
 });

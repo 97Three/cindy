@@ -14,7 +14,11 @@ import os from 'node:os';
 
 import { isSessionActivityRunning } from '@cindy/maker-shared/session-activity';
 
-import type { MobileCodexRateLimitsResult } from '@cindy/maker-shared/device-link-contract';
+import type {
+  MobileCodexRateLimitsResult,
+  MobileUsageWidgetSnapshot,
+  MobileUsageWidgetSnapshotResult,
+} from '@cindy/maker-shared/device-link-contract';
 
 import type { ModelAccessCreditUsage } from '../../shared/modelAccess.js';
 import {
@@ -46,6 +50,7 @@ import { getActiveControllers } from '../device-link/dispatch.js';
 import { handleListDevices, defaultDeps as deviceDirectoryDeps } from '../device-link/ipc.js';
 import { deviceName } from '../device-link/deviceName.js';
 import { getResolvedMainLocale, mainStringKeysUnder, rawMainString } from '../i18n.js';
+import { buildUsageWidgetSnapshot } from './widgetSnapshot.js';
 import { getSessionRowSnapshot } from '../localDb/ipc/sessions.js';
 import { createLogger } from '../logger.js';
 import { getDesktopProviderService } from '../maker-host/createDesktopProviderService.js';
@@ -212,6 +217,13 @@ export class MenubarService {
       remotelyControlled: controllers.length > 0,
       remoteControllerNames: controllers.map(controller => controller.name),
     };
+  }
+
+  /** The last panel view as an iPhone widget snapshot; null until a signed-in build exists. */
+  widgetSnapshot(): MobileUsageWidgetSnapshot | null {
+    if (!this.started || !this.lastView) return null;
+    const locale = getResolvedMainLocale();
+    return buildUsageWidgetSnapshot(this.lastView, Date.now(), key => rawMainString(key, locale));
   }
 
   /** Opens the panel under the status item. */
@@ -788,6 +800,12 @@ export function refreshMenubarLocalization(): void {
 
 export function refreshMenubarControlState(): void {
   service?.refreshControlState();
+}
+
+/** Read by device-link for the iPhone widgets; unavailable while the panel is off or off-platform. */
+export function readUsageWidgetSnapshot(): MobileUsageWidgetSnapshotResult {
+  const snapshot = service?.widgetSnapshot() ?? null;
+  return snapshot ? { ok: true, snapshot } : { ok: false, reason: 'unavailable' };
 }
 
 export function stopMenubarService(): void {

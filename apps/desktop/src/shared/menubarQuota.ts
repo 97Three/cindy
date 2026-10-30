@@ -81,6 +81,8 @@ export interface MenubarSourceCell {
   active: boolean;
   when: string;
   whenLevel: MenubarLevel;
+  /** Reset of the window the tube shows; consumers that outlive the build keep `when` current. */
+  resetsAtMs?: number | null;
   accessibilityLabel: string;
 }
 

@@ -677,6 +677,7 @@ class Builder {
       reserve,
       when,
       whenLevel,
+      resetsAtMs: limit.window.resetsAtMs,
       accessibilityLabel: reserve
         ? this.t('a11y.reserve', { name: `${source.brand} ${name}` })
         : this.t('a11y.remaining', { name: source.brand === name ? name : `${source.brand} ${name}`, n: Math.round(remaining) }),
