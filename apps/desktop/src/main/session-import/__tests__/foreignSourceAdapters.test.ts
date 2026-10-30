@@ -101,7 +101,7 @@ describe('foreign source adapters', () => {
     await put('.qwen/projects/-work-my-app/subagents/q/agent-1.jsonl', [{ uuid: 'z' }]);
     const { listed, messages } = await readAll(qwenAdapter);
     expect(listed.internalCount).toBe(1);
-    expect(path.resolve(listed.sessions[0]!.cwd!)).toBe(project());
+    expect(listed.sessions[0]!.cwd).toBe(project());
     expect(brief(Object.values(messages)[0]!)).toEqual([
       'user:hello',
       'thinking:{"text":"thinking…","durationMs":0,"isRedacted":false}',
@@ -237,7 +237,8 @@ describe('foreign source adapters', () => {
     await setup();
     const { listed, messages } = await readAll(adapter);
     expect(listed.sessions).toHaveLength(1);
-    expect(listed.sessions[0]!.cwd).toBe(project());
+    // Cursor recovers the folder from its dashed name, so Windows separators come back as '/'.
+    expect(path.resolve(listed.sessions[0]!.cwd!)).toBe(project());
     expect(brief(Object.values(messages)[0]!).map((m) => (m.startsWith('tool_use') ? 'tool_use' : m))).toEqual(expected);
   });
 });
