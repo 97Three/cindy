@@ -8,12 +8,22 @@ import { refreshBotGroups } from '../../../src/renderer/features/bots/botGroupSt
 import { ControlledBanner } from '../../../src/renderer/features/remote-device/ControlledBanner';
 import { applyRemoteSessionActivity } from '../../../src/renderer/features/device-link/remoteSessionActivityStore';
 
+// The fixture's custom origin lacks secure-context randomUUID. Only correlation
+// IDs in this isolated renderer use these tokens; production crypto is unchanged.
+if (!crypto.randomUUID) {
+  let sequence = 0;
+  crypto.randomUUID = () => `00000000-0000-4000-8000-${String(++sequence).padStart(12, '0')}`;
+}
+
 interface GroupData {
+  /** Controlled receipts for the real renderer send/settle layout regression. */
+  sendStatus?: boolean;
   workState?: 'thinking' | 'reading-file' | 'testing' | 'waiting' | 'stopping' | 'unknown';
   workRemote?: boolean;
   workParallel?: boolean;
   workLastStopping?: boolean;
   bodyAnswer?: boolean;
+  remoteLimits?: boolean;
   name: string;
   members: Array<{ botId: string; name: string }>;
   messages: number;
@@ -261,7 +271,10 @@ function groupFrom(data: GroupData) {
     ...(data.bubbles || data.arrangement || data.division ? { serverBacked: true } : {}),
     ...(data.settings ? { autoContinue: false } : {}),
     ...(data.threadUnread ? { threads: threadSummaries() } : {}),
-    messages: data.bodyAnswer ? bodyMessages() : data.arrangement ? arrangementMessages(data.arrangement) : data.division ? divisionMessages()
+    messages: data.remoteLimits ? ['REMOTE_DEVICE_LIMIT', 'REMOTE_TOTAL_LIMIT'].map((runtimeFailureCode, i) =>
+      message({ id: `limit-${i}`, sequence: i + 1, kind: 'notice', authorKind: 'system',
+        authorBotId: data.members[i].botId, authorName: data.members[i].name, content: '',
+        noticeCode: 'member-unavailable', runtimeFailureCode, createdAt: T0 + i * MINUTE })) : data.bodyAnswer ? bodyMessages() : data.arrangement ? arrangementMessages(data.arrangement) : data.division ? divisionMessages()
       : bubbles ? bubbles.map(m => (data.threadUnread && UNREAD[m.id as string] ? { ...m, threadUnread: UNREAD[m.id as string] } : m))
       : Array.from({ length: data.messages }, (_, i) => ({
       id: `m${i}`,
@@ -312,7 +325,18 @@ void mountPage({
         listBotGroups: async () => ({ ok: true, groups: (ctx.data as unknown as GroupData).settings ? [group] : [] }),
         getBotGroup: async () => ({ ok: true, group }),
         onBotGroupChanged: subscription('botGroupChanged'),
-        sendBotGroupMessage: forbid('maker.sendBotGroupMessage'),
+        sendBotGroupMessage: data.sendStatus ? (input: { text: string; clientId: string }) => new Promise((resolve) => {
+          window.addEventListener('fixture-send-receipt', (event) => {
+            if ((event as CustomEvent).detail === 'failed') {
+              resolve({ ok: false, errorCode: 'SEND_FAILED', message: 'Fixture send failed' });
+              return;
+            }
+            const id = `sent-${input.clientId}`;
+            group.messages = [...group.messages, message({ id, sequence: group.messages.length + 1,
+              content: input.text, createdAt: Date.now(), isSelf: true }) as (typeof group.messages)[number]];
+            resolve({ ok: true, messageId: id });
+          }, { once: true });
+        }) : forbid('maker.sendBotGroupMessage'),
         stopBotGroupRound: forbid('maker.stopBotGroupRound'),
         chatServer: {
           reactors: async () => ({ ok: true, reactors: [{ actorId: 'me', isSelf: true, name: 'You', formerMember: false }] }),

@@ -41,11 +41,12 @@
  *   发布前仍需用 packaged build 做最终跨平台验证。
  */
 
-import { isValidPluginResourceId } from '@cindy/plugin-protocol';
+import { isLocalPluginSnapshotId, isValidPluginResourceId } from '@cindy/plugin-protocol';
 import { app, BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import { parseProviderShareInvitationIntent, parseSharedTaskInvitationIntent } from '@cindy/device-link';
 import { createLogger } from './logger';
+import { isValidGhostId } from '../shared/ghost';
 import { registerWindowsDeepLinkName } from './deepLinkWindowsRegistration';
 import {
   DEEP_LINK_PRIMARY_SCHEME,
@@ -76,6 +77,7 @@ export type DeepLinkPayload =
   /** 供应商分享链接：原样交给 Renderer 的申请弹窗，由主进程命令再解析与核对区域。 */
   | { type: 'provider-share-join'; link: string }
   | { type: 'plugin'; pluginId: string }
+  | { type: 'local-plugin-share'; snapshotId: string }
   /**
    * islandEntryId 只由主进程的灵动岛点击写入(URL 解析从不产生它),标识这一次点击,
    * 供 renderer 在导航落地后申请处置被点的那张卡。
@@ -101,6 +103,12 @@ export type DeepLinkPayload =
    */
   | { type: 'settings'; tab: 'voice-input' | 'providers' | 'billing' | 'remote-control'; connect?: string; intent?: 'topup' }
   /**
+   * cindy://plugins[/<ghostId>] —— 打开已安装插件列表,带 id 时直达该插件详情页
+   * (随包浏览器扩展等外部表面把用户带回对应插件的启用 / 连接设置)。id 须过
+   * ghost id 白名单,不合法整条拒绝。
+   */
+  | { type: 'installed-plugin'; ghostId?: string }
+  /**
    * 纯"把窗口拉回前台"意图,不携带导航语义 (典型来源:OAuth 授权成功页的
    * "打开 xdt-maker" 按钮 / 自动唤起)。main 进程内消化,不发给 renderer、
    * 不进 pending 缓存 (冷启动时 app 启动本身就会前台,缓存无意义)。
@@ -121,6 +129,10 @@ export function parseDeepLink(url: string): DeepLinkPayload | null {
   const invitation = parseSharedTaskInvitationIntent(url);
   if (invitation) return { type: 'shared-task-join', ...invitation };
   if (parseProviderShareInvitationIntent(url)) return { type: 'provider-share-join', link: url };
+  if (/^(?:cindy|xdt-maker):\/\/plugin-share(?:[/?#]|$)/i.test(url)) {
+    const match = /^(?:cindy|xdt-maker):\/\/plugin-share\/([A-Za-z0-9_-]{32})$/.exec(url);
+    return match && isLocalPluginSnapshotId(match[1]) ? { type: 'local-plugin-share', snapshotId: match[1] } : null;
+  }
   if (/^(?:cindy|xdt-maker):\/\/plugin(?:[/?#]|$)/i.test(url)) {
     const match = /^(?:cindy|xdt-maker):\/\/plugin\/(c[a-z0-9]{24})$/.exec(url);
     return match && isValidPluginResourceId(match[1]) ? { type: 'plugin', pluginId: match[1] } : null;
@@ -136,6 +148,17 @@ export function parseDeepLink(url: string): DeepLinkPayload | null {
   if (rest.startsWith('provider/')) {
     const importId = createProviderImportDraftFromRest(rest);
     return importId ? { type: 'provider-import', importId } : null;
+  }
+  if (/^plugins(?:[/?#]|$)/.test(rest)) {
+    const rawId = rest.slice('plugins'.length).replace(/^\//, '').replace(/[?#].*$/, '').replace(/\/+$/, '');
+    if (!rawId) return { type: 'installed-plugin' };
+    let ghostId: string;
+    try {
+      ghostId = decodeURIComponent(rawId);
+    } catch {
+      return null;
+    }
+    return isValidGhostId(ghostId) ? { type: 'installed-plugin', ghostId } : null;
   }
   const slashIdx = rest.indexOf('/');
   if (slashIdx <= 0) return null;
@@ -480,7 +503,7 @@ export function sendMainWindowMessage(channel: string, payload: unknown): boolea
 
 function safeDeepLinkLog(payload: DeepLinkPayload) {
   // 口令不进日志。
-  return payload.type === 'chat-invite' || payload.type === 'shared-task-join' || payload.type === 'provider-share-join' ? { type: payload.type } : payload;
+  return payload.type === 'chat-invite' || payload.type === 'shared-task-join' || payload.type === 'provider-share-join' || payload.type === 'local-plugin-share' ? { type: payload.type } : payload;
 }
 
 function dispatchDeepLink(payload: DeepLinkPayload, shouldFocus = true, owner?: DataOwnerBroadcastScope): void {
@@ -502,7 +525,7 @@ function dispatchDeepLink(payload: DeepLinkPayload, shouldFocus = true, owner?: 
   }
   // A loaded login/LocalDbGate page has no MainLayout listener yet. These intents stay
   // in the existing pending slot until the authenticated consumer takes them.
-  if (!windowReady || payload.type === 'provider-import' || payload.type === 'shared-task-join' || payload.type === 'provider-share-join' || payload.type === 'plugin') {
+  if (!windowReady || payload.type === 'provider-import' || payload.type === 'shared-task-join' || payload.type === 'provider-share-join' || payload.type === 'plugin' || payload.type === 'local-plugin-share') {
     // 保留"用户最后意图"语义:同一次冷启动如果先后入站多条 (例如 argv 同时含
     // deep link URL 和 --open-folder, 现实场景极罕见但 bootstrap 两条 scan 都
     // 会触发),后到的覆盖前者。但 warn log 留下排查线索,事后能从日志识别这种

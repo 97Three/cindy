@@ -64,7 +64,7 @@ import {
 import { useOptionalConfirmDialog } from '@/components/ui/confirm-dialog-provider';
 import { AnthropicMark } from '@/components/icons/AnthropicMark';
 import { OpenAIMark } from '@/components/icons/OpenAIMark';
-import { XDIncMark } from '@/components/icons/XDIncMark';
+import { CindyMark } from '@/components/icons/CindyMark';
 import { hasProviderLogo, ProviderLogoMark } from '@/components/icons/ProviderLogoMark';
 import { agentOptionOf } from './agentOptions';
 import type { SelectableVendor } from '@/lib/agentVendors';
@@ -158,6 +158,7 @@ import type { ModelAccessAccountTier } from '../../../shared/modelAccess';
 import { applyProviderOrder } from '../../../shared/providerOrder';
 import type { ModelPricingCatalog } from '../../../shared/regionalMoney';
 import { buildProviderSections } from './sourceSwitch';
+import type { ModelPickerPreferenceStore } from './modelPickerPreferences';
 
 // 短刷新（尤其 auto-refresh cooldown 命中）不应让状态行参与 MorphPopover 的首帧量高：
 // 否则它在 220ms 开场内消失后，settle 补量会把面板再缩一次，形成“先变大再变小”。
@@ -425,7 +426,7 @@ export function ProviderMark({
         logoKind={logoKind}
         size={markSize}
         className={
-          providerId === 'xd'
+          logoKind === 'xd'
             ? cn(dense ? 'h-[8.4px] w-[14.2px]' : 'h-[9px] w-[15px]', common)
             : common
         }
@@ -482,9 +483,9 @@ export function ModelIconMark({
     if (kind === 'claude') return <AnthropicMark size={markSize} className={common} />;
     if (kind === 'codex') return <OpenAIMark size={markSize} className={common} />;
     return (
-      <XDIncMark
+      <CindyMark
         size={markSize}
-        className={cn(dense ? 'h-[8.4px] w-[14.2px]' : 'h-[9px] w-[15px]', common)}
+        className={common}
       />
     );
   }
@@ -941,6 +942,8 @@ interface ModelSelectorContentProps {
   thinkingEnabled?: boolean;
   onThinkingChange?: (enabled: boolean) => void | Promise<void>;
   modelMemory?: ModelMemoryAccessors;
+  /** Request-owned preferences; edits never reach the user's saved defaults. */
+  preferenceStore?: ModelPickerPreferenceStore;
   vendorKey?: 'cc' | 'codex' | 'pi';
   /** device-link 远程会话所属被控端 id(列被控端模型)。 */
   deviceId?: string;
@@ -1202,6 +1205,7 @@ function ModelSelectorContentView({
   thinkingEnabled = true,
   onThinkingChange,
   modelMemory: modelMemoryProp,
+  preferenceStore,
   vendorKey,
   deviceId: deviceIdProp,
   remoteAgent,
@@ -1286,7 +1290,7 @@ function ModelSelectorContentView({
     !remoteAgent || (remoteBrowse?.deviceId ?? null) === remoteAgentDeviceId;
   const modelMemory =
     !remoteAgent || browsingSelectedCatalog
-      ? modelMemoryProp
+      ? (preferenceStore?.memory ?? modelMemoryProp)
       : remoteBrowse
         ? remoteAgent.deviceModelMemory?.(remoteBrowse.deviceId)
         : remoteAgent.localModelMemory;
@@ -3579,6 +3583,7 @@ function ModelSelectorContentView({
               unifiedSelectionPolicy === 'official' || !browsingLiveCatalog ? undefined : effort
             }
             {...(modelMemory ? { modelMemory } : {})}
+            {...(preferenceStore ? { preferenceStore } : {})}
             {...(remoteAgent && remoteAgentLocalRailItems
               ? {
                   remoteSources: {

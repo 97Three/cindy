@@ -170,6 +170,23 @@ import {
   supportsCodexNativeTurnFork,
 } from './version-gates.js';
 import {
+  emptyUserInputResponse,
+  normalizeRequestUserInputQuestions,
+  normalizeDynamicAskUserQuestions,
+  questionsToAskUserItems,
+  responseFromAskUserAnswers,
+  responseFromPermissionDecision,
+  dynamicToolResponseFromUserInput,
+  userInputQuestionsFingerprint,
+  userInputAnswersByPosition,
+  responseFromUserInputAnswersByPosition,
+  hasSubmittedUserInput,
+  formatAskUserContinuationMessage,
+  MAX_REQUEST_USER_INPUT_QUESTIONS,
+  MAX_REQUEST_USER_INPUT_OPTIONS,
+  type UserInputAnswersByPosition,
+} from './request-user-input.js';
+import {
   dedupeCells,
   extractAliveYieldCellsFromCodexItem,
   extractSettledYieldCellIdsFromCodexItem,
@@ -719,10 +736,6 @@ const ASK_USER_DYNAMIC_TOOL_CANONICAL_NAME =
   `${ASK_USER_DYNAMIC_TOOL_NAMESPACE}__${ASK_USER_DYNAMIC_TOOL_NAME}`;
 const CODEX_SUBAGENT_ASK_USER_QUESTION_DENIAL_MESSAGE =
   'User questions are only available to the root agent. Report the question to the parent agent, which can decide whether to ask the user.';
-const MAX_REQUEST_USER_INPUT_QUESTIONS = 3;
-const MAX_REQUEST_USER_INPUT_OPTIONS = 10;
-const MAX_REQUEST_USER_INPUT_TEXT_CHARS = 1_000;
-const MAX_REQUEST_USER_INPUT_ANSWER_CHARS = 2_000;
 const DISABLE_ASK_USER_DYNAMIC_TOOL_FALLBACK = process.env.XDT_CODEX_DISABLE_ASK_USER_DYNAMIC_TOOL === '1';
 // xAI rejects Codex namespace dynamic tools in its Responses `tools[]` schema.
 const CODEX_DYNAMIC_TOOL_UNSUPPORTED_PROVIDER_IDS = new Set(['xai']);
@@ -824,194 +837,10 @@ function supportsCodexDynamicTools(
   return true;
 }
 
-function truncateUserInputText(value: string): string {
-  return value.length > MAX_REQUEST_USER_INPUT_TEXT_CHARS
-    ? value.slice(0, MAX_REQUEST_USER_INPUT_TEXT_CHARS)
-    : value;
-}
-
-function truncateAnswerText(value: string): string {
-  return value.length > MAX_REQUEST_USER_INPUT_ANSWER_CHARS
-    ? value.slice(0, MAX_REQUEST_USER_INPUT_ANSWER_CHARS)
-    : value;
-}
-
-function emptyUserInputResponse(questions: readonly Pick<ToolRequestUserInputQuestion, 'id'>[]): ToolRequestUserInputResponse {
-  const answers: ToolRequestUserInputResponse['answers'] = {};
-  for (const q of questions) {
-    if (q.id) answers[q.id] = { answers: [] };
-  }
-  return { answers };
-}
-
-function normalizeRequestUserInputQuestions(
-  questions: readonly ToolRequestUserInputQuestion[],
-): ToolRequestUserInputQuestion[] {
-  return questions.slice(0, MAX_REQUEST_USER_INPUT_QUESTIONS).map((q, index) => ({
-    id: q.id || `question-${index + 1}`,
-    header: truncateUserInputText(q.header || ''),
-    question: truncateUserInputText(q.question || q.header || `Question ${index + 1}`),
-    isOther: q.isOther === true,
-    isSecret: q.isSecret === true,
-    options: Array.isArray(q.options)
-      ? q.options.slice(0, MAX_REQUEST_USER_INPUT_OPTIONS).map((option) => ({
-          label: truncateUserInputText(option.label || ''),
-          description: truncateUserInputText(option.description || ''),
-        })).filter((option) => option.label.trim().length > 0)
-      : null,
-  }));
-}
-
-function normalizeDynamicAskUserQuestions(args: unknown): ToolRequestUserInputQuestion[] {
-  const input = args && typeof args === 'object' ? args as { questions?: unknown } : {};
-  const rawQuestions = Array.isArray(input.questions) ? input.questions : [];
-  const questions: ToolRequestUserInputQuestion[] = rawQuestions.map((raw, index) => {
-    const q = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
-    const rawOptions = Array.isArray(q.options) ? q.options : null;
-    return {
-      id: typeof q.id === 'string' && q.id.trim() ? q.id : `question-${index + 1}`,
-      header: typeof q.header === 'string' ? q.header : '',
-      question: typeof q.question === 'string' ? q.question : '',
-      isOther: q.isOther === true,
-      // Dynamic fallback is a business-choice tool. It must not collect secrets.
-      isSecret: false,
-      options: rawOptions
-        ? rawOptions.map((rawOption) => {
-            const option = rawOption && typeof rawOption === 'object'
-              ? rawOption as Record<string, unknown>
-              : {};
-            return {
-              label: typeof option.label === 'string' ? option.label : '',
-              description: typeof option.description === 'string' ? option.description : '',
-            };
-          })
-        : null,
-    };
-  });
-  return normalizeRequestUserInputQuestions(questions);
-}
-
-function questionsToAskUserItems(questions: readonly ToolRequestUserInputQuestion[]) {
-  return questions.map((q) => ({
-    question: q.question,
-    header: q.header || undefined,
-    options: q.options?.map((option) => ({
-      label: option.label,
-      description: option.description || undefined,
-    })),
-    multiSelect: false,
-  }));
-}
-
-function responseFromAskUserAnswers(
-  questions: readonly ToolRequestUserInputQuestion[],
-  answers: Record<string, string>,
-): ToolRequestUserInputResponse {
-  const out: ToolRequestUserInputResponse['answers'] = {};
-  for (const q of questions) {
-    const raw = answers[q.question] ?? answers[q.header] ?? answers[q.id] ?? '';
-    if (!raw) {
-      out[q.id] = { answers: [] };
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        out[q.id] = { answers: parsed.filter((v): v is string => typeof v === 'string').map(truncateAnswerText) };
-        continue;
-      }
-    } catch {
-      // Single-select answers are plain labels, not JSON.
-    }
-    out[q.id] = { answers: [truncateAnswerText(raw)] };
-  }
-  return { answers: out };
-}
-
-function responseFromPermissionDecision(
-  questions: readonly ToolRequestUserInputQuestion[],
-  decision: Extract<InteractionDecision, { kind: 'permission' }>,
-): ToolRequestUserInputResponse {
-  if (decision.behavior === 'deny') return emptyUserInputResponse(questions);
-  const out: ToolRequestUserInputResponse['answers'] = {};
-  for (const q of questions) {
-    const positiveOption = q.options?.find((option) =>
-      /^(allow|approve|accept|yes|continue|confirm)$/i.test(option.label.trim()),
-    );
-    const option = positiveOption?.label ?? q.options?.[0]?.label ?? 'allow';
-    out[q.id] = { answers: [option] };
-  }
-  return { answers: out };
-}
-
-function dynamicToolResponseFromUserInput(response: ToolRequestUserInputResponse): DynamicToolCallResponse {
-  return {
-    success: true,
-    contentItems: [{ type: 'inputText', text: JSON.stringify(response.answers) }],
-  };
-}
-
-function userInputQuestionsFingerprint(
-  questions: readonly ToolRequestUserInputQuestion[],
-): string {
-  return JSON.stringify(questions.map((question) => ({
-    header: question.header,
-    question: question.question,
-    isOther: question.isOther === true,
-    options: (question.options ?? []).map((option) => ({
-      label: option.label,
-      description: option.description,
-    })),
-  })));
-}
-
-type UserInputAnswersByPosition = string[][];
-
 interface PendingUserInputInteraction {
   interactionPromise: Promise<UserInputAnswersByPosition>;
   cancelledPromise: Promise<void>;
   cancel: () => void;
-}
-
-function userInputAnswersByPosition(
-  questions: readonly ToolRequestUserInputQuestion[],
-  response: ToolRequestUserInputResponse,
-): UserInputAnswersByPosition {
-  return questions.map((question) =>
-    response.answers[question.id]?.answers.slice() ?? [],
-  );
-}
-
-function responseFromUserInputAnswersByPosition(
-  questions: readonly ToolRequestUserInputQuestion[],
-  answersByPosition: readonly (readonly string[])[],
-): ToolRequestUserInputResponse {
-  const answers: ToolRequestUserInputResponse['answers'] = {};
-  questions.forEach((question, index) => {
-    answers[question.id] = { answers: [...(answersByPosition[index] ?? [])] };
-  });
-  return { answers };
-}
-
-function hasSubmittedUserInput(answersByPosition: readonly (readonly string[])[]): boolean {
-  return answersByPosition.some((answers) =>
-    answers.some((value) => value.trim().length > 0),
-  );
-}
-
-function formatAskUserContinuationMessage(
-  questions: readonly ToolRequestUserInputQuestion[],
-  answers: Record<string, string>,
-): string {
-  const lines = [ASK_USER_CONTINUATION_INTRO, ''];
-  for (const question of questions) {
-    const raw = answers[question.question] ?? answers[question.header] ?? answers[question.id] ?? '';
-    lines.push(`Q: ${question.question}`);
-    lines.push(`A: ${raw.trim() || '(no answer)'}`);
-    lines.push('');
-  }
-  lines.push(ASK_USER_CONTINUATION_OUTRO);
-  return lines.join('\n');
 }
 
 interface LiveAskUserRequest {
@@ -1259,8 +1088,6 @@ function codexPermissionStrictnessRank(mode: PermissionMode): number {
 // (codex-rs/tui/src/chatwidget/plan_implementation.rs 的
 // PLAN_IMPLEMENTATION_CODING_MESSAGE), 模型对这句有训练分布上的既有理解。
 const PLAN_IMPLEMENTATION_MESSAGE = 'Implement the plan.';
-const ASK_USER_CONTINUATION_INTRO = 'The user answered the pending question.';
-const ASK_USER_CONTINUATION_OUTRO = 'Continue from the previous turn. Do not ask the same question again.';
 const CODEX_INHERITED_CAPABILITY_SELECTION = Symbol('codexInheritedCapabilitySelection');
 // 计划实施/修订 turn 的**审查意图**:这些 turn 的 message 是固定内部串('Implement the plan.'),
 // 直接拿它当 review intent 会让灰区 reviewer 完全看不到用户原始请求与获批计划(codex 报)。
@@ -3840,7 +3667,7 @@ assertRouteCurrent();
     const translatorRt: CodexRuntimeState = newCodexRuntimeState();
     const liveUsageSnapshot = () => {
       const speed = translatorRt.generationTimingReliable ? translatorRt.tokenSpeed.snapshot() : undefined;
-      return attachLiveGeneration(usageTracker.snapshot(), {
+      return attachLiveGeneration({ ...usageTracker.snapshot(), requestUsage: usageTracker.getRequestMetering() }, {
         tokenSpeed: speed,
         // Legacy clients use these fields: they must share the speed snapshot's
         // measured numerator/denominator, never the billing ledger's lifetime.
@@ -10255,9 +10082,10 @@ assertRouteCurrent();
       const dynamicPending = dynamicToolBroker.has(brokerKey);
       if (userInputPending || dynamicPending) {
         // Wake joined duplicates before settling the owner's outer broker
-        // response. This keeps them on the cancellation/reassignment path even
-        // if a resolver starts mirroring broker settlement in the future.
-        forgetPendingUserInputRequest(uiRequestId);
+        // response. Also remove the live question synchronously: turn/completed
+        // can arrive before the UI resolves the dismissed card, and must not
+        // retain a human continuation for an already-cancelled request.
+        dismissLiveAskUser(uiRequestId, 'server_request_resolved');
       }
       const userInputCancelled = userInputBroker.cancel(
         brokerKey,
@@ -10274,13 +10102,6 @@ assertRouteCurrent();
         eventQueue.push({
           type: 'interaction_dismissed',
           data: { requestId, reason: 'server_request_resolved', resolvedAs: 'deny' },
-          source: 'codex',
-        });
-      }
-      if (userInputCancelled || dynamicCancelled) {
-        eventQueue.push({
-          type: 'interaction_dismissed',
-          data: { requestId: uiRequestId, reason: 'server_request_resolved', resolvedAs: 'deny' },
           source: 'codex',
         });
       }
@@ -11297,6 +11118,7 @@ assertRouteCurrent();
             cancelled: turn.status === 'interrupted',
             ...(assistantAttemptFailure ? { assistantAttemptFailure } : {}),
             usage: codexDoneUsage,
+            requestUsage: usageTracker.getRequestMetering(),
             raw: turn,
           },
           source: 'codex',
@@ -11396,6 +11218,7 @@ assertRouteCurrent();
             type: 'codex/event/task_complete',
             result: finalAssistantText,
             usage: codexDoneUsage,
+            requestUsage: usageTracker.getRequestMetering(),
             raw: turn,
             plan: latestPlanByTurn.get(turn.id) ?? null,
           },

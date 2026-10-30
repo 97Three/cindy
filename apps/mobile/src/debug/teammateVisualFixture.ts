@@ -18,19 +18,19 @@ import { BOT_GROUP_CHAT_PRIMITIVE, BOT_GROUP_REMOTE_COLLECTION_ID, BOT_GROUP_REM
 const TEAMMATES = 'teammates';
 export const VISUAL_TEAMMATE_SESSION_ID = 'visual-teammate-session';
 const MINUTE = 60_000;
-const teammates: ReadonlyArray<{ id: string; name: string; preview: string; minutesAgo: number; avatar: RemoteCollectionItem['display']['avatar']; working?: boolean; following?: string[] }> = [
+const teammates: ReadonlyArray<{ id: string; name: string; preview: string; minutesAgo: number; avatar: RemoteCollectionItem['display']['avatar']; working?: boolean; phase?: string; following?: string[] }> = [
   { id: 'cindy-default', name: 'Cindy', preview: '登录页窄窗口的错位已经修好，截图放在任务里了。', minutesAgo: 2,
     avatar: { kind: 'asset', value: 'cindy://avatar/preset/cindy', fallbackText: 'C' }, working: true,
     // Task rows show the follow mark (`ui-mock` tasks): one shared with LiZi, so the mark picks by name.
     following: ['visual-running', `${UI_MOCK_ID_PREFIX}rich-answer`] },
-  { id: 'visual-bot-dash', name: 'Dash', preview: 'Weekly numbers are in: sign-ups up 12%, churn flat.', minutesAgo: 25,
+  { id: 'visual-bot-dash', phase: 'needs-interaction', working: true, name: 'Dash', preview: 'Weekly numbers are in: sign-ups up 12%, churn flat.', minutesAgo: 25,
     avatar: { kind: 'asset', value: 'cindy://avatar/preset/dash', fallbackText: 'D' } },
-  { id: 'visual-bot-lizi', name: 'LiZi', preview: '这个 PR 我看完了，留了两条建议。', minutesAgo: 90,
+  { id: 'visual-bot-lizi', phase: 'completed', name: 'LiZi', preview: '这个 PR 我看完了，留了两条建议。', minutesAgo: 90,
     avatar: { kind: 'asset', value: 'cindy://avatar/preset/lizi', fallbackText: 'L' },
     following: ['visual-running', `${UI_MOCK_ID_PREFIX}english`] },
   { id: 'visual-bot-xiaoman', name: '小满', preview: '明天上午十点的会已经帮你约好。', minutesAgo: 60 * 20,
     avatar: { kind: 'emoji', value: '🌾', fallbackText: '小' } },
-  { id: 'visual-bot-research', name: 'Research Assistant', preview: 'Three sources disagree on the release date; details inside.', minutesAgo: 60 * 30,
+  { id: 'visual-bot-research', phase: 'error', name: 'Research Assistant', preview: 'Three sources disagree on the release date; details inside.', minutesAgo: 60 * 30,
     avatar: { kind: 'text', value: 'R', fallbackText: 'R' } },
   { id: 'visual-bot-tuantuan', name: '团团', preview: '开始对话', minutesAgo: 60 * 72,
     avatar: { kind: 'emoji', value: '🐼', fallbackText: '团' } },
@@ -38,8 +38,28 @@ const teammates: ReadonlyArray<{ id: string; name: string; preview: string; minu
 
 // Fixed per process: a moving clock would make every row look unread again on each read.
 const FIXTURE_NOW = Date.now();
+export function teammateVisualReplyAt(sessionId: string): number {
+  const bot = teammates.find(item => sessionId === `${VISUAL_TEAMMATE_SESSION_ID}:${item.id}`);
+  return FIXTURE_NOW - (bot?.minutesAgo ?? 0) * MINUTE;
+}
+// In-memory mock state only: exercises the real glance actions without a host or automation.
+let dailyTodoCheck = true;
+let todoDeleted = false;
+const glanceTodo = {
+  id: 'visual-glance-todo', revision: 1, key: 'visual-review', origin: 'assigned',
+  title: '确认登录页的验收截图', progress: '', outcome: '', value: '', next: null,
+  sources: [], associations: [], status: 'open', createdAt: new Date(FIXTURE_NOW).toISOString(),
+  updatedAt: new Date(FIXTURE_NOW).toISOString(),
+  sourceDeadline: { kind: 'instant', date: new Date(FIXTURE_NOW + 60 * MINUTE).toISOString().slice(0, 10), timeZone: 'UTC', at: new Date(FIXTURE_NOW + 60 * MINUTE).toISOString() },
+  deadlineCandidate: null,
+  suggestedDate: null, decision: null, history: [], action: null,
+};
 
 export function teammateVisualFixture(channel: string, args: unknown[], now = FIXTURE_NOW): unknown {
+  if (channel === 'git-context:pr-refs:list') return args[0] === `${UI_MOCK_ID_PREFIX}rich-answer`
+    ? [{ id: 'visual-pr', sessionId: args[0], owner: 'example', repo: 'demo', prNumber: 7, lastSeenAt: now }] : [];
+  if (channel === 'git-context:pr-status') return [{ owner: 'example', repo: 'demo', prNumber: 7, ok: true,
+    status: 'merged', title: '修复登录页在窄窗口下的布局' }];
   if (channel === 'maker:bot-delegations:list') {
     const bot = teammates.find(item => args[0] === `${VISUAL_TEAMMATE_SESSION_ID}:${item.id}`);
     const ids = bot?.id === 'cindy-default' ? ['visual-running', `${UI_MOCK_ID_PREFIX}rich-answer`]
@@ -51,7 +71,23 @@ export function teammateVisualFixture(channel: string, args: unknown[], now = FI
     collections: [{ id: TEAMMATES, resourceKind: 'bot', title: 'Teammates', placement: 'home-scope',
       actions: [{ id: 'open-create', label: 'New teammate' }] }],
   } satisfies RemoteResourceManifestResponse;
-  const request = args[0] as { collectionId?: string; ref?: { collectionId?: string; id?: string }; resourceRef?: { id?: string }; input?: { op?: string; args?: { id?: string } } } | undefined;
+  const request = args[0] as { collectionId?: string; ref?: { collectionId?: string; id?: string }; resourceRef?: { id?: string }; actionId?: string; query?: string; input?: { enabled?: boolean; operation?: string; op?: string; args?: { id?: string } } } | undefined;
+  if (channel === REMOTE_RESOURCE_GET_CHANNEL && request?.ref?.id === 'todos:cindy-default') {
+    const query = JSON.parse(request.query ?? '{}');
+    const items = query.view === 'done' || todoDeleted ? [] : [glanceTodo];
+    return { ref: { collectionId: TEAMMATES, kind: 'bot', id: request.ref.id }, revision: 'visual-1',
+      display: { title: 'Todos' }, actions: [], links: [],
+      blocks: [{ id: 'todos', primitive: 'teammate-todos', fallbackMarkdown: glanceTodo.title, data: { items, total: items.length, dailyCheck: dailyTodoCheck } }] };
+  }
+  if (channel === REMOTE_RESOURCE_INVOKE_CHANNEL && request?.resourceRef?.id === 'todos:cindy-default' && request.actionId === 'todo-daily-check') {
+    dailyTodoCheck = request.input?.enabled === true;
+    return { effects: [], dailyCheck: dailyTodoCheck };
+  }
+  if (channel === REMOTE_RESOURCE_INVOKE_CHANNEL && request?.resourceRef?.id === 'todos:cindy-default' && request.actionId === 'todo-update') {
+    if (request.input?.operation === 'delete') todoDeleted = true;
+    if (request.input?.operation === 'restore') todoDeleted = false;
+    return { effects: [], todo: glanceTodo };
+  }
   // Nine members from three accounts: the header shows a member count, not every name.
   if (channel === REMOTE_RESOURCE_GET_CHANNEL && request?.ref?.collectionId === BOT_GROUP_REMOTE_COLLECTION_ID
     && request.ref.id === 'visual-crowded-group') return {
@@ -92,8 +128,9 @@ export function teammateVisualFixture(channel: string, args: unknown[], now = FI
     const bot = teammates.find(item => item.id === id);
     if (bot) return {
       ref: { collectionId: TEAMMATES, kind: 'bot', id: request.ref.id }, revision: 'visual-1',
-      display: { title: bot.name, avatar: bot.avatar },
-      links: [{ rel: 'conversation', target: { kind: 'session', sessionId: VISUAL_TEAMMATE_SESSION_ID } }],
+      display: { title: bot.name, avatar: bot.avatar, lastReplyAt: teammateVisualReplyAt(`${VISUAL_TEAMMATE_SESSION_ID}:${bot.id}`) },
+      links: [{ rel: 'conversation', target: { kind: 'session', sessionId: `${VISUAL_TEAMMATE_SESSION_ID}:${bot.id}` } },
+        ...(id === 'cindy-default' ? [{ rel: 'todos', target: { kind: 'resource', ref: { collectionId: TEAMMATES, kind: 'bot', id: 'todos:cindy-default' } } }] : [])],
       actions: [], blocks: [{ id: 'profile', primitive: 'markdown', fallbackMarkdown: bot.preview }],
     };
   }
@@ -109,6 +146,7 @@ export function teammateVisualFixture(channel: string, args: unknown[], now = FI
         timestamp: now - bot.minutesAgo * MINUTE,
         lastReplyAt: now - bot.minutesAgo * MINUTE,
         avatar: bot.avatar,
+        ...(bot.phase ? { teammateActivity: { phase: bot.phase } } : {}),
         ...(bot.working ? { generation: { phase: 'replying', startedAt: now - MINUTE } } : {}),
       },
       links: [

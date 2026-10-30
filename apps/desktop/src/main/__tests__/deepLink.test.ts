@@ -346,6 +346,16 @@ describe('parseDeepLink', () => {
     expect(parseDeepLink('xdt-maker://focus/')).toBeNull();
   });
 
+  it('parses plugins payload to the installed list or one plugin detail', () => {
+    // Bug/规则依据: 随包浏览器扩展的断连引导要把用户带回该插件的设置页。
+    expect(parseDeepLink('cindy://plugins')).toEqual({ type: 'installed-plugin' });
+    expect(parseDeepLink('cindy://plugins/')).toEqual({ type: 'installed-plugin' });
+    expect(parseDeepLink('cindy://plugins/my-browser')).toEqual({ type: 'installed-plugin', ghostId: 'my-browser' });
+    expect(parseDeepLink('cindy://plugins/my-browser/?x=1')).toEqual({ type: 'installed-plugin', ghostId: 'my-browser' });
+    expect(parseDeepLink('cindy://plugins/My Browser')).toBeNull();
+    expect(parseDeepLink('cindy://plugins/..%2Fetc')).toBeNull();
+  });
+
   it('parses settings/providers payload with and without a connect target', () => {
     expect(parseDeepLink('cindy://settings/providers')).toEqual({
       type: 'settings',
@@ -731,5 +741,24 @@ describe('public plugin links are navigation only', () => {
   });
   it('does not accept ghost names as server resource IDs', () => {
     expect(parseDeepLink('cindy://plugin/cindy-github')).toBeNull();
+  });
+});
+
+// A local share is a fixed package, never a market ID or an automatic install.
+// Unit: the real parser and pending handoff need no server or real Electron app.
+describe('fixed local plugin share navigation', () => {
+  const snapshotId = 'a'.repeat(32);
+  it('keeps the exact snapshot through the loaded login page', () => {
+    const window = { isDestroyed: () => false, isVisible: () => true, isMinimized: () => false, show: vi.fn(), focus: vi.fn(),
+      restore: vi.fn(), moveTop: vi.fn(), setAlwaysOnTop: vi.fn(),
+      webContents: { isLoading: () => false, send: vi.fn() } } as unknown as BrowserWindow;
+    setDeepLinkMainWindow(window);
+    handleIncomingDeepLink(`cindy://plugin-share/${snapshotId}`, 'open-url');
+    expect(takePendingDeepLink()).toEqual({ type: 'local-plugin-share', snapshotId });
+    expect(takePendingDeepLink()).toBeNull();
+    setDeepLinkMainWindow(null);
+  });
+  it.each(['?install=1', '?url=https://example.test/file', '#auto', '/other', '/../other'])('rejects extra behavior %s', suffix => {
+    expect(parseDeepLink(`cindy://plugin-share/${snapshotId}${suffix}`)).toBeNull();
   });
 });

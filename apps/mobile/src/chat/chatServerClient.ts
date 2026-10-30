@@ -1,14 +1,16 @@
+import type { ChatMaskAction, ChatMaskState, ChatMaskMention } from '@cindy/maker-shared/botGroupChat';
+import { teammateChatActivity, type TeammateActivity } from '@cindy/maker-shared/teammate-status';
 import { inferBotTemplatePresetId } from '@cindy/maker-shared/bot-template-preset';
 import { createConversationListState } from '@cindy/maker-shared/chatConversationList';
 import type { ChatHistory } from '@cindy/maker-shared/chat-history';
-/** The existing Chat Server HTTP contract; no device-link or executor registration. */
-import { botGroupMessageSummaryText, readBotGroupExecutionFailure, readBotGroupQuote, readBotGroupQuoteCard, readBotGroupTaskCard, readImportedBotGroupRuntimeFailureCode, type BotGroupAttachment, type BotGroupMemberView, type BotGroupMessageView, type BotGroupRemoteChatData } from '@cindy/maker-shared/botGroupChat';
-import { chatGroupMemberName as memberName, botGroupExecutionFailureBatches, projectBotGroupExecutionFailures } from '@cindy/maker-shared/botGroupPresentation';
+import { botGroupMessageSummaryText, botGroupQuoteFromMessage, buildBotGroupQuoteCard, readBotGroupExecutionFailure, readBotGroupQuote, readBotGroupQuoteCard, readBotGroupTaskCard, readImportedBotGroupRuntimeFailureCode, type BotGroupAttachment, type BotGroupMemberView, type BotGroupMessageView, type BotGroupRemoteChatData } from '@cindy/maker-shared/botGroupChat';
+import { chatGroupMemberName as memberName, botGroupActivityAt, latestBotGroupMessage, botGroupExecutionFailureBatches, projectBotGroupExecutionFailures } from '@cindy/maker-shared/botGroupPresentation';
 import type { HostedRemoteCollectionItem } from '@/device-link/remoteResources';
 // The app's `@/i18n` sets up this default instance; importing it here would pull React bindings into a plain client.
 import i18next from 'i18next';
+import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from '@/i18n/locale';
 import { mobileMarkdownPreviewText } from '@/session/messageMarkdown';
-import { botGroupQuoteFromMessage, buildBotGroupQuoteCard } from '@cindy/maker-shared/botGroupChat';
+import type { RemoteSerializedAttachment } from '@/session/types';
 
 export interface ChatRoom {
   id: string; name: string; state?: string; kind: string; archived: boolean; dissolved_at?: string | null;
@@ -22,6 +24,7 @@ export interface ChatMember {
   role: 'owner' | 'admin' | 'member' | 'guest';
 }
 export interface ChatMessage {
+  maskAttribution?: BotGroupMessageView['maskAttribution'];
   id: string; seq: string; authorId: string; author: { kind: string; name: string };
   createdAt: string; deleted: boolean; threadRootId: string | null; origin?: string; mentions?: string[];
   content: Array<{ type: string; text?: string; fallback?: string; mediaId?: string; caption?: string;
@@ -57,6 +60,7 @@ export interface ChatSendInput {
   conversationKind?: 'direct';
   clientId: string; text: string; mentions: { all: boolean; botIds: string[] };
   quote?: { messageId: string }; threadRootId?: string;
+  attachments?: readonly RemoteSerializedAttachment[];
 }
 export interface ChatSendBody {
   operationId: string; content: ChatMessage['content']; mentions: string[]; threadRootId?: string;
@@ -106,21 +110,38 @@ export const chatMessageAttachments = (message: ChatMessage): BotGroupAttachment
 const mediaNames = (message: ChatMessage) => message.deleted ? '' : message.content
   .flatMap(block => block.type === 'media' ? [attachmentName(block)] : []).join(', ');
 
+function joinedMemberName(message: ChatMessage): string | undefined {
+  const joined = message.origin === 'system' && !message.deleted && !message.threadRootId && message.content.find(block =>
+    block.type === 'card' && block.namespace === 'cindy.membership' && block.schemaRevision === 1 && block.data?.type === 'member.joined');
+  return joined && typeof joined.data?.displayName === 'string' && joined.data.displayName.trim() ? joined.data.displayName : undefined;
+}
+
 /** Empty device identity means a server-owned conversation, never a fictitious computer. */
-export function chatRoomRow(room: ChatRoom, snapshot?: ChatSnapshot, selfId?: string): HostedRemoteCollectionItem {
+export function chatRoomRow(room: ChatRoom, snapshot?: ChatSnapshot, selfId?: string, activity?: TeammateActivity): HostedRemoteCollectionItem {
   const members = snapshot?.members.filter(member => member.state === 'joined') ?? [];
-  const last = snapshot?.messages.filter(message => !message.threadRootId && !message.deleted)
-    .sort((a, b) => BigInt(chatCursor(a.seq)) < BigInt(chatCursor(b.seq)) ? 1 : -1)[0];
+  const last = latestBotGroupMessage(snapshot?.messages ?? []);
+  const joinedName = last && joinedMemberName(last);
+  // Cached rows resolve their copy at render time, even after an offline language change.
+  const joinedPreview = joinedName && i18next.isInitialized ? {
+    fallback: i18next.t('groupChat.notice.memberJoined', { name: joinedName, lng: DEFAULT_LOCALE }),
+    translations: Object.fromEntries(SUPPORTED_LOCALES.map(lng => [lng,
+      i18next.t('groupChat.notice.memberJoined', { name: joinedName, lng })])),
+  } : undefined;
   const ownerMembers = room.kind === 'direct' ? [] : members;
+  const subtitle = members.map(member => memberName(member, ownerMembers)).join(' · ');
+  const preview = joinedPreview ?? (last
+    ? mobileMarkdownPreviewText(botGroupMessageSummaryText({ content: contentText(last), task: taskCardOf(last) ?? undefined, deleted: last.deleted }) || mediaNames(last)).slice(0, 160) || subtitle
+    : '');
   return { key: `chat:${room.id}`, host: { deviceId: '', deviceName: '' },
     lastReplySequence: snapshot && selfId ? chatLastReplySequence(snapshot.messages, selfId) : undefined,
     chatUnread: snapshot?.reads && selfId ? chatUnread(snapshot, selfId) : undefined,
     groupMembers: snapshot ? members.map(member => chatMemberIdentity(member, ownerMembers)) : undefined, item: {
     ref: { collectionId: 'bot-groups', kind: 'bot-group', id: room.id },
     revision: String(room.head ?? room.revision), display: { title: room.name,
-      subtitle: members.map(member => memberName(member, ownerMembers)).join(' · '),
-      ...(snapshot ? { preview: last ? mobileMarkdownPreviewText(botGroupMessageSummaryText({ content: contentText(last), task: taskCardOf(last) ?? undefined, deleted: last.deleted }) || mediaNames(last)).slice(0, 160) || members.map(member => memberName(member, ownerMembers)).join(' · ') : '' } : {}),
-      timestamp: Date.parse(last?.createdAt ?? room.updated_at),
+      subtitle,
+      ...(activity ? { teammateActivity: activity } : {}),
+      ...(snapshot ? { preview } : {}),
+      timestamp: botGroupActivityAt({ createdAt: Date.parse(room.created_at), lastMessage: last ? { createdAt: Date.parse(last.createdAt) } : null }),
       lastReplyAt: snapshot && selfId ? chatLastReplyAt(snapshot.messages, selfId) : undefined },
     links: members.map(member => ({ rel: 'member', label: memberName(member, ownerMembers),
       target: { kind: 'resource', ref: { collectionId: 'teammates', kind: 'bot', id: member.id } } })),
@@ -206,18 +227,18 @@ export function chatGroupView(page: ChatPage, selfId: string, actors: readonly C
       content: '', mentions: { all: false, botIds: [] }, noticeCode: runtimeFailureCode === 'RUNTIME_TIMEOUT' ? 'member-timeout' : 'member-failed',
       runtimeFailureCode, planId: null, files: [], attachments: [], createdAt: Date.parse(message.createdAt) };
     const member = active.find(candidate => candidate.id === message.authorId);
-    const joined = message.origin === 'system' && !message.deleted && message.content.find(block =>
-      block.type === 'card' && block.namespace === 'cindy.membership' && block.schemaRevision === 1 && block.data?.type === 'member.joined');
+    const joinedName = joinedMemberName(message);
     const quote = message.origin === 'system' ? null : readBotGroupQuote(message.content);
     const task = message.origin === 'system' ? null : taskCardOf(message);
     return { id: message.id, sequence: index + 1, serverSequence: chatCursor(message.seq), kind: message.origin === 'system' ? 'notice' : 'message',
+      ...(message.maskAttribution ? { maskAttribution: message.maskAttribution } : {}),
       ...(task ? { task } : {}), threadRootId: message.threadRootId,
       authorKind: message.origin === 'system' ? 'system' : message.author.kind === 'human' ? 'user' : 'bot',
-      authorBotId: message.authorId, authorName: joined && typeof joined.data?.displayName === 'string' ? joined.data.displayName
+      authorBotId: message.authorId, authorName: joinedName !== undefined ? joinedName
         : member ? memberName(member, ownerMembers) : message.author.name,
       isSelf: message.authorId === selfId, content: contentText(message), mentions: { all: false, botIds: message.mentions ?? [] },
       ...(quote ? { quote: deletedIds.has(quote.messageId) ? { ...quote, originalDeleted: true } : quote } : {}),
-      noticeCode: joined ? 'member-joined' : null, planId: null, files: [],
+      noticeCode: joinedName !== undefined ? 'member-joined' : null, planId: null, files: [],
       attachments: chatMessageAttachments(message), createdAt: Date.parse(message.createdAt) };
   });
   const last = messages.at(-1);
@@ -242,7 +263,7 @@ export function chatGroupView(page: ChatPage, selfId: string, actors: readonly C
     createdAt: Date.parse(room.created_at), updatedAt: Date.parse(room.updated_at),
     lastMessage: last ? { authorKind: last.authorKind, authorName: last.authorName, preview: mobileMarkdownPreviewText(botGroupMessageSummaryText(last)).slice(0, 80), createdAt: last.createdAt } : null,
     speakingBotIds: speakers.map(speaker => speaker.botId), planningBotId: null, openPlan: null, plans: [], messages: projectBotGroupExecutionFailures(messages, failures),
-    hasMoreBefore: page.before !== null, round: { status: speakers.length ? 'running' : 'idle', speakers, canContinue: false }, supportsAttachments: false };
+    hasMoreBefore: page.before !== null, round: { status: speakers.length ? 'running' : 'idle', speakers, canContinue: false }, supportsAttachments: true };
 }
 
 export function createChatServerClient(request: ChatRequest, personalList = createConversationListState(),
@@ -291,16 +312,18 @@ export function createChatServerClient(request: ChatRequest, personalList = crea
   let supportsDissolve = false;
   let supportsListRemoval = false;
   let singleSpeaker = false;
+  let personalMask = false;
   let lastIdentity: { id: string; at: number } | undefined;
   let readingIdentity: Promise<string> | undefined;
   async function identity() {
     if (openHistory && lastIdentity && Date.now() - lastIdentity.at < 60_000) return lastIdentity.id;
     return readingIdentity ??= (async () => {
-      const me = await request<{ actor: { id: string; kind: string }; capabilities?: { groupLifecycleVersion?: number; conversationListStateVersion?: number; groupSingleSpeaker?: number } }>('/me');
+      const me = await request<{ actor: { id: string; kind: string }; capabilities?: { groupLifecycleVersion?: number; conversationListStateVersion?: number; groupSingleSpeaker?: number; personalMask?: number } }>('/me');
       if (me.actor.kind !== 'human') throw new Error('INVALID_CHAT_IDENTITY');
       supportsDissolve = me.capabilities?.groupLifecycleVersion === 1;
       supportsListRemoval = me.capabilities?.conversationListStateVersion === 1;
       singleSpeaker = me.capabilities?.groupSingleSpeaker === 1;
+      personalMask = me.capabilities?.personalMask === 1;
       const id = chatId(me.actor.id); lastIdentity = { id, at: Date.now() };
       return id;
     })().finally(() => { readingIdentity = undefined; });
@@ -309,6 +332,25 @@ export function createChatServerClient(request: ChatRequest, personalList = crea
     invalidateHistory(room: string, metadata = false) { void historyCache?.then(value => value.invalidate(room, metadata)).catch(() => undefined); },
     async refreshHistory(room: string, metadata = false) { const value = await cache(); value?.invalidate(room, metadata); await value?.snapshot(room); },
     personalList,
+    async mask(roomId: string, action?: ChatMaskAction, operationId?: string): Promise<ChatMaskState | null> {
+      await identity();
+      if (!personalMask) return null;
+      return request<ChatMaskState>(`/conversations/${chatId(roomId)}/mask`, action ? 'POST' : 'GET',
+        action ? { ...action, operationId } : undefined);
+    },
+    async maskMentions(roomId: string, before?: string, readIds?: string[], operationId?: string) {
+      await identity();
+      if (!personalMask) return { mentions: [] as ChatMaskMention[], hasMore: false };
+      const path = `/conversations/${chatId(roomId)}/mentions`;
+      if (readIds?.length) await request(`${path}/read`, 'POST', { operationId, messageIds: readIds.map(chatId) });
+      const page = await request<{ messages: Array<ChatMessage & { reply?: { content: ChatMessage['content']; maskAttribution: NonNullable<ChatMessage['maskAttribution']> } }> ; hasMore: boolean }>(`${path}?limit=100${before ? `&before=${chatCursor(before)}` : ''}`);
+      return { hasMore: page.hasMore, mentions: page.messages.map((message): ChatMaskMention => ({
+        messageId: message.id, sequence: message.seq, threadRootId: message.threadRootId ?? undefined,
+        authorName: message.author.name, text: contentText(message),
+        ...(message.reply ? { reply: { companion: message.reply.maskAttribution.companion,
+          text: message.reply.content.map(block => block.text ?? block.fallback ?? block.caption ?? '').join('\n') } } : {}),
+      })) };
+    },
     lifecycleCapabilities: () => ({ supportsDissolve, supportsListRemoval, singleSpeaker }),
     async groupSettings(roomId: string) {
       const [snapshot, self] = await Promise.all([
@@ -443,6 +485,22 @@ export function createChatServerClient(request: ChatRequest, personalList = crea
     },
     /** Main-timeline messages of any room kind (a companion's room is `direct`), newest first. */
     history,
+    /** Read-only roster state; independent of message heads because an approval can arrive silently. */
+    async rosterActivity(roomId: string, snapshot: ChatSnapshot): Promise<TeammateActivity | undefined> {
+      const room = chatId(roomId);
+      const results = await Promise.allSettled([
+        request<ChatExecution[]>(`/conversations/${room}/executions`),
+        request<Array<{ status: string }>>(`/conversations/${room}/plans`),
+      ]);
+      // Older servers can lack these reads. Never manufacture a result from an ordinary unread message.
+      if (results.some(result => result.status === 'rejected')) return undefined;
+      const executions = results[0].status === 'fulfilled' ? results[0].value : [];
+      const plans = results[1].status === 'fulfilled' ? results[1].value : [];
+      if (!Array.isArray(executions) || !Array.isArray(plans)) return undefined;
+      const last = latestBotGroupMessage(snapshot.messages);
+      return teammateChatActivity({ executions, plans, archived: snapshot.room.archived,
+        lastMessageAt: last ? Date.parse(last.createdAt) : 0 });
+    },
     async snapshot(roomId: string, metadata = false): Promise<ChatSnapshot> {
       const stored = await cache();
       if (stored) { stored.invalidate(roomId, metadata); return stored.snapshot<ChatSnapshot>(chatId(roomId)); }
@@ -555,9 +613,12 @@ export function createChatServerClient(request: ChatRequest, personalList = crea
       save(body: ChatSendBody): Promise<void>;
     }) {
       if (durable?.body) return request<ChatMessage>(`/conversations/${chatId(roomId)}/messages`, 'POST', durable.body);
-      const key = JSON.stringify([roomId, input.clientId, input.text, input.mentions, input.quote?.messageId, input.threadRootId]);
+      const key = JSON.stringify([roomId, input.clientId, input.text, input.mentions, input.quote?.messageId, input.threadRootId, input.attachments]);
       const known = input.quote ? postedQuotes.get(key) : undefined;
-      const content: ChatMessage['content'] = known?.content ?? [{ type: 'text', text: input.text }];
+      const content: ChatMessage['content'] = known?.content ?? [
+        ...(input.text ? [{ type: 'text', text: input.text }] : []),
+        ...(input.attachments ?? []).map(attachment => ({ type: 'media', mediaId: chatId(attachment.id), caption: attachment.name })),
+      ];
       const mentions = new Set(known?.mentions ?? input.mentions.botIds.map(chatId));
       if (input.quote && !known) {
         const [original, members] = await Promise.all([

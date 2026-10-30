@@ -18,6 +18,7 @@ import {
   requestRemoteSessionStatus,
   setRemoteReseedImpl,
   setRemoteSessionBootstrapRetryImpl,
+  subscribeRemoteSessionRemoval,
 } from '@/features/device-link/remoteProjectsStore';
 import type { Session } from '@/lib/ccAgent.types';
 
@@ -459,6 +460,22 @@ describe('remoteProjectsStore', () => {
       ]);
       expect(getSessionDeviceId('s1')).toBeUndefined();
       expect(getSessionDeviceId('s2')).toBe('dev-B');
+    });
+
+    it('通知只在意 sessionId 的旁路状态，包含不在任何分片里的会话', () => {
+      const removed: string[] = [];
+      const off = subscribeRemoteSessionRemoval((id) => removed.push(id));
+      remoteProjectsStore.setDeviceSessions('dev-B', 'B', [mk('s1')]);
+
+      remoteProjectsStore.applyPatch('dev-B', 's1', { status: 'deleted' });
+      // 不在任何分片里的会话(分片有界/设备早已移除)也得报:窗口里可能还挂着它的路由。
+      remoteProjectsStore.applyPatch('dev-gone', 's9', { status: 'deleted' });
+      // 非删除的 patch 不是消失。
+      remoteProjectsStore.applyPatch('dev-B', 's2', { status: 'archived' });
+
+      off();
+      remoteProjectsStore.applyPatch('dev-B', 's3', { status: 'deleted' });
+      expect(removed).toEqual(['s1', 's9']);
     });
 
     it('unpin 后触发 reseed,让仅因 includePinned 补入的旧会话被后续 snapshot 剔除', () => {

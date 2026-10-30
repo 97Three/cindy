@@ -96,7 +96,7 @@ const service = {
   continuePlan: vi.fn(),
   retryPlan: vi.fn(),
   editPlanStep: vi.fn(),
-  chatServer: { manage: vi.fn() },
+  chatServer: { manage: vi.fn(), mask: vi.fn(), mentions: vi.fn() },
 };
 
 describe('bot group remote resources', () => {
@@ -232,6 +232,8 @@ describe('bot group remote resources', () => {
     const waiting = summary({
       openPlan: { id: 'p1', status: 'waiting', currentStep: 0, stepCount: 3, currentBotName: '咪咪', currentStepStatus: 'failed' },
     });
+    expect(botGroupRemoteItem(waiting).display.teammateActivity).toEqual({ phase: 'needs-interaction' });
+    expect(botGroupRemoteItem({ ...waiting, teammateActivity: { phase: 'error' } }).revision).not.toEqual(botGroupRemoteItem(waiting).revision);
     expect(botGroupRemotePreview(waiting)).toMatchObject({ translations: { 'zh-CN': '咪咪没做完' } });
     expect(botGroupRemotePreview(summary())).toMatchObject({ translations: { 'zh-CN': '阿布：写好了' } });
   });
@@ -243,6 +245,13 @@ describe('bot group remote resources', () => {
       'zh-CN': 'Taylor加入了群聊', 'zh-TW': 'Taylor加入了群聊',
       ja: 'Taylorさんがグループに参加しました', ko: 'Taylor 님이 그룹에 참여했습니다',
     } });
+  });
+
+  it('uses creation for empty group ordering without publishing a creation notice or counting settings edits', () => {
+    const group = summary({ createdAt: 70, updatedAt: 100, lastMessage: null, openPlan: null });
+    expect(botGroupRemoteItem(group).display).toMatchObject({ timestamp: 70 });
+    expect(botGroupRemoteItem(group).display.preview).toBeUndefined();
+    expect(botGroupRemoteItem({ ...group, lastMessage: summary().lastMessage }).display.timestamp).toBe(70);
   });
 
   it('names who shared a thread reply, never the card text, the way the desktop sidebar does', () => {
@@ -286,6 +295,22 @@ describe('bot group remote resources', () => {
     expect(plain.blocks?.[0]?.fallbackMarkdown).toBe('Taylor joined the group');
     const rich = botGroupRemoteChatData(detail({ messages: [joined] }));
     expect(rich.messages[0]).toMatchObject({ authorKind: 'system', noticeCode, authorName: 'Taylor' });
+  });
+
+  it('forwards personal settings and individual mention reads through the same owner API', async () => {
+    service.getGroup.mockResolvedValue({ ok: true, group: detail({ serverBacked: true }) });
+    service.chatServer.mask.mockResolvedValue({ ok: true, state: { revision: 3 } });
+    service.chatServer.mentions.mockResolvedValue({ ok: true, mentions: [], hasMore: false });
+    const action = { type: 'participate' };
+    const invoke = (actionId: string, input: Record<string, unknown>) => remoteResourceRegistry.invoke(context, {
+      client: client(), collectionId: BOT_GROUP_REMOTE_COLLECTION_ID, resourceRef: ref('g1'), actionId, input });
+    expect(await invoke('mask', { action, operationId: 'personal-write' })).toMatchObject({ result: { state: { revision: 3 } } });
+    expect(service.chatServer.mask).toHaveBeenCalledWith({ groupId: 'g1', action, operationId: 'personal-write' });
+    await invoke('mask-mentions', { readIds: ['m2'], operationId: 'personal-read' });
+    expect(service.chatServer.mentions).toHaveBeenCalledWith({ groupId: 'g1', readIds: ['m2'], operationId: 'personal-read' });
+    expect(service.chatServer.manage).not.toHaveBeenCalled();
+    h.ownerCurrent = () => false;
+    await expect(invoke('mask', {})).rejects.toThrow('Account changed');
   });
 
   it('forwards actions to the group service and reports its error code when refused', async () => {

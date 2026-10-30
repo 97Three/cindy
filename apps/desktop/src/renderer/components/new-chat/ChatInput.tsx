@@ -119,9 +119,12 @@ import {
 } from '@/contexts/dataOwnerGeneration';
 import {
   insertPromptIntoEditor,
+  peekComposerSubmitRequest,
+  subscribeComposerSubmitRequest,
   subscribePromptInsert,
   subscribeSessionLinkInsert,
   subscribeTodoReferenceInsert,
+  takeComposerSubmitRequest,
 } from '@/lib/composerActionsBus';
 import { resolveComposerModelSelection } from './composerModelSelection';
 import type { SessionRuntimeProfileProjection, SessionRuntimePendingProjection } from '@/lib/ccAgent.types';
@@ -504,6 +507,7 @@ interface ChatInputProps {
       deliveryMode?: MessageDeliveryMode;
       builtInSkillIntent?: BuiltInSkillDraftIntent;
       providerId?: string | null;
+      baselineRecovery?: boolean;
       /** chat-text-quote:message 开头的 blockquote 为引用功能拼接产出。 */
       quotesEncoded?: boolean;
       /** Ordered semantic projection metadata for session/project/message chips. */
@@ -547,6 +551,8 @@ interface ChatInputProps {
   runtimeAgentKind?: AgentKind | null;
   runtimeEffective?: SessionRuntimeProfileProjection;
   runtimePending?: SessionRuntimePendingProjection | null;
+  /** Host offers a baseline restoration attempt for this companion, not a connected source. */
+  allowBaselineRecovery?: boolean;
   /**
    * 会话的 Orca 角色(lead / worker;null = 已确认非协同;undefined = 元数据未加载)。
    * Orca Lead/Worker 复用统一的延迟交接切换事务；该字段仍用于协同面板与身份展示。
@@ -1244,6 +1250,7 @@ export function ChatInput({
   runtimeAgentKind,
   runtimeEffective,
   runtimePending,
+  allowBaselineRecovery = false,
   sessionOrcaRole,
   sessionOrcaRemoteWorker,
   initialWorkingDir,
@@ -1714,11 +1721,16 @@ export function ChatInput({
   // 吞掉「+」激活前就存在于锚点后的连续文本。
   const syntheticAtRangeEndRef = useRef<number | null>(null);
   const [syntheticAtAnchor, setSyntheticAtAnchorState] = useState<number | null>(null);
+  // 合成「+」面板自带搜索框（「+」面板浮在输入框上方、盖住了输入框,在看不见的
+  // 输入框里盲打是死路）。面板形态下查询词只认这个框。
+  const [atPanelSearch, setAtPanelSearch] = useState('');
   const setSyntheticAtAnchor = useCallback((next: number | null) => {
     const previous = syntheticAtAnchorRef.current;
     syntheticAtAnchorRef.current = next;
     if (next === null) {
       syntheticAtRangeEndRef.current = null;
+      // 面板一关,搜索词清空(下次打开从空查询开始)。
+      setAtPanelSearch('');
     } else if (previous !== next || syntheticAtRangeEndRef.current === null) {
       syntheticAtRangeEndRef.current = next;
     }
@@ -2176,6 +2188,13 @@ export function ChatInput({
       selectedProviderId: activeProviderId,
       providersLoading,
     });
+
+  // Only the unchanged host-projected selection may enter recovery. A new user
+  // selection must pass the normal source checks, including optimistic switches.
+  const canAttemptBaselineRecovery = !!sessionId && allowBaselineRecovery &&
+    !!runtimeEffective && !composerSelection.pending && !agentSwitchIntent && !pendingRemoteSwitch &&
+    activeModel === runtimeEffective.model && currentModelAgentKind === runtimeEffective.agentKind &&
+    (activeProviderId ?? null) === (runtimeEffective.providerId ?? null);
 
   // 当前**生效来源 id**(= ModelSelector 高亮的 activeSourceId 同口径):显式选中且仍可连、
   // 且提供当前模型 → 用它;否则只在“提供当前模型”的来源里取原生默认。providerModelMemory
@@ -3012,6 +3031,10 @@ export function ChatInput({
       // blur. We defer by a microtask so mouse-click selections on the
       // palette (which also blur the editor momentarily) still register.
       setTimeout(() => {
+        // 焦点落进面板自己的搜索框时不算离开:「+」面板盖住输入框,点搜索框必然
+        // 先让编辑器失焦,按旧口径会把刚打开的面板立刻关掉。
+        const active = document.activeElement;
+        if (active instanceof Element && active.closest('[data-composer-suggestion-search]')) return;
         if (!panelHoverRef.current) {
           // Close both palettes by suppressing the current trigger position.
           // The triggerState recomputes on next tick — if it is still
@@ -3465,6 +3488,7 @@ export function ChatInput({
   const voiceInputStopAndSendRef = useRef<
     (deliveryMode?: MessageDeliveryMode) => void | Promise<void>
   >(() => {});
+  const composerSubmitRequestSendRef = useRef<(() => void | Promise<void>) | null>(null);
   const voiceInputCanStopAndSendRef = useRef(false);
   const composerCanSubmitRef = useRef(false);
   const handleVoiceInputStartRef = useRef(handleVoiceInputStart);
@@ -4824,7 +4848,10 @@ export function ChatInput({
     syntheticAnchor: syntheticAtAnchor,
     syntheticQuery: syntheticAtQuery,
   });
-  const atQuery = effectiveAt?.query ?? '';
+  // 合成「+」形态:查询词只认面板自己的搜索框(编辑器被面板盖住,那条路走不通);
+  // 输入 @ 的形态仍以输入框里的文字为准。
+  const atQuery =
+    effectiveAt?.activation === 'synthetic' ? atPanelSearch : (effectiveAt?.query ?? '');
 
   const runNewGoalAction = useCallback(() => {
     const activeEditor = editorRef.current;
@@ -5175,7 +5202,9 @@ export function ChatInput({
             }
             return false;
           case 'Backspace':
-            if (syntheticAtOpen && !atQuery) {
+            // 判据用编辑器自己的查询词,不用 atQuery:atQuery 现在可能是面板搜索框的词,
+            // 用它会让「按退格收面板」失效,退格转而删掉被面板盖住的正文(看不见的删除)。
+            if (syntheticAtOpen && !syntheticAtQuery) {
               closeAtPanel();
               return true;
             }
@@ -5343,6 +5372,14 @@ export function ChatInput({
       }
       const directoryQuery = getAtDirectoryCompletionQuery(selectedItem);
       if (directoryQuery) {
+        // 合成「+」形态:查询词在面板搜索框里 —— 钻取改搜索框就行,不往编辑器正文塞
+        // 路径文本(那会在选完文件后残留一段没人要的字);也不要把焦点从搜索框抢走,
+        // 抢走会让 MorphPopover 认定焦点出了本层,直接把面板关掉。
+        if (effectiveAt.activation === 'synthetic') {
+          setAtPanelSearch(directoryQuery);
+          setAtFocus(0);
+          return;
+        }
         editor
           .chain()
           .focus()
@@ -5350,14 +5387,11 @@ export function ChatInput({
             tr.replaceWith(
               from,
               to,
-              editor.schema.text(
-                effectiveAt.activation === 'typed' ? `@${directoryQuery}` : directoryQuery,
-              ),
+              editor.schema.text(`@${directoryQuery}`),
             );
             return true;
           })
           .run();
-        if (effectiveAt.activation === 'synthetic') setSyntheticAtAnchor(from);
         setAtFocus(0);
         return;
       }
@@ -5423,10 +5457,24 @@ export function ChatInput({
     [closeAtPanel, editor, insertAtResource, resolveEffectiveAtRange],
   );
 
+  // 合成「+」面板的统一关闭:收面板 + 按焦点位置决定是否把焦点交还编辑器。
+  // 面板内收起(搜索框空框退格 / Esc)时焦点还在面板里:立刻接管回编辑器,否则
+  // MorphPopover 的收合快照会判定「键盘关闭」,动画结束把焦点还给「+」按钮,
+  // 用户接着打的字被按钮吃掉。焦点已被用户挪到面板外(Tab 出去 / 点了其他
+  // 控件)则不抢,否则就是偷走用户刚聚焦的控件。搜索框退格走的 onClose 不经过
+  // MorphPopover 的 onOpenChange,所以面板的 onClose 也必须接到这里。
+  const closeComposerSuggestionPanel = useCallback(() => {
+    setSyntheticAtAnchor(null);
+    const active = document.activeElement;
+    if (active instanceof Element && active.closest('[data-composer-suggestion-panel]')) {
+      editorRef.current?.commands.focus();
+    }
+  }, [setSyntheticAtAnchor]);
+
   const handleComposerSuggestionOpenChange = useCallback(
     (nextOpen: boolean) => {
       if (!nextOpen) {
-        setSyntheticAtAnchor(null);
+        closeComposerSuggestionPanel();
         return;
       }
       if (!editor || editor.isDestroyed || composerMutationLocked) return;
@@ -5437,9 +5485,10 @@ export function ChatInput({
       }
       setSyntheticAtAnchor(editor.state.selection.from);
       setAtFocus(0);
-      editor.commands.focus();
+      // 不在这里抢编辑器焦点:面板的搜索框自己会拿焦点(面板浮在编辑器上方,
+      // 焦点留在编辑器等于让人对着看不见的输入框打字)。
     },
-    [composerMutationLocked, editor, setSyntheticAtAnchor, trigger],
+    [closeComposerSuggestionPanel, composerMutationLocked, editor, trigger],
   );
   const composerSuggestionFocusTarget = useCallback(() => {
     if (!editor || editor.isDestroyed) return null;
@@ -5772,7 +5821,7 @@ export function ChatInput({
         // 直接 LAZY_CREATE_FAILED(renderer 的 sendProviderId=null 救不了已建会话),所以这里
         // 弹窗给出明确原因 + 去设置入口,而不是让请求出去撞一个原始错误码。
         // Send 按钮已被 selectedSourceDisconnected 禁用,此 guard 兜底覆盖间接派发路径。
-        if (selectedSourceDisconnected) {
+        if (selectedSourceDisconnected && !canAttemptBaselineRecovery) {
           const goConnect = await confirmDialog({
             title: t('newChat.sourceDisconnected.title'),
             description: t('newChat.sourceDisconnected.description'),
@@ -5794,7 +5843,7 @@ export function ChatInput({
         // 处理,不误伤。用 chatEligibleSourcesForModel 而非裸 sourcesForModel:
         // 非聊天来源不该被当成"可以发"放行(issue #882 第 3 点,2026-07 review)。
         if (
-          enforceConnectedSourceGate &&
+          enforceConnectedSourceGate && !canAttemptBaselineRecovery &&
           currentModelAgentKind &&
           // 旧被控端明确不支持 provider:list 时，控制端没有可检查的来源镜像；
           // 与模型列表一致交给 capabilities + 被控端发送链路做兼容回退。
@@ -6269,6 +6318,7 @@ export function ChatInput({
             {
               deliveryMode,
               providerId: sendProviderId,
+              ...(canAttemptBaselineRecovery ? { baselineRecovery: true } : {}),
               ...(builtInSkillIntent
                 ? {
                     builtInSkillIntent: {
@@ -6322,6 +6372,7 @@ export function ChatInput({
       activePermissionMode,
       sendProviderId,
       selectedSourceDisconnected,
+      canAttemptBaselineRecovery,
       fastMode,
       hasAttachments,
       attachments,
@@ -6499,7 +6550,41 @@ export function ChatInput({
   );
   useEffect(() => {
     voiceInputStopAndSendRef.current = handleClickSend;
+    composerSubmitRequestSendRef.current = handleClickSend;
   }, [handleClickSend]);
+
+  // 别处的一键动作 (截图「翻译」等) 已把草稿写好并请求发送: 等编辑器与附件同步到位,
+  // 按普通发送键同一路径发一次; 发送中 / 语音占用时与键盘输入同锁, 稍后再试直到过期。
+  useEffect(() => {
+    if (!editor || !storageKey) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const attempt = () => {
+      timer = null;
+      const request = peekComposerSubmitRequest(storageKey);
+      if (!request || editor.isDestroyed) return;
+      const ready =
+        composerCanSubmitRef.current &&
+        !!composerSubmitRequestSendRef.current &&
+        !(sessionId && hasPendingAgentSendDispatch(sessionId)) &&
+        !composerMutationLockedRef.current &&
+        !isEditorEmpty(editor) &&
+        latestAttachmentsRef.current.some((file) => file.url === request.attachmentUrl);
+      if (ready) {
+        takeComposerSubmitRequest(storageKey);
+        void composerSubmitRequestSendRef.current?.();
+        return;
+      }
+      timer = setTimeout(attempt, 100);
+    };
+    const off = subscribeComposerSubmitRequest(storageKey, () => {
+      if (timer) clearTimeout(timer);
+      attempt();
+    });
+    return () => {
+      off();
+      if (timer) clearTimeout(timer);
+    };
+  }, [editor, storageKey, sessionId]);
 
   // ── Model / effort / permission / folder callbacks (unchanged) ─────
   // ---------------------------------------------------------------------------
@@ -9100,9 +9185,9 @@ export function ChatInput({
     : Boolean(
     disabled || sessionModelLoading || waitingForFolders ||
     // 空態:当前 agent 无已连接来源 → Send 禁用(设计 Q7NYAD「send 置灰」),引导用户先去连接来源。
-    (!makeNeedsNoModel && noConnectedSource) ||
+    (!makeNeedsNoModel && !canAttemptBaselineRecovery && noConnectedSource) ||
     // 会话显式选中的来源已断开 → Send 禁用(trigger 同步显示「已断开」错误态说明原因)。
-    (!makeNeedsNoModel && selectedSourceDisconnected) ||
+    (!makeNeedsNoModel && !canAttemptBaselineRecovery && selectedSourceDisconnected) ||
     // device-link 模型目录仍在读取或真实失败 → 禁止旧快照继续发送；旧端明确
     // unsupported 已由 remoteModelListStatus 归并为 ready，不会误伤兼容回退。
     remoteModelListBlocked ||
@@ -9145,17 +9230,21 @@ export function ChatInput({
     showStopButton && (canSend || voiceBusyOnCurrentComposer) && !sendDispatchInFlight;
   // Companion-only idle action: keep the existing send/stop slots and voice-release
   // target. Recording/refinement and queue editing must never become "start call".
+  // A recommendation is still a suggestion: keep the call available until the
+  // user accepts it into the draft. Its Tab/click acceptance and Enter send remain available.
   const mainSlotIsVoice = Boolean(
     onStartVoiceConversation &&
       !queueEditActive &&
       !mainSlotIsStop &&
-      !canSend &&
+      !hasComposerPayload &&
       !hasVoiceDraftText &&
       !voiceBusyOnCurrentComposer,
   );
+  // Automatic actions must observe the same gates as the current Send button
+  // before consuming their one-shot request, including during subscription effects.
+  composerCanSubmitRef.current = !queueEditActive && !sendButtonDisabled;
   useEffect(() => {
     voiceInputCanStopAndSendRef.current = !queueEditActive && !sendButtonDisabled;
-    composerCanSubmitRef.current = !sendButtonDisabled;
   }, [queueEditActive, sendButtonDisabled]);
   const canReleaseVoiceToSend = Boolean(
     !disabled && (voiceInput.isListening || canSend || hasVoiceDraftText),
@@ -9721,17 +9810,18 @@ export function ChatInput({
                   }
                   open={syntheticAtOpen}
                   onOpenChange={handleComposerSuggestionOpenChange}
-                  autoFocusTarget={composerSuggestionFocusTarget}
                   panel={
                     <AtMentionPanel
                       embedded
+                      searchValue={atPanelSearch}
+                      onSearchChange={setAtPanelSearch}
                       query={atQuery}
                       state={atState}
                       entries={filteredAt}
                       focusedIndex={atFocus}
                       onFocusedIndexChange={setAtFocus}
                       onSelect={handleComposerSuggestionSelect}
-                      onClose={closeAtPanel}
+                      onClose={closeComposerSuggestionPanel}
                       onRetry={() => runAtScan(atQuery)}
                       referenceDirs={
                         !settingsLocked && onExtraDirsChange

@@ -31,8 +31,17 @@ export default {
   viewport: { width: 1280, height: 800 },
   real: 'BotGroupChatView (timeline, composer, send button, header registration), ControlledBanner, ContentHeader shell, Markdown, theme, fonts and translations',
   notCovered:
-    'Sending, round control, real device-link control and revocation, pending interactions, plans and attachments; the bubbles case shows a task snapshot, not a live task; the sidebar is an empty frame',
+    'Real IPC/network sending (send-status controls host receipts), round control, real device-link control and revocation, pending interactions, plans and attachments; the bubbles case shows a task snapshot, not a live task; the sidebar is an empty frame',
   cases: {
+    'send-status': {
+      about: 'Mac send flicker regression: real composer/outbox/timeline, controlled slow receipt; row geometry stays stable and failed sends remain retryable',
+      data: { ...base, messages: 40, sendStatus: true },
+    },
+    'remote-limits': {
+      about: '#6835: lane-unavailable notices show device and total task limits with recovery advice',
+      viewport: { width: 720, height: 700 },
+      data: { ...base, sidebar: false, remoteLimits: true },
+    },
     'work-thinking': { about: 'Actual group work status, scenario data: thinking', data: { ...base, messages: 2, workState: 'thinking' } },
     'work-tools': { about: 'Actual group work status, scenario data: command execution', data: { ...base, messages: 2, workState: 'testing' } },
     'work-reading': { about: 'Actual group work status, scenario data: file reading', data: { ...base, messages: 2, workState: 'reading-file' } },
@@ -122,6 +131,58 @@ export default {
   },
   async check(page, ui) {
     const definition = this.cases[ui.case];
+    if (ui.case === 'send-status') {
+      // Renderer integration: jsdom's send tests cannot measure the 600ms layout jump.
+      const input = page.locator('textarea');
+      const outbox = page.getByTestId('bot-group-outbox');
+      const content = 'A message awaiting its receipt';
+      const row = page.locator('[data-bot-group-message-id]').filter({ hasText: content });
+      const geometry = () => row.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        const scroller = document.querySelector('[data-testid="bot-group-timeline"]');
+        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, scrollTop: scroller.scrollTop };
+      });
+      const receipt = (result) => page.evaluate((detail) => window.dispatchEvent(new CustomEvent('fixture-send-receipt', { detail })), result);
+      await input.fill(content);
+      await input.press('Enter');
+      await outbox.waitFor();
+      const pending = await geometry();
+      await ui.capture('pending');
+      await outbox.getByRole('status').waitFor({ state: 'attached' });
+      const slow = await geometry();
+      await ui.capture('slow');
+      await receipt('ok');
+      await outbox.waitFor({ state: 'detached' });
+      const sent = await geometry();
+      await ui.capture('sent');
+      console.log('SEND_STATUS_GEOMETRY', JSON.stringify({ pending, slow, sent }));
+      assert.deepEqual(slow, pending, 'slow-send feedback must not move the row or scroll position');
+      assert.deepEqual(sent, pending, 'receipt must not move the row or scroll position');
+      assert.equal(await row.count(), 1, 'receipt preserves one message');
+
+      await input.fill('Failure remains actionable');
+      await input.press('Enter');
+      await outbox.waitFor();
+      await input.fill('Keep this new draft');
+      await receipt('failed');
+      await outbox.getByRole('alert').waitFor();
+      await ui.capture('failed');
+      assert.equal(await outbox.getByRole('button', { name: await ui.t('bots.groupChat.outbox.edit'), exact: true }).isEnabled(), true);
+      await outbox.getByRole('button', { name: await ui.t('bots.retry'), exact: true }).click();
+      await outbox.getByRole('alert').waitFor({ state: 'detached' });
+      await receipt('ok');
+      await outbox.waitFor({ state: 'detached' });
+      assert.equal(await input.inputValue(), 'Keep this new draft');
+      return;
+    }
+    if (ui.case === 'remote-limits') {
+      const timeline = page.getByTestId('bot-group-timeline');
+      for (const [i, code] of ['REMOTE_DEVICE_LIMIT', 'REMOTE_TOTAL_LIMIT'].entries()) {
+        const expected = (await ui.t(`bots.groupChat.notice.runtimeFailure.${code}`)).replace('{{name}}', members[i].name);
+        assert.ok((await timeline.innerText()).includes(expected));
+      }
+      return;
+    }
     if (definition.data.workState) {
       const state = definition.data.workState;
       await ui.emit('sessionActivity', [{ sessionId: 'fixture-work', phase: 'running',

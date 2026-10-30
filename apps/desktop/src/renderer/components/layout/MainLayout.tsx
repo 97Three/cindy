@@ -1,4 +1,6 @@
 import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts/dataOwnerGeneration';
+import { readInstalledGhostsSnapshot } from '@/cindy-brain/useInstalledGhosts';
+import { installedGhostStoragePart, resolvePluginInstanceQuery } from '../../../shared/pluginIdentity';
 import { drainPendingDeepLinks } from '@/lib/pendingDeepLinks';
 import { ChatInviteHost, reportMalformedChatInvite, requestChatInvite } from '@/features/bots/ChatInviteHost';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -102,6 +104,8 @@ import {
   toggleAgentIslandSoundEnabled,
 } from '@/hooks/useAgentIslandSettings';
 import { requestNewWorkerFromShortcut } from '@/features/cc-agent/lib/newWorkerShortcut';
+import { useSessionBrowseHistory } from '@/features/cc-agent/useSessionBrowseHistory';
+import { useAuth } from '@/contexts/AuthContext';
 // chat-data-localization F1 V0.4 / M-FE6
 import { useCorruptionRestoredToast } from '@/hooks/useCorruptionRestoredToast';
 // #37 schema-drift release-side toast
@@ -131,6 +135,7 @@ import { useSessionEntryLocationCommits } from '@/features/bots/useSessionEntryL
 import { islandEntryRouteState, requestIslandEntryAlertDisposal } from '@/features/bots/islandEntryAlert';
 import { requestProviderShareJoin } from '@/features/provider-share/joinIntent';
 import { ProviderShareGlobalHost } from '@/features/provider-share/ProviderShareGlobalHost';
+import { applyScreenshotComposeRequest } from '@/features/region-screenshot/screenshotTaskHandoff';
 import { remoteProjectsStore } from '@/features/device-link/remoteProjectsStore';
 import {
   isAgentIslandVisibleSessionOwnedByWorkdirBrowseRoute,
@@ -454,6 +459,15 @@ export function MainLayout() {
 
   const isSettingsRoute = location.pathname === '/settings';
 
+  // 任务浏览栈与它的快捷键监听挂在常驻壳层:设置页会整个卸载左上按钮簇
+  // (下面的 `!isSettingsRoute && <ChromeActions>`)，快捷键不能跟着一起消失——
+  // hook 的语义包含「从设置等栈外页后退回最近任务」。浏览栈按数据所有者
+  // (账号 + 恢复代次)隔离：切号时不能把上一个账号的任务带过来。
+  const { dataOwnerId, dataOwnerRecoveryEpoch } = useAuth();
+  const browseHistory = useSessionBrowseHistory({
+    ownerKey: `${dataOwnerId ?? 'signed-out'}:${dataOwnerRecoveryEpoch}`,
+  });
+
   // 完全隐藏态 hover 临时浮出(peek)状态机 —— hover 折叠按钮抽屉滑出预览,
   // 点击/⌘B 固定展开(pin)。rail 态(isCollapsed=false)不触发。见 useSidebarPeek。
   const sidebarPeek = useSidebarPeek({
@@ -720,6 +734,8 @@ export function MainLayout() {
         | { type: 'chat-invite-malformed' }
         | { type: 'provider-share-join'; link: string }
         | { type: 'plugin'; pluginId: string }
+        | { type: 'local-plugin-share'; snapshotId: string }
+        | { type: 'installed-plugin'; ghostId?: string }
         | { type: 'settings'; tab: 'voice-input' | 'providers' | 'billing' | 'remote-control'; connect?: string; intent?: 'topup' },
     ) => {
       if (payload.type === 'chat-message') {
@@ -745,8 +761,25 @@ export function MainLayout() {
         setSharedTaskInvitation({ link: buildSharedTaskInvitationLink(payload.invitation, payload.server), id: ++invitationSequence.current });
         return;
       }
+      if (payload.type === 'local-plugin-share') {
+        navigate(`/plugins?share=${encodeURIComponent(payload.snapshotId)}`);
+        return;
+      }
       if (payload.type === 'plugin') {
         navigate(`/plugins?market=${encodeURIComponent(payload.pluginId)}`);
+        return;
+      }
+      if (payload.type === 'installed-plugin') {
+        // The link carries the plugin's own id; the plugin page selects by instance key
+        // (`_root__my-browser`), so resolve it against what is installed.
+        const resolved = payload.ghostId
+          ? resolvePluginInstanceQuery(readInstalledGhostsSnapshot(), payload.ghostId)
+          : null;
+        navigate(
+          resolved?.status === 'unique'
+            ? `/plugins?ghost=${encodeURIComponent(installedGhostStoragePart(resolved.ghost))}`
+            : '/plugins',
+        );
         return;
       }
       if (payload.type === 'session') {
@@ -809,7 +842,7 @@ export function MainLayout() {
         void pullChatInvitations();
         return;
       }
-      if (payload.type !== 'provider-import' && payload.type !== 'shared-task-join' && payload.type !== 'provider-share-join' && payload.type !== 'plugin') {
+      if (payload.type !== 'provider-import' && payload.type !== 'shared-task-join' && payload.type !== 'provider-share-join' && payload.type !== 'plugin' && payload.type !== 'local-plugin-share') {
         handleDeepLinkPayload(payload);
         return;
       }
@@ -826,6 +859,23 @@ export function MainLayout() {
     pendingDeepLinkPulledRef.current = true;
     void pullChatInvitations();
   }, [handleDeepLinkPayload, pullChatInvitations]);
+
+  // 全局截图「问 Cindy / 翻译 / 解释 / 提取文字」: 挂载时与每次唤醒时各取一次,
+  // main 侧 take 是原子的, 两条路径不会重复处理同一张截图。
+  useEffect(() => {
+    const compose = window.electronAPI.regionScreenshotCompose;
+    if (!compose) return;
+    const pull = () => {
+      void compose
+        .take()
+        .then((request) => {
+          if (request) applyScreenshotComposeRequest(request, navigate);
+        })
+        .catch(() => undefined);
+    };
+    pull();
+    return compose.onWake(pull);
+  }, [navigate]);
 
   const handleToggleSidebar = useCallback(() => {
     setIsSidebarCollapsed((prev) => {
@@ -1628,6 +1678,21 @@ export function MainLayout() {
     { stopImmediate: true },
   );
 
+  // Session/tool-pane declarations update Shell state during navigation. Keep
+  // unrelated updates from invalidating the entire routed conversation again.
+  const outletContext = useMemo(() => ({
+    sidebarWidth,
+    rightSidebarCollapsed: rsbDetached || isRightSidebarCollapsed,
+    onToggleRightSidebar: handleOpenRightSidebar,
+    rightSidebarSide,
+    setRightSidebarAvailable,
+    setRightSidebarSessionId: declareRightSidebarSessionId,
+    setRightSidebarWorkdir,
+  }), [
+    sidebarWidth, rsbDetached, isRightSidebarCollapsed, handleOpenRightSidebar,
+    rightSidebarSide, declareRightSidebarSessionId, setRightSidebarWorkdir,
+  ]);
+
   return (
     // Shell wraps its entire subtree (Sidebar + <Outlet /> inside <main>) in
     // the feature-sidebar slot provider. Any Feature Layout rendered through
@@ -1691,6 +1756,7 @@ export function MainLayout() {
           <ChromeActions
             isSidebarCollapsed={isSidebarCollapsed}
             onToggleSidebar={handleToggleSidebar}
+            browseHistory={browseHistory}
             peekTriggerProps={sidebarPeek.triggerProps}
           />
         )}
@@ -1727,8 +1793,9 @@ export function MainLayout() {
                 }}
               >
                 {/* showCollapsedActions: 完全隐藏(isSidebarCollapsed)**和** rail 态(isRailMode)
-                    都要为浮动 ChromeActions 簇预留 68px 占位 —— rail 下侧栏仅 64px,chrome 簇
-                    贴在 rail 右缘(见上方 sidebarWidth),不留占位会压住会话标题左侧。 */}
+                    都要为浮动 ChromeActions 簇预留占位(CHROME_ACTIONS_GEOMETRY.clusterWidth + 8)
+                    —— rail 下侧栏仅 64px,chrome 簇贴在 rail 右缘(见上方 sidebarWidth),
+                    不留占位会压住会话标题左侧。 */}
                 {/* rail 态在 sidebarVisible 口径里视同"不可见"(codex review): 否则 mac 无
                     headerContent 路由下 ContentHeader 会因 sidebarVisible=true 提前 return null,
                     我们为 rail 浮动 chrome 预留的 spacer 不渲染、按钮悬空。 */}
@@ -1736,6 +1803,9 @@ export function MainLayout() {
                   sidebarVisible={!isSettingsRoute && !isSidebarCollapsed && !isRailMode}
                   showCollapsedActions={!isSettingsRoute && (isSidebarCollapsed || isRailMode)}
                   isSidebarRail={hasRailChromeActions && !rightSidebarOwnsRailChromeActions}
+                  // 展开态侧栏可拖到 180(比按钮簇右缘 202 窄):那一段的按钮悬在 header
+                  // 拖拽区上,由 ContentHeader 按侧栏宽补挖 no-drag。
+                  sidebarWidth={sidebarWidth}
                   // M2(2026-07-09 口径修订):mac 右上浮层随面板在场常驻(折叠
                   // toggle 永远钉窗口右上角),ContentHeader 右端占位不再分侧别。
                   rightSidebarAvailable={rightSidebarAvailable}
@@ -1795,20 +1865,7 @@ export function MainLayout() {
                     </div>
                   )}
                   <FadeSwitcher key={location.pathname.split('/')[1] || 'root'}>
-                    <Outlet
-                      context={{
-                        sidebarWidth,
-                        // detached 时主窗口没有内嵌侧栏，始终按折叠态布局；子窗口开闭
-                        // 不改变主窗口浮动控件的占位语义。
-                        rightSidebarCollapsed: rsbDetached || isRightSidebarCollapsed,
-                        onToggleRightSidebar: handleOpenRightSidebar,
-                        // B2b:面板所在侧,聊天视图据此决定展开入口落左上还是右上。
-                        rightSidebarSide,
-                        setRightSidebarAvailable,
-                        setRightSidebarSessionId: declareRightSidebarSessionId,
-                        setRightSidebarWorkdir,
-                      }}
-                    />
+                    <Outlet context={outletContext} />
                   </FadeSwitcher>
                 </ContentHeaderSlot>
               </main>

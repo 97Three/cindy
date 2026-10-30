@@ -163,7 +163,7 @@ describe('Chat Server result delivery and refresh', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'Date'] });
     vi.setSystemTime(new Date('2026-10-03T00:00:00Z'));
-    fixture.packaged = false; fixture.exists.mockReturnValue(true); fixture.profiles = []; fixture.sockets = []; claimed = false;
+    fixture.packaged = false; fixture.exists.mockReturnValue(true); fixture.profiles = []; fixture.sockets = []; fixture.urls = []; claimed = false;
     fixture.config = '{"baseUrl":"http://127.0.0.1:3018","auth":"cindy"}';
     vi.stubEnv('XDT_ISOLATED', '1');
     fixture.handle.mockImplementation(response);
@@ -181,6 +181,56 @@ describe('Chat Server result delivery and refresh', () => {
     service = withChatServer({ listGroups: vi.fn(async () => ({ ok: true, groups: [] })), settleLaneTurn: vi.fn(async () => false), dispose: vi.fn() } as unknown as BotGroupChatService, deps);
   });
   afterEach(() => { service.dispose(); vi.useRealTimers(); vi.unstubAllEnvs(); fixture.config = ''; vi.clearAllMocks(); });
+
+  it('uses the personal mask grant without requiring bot membership or elevating a peer to owner', async () => {
+    let downgraded = false;
+    const peer = '30000000-0000-4000-8000-000000000002';
+    fixture.handle.mockImplementation((route) => {
+      if (route === '/me') return { body: { actor: { id: selfId }, capabilities: { personalMask: 1, personalMaskTools: 1 } } };
+      if (route === '/mask/executions/claim') {
+        const next = claimed ? null : { ...execution, access_mode: 'tools', mask_owner_id: selfId, mask_kind: 'reply', requester_id: peer,
+          maskOwner: { id: selfId, name: 'Represented member', avatarUrl: null } };
+        claimed = true; return { body: { execution: next } };
+      }
+      if (route.endsWith('/mask')) return { body: { self: { id: selfId }, revision: downgraded ? 2 : 1,
+        settings: { access: downgraded ? 'chat' : 'tools', companionId: botId } } };
+      return response(route);
+    });
+    await start();
+    expect((await service.chatServer!.status()).personalMask).toBe(true);
+    expect(deps.dispatch).toHaveBeenCalledWith(expect.objectContaining({ toolsDisabled: false }));
+    // Owner decision: the actual model input must identify AI reply mode and its represented member.
+    // The existing tool-boundary assertions below ensure this identity does not elevate the peer.
+    const prompt = vi.mocked(deps.dispatch).mock.calls[0][0].message;
+    expect(prompt).toContain('You are in AI reply mode');
+    const identity = [...prompt.matchAll(/<untrusted-data>\n(.*?)\n<\/untrusted-data>/g)]
+      .map(match => JSON.parse(match[1])).find(block => block.representedMember);
+    expect(identity).toMatchObject({ representedMember: { id: selfId, name: 'Represented member' } });
+    expect(deps.ensureLane).toHaveBeenCalledWith(expect.objectContaining({ chatAccess: { mode: 'tools', revision: 1, maskOwnerId: selfId } }));
+    await expect(authorizeGroupTool('lane', 'local-bot', 'read-self')).resolves.toBeDefined();
+    await expect(authorizeGroupTool('lane', 'local-bot', 'owner-action')).rejects.toMatchObject({ code: 'GROUP_AUTHORIZATION_REQUIRED' });
+    downgraded = true;
+    await expect(authorizeGroupTool('lane', 'local-bot', 'read-self')).rejects.toMatchObject({ code: 'GROUP_AUTHORIZATION_REQUIRED' });
+    expect(fixture.handle.mock.calls.some(([route, , body]) => route === '/mask/executions/claim' && body?.accessPolicyVersion === 1)).toBe(true);
+  });
+
+  // Regression: the paired reply is a content projection, not a full Message with author.kind.
+  it('does not call mask endpoints on a server without the capability',async()=>{
+    expect((await service.chatServer!.status()).personalMask).not.toBe(true);
+    expect(await service.chatServer!.mask!({groupId:roomId})).toMatchObject({ok:false,errorCode:'UNSUPPORTED_OPERATION'});
+    expect(await service.chatServer!.mentions!({groupId:roomId})).toMatchObject({ok:false,errorCode:'UNSUPPORTED_OPERATION'});
+    expect(fixture.urls.some(url=>url.includes('/mask') || url.includes('/mentions'))).toBe(false);
+  });
+
+  it('reads mask mentions with paired replies without consuming human read state',async()=>{
+    fixture.handle.mockImplementation(route=>route === '/me' ? {body:{actor:{id:selfId},capabilities:{personalMask:1}}}
+      : route.includes('/mentions?') ? {body:{messages:[{id:execution.source_message_id,seq:'4',author:{kind:'human',name:'Peer'},
+        content:[{type:'text',text:'@owner confirm?'}],reply:{content:[{type:'text',text:'Awaiting owner'}],maskAttribution:{companion:{id:botId,name:'Cindy',avatarUrl:null}}}}],hasMore:false}}
+      : response(route));
+    const result=await service.chatServer!.mentions!({groupId:roomId});
+    expect(result).toMatchObject({ok:true,mentions:[{text:'@owner confirm?',reply:{text:'Awaiting owner',companion:{id:botId}}}]});
+    expect(fixture.urls.some(url=>url.includes('/read'))).toBe(false);
+  });
 
   // Unit: exercise the real transport and read.changed path. The former notification-only
   // tests had no persistent group attention consumer, so read/mute/reconnect could not be observed.
@@ -379,6 +429,31 @@ describe('Chat Server result delivery and refresh', () => {
   it('uses the mobile edited revision instead of a newer server snapshot when saving settings', async () => {
     await service.updateGroup({ groupId: roomId, name: 'Draft', expectedRevision: 7 });
     expect(fixture.handle).toHaveBeenCalledWith(`/conversations/${roomId}`, 'PATCH', expect.objectContaining({ name: 'Draft', expectedRevision: 7 }));
+  });
+  // Unit: renderer filtering alone left older servers callable with bot targets.
+  // Exercise production manage with a nonhuman/left target and the legacy bot-owner
+  // recovery path; assertions cover rejected writes and the delegated HTTP identity.
+  it.each(['bot', 'integration', 'left', 'human', 'legacy'] as const)('validates the ownership transfer recipient (%s) before sending', async mode => {
+    const targetId = mode === 'legacy' ? selfId : botId;
+    fixture.handle.mockImplementation(route => {
+      if (route.endsWith('/snapshot')) return { body: { room: room(roomId), members: [
+        { id: selfId, kind: 'human', ownerActorId: selfId, state: 'joined', role: mode === 'legacy' ? 'admin' : 'owner' },
+        { id: botId, kind: mode === 'bot' || mode === 'legacy' ? 'bot' : mode === 'integration' ? 'integration' : 'human',
+          ownerActorId: mode === 'legacy' ? selfId : botId, state: mode === 'left' ? 'left' : 'joined', role: mode === 'legacy' ? 'owner' : 'member' },
+      ], messages: [], cursor: '1' } };
+      return response(route);
+    });
+    const requestsStart = fixture.requests.length;
+    const result = await service.chatServer!.manage({ groupId: roomId, action: { type: 'transfer', actorId: targetId } });
+    const writes = fixture.handle.mock.calls.filter(([route, method]) => route === `/conversations/${roomId}/transfer` && method === 'POST');
+    if (mode === 'human' || mode === 'legacy') {
+      expect(result).toEqual({ ok: true });
+      expect(writes).toEqual([[`/conversations/${roomId}/transfer`, 'POST', { actorId: targetId, operationId: expect.any(String) }]]);
+      expect(fixture.requests.slice(requestsStart).find(r => r.url.endsWith('/transfer'))?.actor).toBe(mode === 'legacy' ? botId : selfId);
+    } else {
+      expect(result).toEqual({ ok: false, errorCode: mode === 'left' ? 'MEMBER_NOT_FOUND' : 'HUMAN_OWNER_REQUIRED' });
+      expect(writes).toEqual([]);
+    }
   });
   // Group avatar regression: exercise the production manage entry, real image
   // validation and HTTP payload, with only the network/image decoder faked.
@@ -1087,11 +1162,15 @@ describe('Chat Server result delivery and refresh', () => {
   });
 
   it.each([
-    ['NO_MODEL', 'MODEL_UNAVAILABLE'],
-    ['MEMBER_UNAVAILABLE', 'RUNTIME_ERROR'],
-  ])('settles the lane preparation failure %s without dispatching or exposing details', async (errorCode, failureCode) => {
+    // #6835: unit service entry must retain wrapped lane limits; the old matrix only covered codes.
+    ['NO_MODEL', 'MODEL_UNAVAILABLE', 'private preparation details'],
+    ['MEMBER_UNAVAILABLE', 'RUNTIME_ERROR', 'private preparation details'],
+    ['LAZY_CREATE_FAILED', 'REMOTE_DEVICE_LIMIT', '[REMOTE_AGENT_BUSY] [DEVICE_LIMIT] private preparation details'],
+    ['LAZY_CREATE_FAILED', 'REMOTE_TOTAL_LIMIT', '[REMOTE_AGENT_BUSY] [TOTAL_LIMIT] private preparation details'],
+    ['LAZY_CREATE_FAILED', 'RUNTIME_ERROR', '[REMOTE_AGENT_BUSY] private preparation details'],
+  ])('settles the lane preparation failure %s without dispatching or exposing details', async (errorCode, failureCode, message) => {
     fixture.profiles = [{ id: 'local-bot', displayName: 'Bot', avatar: null, status: 'active' }];
-    deps.ensureLane = vi.fn(async () => ({ ok: false as const, errorCode, message: 'private preparation details' }));
+    deps.ensureLane = vi.fn(async () => ({ ok: false as const, errorCode, message }));
     await vi.advanceTimersByTimeAsync(2000);
     expect(deps.dispatch).not.toHaveBeenCalled();
     expect(deps.abortLane).not.toHaveBeenCalled();
@@ -1140,6 +1219,8 @@ describe('Chat Server result delivery and refresh', () => {
 
   it.each([
     ['authentication_failed private credential', 'AUTH_REQUIRED'],
+    ['[REMOTE_AGENT_BUSY] [DEVICE_LIMIT] private credential', 'REMOTE_DEVICE_LIMIT'],
+    ['[REMOTE_AGENT_BUSY] [TOTAL_LIMIT] private credential', 'REMOTE_TOTAL_LIMIT'],
     ['ECONNRESET private endpoint', 'NETWORK_ERROR'],
     ['pi rpc timeout after 30000ms: prompt /private/path', 'RUNTIME_TIMEOUT'],
   ])('classifies an unqueued dispatch rejection from its local message: %s', async (message, code) => {
@@ -1701,21 +1782,27 @@ describe('Chat Server result delivery and refresh', () => {
     expect(retry).toMatchObject({ ok: true, executionFailures: [], hasMore: true });
   });
 
-  it('keeps the specific local failure on an older server and clears the notice after retry', async () => {
+  // #6835: unit readback must retain local limit reasons when an older server normalizes unknown codes.
+  it.each([
+    [undefined, 'IMAGE_INPUT_UNSUPPORTED', 'IMAGE_INPUT_UNSUPPORTED'],
+    ['RUNTIME_ERROR', 'REMOTE_DEVICE_LIMIT', 'REMOTE_DEVICE_LIMIT'],
+    ['RUNTIME_ERROR', 'REMOTE_TOTAL_LIMIT', 'REMOTE_TOTAL_LIMIT'],
+    ['AUTH_REQUIRED', 'REMOTE_DEVICE_LIMIT', 'AUTH_REQUIRED'],
+  ] as const)('keeps specific local failures with server code %s and clears them on retry', async (serverCode, localCode, expectedCode) => {
     await start();
-    await service.settleLaneTurn({ ...terminal, outcome: 'error', failureCode: 'IMAGE_INPUT_UNSUPPORTED' });
+    await service.settleLaneTurn({ ...terminal, outcome: 'error', failureCode: localCode });
     const source = { id: execution.source_message_id, seq: '7', authorId: selfId, author: { kind: 'human', name: 'Owner' },
       content: [{ type: 'text', text: 'Question' }], origin: 'user', deleted: false, threadRootId: null, createdAt: '2026-10-03T00:00:00Z' };
     let status = 'failed';
     fixture.handle.mockImplementation((route, method, body) => {
       if (route.includes('/messages?')) return { body: [source] };
       if (route.includes('/execution-failures?')) return { status: 404, body: { code: 'NOT_FOUND' } };
-      if (route.endsWith('/executions')) return { body: [{ ...execution, status }] };
+      if (route.endsWith('/executions')) return { body: [{ ...execution, status, failure_code: serverCode }] };
       return response(route);
     });
     const failed = await service.getGroup(roomId);
     if (!failed.ok) throw new Error('group missing');
-    expect(projectBotGroupExecutionFailures(failed.group.messages, failed.group.executionFailures)[1]).toMatchObject({ runtimeFailureCode: 'IMAGE_INPUT_UNSUPPORTED' });
+    expect(projectBotGroupExecutionFailures(failed.group.messages, failed.group.executionFailures)[1]).toMatchObject({ runtimeFailureCode: expectedCode });
     status = 'queued';
     const retrying = await service.getGroup(roomId);
     if (!retrying.ok) throw new Error('group missing');

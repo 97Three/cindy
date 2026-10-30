@@ -140,6 +140,10 @@ export type SessionRowWithCount = SessionRow & {
 const PREVIEW_MAX_CHARS = 140;
 /** Bound serialized content before JSON.parse so oversized rows stay valid JSON. */
 const PREVIEW_CONTENT_BOUND_CHARS = 4096;
+// Cache only this pure projection, never a session row. Exact text/role keys
+// keep edits visible; both entry count and input size bound retained memory.
+const PREVIEW_CACHE_ENTRIES = 1024;
+const plainPreviewCache = new Map<string, string | null>();
 
 /**
  * 从消息 content（DB 存的 JSON string）提炼 sidebar 卡片预览纯文本。
@@ -153,6 +157,26 @@ export function finalizePlainPreview(
   role: string | null | undefined,
 ): string | null {
   if (!text) return null;
+  const key = text.length <= PREVIEW_CONTENT_BOUND_CHARS
+    ? `${role === 'assistant' ? 'assistant' : 'plain'}:${text}`
+    : null;
+  if (key !== null && plainPreviewCache.has(key)) {
+    const cached = plainPreviewCache.get(key)!;
+    plainPreviewCache.delete(key);
+    plainPreviewCache.set(key, cached);
+    return cached;
+  }
+  const preview = computePlainPreview(text, role);
+  if (key !== null) {
+    plainPreviewCache.set(key, preview);
+    if (plainPreviewCache.size > PREVIEW_CACHE_ENTRIES) {
+      plainPreviewCache.delete(plainPreviewCache.keys().next().value!);
+    }
+  }
+  return preview;
+}
+
+function computePlainPreview(text: string, role: string | null | undefined): string | null {
   let next = text;
   // 合成 UI 指令行(隐藏续跑 / 图片按钮)不进 sidebar 预览(review P2):它是
   // role='user' 的正常落库行,但对用户不可见 —— 预览显示隐藏英文指令会暴露
@@ -268,6 +292,7 @@ export function sessionToCamel(row: SessionRowWithCount): Session {
     clearedAt: msToIso(row.clearedAt),
     pinnedAt: msToIso(row.pinnedAt),
     hiddenAt: msToIso(row.hiddenAt),
+    notificationsMuted: !!row.notificationsMuted,
     userSendAt: msToIso(row.userSendAt),
     lastActivityAt: msToIso(row.lastActivityAt),
     agentKind: row.agentKind as AgentKind,
@@ -490,6 +515,7 @@ export function sessionPatchToRow(
     contextWindow?: number;
     clearedAt?: string | null;
     pinnedAt?: string | null;
+    notificationsMuted?: boolean;
     status?: SessionStatus;
     orcaRole?: OrcaRole | null;
     extraDirs?: string[];
@@ -517,6 +543,7 @@ export function sessionPatchToRow(
   if (patch.contextWindow !== undefined) out.contextWindow = patch.contextWindow;
   if (patch.clearedAt !== undefined) out.clearedAt = isoToMs(patch.clearedAt);
   if (patch.pinnedAt !== undefined) out.pinnedAt = isoToMs(patch.pinnedAt);
+  if (patch.notificationsMuted !== undefined) out.notificationsMuted = !!patch.notificationsMuted;
   if (patch.status !== undefined) out.status = patch.status;
   if (patch.orcaRole !== undefined) out.orcaRole = patch.orcaRole;
   if (patch.extraDirs !== undefined) out.extraDirs = safeStringify(patch.extraDirs);

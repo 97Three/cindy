@@ -75,7 +75,11 @@ import {
   shell,
   Tray,
 } from 'electron';
-import { resolveVibrancyConfig } from './vibrancyConfig';
+import {
+  resolveVibrancyConfig,
+  resolveWindowVibrancyConfig,
+  setWindowWallpaperCovered,
+} from './vibrancyConfig';
 import { getSessionThinkingSnapshots, getHistoryToolName, drainPersistQueue } from './messagePersistBroadcaster';
 import { applyVibrancyToSecondaryWindows } from './secondary-windows';
 import { rememberResolvedAppTheme, resolveAppThemeIsDark } from './resolved-app-theme';
@@ -423,7 +427,7 @@ import {
 } from './cindy-make/versionRuntimeIdentity.js';
 import { createStorageIpcHandlers } from './cindy-media/storageIpc';
 import { registerLocalAgentConfirmationIpc, cancelLocalAgentConfirmations } from './local-agent/confirmation.js';
-import { disposeLocalAgentHost, localAgentConnections, localAgentDeveloperConnection, revokeLocalAgentConnections } from './local-agent/service.js';
+import { disposeLocalAgentHost, localAgentConnections, localAgentDeveloperConnection, revokeLocalAgentConnections, setLocalAgentCreateVisibleSessions } from './local-agent/service.js';
 import { clearLocalEntries } from './device-link/remoteMediaCacheStore';
 import {
   collectDatabaseSizeWarningStatus,
@@ -594,6 +598,7 @@ import { readFileBytesForPreview } from './fileReadBytes.js';
 import { copyPngToClipboard } from './pngClipboard.js';
 import { COPY_PNG_TO_CLIPBOARD_CHANNEL } from '../shared/pngClipboard.js';
 import { copyTextToClipboard } from './textClipboard.js';
+import { copyFileToClipboardWindows, copyFileToClipboardMacOS } from './fileClipboard.js';
 import { COPY_TEXT_TO_CLIPBOARD_CHANNEL } from '../shared/textClipboard.js';
 import {
   readLinuxClipboardSnapshot,
@@ -606,6 +611,7 @@ import { initAnalyticsSettingsService, noteAuthColdStartState } from './analytic
 import { initLogUploadService, scheduleStartupBackfill } from './log-upload';
 import { createOpenLogsMenuItem, openLogsDirectory } from './logSupport';
 import { WindowManualDragController } from './windowManualDrag';
+import { loadWindowsTaskbarNative } from './windowsTaskbarNative';
 import { issueWritableDirectoryPickerGrant } from './maker-ipc/writableDirectoryPickerGrant.js';
 // 设备互联(跨设备远程控制): relay 连接 host + 开关/设备列表 IPC
 import {
@@ -621,6 +627,7 @@ import { closeSharedTasksBeforeLogout } from './device-link/sharedTaskRuntime.js
 import { closeSharedTasksBeforeAccountHandover } from './device-link/sharedTaskAccountBoundary.js';
 import { registerSharedTaskIpc } from './device-link/sharedTaskIpc.js';
 import { registerProviderShareIpc } from './device-link/providerShareRuntime.js';
+import { registerSelfHostedRelayIpc } from './device-link/selfHostedRelayRuntime.js';
 import { registerProviderGroupIpc } from './provider-group/ipc.js';
 import { registerProviderGroupRemoteHandler } from './provider-group/remoteRegistration.js';
 import { providerGroupReshare, registerProviderGroupReshare } from './provider-group/reshareRuntime.js';
@@ -754,7 +761,9 @@ import {
   setMainWindowAccessorForBackend,
   setEnsureHostForBackend,
   setIsDetachedForBackend,
+  setUserBrowserPageControlProvider,
 } from './mcp-integrations/browser.js';
+import { setPageControlGhostProvider } from './mcp-integrations/ghost.js';
 import { RsbWindowController } from './right-sidebar-window/controller.js';
 import { resolveRsbHostContextFromSession } from './right-sidebar-window/resolveHostContext.js';
 import { createRightSidebarWindow } from './right-sidebar-window/window.js';
@@ -986,6 +995,7 @@ import { disposeRemoteFileBrowser } from './file-browser/remote-deps.js';
 import { registerFileBrowserDeviceOp } from './file-browser/device-op.js';
 import { registerSearchIpc } from './file-browser/search/index.js';
 import { registerVoiceInputIpc } from './voice-input/index.js';
+import { initRegionScreenshot, stopRegionScreenshot } from './region-screenshot/index.js';
 import { installWindowHiddenBroadcast } from './windowHiddenBroadcast.js';
 import { getRenderWatchdogContext } from './renderWatchdogContext.js';
 import {
@@ -1143,6 +1153,7 @@ import {
   setGhostNodeRuntimeStartAttemptContextReader,
   suspendAllGhosts,
   waitForGhostMutations,
+  getGhostBrowserExtensionSlot,
 } from './cindy-brain/index.js';
 import { setCodexImageAuthBinding } from './cindy-brain/codexImageAuthBinding.js';
 import { configureMailAttachmentHost } from './cindy-brain/mailAttachmentUpload.js';
@@ -1154,6 +1165,7 @@ import { getGhostSetupChangeBus } from './cindy-brain/ghostSetupChangeBus.js';
 import { getGhostSetupInteractionBridge } from './cindy-brain/ghostSetupInteractionBridge.js';
 import { registerPluginMarketIpc, syncDefaultMarketPlugins, refreshForegroundMarketPlugins } from './plugin-market/registerIpc.js';
 import { getPluginMarketService } from './plugin-market/service.js';
+import { installLocalPluginShare } from './plugin-market/localSharing.js';
 import { StableOwnerPostCommitStep } from './stableOwnerPostCommit.js';
 import { registerPluginContributionsIpc } from './plugin-contributions/registerIpc.js';
 import { registerPluginPublisherIpc } from './plugin-publisher/registerIpc.js';
@@ -1644,6 +1656,7 @@ const rendererConsoleLog = createLogger('renderer-console');
 const updatePresentationLog = createLogger('update-presentation');
 const voicePowerBroadcastLog = createLogger('voice-input-power');
 const sessionDragPreviewLog = createLogger('session-drag-preview');
+const windowDragLog = createLogger('window-drag');
 const piSubagentLog = createLogger('pi-subagent');
 let rendererBootGuard: RendererBootGuard | null = null;
 
@@ -2495,6 +2508,11 @@ setMainWindowAccessorForBackend((op) => {
 });
 setEnsureHostForBackend((sessionId) => rsbWindowController.ensureOpenForAutomation({ sessionId }));
 setIsDetachedForBackend(() => readRsbWindowSettings().detached);
+// 「我的浏览器」后端经 browserExtension 插件槽拿页面控制桥接;槽归 cindy-brain,
+// 这里倒置依赖,browser.ts 不反向 import 插件基座。
+setUserBrowserPageControlProvider(() => getGhostBrowserExtensionSlot().getPageControl());
+// The plugin providing "My browser" hides its own page tools from agents: one way to drive the user's browser.
+setPageControlGhostProvider(() => getGhostBrowserExtensionSlot().getPageControl()?.instanceId ?? null);
 setBrowserSessionUploadRootResolver(async (sessionId) => {
   try {
     const meta = await getMakerCore().getSessionMeta(sessionId);
@@ -2544,6 +2562,9 @@ setCodexImageAuthBinding({
 configureMailAttachmentHost({ writeTempFile, materializeDirectSendOssAttachments });
 setRemotePluginManagementServices({
   isRelayOnline: () => getDeviceLinkStatus() === 'online',
+  installShare: async (snapshot, prompt, assertScope) => {
+    await installLocalPluginShare(snapshot.snapshotId, snapshot, prompt, assertScope);
+  },
   listProjects: listRecentWorkdirs,
   sidebar: {
     read: id => !loadSidebarSettingsSnapshot().hiddenMainViewGhostIds.includes(id),
@@ -3124,11 +3145,17 @@ ipcMain.on('app-locale:get-preferred-system-locale-sync', (event) => {
 ipcMain.handle('deep-link:take-pending', takePendingDeepLinkFromRenderer);
 
 ipcMain.handle('app-menu:set-locale', (_event, locale: unknown): { ok: true } => {
+  const previousLocale = currentApplicationMenuLocale;
   currentApplicationMenuLocale = resolveApplicationMenuLocale(
     typeof locale === 'string' ? locale : null,
   );
   setSelectionContextMenuLocale(currentApplicationMenuLocale);
   setMainLocale(currentApplicationMenuLocale);
+  if (previousLocale !== currentApplicationMenuLocale) {
+    // Identity names are localized on the source host; refresh its cached views
+    // and linked devices through the existing provider-change notification.
+    refreshSelectableModelsAndBroadcast({ providerId: 'xd' });
+  }
   refreshWindowsAppBadge();
   resourceUsageWindowController.setLocale(currentApplicationMenuLocale);
   remoteDesktopViewerWindows.setLocale(currentApplicationMenuLocale);
@@ -4573,6 +4600,10 @@ const registerIpcHandlers = () => {
   });
   app.once('will-quit', stopMenubarService);
 
+  // 全局框选截图快捷键 (键盘快捷键设置里可改)，支持复制、保存、贴图与新任务。
+  initRegionScreenshot();
+  app.once('will-quit', stopRegionScreenshot);
+
   // 「在新窗口打开」会话多开 —— 新建一个完整窗口定位到该 session, 初始 bounds 取主窗。
   ipcMain.handle(
     MAKER_IPC_INVOKE.OPEN_SESSION_IN_NEW_WINDOW,
@@ -4696,7 +4727,7 @@ const registerIpcHandlers = () => {
   function applyWindowVibrancy(familyId: string, isDark: boolean): void {
     const win = mainWindowRef;
     if (!win || win.isDestroyed()) return;
-    const config = resolveVibrancyConfig(familyId, isDark, process.platform);
+    const config = resolveWindowVibrancyConfig(win, familyId, isDark, process.platform);
     if (process.platform === 'darwin') {
       win.setVibrancy(config.vibrancy as 'under-window' | null);
     }
@@ -4713,6 +4744,12 @@ const registerIpcHandlers = () => {
     const payload = parseWindowThemeVibrancyPayload(rawPayload);
     if (!payload) return;
     if (payload.mode === undefined || payload.systemModeFollowsSystem === undefined) return;
+    if (payload.wallpaperCovered !== undefined) {
+      const senderWindow = BrowserWindow.fromWebContents(event.sender);
+      if (senderWindow && !senderWindow.isDestroyed()) {
+        setWindowWallpaperCovered(senderWindow, payload.wallpaperCovered);
+      }
+    }
     if (process.platform === 'win32') {
       writeWindowThemeSnapshot(
         payload.mode,
@@ -5538,7 +5575,25 @@ const registerIpcHandlers = () => {
   // 手动窗口拖拽:no-drag 元素(会话标题文字等,需要同时响应双击)按住移动
   // 时由 renderer 发起,main 用光标位置驱动窗口跟随;pointerup 后 stop。
   // 详见 windowManualDrag.ts 头注释。
-  const windowManualDrag = new WindowManualDragController(screen);
+  let nativeWindowDrag: Awaited<ReturnType<typeof loadWindowsTaskbarNative>> | null = null;
+  if (process.platform === 'win32') {
+    void loadWindowsTaskbarNative().then((native) => {
+      nativeWindowDrag = native;
+    }).catch((error: unknown) => {
+      windowDragLog.warn('Windows native window drag unavailable; using DIP bounds fallback', error);
+    });
+  }
+  const windowManualDrag = new WindowManualDragController(screen, undefined, undefined,
+    process.platform === 'win32' ? (win) => {
+      const native = nativeWindowDrag;
+      const handle = win.getNativeWindowHandle?.();
+      if (!native || !handle) return null;
+      const offset = native.windowDragOffset(handle);
+      return () => native.moveWindowAtCursor(handle, offset.x, offset.y);
+    } : undefined, (error: unknown) => {
+      windowDragLog.warn('Windows native window drag initialization failed; using DIP bounds fallback', error);
+    });
+
   // start / stop 都严格绑定 sender 窗口,解析不到(窗口销毁中)直接忽略,
   // 不 fallback 主窗:多窗口下副窗的延迟消息若落到主窗上,start 会让主窗
   // 意外粘附光标并误停他窗的合法拖拽,stop 会误停主窗拖拽。已销毁窗口的
@@ -8182,57 +8237,6 @@ const registerIpcHandlers = () => {
   // that paste-into-folder accepts. spawn (no shell) is used to keep the
   // path argument out of any shell-quote interpretation.
 
-  /** Windows: PowerShell `Set-Clipboard -LiteralPath` writes CF_HDROP. */
-  function copyFileToClipboardWindows(absPath: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // Single-quoted PS string is literal except for `'` itself; double it
-      // to escape. Path can contain spaces, `$`, backticks, etc. — all safe
-      // inside single quotes.
-      const escaped = absPath.replace(/'/g, "''");
-      const psCommand = `Set-Clipboard -LiteralPath '${escaped}'`;
-      const proc = spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCommand], {
-        windowsHide: true,
-      });
-      let stderr = '';
-      proc.stderr.on('data', (d) => {
-        stderr += d.toString();
-      });
-      proc.on('error', reject);
-      proc.on('exit', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(stderr.trim() || `Set-Clipboard exited ${code}`));
-      });
-    });
-  }
-
-  /**
-   * macOS: AppleScript `set the clipboard to (POSIX file …)` writes the
-   * NSPasteboardTypeFileURL pasteboard entry. The path is passed as an
-   * AppleScript argv to avoid in-script escaping.
-   */
-  function copyFileToClipboardMacOS(absPath: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const proc = spawn('osascript', [
-        '-e',
-        'on run argv',
-        '-e',
-        'set the clipboard to (POSIX file (item 1 of argv))',
-        '-e',
-        'end run',
-        absPath,
-      ]);
-      let stderr = '';
-      proc.stderr.on('data', (d) => {
-        stderr += d.toString();
-      });
-      proc.on('error', reject);
-      proc.on('exit', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(stderr.trim() || `osascript exited ${code}`));
-      });
-    });
-  }
-
   // Right-click → "open file folder". Accepts xdt-image:// / xdt-video:// URLs
   // (resolved via the matching cache store) or an absolute file path. On
   // success, reveals the file in the OS file manager (Explorer / Finder).
@@ -8668,6 +8672,10 @@ const registerIpcHandlers = () => {
     ipcMain.handle('local-agent:connections', (event) => {
       assertTrustedAppRendererEvent(event);
       return localAgentConnections(() => assertTrustedAppRendererEvent(event));
+    });
+    ipcMain.handle('local-agent:set-create-visible-sessions', (event, connectionId: unknown, enabled: unknown) => {
+      assertTrustedAppRendererEvent(event);
+      return setLocalAgentCreateVisibleSessions(connectionId, enabled, () => assertTrustedAppRendererEvent(event));
     });
     ipcMain.handle('local-agent:developer-connection', (event) => {
       assertTrustedAppRendererEvent(event);
@@ -9962,6 +9970,8 @@ app.on('ready', async () => {
   );
   registerSharedTaskIpc(isSharedTaskAvailable, () => getDeviceLinkStatus() === 'online');
   registerProviderShareIpc();
+  // 自建中转服务(docs/self-hosted-relay-plan.md):本机中转与加入别的中转。
+  registerSelfHostedRelayIpc();
   registerProviderGroupIpc({ reshare: providerGroupReshare });
   registerProviderGroupRemoteHandler({ onGroupChanged: () => providerGroupReshare.kick('group') });
   registerProviderGroupReshare();

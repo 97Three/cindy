@@ -47,9 +47,15 @@ pnpm mobile:sim:start:cn
 
 修改原生依赖、Expo 原生配置，或切换到尚未安装对应开发包的区域时，重新构建：
 
+这里的 `rebuild` 是“准备兼容原生包”的入口：先复用匹配缓存，未命中才完整编译。
+未安装 App 不等于必须编译；纯 JS/TS 改动且 `native-matched` 时直接复用已安装包。
+截图和交付测试的完整流程见 [截图与当前版本测试](../../apps/mobile/docs/simulator-debugging.md#截图与当前版本测试)，
+缺少工具时见 [iOS 工具链](environment-setup.md#macosios-模拟器构建工具链)。
+
 `whoami` 还会比较已安装 `.app/EXUpdates.bundle/fingerprint` 与当前 worktree 的
 Expo Updates 开发指纹。`native-mismatch` 或 `native-unknown` 不能作为可测试状态，
-即使版本号、Metro 和页面都正常也要先普通重建。重建入口同样检查缓存、构建产物和安装后
+即使版本号、Metro 和页面都正常也不能交付。若未知源于工具探测或指纹计算失败，先修复检查；
+确认包缺失、不匹配或缺少兼容性证据时走普通重建。重建入口同样检查缓存、构建产物和安装后
 的真实指纹，避免跨 worktree 复用不兼容的原生包；不匹配的缓存会跳过。不要通过临时修改
 JS 参数协议来适配另一版本原生依赖。此检查不修改 App 配置或发布指纹。
 
@@ -86,6 +92,15 @@ JSON 已包含 `worktree` / `expectedSource`、`region` / `bundleId`、目标设
 `pageVerified: false` 明确保留这个边界。页面／bundle 验证与截图按模拟器调试手册另外完成，
 证据放在同一任务目录。
 
+### 仓库与个人配置的边界
+
+- 仓库维护工具要求、脚本参数、缓存与身份校验、mock 场景和验收合同；个人 Skill 调用这些入口，
+  不再实现第二套指纹、bundle ID 或缓存解析。
+- 默认区域、设备偏好、模拟器后端、接管时机与工具管理方式属于开发者的本地 profile/工作流。
+  本次明确指定的设备或区域高于个人默认；本次覆盖不自动写回 profile。
+- 自定义 bundle ID、签名团队与私有端点留在本地配置；仓库提供模板和校验，凭证进入凭证存储。
+- 设备在线状态、已安装包、Metro 占用、工具位置和缓存命中是现场事实，每次探测，不作为长期偏好。
+
 不要用临时 Metro、端口探测或手工修改 `.env` 代替这些脚本。多 worktree、原生构建、
 登录态和日志排查见 `apps/mobile/docs/simulator-debugging.md`。
 
@@ -112,6 +127,24 @@ pnpm --filter mobile test:smoke
 - 记录实际执行和结果；未执行的高相关检查必须说明原因。
 
 ## 专项入口
+
+### Android 组字与发送快照
+
+WebView 输入框把屏幕可见的组字文本同步为草稿；React Native 接受本地编辑的回传时不重写
+DOM，保留输入法组字与光标。点击发送后，在发送防重锁内等待编辑器返回当前完整
+`ComposerDocument`，再做空内容判断、命令解析和入队，不依赖失焦或 `compositionend` 的顺序。
+等待期间账号、设备、任务、编辑器或排队编辑目标变化时取消本次提交；读取失败、超时或
+粘贴尚未替换完成时保留输入并提示重试，不回退到旧草稿发送。语音结果、独立快捷发送和
+显式传入的文档保持各自的快照来源，iOS 原生编辑器保留现有原生路径。
+快照回包在写回编辑器状态或草稿之前核对调用方作用域；不能只在 `await` 返回后检查，
+否则取消排队编辑与下一帧渲染之间到达的旧快照会覆盖已恢复的原草稿。
+取消排队编辑时同步向编辑器应用暂存的个人草稿，立即轮换文档标识；不能只等待下一帧
+传入新 props，否则迟到的普通 `change` 消息也可能写回旧内容。恢复不主动聚焦或弹出键盘。
+
+实现：`ComposerRichInput.tsx`、`composerRichInputHtml.ts` 与 `app/sessions/[sessionId].tsx`；
+回归：`composerRichInputLifecycle.test.tsx`、`composerRichInputHtml.test.ts`。Android 模拟器
+可用 mock 模式配合 CDP `Input.imeSetComposition` 检查点击原生发送按钮后的完整文本；
+它不替代三星真机键盘或真实跨设备送达验收。
 
 ### 相册选图与 iCloud 原图
 
@@ -365,8 +398,9 @@ Mobile 用 `runtimeVersion.policy: "fingerprint"`:OTA 热更只在**指纹一致
 - **审查标准:会触发冷更的 PR 与技术框架变动同级,必须由仓库指定的把关人针对冷更明确
   确认后才能合并。** 不看改动大小,也不看谁提的——提交者是不是维护者、有没有拿到普通
   Approve、有没有被标回 Ready 都不构成例外;把关人自己提的 PR 同样要留下一条显式的冷更
-  确认。未确认前不进入自动审查与自动合并路径;判定、hold 与放行走与技术架构变更门同一套
-  机制(讨论 issue + 转 draft + 确认后放行),名单与细则属维护者内部 gate。
+  确认。冷更 PR 可以保持 Ready 并正常进入自动审查,不因冷更要求新建讨论 issue 或转为
+  draft;冷更确认可直接留在 PR 中。未确认前不得合并(包括自动合并),把关人名单与确认
+  判定细则属维护者内部 gate。若同时命中其他独立的讨论或草稿门禁,仍按对应规则处理。
 - 提交前自查:在改动前后各跑一次
   `node apps/mobile/scripts/ci-fingerprint.mjs compute --output <file>` 并比对 hash。PR 上
   出现 fingerprint guard 的 sticky comment 时,以它给出的 base(main) vs 合并结果对比为准。

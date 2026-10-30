@@ -1,3 +1,4 @@
+import { captureSessionCreationCancellation } from '../sessionRuntimeCleanup.js';
 import { removeSessionModelInterface } from '../../maker-host/session-model-interface.js';
 import { isEndedWriteSuppressed } from '../sessionActiveTurn.js';
 import { ensureOpenedProjectGit, openSession } from '../sessionOpening.js';
@@ -42,7 +43,7 @@ import { getDbClient } from '../client/current';
 import * as currentDb from '../client/current';
 import type { DbClient } from '../client/DbClient';
 import type { SessionsSetTerminalStatusResult } from '../client/tx/types';
-import { sessions, messages } from '../schema';
+import { sessions, messages, botSessionLinks } from '../schema';
 import { clearSessionAttention } from '../../appBadgeService';
 import {
   selectSessionListRows,
@@ -111,7 +112,7 @@ import { assertRendererSessionSourceAllowed } from './sessionSourceGuard.js';
 import type { SessionReference } from '../../../shared/sessionReference.js';
 import * as broadcastTap from '../../device-link/broadcast-tap.js';
 import { notifyAgentIslandSessionPatch } from '../agentIslandSessionPatch';
-import { ensureHiddenSessionRegistryLoaded } from '../hiddenSessionRegistry.js';
+import { ensureSessionFlagRegistryLoaded, noteSessionNotificationsMuted } from '../sessionFlagRegistry.js';
 import { recoverGeneratedImagesForHistory } from '../../cindy-media/generatedImageRecovery';
 import { noteSessionClearBoundary } from '../../messagePersistBroadcaster';
 import {
@@ -143,6 +144,8 @@ import { recycleCindyMakeTask } from '../../cindy-make/taskManagement.js';
 import { broadcastSubagentRunsInvalidated } from './subagentRuns.js';
 import { compactSessionToolResultsBestEffort } from '../toolResultCompaction.js';
 import { consumeWritableDirectoryPickerGrants } from '../../maker-ipc/writableDirectoryPickerGrant.js';
+import { botSessionInputBlockReason, isShadowedCompanionSession } from '../../maker-ipc/botSessionInputGuard.js';
+import { isCompanionShadowed } from '../../companion-cloud/homes.js';
 
 export { setSessionRuntimeCleanup } from '../sessionRuntimeCleanup.js';
 
@@ -1560,8 +1563,9 @@ export function registerSessionIpc(
       // sidebar-card-mode: 首次 list(db 必然 ready)触发一次置顶摘要回填——
       // 老置顶会话没有 turn-done 触发点。模块内部 once 守卫 + 串行 + swallow。
       void import('../../sessionTaskSummary.js').then((m) => m.backfillPinnedSessionSummaries());
-      // 首次 list 即账号库就绪:预热插件后台任务索引,灵动岛/通知的同步判定从此可用。
-      void ensureHiddenSessionRegistryLoaded();
+      // 首次 list 即账号库就绪:预热 session 标记索引(插件后台隐藏 + 消息免打扰),
+      // 灵动岛/通知的同步判定从此可用。
+      void ensureSessionFlagRegistryLoaded();
       // 同一时机清掉上次运行没来得及删的未发送任务；先等它清完再读列表，残留不会被列出来。
       // 每个账号库只真正清理一次，之后直接返回同一个结果。
       await sweepLeftoverProvisionalSessions().catch(() => undefined);
@@ -1861,7 +1865,11 @@ export function registerSessionIpc(
   // 正在跑的 turn 算进来。只服务本机顶层 renderer,不进 device-link allowlist。
   ipcMain.handle('local-db:sessions:interrupted-resume-candidates', async (event) => {
     assertTrustedAppRendererEvent(event);
-    const rows = await listInterruptedResumeCandidateRows();
+    const rows = await listInterruptedResumeCandidateRows(
+      ({ botId, role, profileStatus }) =>
+        botSessionInputBlockReason({ source: 'bot', role, profileStatus }) === null
+        && !isShadowedCompanionSession({ role, botId }, isCompanionShadowed),
+    );
     const wording = createLocalizedToolRowWording();
     return rows.map(({ sessionId, interruptedAt, lastToolUse }) => ({
       sessionId,
@@ -2114,6 +2122,11 @@ export function registerSessionIpc(
   ipcMain.handle('local-db:sessions:update', async (_e, id: unknown, patch: unknown) => {
     const sid = requireString(id, 'id');
     const p = requireObject(patch, 'patch');
+    // renderer payload 不可信:静音是 boolean 语义,字符串 "false" 进 mapper 会被 `!!`
+    // 存成 true(开关反转)。出现就必须是真 boolean,与 set-pinned-card-summaries 同口径。
+    if (p.notificationsMuted !== undefined && typeof p.notificationsMuted !== 'boolean') {
+      throwIpcError('INVALID_PARAMS', 'notificationsMuted must be a boolean');
+    }
     return updateSessionInDb(sid, p, opts);
   });
 
@@ -2171,6 +2184,23 @@ export function registerSessionIpc(
  * (GUI 侧栏、MCP 工具、device-link)一并生效;GUI 侧的预检只为及时反馈,规则
  * 以本函数为准,不得在入口层另立一份。
  */
+
+/** Pre-lock cancellation is limited to validated terminal intent; commit/cleanup stay locked. */
+async function cancelValidatedCreation(
+  dbClient: DbClient, sessionId: string, status: unknown,
+  assertCurrent: () => void,
+): Promise<void> {
+  if (status !== 'archived' && status !== 'deleted') return;
+  const cancel = captureSessionCreationCancellation(dbClient, sessionId);
+  const [target] = await dbClient.drizzle.select({ source: sessions.source })
+    .from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+  if (!target) throwIpcError('NOT_FOUND', 'Session 不存在');
+  await assertGenericSessionLifecycleAllowed(dbClient.drizzle, sessionId);
+  assertCurrent();
+  if (getDbClient() !== dbClient) throwIpcError('PRECONDITION_FAILED', 'Session owner changed');
+  cancel();
+}
+
 export async function updateSessionInDb(
   sid: string,
   p: Record<string, unknown>,
@@ -2354,6 +2384,7 @@ export async function updateSessionInDb(
       'extraDirs',
       'writableDirs',
       'pinnedAt',
+      'notificationsMuted',
       'workingDir',
       'workspaceKind',
       'title',
@@ -2413,6 +2444,10 @@ export async function updateSessionInDb(
     const previousContextWindowBudget: number | null = hasContextWindowBudgetChange
       ? readSessionContextWindowBudget(sid)
       : null;
+    await cancelValidatedCreation(dbClient, sid, p.status, () => {
+      moveGuard?.assertCurrent();
+      if (!isOwnerScopeCurrent(ownerScope)) throwIpcError('PRECONDITION_FAILED', 'Session owner changed');
+    });
     let deletedSideChats: SessionsSetTerminalStatusResult['deletedSideChats'] | undefined;
     await withStatusWriteLock(
       db,
@@ -2472,6 +2507,13 @@ export async function updateSessionInDb(
       row.summary = null;
     }
     const updated = sessionToCamel(row);
+    // 「消息免打扰」是通知面专用标记:同步给进程内索引,免得通知/灵动岛路径逐事件查库。
+    if (p.notificationsMuted !== undefined) {
+      noteSessionNotificationsMuted(sid, updated.notificationsMuted === true, dbClient);
+      // 岛面收敛:静音后要把已经上岛的任务从展示面收走,取消静音要放回来。只影响
+      // 展示面 —— 事件仍照常进状态机(侧栏实时活动就长在那份状态上)。
+      notifyAgentIslandSessionPatch(sid, { notificationsMuted: updated.notificationsMuted });
+    }
     if (updated.status === 'deleted' && isOwnerScopeCurrent(ownerScope)) {
       clearSessionAttention(sid, 'explicit');
     }
@@ -2533,7 +2575,8 @@ export async function updateSessionInDb(
       settingsChanged ||
       titleChanged ||
       statusChanged ||
-      p.pinnedAt !== undefined
+      p.pinnedAt !== undefined ||
+      p.notificationsMuted !== undefined
     ) {
       if (isOwnerScopeCurrent(ownerScope)) {
         broadcastSessionPatched(sid, broadcastPatch, ownerScope);
@@ -2633,7 +2676,8 @@ export async function restoreArchivedSessionForSend(
     if (!isOwnerScopeCurrent(ownerScope)) throwIpcError('PRECONDITION_FAILED', 'Task owner changed');
     if (row?.status === 'deleted') throwIpcError('NOT_FOUND', 'Session does not exist');
     if (row?.status !== 'archived') return;
-    if (row.source === 'bot' || row.orcaRole === 'worker' || row.orcaRemoteLead) {
+    if ((row.source === 'bot' && !(await isTaskListBotLane(db, sessionId)))
+      || row.orcaRole === 'worker' || row.orcaRemoteLead) {
       throwIpcError('PRECONDITION_FAILED', 'Restore the managed task before continuing');
     }
     await patchSessionMetaInDb(sessionId, { status: 'active' }, { ...options, routeLockHeld: true });
@@ -2675,6 +2719,12 @@ export async function patchSessionMetaInDb(
   // 控制端远程改名走这条,与本机改名同口径(同样先记号后写库)。
   if (patch.title !== undefined) noteUserTitleWritten(sessionId);
   let deletedSideChats: SessionsSetTerminalStatusResult['deletedSideChats'] | undefined;
+  await cancelValidatedCreation(dbClient, sessionId, patch.status, () => {
+    if (!isOwnerScopeCurrent(ownerScope) || options.signal?.aborted) {
+      throwIpcError('PRECONDITION_FAILED', 'Session send aborted');
+    }
+    options.beforeWrite?.();
+  });
   const updated = await withStatusWriteLock(db, sessionId, patch.status, async () => {
     if (patch.status !== undefined) await assertGenericSessionLifecycleAllowed(db, sessionId);
     options.beforeWrite?.();
@@ -2755,7 +2805,24 @@ export async function patchSessionMetaInDb(
 }
 
 /**
- * Bot tasks are absent from the ordinary task pool, so their active/history/
+ * Routine and channel lanes are listed with ordinary tasks (`ordinaryTaskListFilter`)
+ * and hold no Profile pointer, so they archive, restore and delete like ordinary tasks.
+ * Their next trigger resumes an archived lane (`ensureBotOwnedLaneSession`).
+ */
+async function isTaskListBotLane(db: DbClient['drizzle'], sessionId: string): Promise<boolean> {
+  const [link] = await db
+    .select({ role: botSessionLinks.role })
+    .from(botSessionLinks)
+    .where(and(
+      eq(botSessionLinks.sessionId, sessionId),
+      inArray(botSessionLinks.role, ['routine', 'channel']),
+    ))
+    .limit(1);
+  return !!link;
+}
+
+/**
+ * Other Bot tasks are absent from the ordinary task pool, so their active/history/
  * route transitions must go through the Bot lifecycle service. That service
  * updates the Profile pointer and Session projection atomically.
  */
@@ -2768,7 +2835,7 @@ async function assertGenericSessionLifecycleAllowed(
     .from(sessions)
     .where(eq(sessions.id, sessionId))
     .limit(1);
-  if (target?.source === 'bot') {
+  if (target?.source === 'bot' && !(await isTaskListBotLane(db, sessionId))) {
     throwIpcError(
       'PRECONDITION_FAILED',
       'Bot task lifecycle is managed by teammate recovery and history controls',
