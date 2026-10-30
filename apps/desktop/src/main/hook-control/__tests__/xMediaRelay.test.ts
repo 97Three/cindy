@@ -50,6 +50,27 @@ const upload = (relay: ReturnType<typeof createXMediaRelay>, send: (m: HookMessa
   relay.upload({ connectionId: 'conn-1', requestId: 'req-1', absPath, mimeType: 'video/mp4', send });
 
 describe('X media relay', () => {
+  // 明确停止必须同时结束 Agent 已完成后的媒体传输；旧实现只中止 Agent，仍会把视频传完。
+  // 最小输入：停止发生在读盘前、等 init 回执或两段之间。复用真实 upload 入口与 fake server。
+  it.each(['before upload', 'waiting for a result', 'between steps'])('stops uploading when cancelled %s', async (when) => {
+    const controller = new AbortController();
+    const { relay, sent, send } = setup();
+    const file = await video(Buffer.from('video'));
+    if (when === 'before upload') controller.abort();
+    const running = relay.upload({ connectionId: 'conn-1', requestId: 'req-1', absPath: file,
+      mimeType: 'video/mp4', signal: controller.signal,
+      send: (message) => {
+        if (message.type === 'x.media.init' && when === 'waiting for a result') controller.abort();
+        const accepted = send(message);
+        if (message.type === 'x.media.init' && when === 'between steps') queueMicrotask(() => controller.abort());
+        return accepted;
+      },
+    });
+    await expect(running).rejects.toMatchObject({ code: 'X_MEDIA_RELAY_CANCELLED' });
+    expect(types(sent)).not.toContain('x.media.append');
+    expect(types(sent)).not.toContain('x.media.finalize');
+  });
+
   it('sends the whole file in ordered segments, one at a time', async () => {
     const bytes = Buffer.alloc(X_MEDIA_SEGMENT_MAX_BYTES + 5, 7);
     const { relay, sent, send } = setup();

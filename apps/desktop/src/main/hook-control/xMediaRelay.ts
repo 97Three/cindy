@@ -34,6 +34,7 @@ export interface XMediaRelayUpload {
   requestId: string;
   absPath: string;
   mimeType: string;
+  signal?: AbortSignal;
   send(message: HookMessage): boolean;
 }
 
@@ -44,6 +45,7 @@ interface PendingStep {
   resolve(mediaId: string | null): void;
   reject(error: Error): void;
   timer: ReturnType<typeof setTimeout>;
+  cleanup(): void;
 }
 
 export function createXMediaRelay(options: { stepTimeoutMs?: number; finalizeTimeoutMs?: number } = {}) {
@@ -55,6 +57,7 @@ export function createXMediaRelay(options: { stepTimeoutMs?: number; finalizeTim
     const entry = pending.get(uploadId);
     if (!entry) return undefined;
     clearTimeout(entry.timer);
+    entry.cleanup();
     pending.delete(uploadId);
     return entry;
   };
@@ -68,17 +71,27 @@ export function createXMediaRelay(options: { stepTimeoutMs?: number; finalizeTim
   };
 
   return {
-    async upload({ connectionId, requestId, absPath, mimeType, send }: XMediaRelayUpload): Promise<string> {
+    async upload({ connectionId, requestId, absPath, mimeType, signal, send }: XMediaRelayUpload): Promise<string> {
+      const cancelled = new XMediaRelayError('X_MEDIA_RELAY_CANCELLED', 'The video upload was cancelled.');
+      if (signal?.aborted) throw cancelled;
       const uploadId = randomUUID();
       const target = { uploadId, requestId };
       const request = (message: HookMessage, step: XMediaStep, segmentIndex: number | null, timeoutMs: number) =>
         new Promise<string | null>((resolve, reject) => {
+          if (signal?.aborted) { reject(cancelled); return; }
+          const onAbort = () => {
+            settle(uploadId);
+            reject(cancelled);
+          };
           const timer = setTimeout(() => {
             settle(uploadId);
             reject(new XMediaRelayError('X_MEDIA_RELAY_TIMEOUT', `The server did not answer ${step} in time.`));
           }, timeoutMs);
           timer.unref?.();
-          pending.set(uploadId, { connectionId, step, segmentIndex, resolve, reject, timer });
+          pending.set(uploadId, { connectionId, step, segmentIndex, resolve, reject, timer,
+            cleanup: () => signal?.removeEventListener('abort', onAbort),
+          });
+          signal?.addEventListener('abort', onAbort, { once: true });
           if (send(message)) return;
           settle(uploadId);
           reject(new XMediaRelayError('X_MEDIA_RELAY_OFFLINE', 'The server connection is not available.'));

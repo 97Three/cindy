@@ -3001,6 +3001,38 @@ describe('dispatcher 核心语义', () => {
     expect(typeof fr.calls[0]?.relayXVideo === 'function').toBe(expected);
   });
 
+  // IM 轮次流程 §9：明确停止包含 Agent 结束后的上传；此前只 abort Agent，回执仍可能等 35 分钟。
+  // 生产入口 cancel；最小失败输入：init 在途时 task.cancel。其他连接不能取消，取消后也不能重新开始上传。
+  it('task.cancel immediately stops its video upload and prevents a late upload', async () => {
+    const fr = fakeRunner();
+    const { d } = makeDispatcher({ runner: fr.runner });
+    const c = collector();
+    d.onConnected('conn-1', c.send, [HOOK_FEATURE_X_MEDIA_RELAY]);
+    d.handleDispatch('conn-1', dispatch({ source: { im: 'x' } }), c.send);
+    await tick();
+    const dir = mkdtempSync(path.join(tmpdir(), 'cindy-dispatch-relay-'));
+    const file = path.join(dir, 'clip.mp4');
+    writeFileSync(file, 'video');
+    try {
+      const relayVideo = fr.calls[0]!.relayXVideo!;
+      const upload = relayVideo(file, 'video/mp4').catch((error: unknown) => error);
+      await vi.waitFor(() => expect(c.ofType('x.media.init')).toHaveLength(1));
+      d.cancel('other-connection', 'req-1');
+      expect(c.ofType('x.media.abort')).toHaveLength(0);
+      d.cancel('conn-1', 'req-1');
+      expect(await upload).toMatchObject({ code: 'X_MEDIA_RELAY_CANCELLED' });
+      expect(c.ofType('x.media.abort')).toHaveLength(1);
+      await expect(relayVideo(file, 'video/mp4')).rejects.toMatchObject({ code: 'X_MEDIA_RELAY_CANCELLED' });
+      expect(c.ofType('x.media.init')).toHaveLength(1);
+      fr.finish();
+      await tick();
+      expect(c.ofType('turn.end').at(-1)?.payload).toMatchObject({ status: 'cancelled' });
+    } finally {
+      d.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   // media id 必须随终稿发回, 否则视频已上传但回帖不带它。
   it('turn.end 带上已转传的 media id, 断线时结束等待中的上传', async () => {
     const fr = fakeRunner();

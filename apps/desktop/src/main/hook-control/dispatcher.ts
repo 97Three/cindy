@@ -896,7 +896,9 @@ export function createHookDispatcher(deps: HookDispatcherDeps): HookDispatcher {
   /** 每 session 的 FIFO 等待队列。 */
   const queues = new Map<string, PendingTask[]>();
   /** connectionId + requestId -> 正在执行它的 session(cancel 定位与归属校验用, 收口即清)。 */
-  const runningByRequest = new Map<string, { sessionId: string; connectionId: string; observing?: boolean }>();
+  const runningByRequest = new Map<string, {
+    sessionId: string; connectionId: string; observing?: boolean; relayAbort?: AbortController;
+  }>();
   /**
    * 已开始执行但 provider 尚未受理的 Telegram 群任务。账号边界必须把其
    * accepted / queued ACK 收成 cancelled；accepted=true 后消息已交给 agent，
@@ -943,11 +945,11 @@ export function createHookDispatcher(deps: HookDispatcherDeps): HookDispatcher {
     telegramOpRouter.failAll();
   };
   /** 只有声明分块转传的 X server 才走这条路; 否则继续内联 10 MiB 以内的视频。 */
-  const xVideoRelayOption = (task: { connectionId: string; requestId: string; run: { source?: TaskSource } }) =>
+  const xVideoRelayOption = (task: { connectionId: string; requestId: string; run: { source?: TaskSource } }, signal: AbortSignal) =>
     task.run.source?.im === 'x' && serverFeatures.get(task.connectionId)?.includes(HOOK_FEATURE_X_MEDIA_RELAY)
       ? {
           relayXVideo: (absPath: string, mimeType: string) => xMediaRelay.upload({
-            connectionId: task.connectionId, requestId: task.requestId, absPath, mimeType,
+            connectionId: task.connectionId, requestId: task.requestId, absPath, mimeType, signal,
             send: (message) => sendFns.get(task.connectionId)?.(message) ?? false,
           }),
         }
@@ -1863,7 +1865,7 @@ export function createHookDispatcher(deps: HookDispatcherDeps): HookDispatcher {
     // 这条消息线交给新任务了: 撤掉上一轮失败留下的续跑观察与记账。连接还在, 所以要
     // 发收口帧把那条旧消息定稿; 但不再记待续跑(它已经不是"最新一轮"了)。
     dropContinuation(sessionId, { silent: false, remember: false });
-    const runningEntry = { sessionId, connectionId: task.connectionId, observing: true };
+    const runningEntry = { sessionId, connectionId: task.connectionId, observing: true, relayAbort: new AbortController() };
     runningByRequest.set(requestKey, runningEntry);
     const messageLifecycle = telegramLegacyLifecycle(
       task.connectionId,
@@ -1960,7 +1962,7 @@ export function createHookDispatcher(deps: HookDispatcherDeps): HookDispatcher {
       try {
         outcome = await runner.run({
           ...task.run,
-          ...xVideoRelayOption(task),
+          ...xVideoRelayOption(task, runningEntry.relayAbort.signal),
           onTurnTerminal: () => { runningEntry.observing = false; },
           onProgress,
           ...(task.run.source?.im === 'telegram' ? {
@@ -3011,6 +3013,7 @@ export function createHookDispatcher(deps: HookDispatcherDeps): HookDispatcher {
       // 命中, 但留着会让 supportsReopen 对"同名连接"给出上一个账号的答案。
       serverFeatures.clear();
       xMediaRelay.failAll();
+      for (const entry of runningByRequest.values()) entry.relayAbort?.abort();
       // ack 的待补发与可回落表随账号走 —— 换账号后它们指向的连接与消息都不再
       // 属于当前主人, 留着既补不出去也是一份只涨不落的内存。
       ackReactions.reset();
@@ -3279,6 +3282,7 @@ export function createHookDispatcher(deps: HookDispatcherDeps): HookDispatcher {
       if (runningEntry !== undefined && runningEntry.connectionId === connectionId) {
         const sessionId = runningEntry.sessionId;
         cancelRequested.add(requestKey);
+        runningEntry.relayAbort?.abort();
         log.info(`hook task ${requestId} cancel requested (stopping session ${sessionId})`);
         // 渠道里的 /stop 是用户明确喊停: 与桌面 Stop 同一套清理, 不只是 abort ——
         // 否则已排期的自动续跑会在喊停后原地复活, 进行中的 Goal 也会接着跑。
@@ -3298,6 +3302,9 @@ export function createHookDispatcher(deps: HookDispatcherDeps): HookDispatcher {
     onDisconnected(connectionId) {
       sendFns.delete(connectionId);
       xMediaRelay.failConnection(connectionId);
+      for (const entry of runningByRequest.values()) {
+        if (entry.connectionId === connectionId) entry.relayAbort?.abort();
+      }
       // 在等的进度回执不会再来: 立刻按"回执未知"收口(send 下一窗口原 opId 重发)。
       telegramOpRouter.failConnection(connectionId);
       for (const pending of pendingDeliveryTurnEnds.values()) {
@@ -3341,6 +3348,7 @@ export function createHookDispatcher(deps: HookDispatcherDeps): HookDispatcher {
       latestPromptBySession.clear();
       serverFeatures.clear();
       xMediaRelay.failAll();
+      for (const entry of runningByRequest.values()) entry.relayAbort?.abort();
       sendFns.clear();
       pendingTurnEnds.clear();
       for (const key of [...pendingDeliveryTurnEnds.keys()]) clearPendingDelivery(key);
