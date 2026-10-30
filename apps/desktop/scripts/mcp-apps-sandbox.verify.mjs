@@ -70,12 +70,12 @@ try {
       resolveDir: scriptDir,
       contents: `
     import { McpAppController } from '@cindy/maker-shared/mcp-app-controller';
-    window.testState = {};
+    window.testState = {sizes:[]};
     let frame;
     const controller = new McpAppController((_id,input)=>window.testHost.invoke(input),'task','card',
       message=>frame?.contentWindow?.postMessage(message,'*'),message=>{
         if(message.method==='ui/notifications/initialized')window.testState.initialized=true;
-        if(message.method==='ui/notifications/size-changed'){window.testState.size=message.params;if(frame)frame.style.height=(${authorMode === 'files'}?message.params.height:Math.min(1200,message.params.height))+'px';}
+        if(message.method==='ui/notifications/size-changed'){window.testState.size=message.params;window.testState.sizes.push(message.params);if(frame)frame.style.height=(${authorMode === 'files'}?message.params.height:Math.min(1200,message.params.height))+'px';}
         if(message.method==='ui/notifications/host-context-changed'&&message.params.displayMode)window.testState.mode=message.params.displayMode;
       },error=>{window.testState.error=String(error);});
     window.testController=controller;
@@ -263,7 +263,7 @@ try {
       assert.equal(await window.webContents.executeJavaScript(
         "window.testHost.invoke({op:'message',viewId:window.testController.document.viewId,message:{jsonrpc:'2.0',id:'forged',method:'tools/list'}}).then(()=>false,()=>true)"),true);
       if (process.env.CINDY_MCP_APP_TEST_HOST_SDK==='1') {
-        stage='host SDK document replacement';
+        stage='host SDK first generated page';
         await wait(()=>inner()?.executeJavaScript('window.pageState?.ready===true'));
         assert.equal(await inner().executeJavaScript('window.pageState.page'),1);
         assert.equal(await inner().executeJavaScript('window.loaderCompatMode'), 'CSS1Compat');
@@ -271,6 +271,7 @@ try {
         assert.equal(record.sdk,undefined);
         const attachment=process.env.CINDY_MCP_APP_TEST_REMOTE!=='1'
           ? await inner().executeJavaScript('window.sdkApp.getHostContext().toolInfo.tool._meta["cindy/attachments"][0]._meta["cindy/file"].url') : undefined;
+        stage='host SDK pending approval and second page';
         // Hold an old request in approval, then replace the whole document. Both
         // official App instances allocate the same first tools/call ID.
         await inner().executeJavaScript('void window.sdkApp.callServerTool({name:"echo",arguments:{text:"old-document"}}).catch(()=>{});');
@@ -286,6 +287,7 @@ try {
         assert.equal(sdkIds.find(x=>x.text==='old-document').id,sdkIds.find(x=>x.text==='new-document').id);
         assert.equal(await inner().executeJavaScript('window.pageState.theme'),'dark');
         for (const page of [3,4]) {
+          stage='host SDK generated page '+page;
           if(page===4){
             await inner().executeJavaScript('void window.sdkApp.callServerTool({name:"echo",arguments:{text:"old-upstream"}}).catch(()=>{});');
             await wait(()=>!!sdkUpstreamSignal);
@@ -304,10 +306,16 @@ try {
           assert.equal(await inner().executeJavaScript('window.sdkApp.getHostContext().toolInfo.tool._meta["cindy/attachments"][0]._meta["cindy/file"].url'),attachment);
           assert.equal(await inner().executeJavaScript('fetch('+JSON.stringify(attachment)+').then(r=>r.text())'),'host-only-file');
         }
+        stage='host SDK theme update';
         await window.webContents.executeJavaScript('window.testController.context({theme:"light"})');
         await wait(()=>inner().executeJavaScript('window.pageState.theme==="light"'));
-        await inner().executeJavaScript('window.sdkApp.sendSizeChanged({width:680,height:317})');
-        await wait(()=>window.webContents.executeJavaScript('window.testState.size?.height===317'));
+        // Back-to-back notifications reproduce the SDK's automatic resize racing a manual size.
+        stage='host SDK size notification';
+        await window.webContents.executeJavaScript('window.testState.sizes=[]');
+        await inner().executeJavaScript('window.sdkApp.sendSizeChanged({width:680,height:317}).then(()=>window.sdkApp.sendSizeChanged({width:680,height:318}))');
+        // Observe delivery, not a transient last size that autoResize can overwrite.
+        await wait(()=>window.webContents.executeJavaScript('[317,318].every(height=>window.testState.sizes.some(size=>size.height===height))'));
+        stage='host SDK teardown and reopen';
         const previous=inner(), viewId=await window.webContents.executeJavaScript('window.testController.document.viewId');
         await window.webContents.executeJavaScript('window.testController.close()');
         assert.equal(await previous.executeJavaScript('window.pageState.tornDown'),true);

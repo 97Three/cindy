@@ -239,3 +239,9 @@ it('does not treat an SVG script as an HTML importmap', () => {
 it.each([undefined, '/relative.js'])('requires an absolute SDK URL: %s', url => {
   expect(() => Reflect.apply(withHostAppSdk, undefined, [sdkModule, url])).toThrow();
 });
+
+// Greptile 4427568750: template-literal dynamic imports are valid module requests.
+it('supplies the SDK for a template-literal dynamic import', () => {
+  const html = '<script type="module">import(`@modelcontextprotocol/ext-apps`);</script>';
+  expect(withHostAppSdk(html, sdkUrl)).toContain(sdkUrl);
+});

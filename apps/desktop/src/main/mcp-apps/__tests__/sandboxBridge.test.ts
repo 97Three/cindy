@@ -71,3 +71,20 @@ it('still relays App readiness and size notifications to the Renderer and Host',
   }
   expect(f.parent.postMessage).toHaveBeenCalledTimes(2);
 });
+
+// Greptile 4427568732: a poll already on the wire can arrive after initialize.
+// Real emitted bridge script, deferred network response, reused request ID.
+it('drops in-flight old-document replies before posting to the new frame', async () => {
+  const f = fixture();
+  const receive = (data: unknown) => f.handlers.get('message')!({ source: f.frame.contentWindow, data });
+  receive({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  receive({ jsonrpc: '2.0', id: 70, method: 'ui/initialize', params: {} });
+  const old = { jsonrpc: '2.0', id: 70, error: { code: -1, message: 'old document' } };
+  const current = { jsonrpc: '2.0', id: 70, result: { protocolVersion: '2026-01-26' } };
+  f.pending[0]({ ok: true, json: async () => [
+    { seq: 1, message: old }, { seq: 2, generation: 1, message: current },
+  ] });
+  for (let index = 0; index < 8; index++) await Promise.resolve();
+  expect(f.frame.contentWindow.postMessage).not.toHaveBeenCalledWith(old, '*');
+  expect(f.frame.contentWindow.postMessage).toHaveBeenCalledWith(current, '*');
+});

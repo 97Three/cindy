@@ -21,6 +21,8 @@ export class McpAppController {
   private finishTeardown?: () => void;
   private closePromise?: Promise<void>;
   private ready = false;
+  private generation = 0;
+  private initialized = false;
   private outbound: AppRpc[] = [];
   private initializeId?: string | number;
   private startupTimer?: ReturnType<typeof setTimeout>;
@@ -97,8 +99,16 @@ export class McpAppController {
     }
     if (message.method?.startsWith('ui/notifications/sandbox-')) return;
     if (this.closing && message.method) return;
-    if (message.method === 'ui/initialize') this.initializeId = message.id;
+    if (message.method === 'ui/initialize') {
+      if (this.initialized) {
+        this.generation++;
+        this.initialized = false;
+        this.outbound = [];
+      }
+      this.initializeId = message.id;
+    }
     if (message.method === 'ui/notifications/initialized') {
+      this.initialized = true;
       clearTimeout(this.startupTimer);
       this.startupTimer = undefined;
     }
@@ -153,6 +163,8 @@ export class McpAppController {
         for (const event of events) {
           if (!Number.isSafeInteger(event.seq) || event.seq <= this.after) continue;
           this.after = event.seq;
+          // Replies already in transit cannot be recalled by the execution Host.
+          if ((event.generation ?? 0) !== this.generation) continue;
           if (event.openLink) {
             const viewId = this.document.viewId;
             void (async () => {

@@ -768,6 +768,7 @@ it('drops an old poll snapshot when its final authorization straddles a new docu
   expect(await poll).toEqual([]);
   const next = await f.poll(0);
   expect(next.some(e => e.message && 'id' in e.message && e.message.id === 1)).toBe(true);
+  expect(next.every(event => event.generation === 1)).toBe(true);
   expect(next.some(e => e.message && 'method' in e.message && e.message.method === 'ui/notifications/tool-input')).toBe(false);
 });
 

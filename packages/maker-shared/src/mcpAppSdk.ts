@@ -22,7 +22,7 @@ function sdkPlan(html: string) {
           .replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '').toLowerCase();
         const text = node.childNodes.map(child => 'value' in child ? child.value : '').join('');
         if (['module', '', 'text/javascript', 'application/javascript'].includes(type))
-          imported ||= text.includes('"' + moduleName + '"') || text.includes("'" + moduleName + "'");
+          imported ||= ['"', "'", "`"].some(quote => text.includes(quote + moduleName + quote));
         if (type === 'importmap') {
           try {
             const map = JSON.parse(text);

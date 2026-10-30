@@ -81,13 +81,14 @@ class ViewTransport implements Transport {
   private localFilesUnavailable = false;
   private closed = false;
   private discardedThrough = 0;
+  private generation = 0;
   constructor(private readonly maxBytes: number, private readonly localFilesAllowed = true) {}
   async start(): Promise<void> {}
   async send(message: JSONRPCMessage): Promise<void> {
-    this.enqueue({ seq: ++this.seq, message });
+    this.enqueue({ seq: ++this.seq, ...(this.generation ? { generation: this.generation } : {}), message });
   }
   openLink(id: string, url: string): void {
-    this.enqueue({ seq: ++this.seq, openLink: { id, url } });
+    this.enqueue({ seq: ++this.seq, ...(this.generation ? { generation: this.generation } : {}), openLink: { id, url } });
   }
   private enqueue(event: (typeof this.events)[number]): void {
     if (!this.localFilesAllowed && hasExecutionComputerFile(event)) {
@@ -133,7 +134,8 @@ class ViewTransport implements Transport {
     if (this.failed) throw new Error('MCP_APP_BACKPRESSURE');
     return this.events.filter((event) => event.seq > after);
   }
-  discardDocumentEvents(): void {
+  discardDocumentEvents(generation: number): void {
+    this.generation = generation;
     this.discardedThrough = this.seq;
     this.events.length = 0;
     this.bytes = 2;
@@ -398,10 +400,8 @@ export class McpAppsHost {
         prefersBorder: resource.meta.prefersBorder !== false,
       };
       const remote = caller.startsWith('device:');
-      // Preserve the old remote document budget for pages bundling their own SDK.
-      // A near-limit page can still open; the optional host SDK is omitted there.
-      if (remote && Buffer.byteLength(JSON.stringify(document)) > MCP_APPS_MAX_REMOTE_BYTES)
-        delete document.sdk;
+      // SDK-free pages keep their existing budget. A required SDK must travel
+      // with its document; silently dropping it would return an unusable page.
       if (remote && Buffer.byteLength(JSON.stringify(document)) > MCP_APPS_MAX_REMOTE_BYTES)
         throw new Error('MCP_APP_RESOURCE_TOO_LARGE');
       const transport = new ViewTransport(remote ? MCP_APPS_MAX_REMOTE_BYTES : MCP_APPS_MAX_BYTES, !remote || !config.plugin);
@@ -452,7 +452,7 @@ export class McpAppsHost {
           // Revoke before closing the old SDK Protocol, including its error replies.
           view.generation++;
           view.initialized = false;
-          transport.discardDocumentEvents();
+          transport.discardDocumentEvents(view.generation);
           view.links.forEach(link => link.resolve(false));
           view.unlisten.splice(0).forEach(remove => remove());
           const old = view.bridge;

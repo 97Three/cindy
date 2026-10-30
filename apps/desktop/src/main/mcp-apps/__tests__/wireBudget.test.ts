@@ -117,6 +117,20 @@ describe('MCP Apps serialized remote result budgets', () => {
     );
   });
 
+  // Codex 4427537663: dropping a required SDK returns an unusable remote page.
+  // Unit / real Host.open: HTML fits the old budget, but HTML + SDK exceeds it.
+  it('rejects SDK-dependent remote pages instead of silently dropping their SDK', async () => {
+    const f = fixture();
+    const html = '<script type="module">import "@modelcontextprotocol/ext-apps";</script>' + 'x'.repeat(MCP_APPS_MAX_REMOTE_BYTES - 4096);
+    f.resource.mockResolvedValue({ result: f.contents(html) });
+    const local = await f.host.open('renderer:local', 'task', 'card', {});
+    expect(local.sdk).toBeDefined();
+    expect(Buffer.byteLength(JSON.stringify({ ...local, sdk: undefined }))).toBeLessThan(MCP_APPS_MAX_REMOTE_BYTES);
+    expect(Buffer.byteLength(JSON.stringify(local))).toBeGreaterThan(MCP_APPS_MAX_REMOTE_BYTES);
+    const outcome = await f.host.open('device:phone', 'task', 'card', {}).then(() => 'opened', error => error.message);
+    expect(outcome).toBe('MCP_APP_RESOURCE_TOO_LARGE');
+  });
+
   it.each(['multibyte', 'quotes', 'control characters'] as const)(
     'rejects remote %s before retaining a View, while preserving the local resource budget',
     async (kind) => {
