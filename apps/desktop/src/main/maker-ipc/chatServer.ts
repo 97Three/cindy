@@ -53,7 +53,7 @@ import {
   botGroupQuoteAttachmentName, botGroupQuoteExcerpt, botGroupQuoteFromMessage, buildBotGroupQuoteCard, readBotGroupQuote, readBotGroupQuoteCard, type BotGroupQuoteView,
   readBotGroupTaskCard, botGroupMessageSummaryText,
 } from '../../shared/botGroupChat.js';
-import type { BotGroupChatService, BotGroupChatServiceDeps, BotGroupLaneTerminal, BotGroupTaskPostInput, BotGroupTaskPostResult } from './botGroupChatService.js';
+import type { BotGroupChatService, BotGroupChatServiceDeps, BotGroupLaneTerminal, BotGroupPreparedAttachments, BotGroupTaskPostInput, BotGroupTaskPostResult } from './botGroupChatService.js';
 import { readPersistedReplyText } from './botGroupChatService.js';
 import { botGroupRuntimeFailureCode, botGroupRuntimeFailureDetail } from './botGroupRuntimeFailure.js';
 import { chatGroupMemberName as memberName, chatGroupOwnerName, botGroupExecutionFailureBatches, latestBotGroupMessage } from '@cindy/maker-shared/botGroupPresentation';
@@ -2714,9 +2714,14 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     return parsed.data;
   }
   const operationId = z.string().min(8).max(160).regex(/^[a-zA-Z0-9_.:-]+$/);
-  // Keep the recipients once a Thread POST may have committed, including when the
-  // controller loses our successful answer. The server still authorizes every replay.
-  const postedThreadRecipients = new Map<string, string[]>();
+  // Keep the exact body once a Thread POST may have committed, including when the
+  // controller loses our successful answer. A retry must not re-read mutable local files.
+  interface ThreadPost {
+    body: { operationId: string; threadRootId: string; content: ChatContentBlock[]; mentions: string[] };
+    prepared?: BotGroupPreparedAttachments;
+  }
+  const postedThreads = new Map<string, ThreadPost>();
+  const commitThreadPost = (post: ThreadPost) => { post.prepared?.commit(); post.prepared = undefined; };
   const chatServer: ChatServerApi = {
     mask: input => result(async () => {
       await register();
@@ -2890,23 +2895,48 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       }
     }),
     reply: input => result(async () => {
-      const i = z.object({ groupId: id, rootId: id, text: z.string().trim().min(1).max(8000), clientId: operationId,
-        mentions: z.object({ all: z.boolean(), botIds: z.array(z.string()).max(100) }) }).parse(input);
+      const i = z.object({ groupId: id, rootId: id, text: z.string().trim().max(8000), clientId: operationId,
+        mentions: z.object({ all: z.boolean(), botIds: z.array(z.string()).max(100) }),
+        attachments: z.array(z.unknown()).max(BOT_GROUP_ATTACHMENTS_MAX).optional(),
+      }).refine(value => value.text.length > 0 || !!value.attachments?.length).parse(input);
       i.groupId = await groupRoom(i.groupId);
       // Include the caller's intent: editing a failed send must not reuse old recipients.
       const key = JSON.stringify(i);
-      const recipients = postedThreadRecipients.get(key) ?? await mentionIds(i.groupId, i.mentions, i.rootId);
-      postedThreadRecipients.set(key, recipients);
-      if (postedThreadRecipients.size > 128) postedThreadRecipients.delete(postedThreadRecipients.keys().next().value!);
+      let post = postedThreads.get(key);
+      const recipients = post?.body.mentions ?? await mentionIds(i.groupId, i.mentions, i.rootId);
+      const prepared = !post && i.attachments?.length
+        ? await deps.prepareAttachments?.({ groupId: i.groupId, attachments: i.attachments }) : undefined;
+      if (!post && i.attachments?.length && (!prepared || !prepared.ok)) {
+        throw new Error(prepared && !prepared.ok && prepared.errorCode !== 'INVALID_PARAMS' ? prepared.errorCode : 'INVALID_ATTACHMENT');
+      }
       let posted: { id: string };
       try {
-        posted = await api<{ id: string }>(`/conversations/${i.groupId}/messages`, 'POST', {
-          operationId: i.clientId, threadRootId: i.rootId, content: [{ type: 'text', text: i.text }], mentions: recipients,
-        });
+        if (!post) {
+          const uploaded = prepared?.ok ? await media.upload(i.groupId, i.clientId, prepared.attachments, selfId) : [];
+          post = { body: { operationId: i.clientId, threadRootId: i.rootId,
+            content: [...(i.text ? [{ type: 'text', text: i.text }] : []), ...uploaded], mentions: recipients },
+            prepared: prepared?.ok ? prepared : undefined };
+          postedThreads.set(key, post);
+          if (postedThreads.size > 128) {
+            const oldest = postedThreads.keys().next().value!;
+            // An evicted POST may exist: preserve its group-owned media rather than undoing it.
+            commitThreadPost(postedThreads.get(oldest)!);
+            postedThreads.delete(oldest);
+          }
+        }
+        posted = await api<{ id: string }>(`/conversations/${i.groupId}/messages`, 'POST', post.body);
       } catch (error) {
-        if (error instanceof ChatResponseError && error.status >= 400 && error.status < 500 && error.status !== 408) postedThreadRecipients.delete(key);
+        // Before POST, or after a definite refusal, this batch belongs to no message.
+        // An uncertain POST keeps its body and media ownership until retry settles it.
+        if (!post || (error instanceof ChatResponseError && error.status >= 400 && error.status < 500 && error.status !== 408)) {
+          const rejected = post ? post.prepared : prepared?.ok ? prepared : undefined;
+          await rejected?.discard();
+          if (post) post.prepared = undefined;
+          postedThreads.delete(key);
+        }
         throw error;
       }
+      commitThreadPost(post);
       changed(i.groupId); return { messageId: posted.id };
     }),
     react: input => result(async () => {
@@ -3382,6 +3412,8 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     editPlanStep: input => safe(() => actPlan(input, 'reassign')),
     dispose: () => {
       chatNotifications?.dispose();
+      for (const post of postedThreads.values()) commitThreadPost(post);
+      postedThreads.clear();
       for (const roomId of attentionGroups) clearGroupAttention(roomId);
       unsubscribeProfiles();
       disposed = true; threads.dispose(); clearInterval(timer); clearInterval(heartbeat); clearTimeout(reconnect); clearTimeout(claimTrigger); socket?.close();

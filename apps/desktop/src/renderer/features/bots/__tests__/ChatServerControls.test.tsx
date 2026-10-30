@@ -10,7 +10,7 @@ import { BotGroupThreadHint } from '../BotGroupThreadHint';
 import { GroupMaskProvider } from '../GroupMaskProvider';
 import { GroupMaskContext, useGroupMask, useReadLocatedMention, type GroupMaskPresentation } from '../groupMaskPresentation';
 import { botGroupThreadDraftKey } from '../botGroupAttachments';
-import { clearDraft } from '@/lib/composerDraftStore';
+import { clearDraft, getDraft, saveDraft } from '@/lib/composerDraftStore';
 import { flashThreadTarget } from '../BotGroupThreadViews';
 import { chatErrorKey } from '../chatError';
 import type { BotGroupDetail, BotGroupMessageView, BotGroupThreadSummary, ChatMaskState } from '../../../../shared/botGroupChat';
@@ -775,6 +775,65 @@ describe('chat interaction controls', () => {
     await waitFor(() => expect(mocks.reply).toHaveBeenCalledTimes(3));
     expect(mocks.reply.mock.calls[2]![0].mentions).toEqual({ all: false, botIds: members.map(member => member.botId) });
     expect(mocks.reply.mock.calls[2]![0].clientId).not.toBe(original.clientId);
+  });
+
+  // Regression: thread mode hid the attachment menu and silently sent text only.
+  // Real panel + useAttachments; unit tier, picking a single image is the minimal input.
+  it('sends an image-only thread draft, keeps it on failure and clears it after retry', async () => {
+    const image = { id: 'thread-photo', name: 'photo.png', ext: '.png', category: 'image' as const,
+      mimeType: 'image/png', size: 12, path: '', url: 'cindy-media://blobs/photo.png' };
+    Object.assign(window.electronAPI, {
+      getFilePath: () => '/fixture/photo.png',
+      cacheImageFromPath: vi.fn(async () => ({ url: image.url })),
+    });
+    mocks.reply.mockResolvedValueOnce({ ok: false, errorCode: 'REQUEST_TIMEOUT' })
+      .mockResolvedValueOnce({ ok: true, messageId: 'image-reply' });
+    const view = render(<ChatThreadPanel group={group} rootId="root" onClose={vi.fn()} />);
+    fireEvent.keyDown(screen.getByRole('button', { name: 'bots.groupChat.composer.more' }), { key: 'Enter' });
+    expect(await screen.findByRole('menuitem', { name: 'extraDirs.addFiles' })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: /bots.groupChat.composer.division/ })).toBeNull();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'extraDirs.addFiles' }));
+    fireEvent.change(view.container.querySelector('input[type="file"]')!, {
+      target: { files: [new File(['image-bytes'], image.name, { type: image.mimeType })] },
+    });
+    const send = screen.getByRole('button', { name: k('sendReply') });
+    await waitFor(() => expect((send as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(send);
+    expect((await screen.findByRole('alert')).textContent).toBe(k('requestFailed'));
+    expect(mocks.reply).toHaveBeenCalledWith(expect.objectContaining({
+      rootId: 'root', text: '', attachments: [expect.objectContaining({ name: image.name, url: image.url })],
+    }));
+    const original = mocks.reply.mock.calls[0]![0];
+    fireEvent.click(send);
+    await waitFor(() => expect(mocks.reply).toHaveBeenCalledTimes(2));
+    expect(mocks.reply.mock.calls[1]![0]).toEqual(original);
+    await waitFor(() => expect((send as HTMLButtonElement).disabled).toBe(true));
+  });
+
+  // Review regression: id-only settlement erased newer annotations after reopening during upload.
+  // Unit tier: real panel/hook, one image, one delayed reply; selection/retry is covered above.
+  it('preserves a newer attachment draft when an earlier thread upload settles after reopening', async () => {
+    const scope = botGroupThreadDraftKey(group.id, 'root');
+    const file = { id: 'thread-photo', name: 'photo.png', ext: '.png', category: 'image' as const,
+      mimeType: 'image/png', size: 12, path: '', url: 'cindy-media://blobs/photo.png' };
+    saveDraft(scope, { text: null, attachments: [file] });
+    let finish!: (value: { ok: true; messageId: string }) => void;
+    mocks.reply.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const first = render(<ChatThreadPanel group={group} rootId="root" onClose={vi.fn()} />);
+    const send = screen.getByRole('button', { name: k('sendReply') });
+    await waitFor(() => expect((send as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(send);
+    await waitFor(() => expect(mocks.reply).toHaveBeenCalledOnce());
+    first.unmount();
+    render(<ChatThreadPanel group={group} rootId="root" onClose={vi.fn()} />);
+    await screen.findByRole('img', { name: file.name });
+    const edited = { ...file, annotationStrokes: [{ points: [{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.5 }] }] };
+    // The shared draft write is the same live hook update used by annotation edits.
+    act(() => saveDraft(scope, { ...getDraft(scope)!, attachments: [edited] }));
+    await act(async () => finish({ ok: true, messageId: 'earlier-reply' }));
+    expect(getDraft(scope)?.attachments).toEqual([edited]);
+    expect(screen.getByRole('img', { name: file.name })).toBeTruthy();
+    expect((screen.getByRole('button', { name: k('sendReply') }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('keeps a failed reply draft and reuses its operation id; IME confirmation does not send', async () => {

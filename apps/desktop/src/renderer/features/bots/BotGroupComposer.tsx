@@ -26,9 +26,9 @@
  * 主群的乐观发送由 botGroupOutbox 统一管理；话题仍用 `onSendStart` / `onSendSettled`
  * 把本地副本与回执交给话题时间线。
  *
- * 话题模式（`mode="thread"`）：同一个输入框用于话题回复——没有「+」菜单（不能安排分工；
- * Chat Server 的话题回复不带附件）、没有引用回复，发送键是「发送回复」，失败原因写在输入框
- * 上方；同一段文字、按当次成员解析出的点名目标也不变时，重发沿用同一个 clientId 和点名。
+ * 话题模式（`mode="thread"`）：同一个输入框用于话题回复，「+」只提供附件（不能安排分工），
+ * 没有引用回复，发送键是「发送回复」，失败原因写在输入框上方；文字、附件与按当次成员
+ * 解析出的点名目标都不变时，重发沿用同一个 clientId、烧录附件和点名。
  */
 import {
   useEffect,
@@ -56,12 +56,14 @@ import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts
 import { MENU_ITEM_CLASS } from '@/features/cc-agent/sidebar/menuStyles';
 import type { UseAttachmentsReturn } from '@/hooks/useAttachments';
 import {
+  areAttachedFileSnapshotsEqual,
   captureDraftDiscardToken,
   getDraft,
   isDraftDiscardTokenCurrent,
   saveDraft,
 } from '@/lib/composerDraftStore';
 import type { AttachedFile } from '@/lib/fileTypes';
+import { isAnnotationBurnInError, materializeAnnotatedAttachmentsForSend } from '@/lib/annotationBurnIn';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import {
@@ -84,10 +86,13 @@ import {
   type BotGroupQuoteDisplay,
   type BotGroupQuoteView,
   type ChatServerResult,
+  type ChatServerApi,
 } from '../../../shared/botGroupChat';
 import { BotGroupQuotePreview } from './BotGroupQuote';
 import {
   botGroupAttachmentSignature,
+  botGroupAttachmentPreview,
+  toBotGroupAttachmentInputs,
   botGroupDraftDoc,
   botGroupDraftText,
 } from './botGroupAttachments';
@@ -186,7 +191,7 @@ export function BotGroupComposer({
 }: {
   groupId: string;
   conversationKind?: 'direct';
-  /** `thread`: a 话题's reply box (no 「+」 menu, attachments or quotes). */
+  /** `thread`: a 话题's reply box (attachments, without 分工 or quotes). */
   mode?: 'group' | 'thread';
   /** Where the unsent text is kept (the group's attachment scope, or the 话题's own key). */
   draftKey: string;
@@ -207,7 +212,7 @@ export function BotGroupComposer({
   quote?: { view: BotGroupQuoteView; display: BotGroupQuoteDisplay } | null;
   onQuoteChange?: (quote: BotGroupQuoteView | null) => void;
   /** Thread mode: posts the reply. */
-  sendReply?: (input: { text: string; clientId: string; mentions: BotGroupMention }) => Promise<ChatServerResult<{ messageId: string }>>;
+  sendReply?: (input: Omit<Parameters<ChatServerApi['reply']>[0], 'groupId' | 'rootId'>) => Promise<ChatServerResult<{ messageId: string }>>;
   /** The message is on its way: show its local copy now. */
   onSendStart?: (message: BotGroupOutgoingMessage) => void;
   /** Main answered (or the send failed before reaching it). */
@@ -262,6 +267,8 @@ export function BotGroupComposer({
   const attemptRef = useRef<{
     text: string;
     clientId: string;
+    attachmentSignature: string;
+    prepared?: readonly AttachedFile[];
     /** 话题 replies keep the targets resolved on the first attempt, with the roster of that moment. */
     mentions?: BotGroupMention;
     roster?: readonly BotGroupMemberView[];
@@ -312,7 +319,7 @@ export function BotGroupComposer({
   useRefitBotGroupComposerInputOnResize(textareaRef);
 
   /**
-   * 话题 reply: a retry reuses the attempt only for the same text and the same targets
+   * 话题 reply: a retry reuses the attempt only for the same text, files and targets
    * (bot-group-chat.md). Targets are re-resolved against the attempt's own roster: a roster
    * refresh alone changes nothing and the host still rejects a departed target; re-picking
    * someone else gets a new clientId.
@@ -320,13 +327,16 @@ export function BotGroupComposer({
   const sendThreadReply = async () => {
     if (!canSend || sendingRef.current || !sendReply) return;
     groupMask?.participate();
+    const files = attachmentState.attachments;
+    const attachmentSignature = botGroupAttachmentSignature(files);
     const previous = attemptRef.current;
-    const attempt =
+    const attempt: NonNullable<typeof attemptRef.current> =
       previous?.mentions && previous.roster && previous.text === trimmed
+      && previous.attachmentSignature === attachmentSignature
       && sameBotGroupMentions(mention.resolve(text, previous.roster), previous.mentions)
         ? previous
         : {
-            text: trimmed, clientId: crypto.randomUUID(),
+            text: trimmed, clientId: crypto.randomUUID(), attachmentSignature,
             mentions: mention.resolve(text), roster: members,
           };
     attemptRef.current = attempt;
@@ -338,7 +348,6 @@ export function BotGroupComposer({
     setError('');
     setText('');
     mention.reset();
-    onSendStart?.({ clientId: attempt.clientId, text: attempt.text, mentions, attachments: [], quote: null });
     const owner = getDataOwnerGeneration();
     const fail = (message: string) => {
       onSendSettled?.(attempt.clientId, { ok: false });
@@ -347,14 +356,37 @@ export function BotGroupComposer({
       setError(message);
     };
     try {
-      const result = await sendReply({ text: attempt.text, clientId: attempt.clientId, mentions });
+      const prepared = attempt.prepared ?? (files.length
+        ? await materializeAnnotatedAttachmentsForSend(files, attachmentScope, { burnFailure: 'abort' }) ?? [] : []);
+      attempt.prepared = prepared;
+      if (!isDataOwnerGenerationCurrent(owner) || !isDraftDiscardTokenCurrent(discardTokenRef.current)) return;
+      onSendStart?.({ clientId: attempt.clientId, text: attempt.text, mentions,
+        attachments: prepared.map(botGroupAttachmentPreview), quote: null });
+      const result = await sendReply({ text: attempt.text, clientId: attempt.clientId, mentions,
+        ...(prepared.length ? { attachments: toBotGroupAttachmentInputs(prepared) } : {}),
+      });
       if (!isDataOwnerGenerationCurrent(owner)) return;
       if (!result.ok) { fail(t(chatErrorKey(result.errorCode))); return; }
       attemptRef.current = null;
+      // A file added by an earlier asynchronous picker while sending stays in the next draft.
+      const sentFiles = new Map(files.map(file => [file.id, file]));
+      const keepFile = (file: AttachedFile) => {
+        const sent = sentFiles.get(file.id);
+        return !sent || !areAttachedFileSnapshotsEqual(file, sent);
+      };
+      const remaining = attachmentsRef.current.filter(keepFile);
+      attachmentState.clearFiles();
+      if (remaining.length) attachmentState.restoreFiles(remaining);
+      // Closing the panel during upload already saved its tray; settle that draft as well.
+      const saved = getDraft(draftKey);
+      if (saved && isDraftDiscardTokenCurrent(discardTokenRef.current)) {
+        saveDraft(draftKey, { ...saved, attachments: saved.attachments.filter(keepFile) });
+      }
       onSendSettled?.(attempt.clientId, { ok: true, messageId: result.messageId });
       onSent?.();
-    } catch {
-      if (isDataOwnerGenerationCurrent(owner)) fail(t('bots.groupChat.server.requestFailed'));
+    } catch (error) {
+      if (isDataOwnerGenerationCurrent(owner)) fail(t(isAnnotationBurnInError(error)
+        ? 'chat.media.annotateBurnFailedNotSent' : 'bots.groupChat.server.requestFailed'));
     } finally {
       sendingRef.current = false;
       setSending(false);
@@ -459,8 +491,7 @@ export function BotGroupComposer({
 
   /** Files copied in a file manager attach by path; a screenshot or copied image attaches as an image. */
   const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    // A 话题 reply carries text only; pasted files stay out of it.
-    if (thread) return;
+    if (disabled || sendingRef.current) return;
     const items = event.clipboardData?.items;
     if (!items || items.length === 0) return;
     const filesWithPath: File[] = [];
@@ -631,12 +662,11 @@ export function BotGroupComposer({
           />
           <div className={BOT_GROUP_COMPOSER_FOOTER}>
             <div className={BOT_GROUP_COMPOSER_FOOTER_START}>
-              {footerStart?.(sending)}
-              {thread ? null : (<>
               <input
                 ref={fileInputRef}
                 type="file"
                 multiple
+                disabled={disabled || sending}
                 className="hidden"
                 onChange={(event) => {
                   const files = Array.from(event.currentTarget.files ?? []);
@@ -650,6 +680,7 @@ export function BotGroupComposer({
                     <button
                       type="button"
                       aria-label={moreLabel}
+                      disabled={disabled || sending}
                       className={cn(
                         'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]',
                         menuOpen && 'bg-[var(--surface-chip)] text-[var(--text-primary)]',
@@ -683,7 +714,7 @@ export function BotGroupComposer({
                       {t('extraDirs.addFiles')}
                     </span>
                   </DropdownMenuItem>
-                  {conversationKind !== 'direct' && <DropdownMenuItem
+                  {!thread && conversationKind !== 'direct' && <DropdownMenuItem
                     disabled={divisionBlocked}
                     className={cn(MENU_ITEM_CLASS, 'h-auto items-start gap-2.5 py-2')}
                     onSelect={() => {
@@ -707,7 +738,7 @@ export function BotGroupComposer({
                   </DropdownMenuItem>}
                 </DropdownMenuContent>
               </DropdownMenu>
-              </>)}
+              {footerStart?.(sending)}
               {conversationKind !== 'direct' && <GroupMaskIndicator groupId={groupId} onTakeOver={() => textareaRef.current?.focus()} />}
               <span className="min-w-0 truncate text-12 text-[var(--text-tertiary)]" aria-live="polite">
                 {hint}

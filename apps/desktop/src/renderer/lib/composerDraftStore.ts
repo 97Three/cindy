@@ -135,7 +135,7 @@ const ATTACHED_FILE_SNAPSHOT_KEYS = [
  * id-only cleanup can delete a newer file that happens to reuse the id. Keep
  * every mutable serialized field in the click-time snapshot comparison.
  */
-function areAttachedFileSnapshotsEqual(left: AttachedFile, right: AttachedFile): boolean {
+export function areAttachedFileSnapshotsEqual(left: AttachedFile, right: AttachedFile): boolean {
   return (
     ATTACHED_FILE_SNAPSHOT_KEYS.every((key) => left[key] === right[key]) &&
     JSON.stringify(left.annotationStrokes ?? null) ===

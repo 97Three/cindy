@@ -613,6 +613,110 @@ describe('Chat Server result delivery and refresh', () => {
     expect(fixture.handle.mock.calls.filter(([route, method]) => route.endsWith('/messages') && method === 'POST')).toHaveLength(1);
   });
 
+  // Thread attachment regression: real reply entry, injected byte preparation/transport.
+  // Existing send tests covered only main-chat media. Unit tier: image-only reply + failed POST.
+  it('uploads image-only thread replies and settles media references on failure and retry', async () => {
+    const commit = vi.fn(), discard = vi.fn();
+    const attachment = { id: 'image', name: 'photo.png', category: 'image' as const,
+      mimeType: 'image/png', size: 12, url: 'cindy-media://blobs/photo.png', path: '/fixture/photo.png', ext: '.png' };
+    const media = { type: 'media' as const, mediaId: '80000000-0000-4000-8000-000000000001', caption: 'photo.png' };
+    deps.prepareAttachments = vi.fn(async () => ({ ok: true as const, attachments: [attachment], commit, discard }));
+    fixture.upload.mockResolvedValue([media]);
+    let fail = true;
+    fixture.handle.mockImplementation((route, method) => {
+      if (route.endsWith('/members')) return { body: [] };
+      if (route.endsWith('/messages') && method === 'POST') return fail
+        ? { status: 500, body: { error: { code: 'UPSTREAM_FAILED' } } }
+        : { body: { id: 'saved-image-reply' } };
+      return response(route);
+    });
+    const input = { groupId: roomId, rootId: '70000000-0000-4000-8000-000000000001',
+      text: '', clientId: 'thread-image-1', mentions: { all: false, botIds: [] }, attachments: [attachment] };
+    expect(await service.chatServer!.reply(input)).toMatchObject({ ok: false });
+    // A 5xx does not prove the POST was refused; retain the original upload for retry.
+    expect(discard).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+    fail = false;
+    expect(await service.chatServer!.reply(input)).toEqual({ ok: true, messageId: 'saved-image-reply' });
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(discard).not.toHaveBeenCalled();
+    expect(deps.prepareAttachments).toHaveBeenCalledOnce();
+    expect(fixture.upload).toHaveBeenCalledOnce();
+    expect(fixture.upload).toHaveBeenLastCalledWith(roomId, input.clientId, [attachment], selfId);
+    const posts = fixture.handle.mock.calls.filter(([route, method]) => route.endsWith('/messages') && method === 'POST');
+    expect(posts.map(([, , body]) => body)).toEqual([0, 1].map(() => ({
+      operationId: input.clientId, threadRootId: input.rootId, content: [media], mentions: [],
+    })));
+  });
+
+  // Review regression: a lost ACK followed by a changed/deleted local file must replay the
+  // uploaded body. Unit tier at reply's production entry; ordinary retry/ref settlement is above.
+  it.each(['changed', 'deleted'] as const)('replays an uncertain thread attachment POST after its source is %s', async source => {
+    const attachment = { id: 'file', name: 'notes.md', category: 'text' as const,
+      mimeType: 'text/markdown', size: 12, url: null, path: '/fixture/notes.md', ext: '.md' };
+    deps.prepareAttachments = vi.fn(async () => ({ ok: true as const, attachments: [attachment], commit: vi.fn(), discard: vi.fn() }));
+    let sourceVersion = 'original';
+    // The real uploader hashes source bytes into its media operation id and rejects missing files.
+    fixture.upload.mockImplementation(async () => {
+      if (sourceVersion === 'deleted') throw new Error('ATTACHMENT_UNAVAILABLE');
+      return [{ type: 'media', mediaId: sourceVersion, caption: attachment.name }];
+    });
+    let committed: unknown;
+    fixture.handle.mockImplementation((route, method, body) => {
+      if (route.endsWith('/members')) return { body: [] };
+      if (route.endsWith('/messages') && method === 'POST') {
+        if (!committed) {
+          committed = structuredClone(body);
+          throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+        }
+        return JSON.stringify(body) === JSON.stringify(committed)
+          ? { body: { id: 'saved-file-reply' } }
+          : { status: 409, body: { error: { code: 'OPERATION_CONFLICT' } } };
+      }
+      return response(route);
+    });
+    const input = { groupId: roomId, rootId: '70000000-0000-4000-8000-000000000001', text: '',
+      clientId: 'thread-file-uncertain', mentions: { all: false, botIds: [] }, attachments: [{ ...attachment, url: undefined }] };
+    expect(await service.chatServer!.reply(input)).toMatchObject({ ok: false });
+    sourceVersion = source;
+    expect(await service.chatServer!.reply(input)).toEqual({ ok: true, messageId: 'saved-file-reply' });
+    // A successful host response can also be lost before the composer receives it.
+    expect(await service.chatServer!.reply(input)).toEqual({ ok: true, messageId: 'saved-file-reply' });
+    expect(fixture.upload).toHaveBeenCalledOnce();
+  });
+
+  // Complement the uncertain-POST case: a failed upload or explicit 400 stored no message,
+  // so it must release its media and permit fresh preparation on the next attempt.
+  it.each(['upload', 'post'] as const)('releases thread media after a definite failure at %s', async stage => {
+    const attachment = { id: 'file', name: 'notes.md', category: 'text' as const,
+      mimeType: 'text/markdown', size: 12, url: null, path: '/fixture/notes.md', ext: '.md' };
+    const commit = vi.fn(), discard = vi.fn();
+    deps.prepareAttachments = vi.fn(async () => ({ ok: true as const, attachments: [attachment], commit, discard }));
+    let fail = true;
+    fixture.upload.mockImplementation(async () => {
+      if (fail && stage === 'upload') throw new Error('ATTACHMENT_UNAVAILABLE');
+      return [{ type: 'media', mediaId: fail ? 'first-upload' : 'fresh-upload', caption: attachment.name }];
+    });
+    fixture.handle.mockImplementation((route, method) => {
+      if (route.endsWith('/members')) return { body: [] };
+      if (route.endsWith('/messages') && method === 'POST') return fail
+        ? { status: 400, body: { error: { code: 'INVALID_INPUT' } } }
+        : { body: { id: 'fresh-file-reply' } };
+      return response(route);
+    });
+    const input = { groupId: roomId, rootId: '70000000-0000-4000-8000-000000000001', text: '',
+      clientId: 'thread-file-refused', mentions: { all: false, botIds: [] }, attachments: [{ ...attachment, url: undefined }] };
+    expect(await service.chatServer!.reply(input)).toMatchObject({ ok: false });
+    expect(discard).toHaveBeenCalledOnce();
+    expect(commit).not.toHaveBeenCalled();
+    fail = false;
+    expect(await service.chatServer!.reply(input)).toEqual({ ok: true, messageId: 'fresh-file-reply' });
+    expect(deps.prepareAttachments).toHaveBeenCalledTimes(2);
+    expect(fixture.upload).toHaveBeenCalledTimes(2);
+    expect(commit).toHaveBeenCalledOnce();
+    expect(discard).toHaveBeenCalledOnce();
+  });
+
   it('reports an HTTP send failure with safe route, code and status', async () => {
     deps.log = { warn: vi.fn() };
     fixture.handle.mockImplementation((route, method) => {
