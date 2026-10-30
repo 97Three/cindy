@@ -8288,19 +8288,43 @@ describe('Bot Session task end-to-end runtime', () => {
     } finally { h.tx = originalTx; runtime.dispose(); }
   });
 
-  it('binds a prepared worktree before first dispatch and rejects unavailable isolation', async () => {
+  it('creates projectless tasks with independent managed directories and reports the persisted cwd', async () => {
+    await seedPair();
+    const runtime = createDelegationRuntime();
+    try {
+      const dirs: string[] = [];
+      for (const title of ['First conversation', 'Second conversation']) {
+        const result = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Discuss this topic.', projectDir: null, title });
+        expect(result).toMatchObject({ ok: true, workspaceKind: 'dialogue' });
+        if (!result.ok) throw new Error(result.message);
+        expect(result.workingDir).toBeTruthy();
+        expect(h.ensureDialogue).toHaveBeenCalledWith(result.childSessionId, expect.any(Number));
+        expect(result.workingDir).toBe(normalizeWorkingDirForStorage(join(h.userDataDir, result.childSessionId)));
+        expect(h.sqlite!.prepare('SELECT project_dir, working_dir, workspace_kind, title FROM sessions WHERE id = ?').get(result.childSessionId))
+          .toEqual({ project_dir: null, working_dir: normalizeWorkingDirForStorage(result.workingDir), workspace_kind: 'dialogue', title });
+        dirs.push(result.workingDir);
+      }
+      expect(dirs[0]).not.toBe(dirs[1]);
+      expect(await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Discuss.', projectDir: null, useWorktree: true }))
+        .toMatchObject({ ok: false, errorCode: 'INVALID_WORKING_DIR' });
+    } finally { runtime.dispose(); }
+  });
+
+  it.each(['/selected-project', null])('binds a prepared worktree without changing membership (%s) and rejects unavailable isolation', async projectDir => {
     await seedPair();
     const workspace = join(h.userDataDir, 'task-project-worktree');
     mkdirSync(workspace, { recursive: true });
     const runtime = createDelegationRuntime({ prepareWorktree: async () => ({ ok: true, sessionId: 'worktree-session', workingDir: workspace }) });
     try {
-      const result = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Edit this project.', workingDir: h.userDataDir, useWorktree: true });
-      expect(result).toMatchObject({ ok: true, childSessionId: 'worktree-session' });
+      const workspaceKind = projectDir === null ? 'dialogue' : 'project';
+      const result = await runtime.delegation.startSessionTask({ callerSessionId: 'session-1', objective: 'Edit this project.', projectDir, workingDir: h.userDataDir, useWorktree: true });
+      expect(result).toMatchObject({ ok: true, childSessionId: 'worktree-session', workingDir: normalizeWorkingDirForStorage(workspace), workspaceKind });
       if (!result.ok) throw new Error('missing task');
       expect(await runtime.delegation.getSessionTask('session-1', result.delegationId))
-        .toMatchObject({ task: { working_dir: normalizeWorkingDirForStorage(workspace), workspace_kind: 'project' } });
+        .toMatchObject({ task: { working_dir: normalizeWorkingDirForStorage(workspace), workspace_kind: workspaceKind } });
       expect(runtime.started[0].sessionId).toBe('worktree-session');
       expect(h.sqlite!.prepare('SELECT worktree_path AS path FROM sessions WHERE id = ?').get('worktree-session')).toEqual({ path: workspace });
+      expect(h.sqlite!.prepare('SELECT project_dir FROM sessions WHERE id = ?').get('worktree-session')).toEqual({ project_dir: projectDir });
     } finally { runtime.dispose(); }
     const unavailable = createDelegationRuntime();
     try {

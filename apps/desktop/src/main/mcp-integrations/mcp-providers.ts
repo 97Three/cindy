@@ -1061,12 +1061,10 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
             };
           }
           try {
-            if (!params.projectDir) return { ok: false, errorCode: 'INVALID_ARGS',
-              message: '新建任务必须指定 project_path，请先用 list_projects 选择已有项目。' };
             const project = await resolveSessionProject({ callerSessionId: params.callerSessionId, projectDir: params.projectDir });
             if (!project.ok) return project;
             const result = await svc.startSessionTask({ ...params, projectDir: project.projectDir,
-              workingDir: params.workingDir ?? project.projectDir });
+              workingDir: params.workingDir ?? project.projectDir ?? undefined });
             return result.ok ? { ...result, projectDir: project.projectDir } : result;
           } catch (err) {
             return {

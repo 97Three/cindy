@@ -1315,10 +1315,13 @@ describe("direct Bot MCP tools", () => {
       const first = await client.listTools();
       const task = first.tools.find(t => t.name === "start_session_task");
       expect(task?.inputSchema.required).toContain("instruction");
-      expect(task?.inputSchema.required).toContain("project_path");
+      expect(task?.inputSchema.required).not.toContain("project_path");
       const missingProject = await client.callTool({ name: 'start_session_task', arguments: { instruction: 'Work', working_dir: '/tmp/checkout' } });
-      expect(missingProject.isError).toBe(true);
-      expect(start).not.toHaveBeenCalled();
+      expect(parsePayload(missingProject)).toMatchObject({ ok: true });
+      expect(start).toHaveBeenLastCalledWith(expect.objectContaining({ projectDir: undefined, workingDir: '/tmp/checkout' }));
+      const dialogue = await client.callTool({ name: 'start_session_task', arguments: { instruction: 'Discuss', project_path: null } });
+      expect(parsePayload(dialogue)).toMatchObject({ ok: true, project_path: null });
+      expect(start).toHaveBeenLastCalledWith(expect.objectContaining({ projectDir: null }));
       const discovered = parsePayload(await client.callTool({ name: "list_tools", arguments: { category: "bots" } })).tools as Array<{ name: string; description: string }>;
       expect(task?.description).toBe(discovered.find(tool => tool.name === "start_session_task")?.description);
       expect(first.tools.map(t => t.name)).toEqual(expect.arrayContaining([
@@ -1340,7 +1343,7 @@ describe("direct Bot MCP tools", () => {
         expect(parsePayload(await client.callTool({ name: "start_session_task", arguments: { project_path: '/project', instruction: "denied" } })))
           .toMatchObject({ ok: false, errorCode: "CAPABILITY_NOT_AVAILABLE" });
       }
-      expect(start).toHaveBeenCalledTimes(1);
+      expect(start).toHaveBeenCalledTimes(3);
     } finally {
       await client.close();
       await server.close();

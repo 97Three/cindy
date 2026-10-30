@@ -55,14 +55,16 @@ function parse(result: XdtHelperToolResult) {
 }
 
 describe('send_to_session tool', () => {
-  // Unit: omission used to silently create a project from the caller's cwd.
-  // Exercise the real registry boundary and prove no host side effect occurs.
-  it.each([{}, { working_dir: '/temporary/checkout' }])('requires a project even when an execution directory is provided: %j', async extra => {
+  // Unit: preserve omitted vs null membership through the real tool boundary;
+  // the host resolves inheritance independently of the execution checkout.
+  it.each([undefined, null])('passes project choice %j without replacing it with cwd', async project_path => {
     const { registry, sendToSession } = setup();
-    const result = parse(await registry.call('send_to_session', { message: 'Start work', ...extra }));
-    expect(result).toMatchObject({ ok: false, errorCode: 'INVALID_ARGS' });
-    expect(result.data.hint).toContain('project_path');
-    expect(sendToSession).not.toHaveBeenCalled();
+    const result = parse(await registry.call('send_to_session', { message: 'Start work',
+      working_dir: '/temporary/checkout', ...(project_path === undefined ? {} : { project_path }) }));
+    expect(result).toMatchObject({ ok: true });
+    const accepted = sendToSession.mock.calls[0] as unknown as [{ projectDir?: string | null; workingDir: string }];
+    expect(accepted[0].projectDir).toBe(project_path);
+    expect(accepted[0].workingDir).toBe('/temporary/checkout');
   });
 
   it('passes independent project and execution paths and reports their accepted values', async () => {

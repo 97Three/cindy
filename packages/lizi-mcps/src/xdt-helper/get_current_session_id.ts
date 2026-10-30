@@ -19,7 +19,7 @@ export interface GetCurrentSessionIdDeps {
 
 const DESCRIPTION =
   `返回当前 MCP 会话所属的 ${BRAND_NAME} session 的 business id,供 skill 把 sessionId 和外部业务对象(issue/jira/pr 等)的 key 做绑定持久化。` +
-  '同时返回 project_path（项目归属）与 working_dir（执行目录）。同项目新建任务直接显式传入此 project_path，无需遍历项目；无项目、查询不可用或要选其他项目时用 control/list_projects。remote_host_id 非空表示 SSH 项目，不能作为本机新建任务的项目。不要把 working_dir 当作项目归属。' +
+  '同时返回 project_path（项目归属）与 working_dir（执行目录）。新建任务省略 project_path 即继承来源归属，也可显式传入此 project_path，无需遍历项目；null 表示不绑项目。要选其他项目时用 control/list_projects。remote_host_id 非空表示 SSH 项目，不能作为本机新建任务的项目。不要把 working_dir 当作项目归属。' +
   `未绑定具体 ${BRAND_NAME} session 的 MCP 调用会返 NO_SESSION_CONTEXT(skill 应静默回退)。`;
 
 export function registerGetCurrentSessionIdTool(

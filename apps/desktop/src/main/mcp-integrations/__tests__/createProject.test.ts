@@ -170,6 +170,32 @@ describe('createProject', () => {
     expect(h.restore).not.toHaveBeenCalled();
   });
 
+  // Unit: omitted membership inherits the persisted source, never the execution
+  // checkout; null explicitly opts out. Previously omission/null was rejected.
+  it.each(['project', 'legacy', 'dialogue', 'explicit-dialogue'] as const)(
+    'resolves inherited or projectless membership: %s', async mode => {
+      const projectDir = h.registered[0].path;
+      h.query.mockResolvedValue([{
+        id: 'caller', remoteHostId: null,
+        workspaceKind: mode === 'dialogue' ? 'dialogue' : 'project',
+        projectDir: mode === 'legacy' ? null : projectDir,
+        workingDir: mode === 'legacy' ? path.join(directory, '.cindy-worktrees', 'child') : '/other-checkout',
+      }]);
+      expect(await resolveSessionProject({ callerSessionId: 'caller',
+        ...(mode === 'explicit-dialogue' ? { projectDir: null } : {}),
+      })).toEqual({ ok: true, projectDir: mode.includes('dialogue') ? null : projectDir });
+      expect(h.upsert).not.toHaveBeenCalled();
+      expect(h.restore).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects unknown inherited membership instead of using an execution directory', async () => {
+    h.query.mockResolvedValue([{ id: 'caller', remoteHostId: null, workspaceKind: null,
+      projectDir: null, workingDir: directory }]);
+    expect(await resolveSessionProject({ callerSessionId: 'caller' })).toMatchObject({ ok: false, errorCode: 'INVALID_ARGS' });
+    expect(h.upsert).not.toHaveBeenCalled();
+  });
+
   it.each(['unregistered', 'hidden', 'missing'] as const)('rejects a %s project without registering or restoring it', async state => {
     if (state === 'unregistered') h.registered = [];
     if (state === 'hidden') h.hiddenKeys = [`local:${h.registered[0].path}`];

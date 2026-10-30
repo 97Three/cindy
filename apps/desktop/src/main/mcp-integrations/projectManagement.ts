@@ -64,11 +64,22 @@ async function requireRegisteredProject(
 /** Selecting a task's project is read-only: never register or restore a directory. */
 export async function resolveSessionProject(params: {
   callerSessionId: string;
-  projectDir: string;
+  /** undefined inherits the persisted source; null explicitly creates a dialogue. */
+  projectDir?: string | null;
 }) {
-  const directory = validateLocalProjectDirectory(params.projectDir);
-  if (!directory.ok) return directory;
   return withLocalProjectContext(params.callerSessionId, async (context) => {
+    let selected = params.projectDir;
+    if (selected === undefined) {
+      const source = await readCurrentSessionProject(params.callerSessionId);
+      context.assertCurrent();
+      if (source.workspaceKind === 'dialogue') selected = null;
+      else if (source.workspaceKind === 'project' && source.projectDir) selected = source.projectDir;
+      else return { ok: false as const, errorCode: 'INVALID_ARGS',
+        message: '无法确定来源任务的项目。请指定已有项目的 project_path，或传 null 创建不绑项目的任务。' };
+    }
+    if (selected === null) return { ok: true as const, projectDir: null };
+    const directory = validateLocalProjectDirectory(selected);
+    if (!directory.ok) return directory;
     const projectDir = await requireRegisteredProject(context, directory.workingDir);
     const hidden = loadSidebarSettingsSnapshot().hiddenProjectKeys.some(
       (key) => projectKeyComparisonKey(key, process.platform) === identity(projectDir),

@@ -28,8 +28,8 @@ export type SendToSessionCallback = (params: {
   useWorktree?: boolean;
   /** create 模式可选:新 session 的工作目录覆盖(绝对路径,须已存在;jump 忽略)。#811 */
   workingDir?: string;
-  /** Required in create mode: registered project selected independently of cwd. */
-  projectDir?: string;
+  /** Omitted inherits source membership; null explicitly creates a projectless task. */
+  projectDir?: string | null;
   /** create 模式可选:显式目标 Agent；缺省继承 dispatcher。jump 忽略。 */
   agentKind?: ControlWorkerAgent;
   /** create 模式可选:显式目标模型；缺省继承 dispatcher。jump 忽略。 */
@@ -52,6 +52,7 @@ export type SendToSessionCallback = (params: {
       /** create + useWorktree 成功时为新 session 的 worktree 绝对路径;其余情况 host 可省略。 */
       worktreePath?: string | null;
       projectDir?: string | null;
+      workspaceKind?: 'project' | 'dialogue';
       workingDir?: string;
       model?: string;
       effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | null;
@@ -116,21 +117,21 @@ export interface SendToSessionDeps {
 // 这是 LLM 点进 handoff 类目、看到本工具后的行为说明;选类目阶段的协同规避另见
 // lizi_xdtHelperMcpServer.ts 的 D_LIST_TOOLS(handoff 类目介绍)。
 const DESCRIPTION = [
-  "【已有任务】发消息必须传 target_session_id；不知道 id 先用 history/list_sessions 查找。只有明确新建任务时才省略 target_session_id，并且必须指定 project_path。漏传项目会返回 INVALID_ARGS，不创建任务或项目。",
+  "【已有任务】发消息必须传 target_session_id；不知道 id 先用 history/list_sessions 查找。只有明确新建任务时才省略 target_session_id。新建时省略 project_path 继承来源归属，传已有项目路径切换项目，传 null 创建不绑项目的任务。",
   "",
   '⚠️【不要用于"开协同 / 多 worker"】本工具 create 模式产出的是普通独立 session,不进入 Orca 协同分组或 Lead 右侧 worker 栏。用户明确要协同 team/worker 时才使用 cindy_orca；外部业务对象(issue / jira / pr)需要独立项目 session 时使用本工具。',
   "",
   "把一条控制层 handoff 消息投递到一个 session。两种模式:",
   "- 传 target_session_id → jump:投递到该既有 session(已关闭会自动 resume),wake_kind 返 resumed / already-active;目标正在跑 turn 时消息进入其输入队列、当前 turn 结束后自动派发,wake_kind 返 queued(无需重试)。",
   "- 目标在另一台电脑:target_session_id 传 deviceId::sessionId(history 类目 list_sessions 用 device 参数查到的 id 就是这个形式),消息经远程控制通道发给那台电脑上的既有任务,对方显示来自本任务。要求对方电脑在线并已开启远程控制;只支持发给既有任务(不能在另一台电脑新建),message_purpose 只能是 user-visible 或省略。",
-  "- 不传 target_session_id → create:在 project_path 指定的已有项目中新建任务并发送首条消息。Agent / model / effort / Fast 缺省继承当前任务。返回 wake_kind=created、target_session_id、project_path 与实际 working_dir；后续消息用返回的 id。",
-  "【项目】同项目派发时，直接复用 get_current_session_id 返回的本机 project_path，无需遍历项目。无当前项目、项目不可用或跨项目时，再用 control/list_projects 选择可见且存在的项目。项目和执行目录是不同概念：临时目录、仓库子目录、worktree 都不会变成新项目。确实需要新增或恢复项目时，单独调用 create_project，再选择返回的 project_path。不要为了临时执行目录创建项目。",
+  "- 不传 target_session_id → create:新建任务并发送首条消息，可用 title 指定简短标题。Agent / model / effort / Fast 缺省继承当前任务。返回 wake_kind=created、target_session_id、project_path 与实际 working_dir；后续消息用返回的 id。",
+  "【项目】省略 project_path 时继承来源任务的项目；来源本来不绑项目时，新任务也不绑项目。无法可靠确定来源归属时明确失败，不从新执行目录猜测。也可显式复用 get_current_session_id.project_path；跨项目用 control/list_projects 选择已有项目。传 project_path:null 明确创建不绑项目的任务。临时目录、仓库子目录、worktree 都不会变成新项目。确需新增或恢复项目时，单独调用 create_project。",
   "",
   "【执行配置(仅 create 模式)】agent_kind 可选 claude-code / codex / pi；model 使用宿主模型目录返回的精确 id；effort / fast 按目标模型能力校验。只改 Agent 却留下不属于目标 Agent 的继承模型会返 INVALID_ARGS，不会自动挑列表第一项。跨 Agent/model 时模型来源交给 host 既有默认路由解析。完全不传这些字段时保持原有 dispatcher 继承行为。jump 模式忽略这些字段，不修改既有 session。",
   "",
-  "【working_dir(仅 create 模式)】可选执行目录，缺省为 project_path。可以指定已有仓库、子目录或临时 worktree；必须为存在的绝对目录。它不改变项目归属，也不登记项目。与 use_worktree 组合时从此执行目录解析 Git 仓库。jump 模式忽略。",
+  "【working_dir(仅 create 模式)】可选执行目录，缺省为选中或继承的项目目录；不绑项目时分配独立的托管目录。可以指定已有仓库、子目录或临时 worktree；必须为存在的绝对目录。它不改变项目归属，也不登记项目。不绑项目且 use_worktree=true 时必须显式指定 working_dir 作为 Git 仓库。jump 模式忽略。",
   "",
-  "【use_worktree(仅 create 模式)】use_worktree=true 时,host 会先从**新 session 的 workingDir**(即 working_dir 覆盖后的目录;未覆盖时为 project_path,此时 session 自己在 worktree 里跑也能正确反推主仓库)解析出 base git 仓库,为新 session 预建一个正规 session worktree(<baseRepo>/.cindy-worktrees/<自动名> + cindy/<自动名> 分支,UI 有徽标,session 关闭时自动 stash 未提交改动后回收),新 session 的 workingDir 即该 worktree 路径,返回里带 worktree_path，项目归属仍是 project_path。历史 xdt/<自动名> 分支仍可恢复与回收。适用:新 session 要改代码 / checkout 分支,不能污染当前工作树时(如 PR 修复跟进)。workingDir 不是 git 仓库 / git 未装 / worktree 创建失败 → 返 WORKTREE_UNAVAILABLE(不静默降级);调用方可视情况去掉该参数重试(新 session 将直接使用 working_dir 或 project_path)。jump 模式忽略此参数。",
+  "【use_worktree(仅 create 模式)】use_worktree=true 时,host 会先从**新 session 的 workingDir**(即 working_dir 覆盖后的目录;未覆盖时为选中或继承的项目目录)解析出 base git 仓库,为新 session 预建一个正规 session worktree(<baseRepo>/.cindy-worktrees/<自动名> + cindy/<自动名> 分支,UI 有徽标,session 关闭时自动 stash 未提交改动后回收),新 session 的 workingDir 即该 worktree 路径,返回里带 worktree_path，项目归属保持不变，包括不绑项目的任务。历史 xdt/<自动名> 分支仍可恢复与回收。适用:新 session 要改代码 / checkout 分支,不能污染当前工作树时(如 PR 修复跟进)。workingDir 不是 git 仓库 / git 未装 / worktree 创建失败 → 返 WORKTREE_UNAVAILABLE(不静默降级);调用方可视情况去掉该参数重试(新 session 将直接使用 working_dir 或默认执行目录)。jump 模式忽略此参数。",
   "当前 dispatcher session 不会被本工具关闭或改写,消息投递成功后立即返回。",
   "",
   "【典型场景】首次处理外部业务对象时，选择已有项目并传 project_path 新建任务，保存返回的 id；再次处理时传 target_session_id 回到原任务。",
@@ -187,7 +188,7 @@ export function registerSendToSessionTool(
             "历史 session 可能是 cuid 或 IM 确定性 id,一律按不透明字符串处理、不校验格式)。" +
             "要发给已有任务时必传(不知道 id 先用 list_sessions 查);提供 → jump 到该既有 session。" +
             "另一台电脑上的任务用 deviceId::sessionId。" +
-            "省略 → create:必须同时指定 project_path，在该已有项目中新建任务并立刻跑一轮。",
+            "省略 → create:新建任务并立刻跑一轮；项目归属由 project_path 指定或继承。",
         ),
       message: z
         .string()
@@ -214,10 +215,10 @@ export function registerSendToSessionTool(
         .string()
         .optional()
         .describe(
-          "仅 create 模式可选:执行目录(已有绝对目录)，缺省为 project_path。可使用子目录或临时 worktree；不改变项目归属、不创建项目。jump 忽略。",
+          "仅 create 模式可选:执行目录(已有绝对目录)，缺省为选中或继承的项目目录；不绑项目时分配独立托管目录。可使用子目录或临时 worktree；不改变项目归属、不创建项目。jump 忽略。",
         ),
-      project_path: z.string().trim().min(1).max(4096).optional().describe(
-        "create 模式必填：同项目用 get_current_session_id 返回的本机 project_path，其他项目从 list_projects 选择。与 working_dir 独立；隐藏或未登记项目不能使用。jump 模式忽略。",
+      project_path: z.string().trim().min(1).max(4096).nullable().optional().describe(
+        "仅 create：省略继承来源任务归属；字符串选择 list_projects 中已有项目；null 明确创建不绑项目的任务。与 working_dir 独立；隐藏或未登记项目不能使用。来源归属不明确时报错。jump 模式忽略。",
       ),
       agent_kind: z
         .enum(["claude-code", "codex", "pi"])
@@ -262,9 +263,6 @@ export function registerSendToSessionTool(
       const qualified = parseQualifiedSessionId(target_session_id);
       // 设备目录里本机的 id 是 "local":local::<id> 就是本机任务。
       const localTargetId = qualified?.deviceId === "local" ? qualified.sessionId : target_session_id;
-      if (!localTargetId && project_path === undefined) {
-        return errorPayload("INVALID_ARGS", "新建任务必须指定 project_path。同项目可用 get_current_session_id 返回的本机 project_path，其他项目用 list_projects 选择；确需新增项目时单独调用 create_project。");
-      }
       if (qualified && qualified.deviceId !== "local") {
         if (!deps.sendToRemoteSession) {
           return errorPayload("REMOTE_UNSUPPORTED", "当前宿主不支持给其它电脑上的任务发消息。");
@@ -332,6 +330,7 @@ export function registerSendToSessionTool(
         ...(result.queuedMessageId ? { queued_message_id: result.queuedMessageId } : {}),
         worktree_path: result.worktreePath ?? null,
         ...(result.projectDir !== undefined ? { project_path: result.projectDir } : {}),
+        ...(result.workspaceKind !== undefined ? { workspace_kind: result.workspaceKind } : {}),
         ...(result.workingDir !== undefined ? { working_dir: result.workingDir } : {}),
         ...(result.model !== undefined ? { model: result.model } : {}),
         ...(result.effort !== undefined ? { effort: result.effort } : {}),

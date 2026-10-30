@@ -2579,6 +2579,7 @@ type SendToSessionInternalResult =
       /** create + useWorktree 成功时为新 session 的 worktree 绝对路径;其余情况 undefined。 */
       worktreePath?: string | null;
       projectDir?: string | null;
+      workspaceKind?: 'project' | 'dialogue';
       workingDir?: string;
       model?: string;
       effort?: SendToSessionCreateDefaults['effort'] | null;
@@ -2756,7 +2757,7 @@ interface OrcaCollabService {
     title?: string;
     /** create 分支可选:true = 为新 session 预建独立 git worktree 并以其为 workingDir(jump 忽略)。 */
     useWorktree?: boolean;
-    projectDir?: string;
+    projectDir?: string | null;
     /** create 分支可选:新 session 的工作目录覆盖(绝对路径,须已存在;jump 忽略)。#811 */
     workingDir?: string;
     /** create 分支可选:显式执行配置；未提供的字段继续继承 dispatcher。jump 忽略。 */
@@ -12354,7 +12355,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     dispatcherSessionId?: string;
     title?: string;
     useWorktree?: boolean;
-    projectDir?: string;
+    projectDir?: string | null;
     /** create 分支可选:新 session 的工作目录覆盖(绝对路径,须已存在;jump 忽略)。#811 */
     workingDir?: string;
     /** create 分支可选:显式执行配置；未提供的字段继续继承 dispatcher。jump 忽略。 */
@@ -12508,10 +12509,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               message: `dispatcher session ${dispatcherSessionId} not found`,
             };
           }
-          // working_dir 覆盖(#811):把新 session 落到指定项目目录,而不是恒继承
-          // dispatcher 的目录。先于 worktree 预建校验——use_worktree 的 base 仓库
+          // working_dir 只覆盖执行目录，不改变项目归属。
+          // 先于 worktree 预建校验——use_worktree 的 base 仓库
           // 也从覆盖后的目录(校验器规范化后的形态)解析。
-          let resolvedWorkDir = meta.workDir;
+          // A projectless child without an explicit cwd gets its own managed
+          // directory from openSession, rather than sharing the parent's cwd.
+          let resolvedWorkDir = params.projectDir === null ? '' : meta.workDir;
           if (workingDirOverride !== undefined) {
             // 远程 SSH 会话的 workDir 是远端路径,本机 stat 校验对它无意义
             // (本机恰好同名目录会假阳性、远端合法目录会假阴性)——fail-closed
@@ -12538,10 +12541,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           const inheritedBase: SendToSessionCreateDefaults = {
             agentKind: meta.agentKind,
             workingDir: resolvedWorkDir,
-            // Execution directories do not introduce projects. Host-owned
-            // child tasks inherit membership; helper callers select it explicitly.
-            workspaceKind: params.projectDir ? 'project' : (meta.workspaceKind ?? 'project'),
-            projectDir: params.projectDir ?? meta.projectDir,
+            workspaceKind: params.projectDir === null ? 'dialogue'
+              : params.projectDir !== undefined ? 'project' : (meta.workspaceKind ?? 'project'),
+            projectDir: params.projectDir !== undefined ? params.projectDir : meta.projectDir,
             model: meta.model,
             effort: (row?.effort ?? undefined) as SendToSessionCreateDefaults['effort'],
             fastMode: (row?.fastMode ?? false),
@@ -12600,6 +12602,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           // ——调用方显式要隔离,静默降级会让新 session 落在共享工作树里(dispatcher 若在
           // ephemeral worktree 里跑,新 session 还会随那个 worktree 一起被回收)。
           if (useWorktree) {
+            if (!resolvedWorkDir) return { ok: false, errorCode: 'INVALID_ARGS',
+              message: '不绑项目的任务使用 use_worktree 时需要指定 working_dir。' };
             const prep = await prepareHandoffWorktree(
               {
                 getForSession: worktreeManager.getForSession,
@@ -12750,7 +12754,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           targetLastUserSendAt: null,
           worktreePath: handoffWorktree?.meta.path ?? null,
           projectDir: inherited.projectDir ?? null,
-          workingDir: createOpts.workingDir,
+          workspaceKind: openedRow.workspaceKind,
+          workingDir: openedRow.workingDir ?? createOpts.workingDir,
           model: openedRow.model,
           effort: openedRow.effort || null,
           fastMode: openedRow.fastMode,
@@ -17849,16 +17854,16 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     sendToSession: async (params) => {
       const ownerScope = captureDataOwnerBroadcastScope();
       if (!params.targetSessionId && !params.createDefaults) {
-        if (!params.projectDir || !params.dispatcherSessionId) {
+        if (!params.dispatcherSessionId) {
           return { ok: false, errorCode: 'INVALID_ARGS',
-            message: '新建任务必须指定 project_path。先用 list_projects 选择已有项目；新增项目请显式调用 create_project。' };
+            message: '新建任务需要来源任务上下文。' };
         }
         const project = await resolveSessionProject({
           callerSessionId: params.dispatcherSessionId, projectDir: params.projectDir,
         });
         if (!project.ok) return { ok: false, errorCode: 'INVALID_ARGS', message: project.message };
         params = { ...params, projectDir: project.projectDir,
-          workingDir: params.workingDir ?? project.projectDir };
+          workingDir: params.workingDir ?? project.projectDir ?? undefined };
       }
       // A script follow-up may name a companion as its dispatcher while no
       // owner turn is active. Never quote that companion's stale last input.

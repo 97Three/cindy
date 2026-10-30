@@ -264,7 +264,8 @@ Telegram 复用个人 bot 的变体池；X 不发送该声明。
 ## Session 显式项目归属（2026-10-30）
 
 Session 列表与搜索摘要新增可选 `projectDir`，数据库 migration 0137 新增可空
-`sessions.project_dir`。缺省/null 继续按 `workingDir` 归组；新值只用于项目身份，
+`sessions.project_dir`。项目任务的缺省/null 继续按 `workingDir` 归组；
+`workspaceKind: dialogue` 始终表示不绑项目，不从执行目录推断归属。新值只用于项目身份，
 命令、文件、Git 与权限仍使用实际 `workingDir`。新客户端兼容旧宿主缺字段；旧客户端
 忽略新字段，执行目录与项目不同时仍显示旧分组，需升级查看端获得一致归属。
 没有修改 device-link allowlist、账号边界或任务路径权限。
@@ -281,8 +282,12 @@ Renderer → Main 输入附带可选 `projectDir`，旧输入缺字段时回落�
 优先读取显式归属（不折叠已登记的 worktree 项目）；旧任务仍从 cwd 推断。
 归属只决定目标项目位置，打包与恢复仍使用实际执行目录，不扩充复制协议或权限。
 
-本机 Agent 工具的新建模式要求 `project_path`；`list_projects` / `create_project`
-保留 `working_dir` 并新增 `project_path` 回执。旧调用缺参数明确失败，不静默新建。
+本机 Agent 工具的新建模式中，省略 `project_path` 继承来源归属，字符串选择已有项目，
+显式 `null` 创建不绑项目的任务；适配层必须保留缺省与 null 的区别。
+无法确定来源归属时明确失败，不以新执行目录猜测或登记项目。
+不绑项目且未传 `working_dir` 时复用既有托管目录创建流程；传目录或使用 worktree 也不改变归属。
+创建回执返回 `project_path`、实际 `working_dir` 与 `workspace_kind`；
+`list_projects` / `create_project` 保留 `working_dir` 并新增 `project_path` 回执。
 `send_to_session` 的既有任务投递不要求项目，跨电脑投递合同不变。
 
 ## 手机读取项目别名（#6916）
