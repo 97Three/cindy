@@ -224,7 +224,7 @@ interface WindowState {
 
 interface SubscriptionState {
   windows: WindowState[];
-  /** The tightest window that limits the whole account (scoped windows excluded). */
+  /** The window the account is shown by: the weekly one, else the tightest (scoped windows excluded). */
   limit: WindowState | null;
   remaining: number | null;
 }
@@ -254,10 +254,16 @@ function windowState(window: MenubarWindowInput, nowMs: number): WindowState {
   return state;
 }
 
+/**
+ * Every account reads on its weekly window, so the tubes compare like with like and a short
+ * window that has not started (no reset time yet) never blanks the countdown. Accounts without
+ * a weekly window fall back to their tightest one.
+ */
 function subscriptionState(source: MenubarSubscriptionInput, nowMs: number): SubscriptionState {
   const windows = source.windows.map((window) => windowState(window, nowMs));
   const limits = windows.filter((state) => state.window.kind !== 'scoped');
-  const limit = limits.reduce<WindowState | null>(
+  const weekly = limits.filter((state) => state.window.kind === 'week');
+  const limit = (weekly.length > 0 ? weekly : limits).reduce<WindowState | null>(
     (tightest, state) => (!tightest || state.remaining < tightest.remaining ? state : tightest),
     null,
   );
