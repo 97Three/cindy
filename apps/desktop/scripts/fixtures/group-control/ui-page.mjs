@@ -31,8 +31,12 @@ export default {
   viewport: { width: 1280, height: 800 },
   real: 'BotGroupChatView (timeline, composer, send button, header registration), ControlledBanner, ContentHeader shell, Markdown, theme, fonts and translations',
   notCovered:
-    'Real IPC/network sending (send-status controls host receipts), round control, real device-link control and revocation, answering pending interactions, plans and attachments; the bubbles case shows a task snapshot, not a live task; the sidebar is an empty frame',
+    'Real IPC/network sending (send-status/share-pending control host receipts), round control, real device-link control and revocation, answering pending owner interactions, plans and attachment IO; the bubbles case shows a task snapshot, not a live task; the sidebar is an empty frame',
   cases: {
+    'share-pending': {
+      about: 'Pending topic copy appears in the main chat while the host receipt is unresolved',
+      data: { ...base, bubbles: true, threadPanel: true, sharePending: true },
+    },
     'send-status': {
       about: 'Mac send flicker regression: real composer/outbox/timeline, controlled slow receipt; row geometry stays stable and failed sends remain retryable',
       data: { ...base, messages: 40, sendStatus: true },
@@ -132,6 +136,19 @@ export default {
   },
   async check(page, ui) {
     const definition = this.cases[ui.case];
+    if (ui.case === 'share-pending') {
+      await page.locator('[data-bot-group-message-id="a1"] [data-thread-preview]').click();
+      const source = page.locator('aside [data-bot-group-message-id="r1"]');
+      await source.hover();
+      await source.getByRole('button', { name: await ui.t('chat.messageActionBar.moreActions'), exact: true }).click();
+      await page.getByRole('menuitem', { name: await ui.t('bots.groupChat.server.thread.postToMain'), exact: true }).click();
+      const pending = page.locator('[data-testid="bot-group-timeline"] [data-bot-group-message-id="pending:share:r1"]');
+      await pending.waitFor({ timeout: 1500 });
+      assert.equal(await pending.locator('article').getAttribute('aria-busy'), 'true');
+      await pending.scrollIntoViewIfNeeded();
+      await ui.capture('share-pending');
+      return;
+    }
     if (ui.case === 'send-status') {
       // Renderer integration: jsdom's send tests cannot measure the 600ms layout jump.
       const input = page.locator('textarea');
