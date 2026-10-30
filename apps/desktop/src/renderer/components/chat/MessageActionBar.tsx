@@ -67,6 +67,8 @@ import { formatAbsolute, useRelativeTime } from '@/hooks/useRelativeTime';
 import { SHARE_EXCLUDE_ATTR } from '@/lib/shareConversationImage';
 import { formatCompactTokens, formatTurnCostMoney } from '@/lib/usageFormat';
 import { buildTurnUsageTooltipLines } from '@/lib/turnUsageTooltip';
+import { splitUsageCost } from '@cindy/maker-shared/usage-cost-details';
+import { UsageCostPopover } from '@/components/status/UsageCostPopover';
 import type { TurnUsageDetails } from '../../../shared/turnUsageDetails';
 import {
   legacyUsdMoney,
@@ -74,6 +76,8 @@ import {
 } from '../../../shared/regionalMoney';
 
 interface MessageActionBarProps {
+  sessionId?: string;
+  clientId?: string;
   createdAt?: string;
   /** Plaintext that will hit the clipboard on copy click. */
   copyText: string;
@@ -186,6 +190,8 @@ export function MessageActionBar({
   userTurnCostUsd,
   userTurnCostIsEstimate = false,
   turnUsageDetails,
+  sessionId,
+  clientId,
 }: MessageActionBarProps) {
   const { t } = useTranslation();
   const readAloud = useContext(MessageReadAloudContext);
@@ -526,6 +532,12 @@ export function MessageActionBar({
     ? userTurnCostIsEstimate
     : turnCostIsEstimate;
   const isUserTurnTotal = effectiveUserTurnMoney != null;
+  const splitCost = displayedMoney ? splitUsageCost(displayedMoney, turnUsageDetails?.additionalCosts) : null;
+  const conversationText = splitCost && splitCost.conversation.amount > 1e-9
+    ? displayedCostIsEstimate
+      ? t('chat.messageActionBar.turnCostEstimatedValue', { cost: formatTurnCostMoney(splitCost.conversation) })
+      : formatTurnCostMoney(splitCost.conversation) : '';
+  const costLabel = [conversationText, ...(splitCost?.additional.map(formatTurnCostMoney) ?? [])].filter(Boolean).join(' + ');
 
   // 费用 — 样式与 timeText 完全一致(12px + 同色 + 0.5px 光学修正)。
   // 仅 assistant(align='left')会拿到值;估算值(Codex 折算)表达为 token 价值。
@@ -536,6 +548,7 @@ export function MessageActionBar({
           details: turnUsageDetails,
           t,
           money: displayedMoney,
+          usageOnly: !!sessionId,
           isEstimate: displayedCostIsEstimate,
           ...(isUserTurnTotal ? { title: t('chat.messageActionBar.userTurnCostDetailsTitle') } : {}),
         }).join('\n')}
@@ -559,20 +572,8 @@ export function MessageActionBar({
   );
 
   const costText = displayedMoney && displayedMoney.amount > 0 && (
-    <Tooltip.Root key="cost">
-      <Tooltip.Trigger asChild>
-        <span className={metaTextClassName}>
-          {displayedCostIsEstimate
-            ? t('chat.messageActionBar.turnCostEstimatedValue', {
-                cost: formatTurnCostMoney(displayedMoney),
-              })
-            : formatTurnCostMoney(displayedMoney)}
-        </span>
-      </Tooltip.Trigger>
-      <Tooltip.Content>
-        {turnCostTooltipNode}
-      </Tooltip.Content>
-    </Tooltip.Root>
+    <UsageCostPopover key="cost" sessionId={sessionId} clientId={clientId}
+      className={metaTextClassName} label={costLabel} fallback={turnCostTooltipNode} />
   );
 
   // 金额缺席时的回退:显示本轮 token 总量。成因可能是网关目录整体不下发价格、

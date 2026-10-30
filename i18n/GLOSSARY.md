@@ -163,6 +163,10 @@
 
 设置 → 键盘快捷键里，尚未检测到的硬件输入设备（Work Louder 键盘、Xbox 手柄等）收在这一栏。已插入的设备单独成卡，不进这一栏。与 device-link 的「设备／设备互联」不是同一概念。
 
+### Additional fees
+
+任务中主对话之外的额外模型费用，按模型和调用渠道汇总；用户于 2026-10-30 选定中文名称。
+
 ### Anthropic Messages
 
 Anthropic Messages API / wire protocol 的用户可见名称。四语统一保留官方英文名称，避免与普通的“消息”概念混译；先登记为 proposed，待产品术语评审后固化。
@@ -462,6 +466,10 @@ issue #882：模型管理/新对话选择器的分类标签，对应 Gateway mod
 ### Native API
 
 模型目录维护的权威协议；独立于各 Harness 的实际接入配置。设置面板用于简短对比原生支持与兼容模式。
+
+### Upstream APIs
+
+模型设置「引擎支持」顶部只读列出当前来源为该模型提供的全部接口（Messages / Responses / Chat Completions / Google Gemini），替代旧的单值「原生协议」。上游提供的接口按原生使用，只有 Cindy 本地转换才标兼容模式（2026-10-30）。
 
 ### Publish Plugin
 

@@ -1674,7 +1674,9 @@
     }
   },
   "settings": {
-    "newChatDefaults": { "title": "新しいタスクのデフォルト権限" },
+    "newChatDefaults": {
+      "title": "新しいタスクのデフォルト権限"
+    },
     "imConnection": {
       "reconnect": "再接続",
       "savedNote": "連携情報は保存されています。そのまま再接続できます。",
@@ -3840,7 +3842,7 @@
           "contextLimitOverWindow": "プロバイダーが宣言した上限を超えています。リクエストが失敗する可能性があります。",
           "restoreDefault": "既定に戻す",
           "engines": "エンジン対応",
-          "enginesHint": "互換モードはリクエストを変換します。初期状態ではオフですが、必要に応じて有効にできます。",
+          "enginesHint": "互換モードでは Cindy がローカルでリクエストを変換します。初期状態ではオフですが、必要に応じて有効にできます。",
           "engineUnsupported": "非対応",
           "engineNotConfigured": "未設定",
           "engineNoFast": "Fast なし",
@@ -3879,10 +3881,10 @@
           "protocol": {
             "reference": "ネイティブAPI",
             "compatibility": "互換モード",
-            "compatibilityHint": "互換モードでは動作が不安定になったり、一部の機能が正常に動作しない場合があります。経験のあるユーザー向けです。",
-            "matching": "ネイティブ対応",
+            "compatibilityHint": "Cindy がローカルでリクエストを変換します。動作が不安定になったり、一部の機能が正常に動作しない場合があります。経験のあるユーザー向けです。",
             "unknown": "プロトコル未確認",
-            "automatic": "自動選択"
+            "automatic": "自動選択",
+            "upstream": "上流 API"
           },
           "lifecycle": {
             "alpha": "試用版",
@@ -4008,9 +4010,7 @@
         "metaOAuth": "サブスクリプションアカウント",
         "metaApiKey": "API key",
         "metaNoAuth": "ローカル / セルフホスト · 認証なし",
-        "customTitle": "カスタムエンドポイント",
-        "customMeta": "OpenAI / Anthropic 互換の任意のモデルソースを接続",
-        "pickHint": "接続するアカウントまたはサービスを選択してください。",
+        "customAction": "見つかりませんか？カスタム追加",
         "oauthDesc": "ブラウザーでログインします。API key は不要です。",
         "deviceOAuthDesc": "ワンタイムデバイスコードを使い、プロバイダーの認証ページで認証します",
         "authorizeInBrowser": "ブラウザで認証",
@@ -5682,7 +5682,7 @@
         },
         "host": {
           "title": "このコンピュータでリレーを開始",
-          "hint": "他のデバイスからこのコンピュータに接続できる必要があります。同じローカルネットワーク、ルーターのポート転送、トンネル、メッシュ VPN などで、ご自身で確保してください。このコンピュータがスリープしたり Cindy を終了したりすると全デバイスが切断されるため、「コンピュータをスリープさせない」をオンにします。",
+          "hint": "他のデバイスからこのコンピュータに接続できる必要があります。同じローカルネットワーク、ルーターのポート転送、トンネル、メッシュ VPN などで、ご自身で確保してください。このコンピュータがスリープしたり Cindy を終了したりすると全デバイスが切断されるため、「パソコンをスリープさせない」をオンにします。",
           "port": "ポート",
           "scope": "接続を許可する範囲",
           "scopeLocal": "このコンピュータのみ",
@@ -14411,8 +14411,8 @@
         "ghMissing": "GitHub CLI（gh）が見つからないため、PR の状態を表示できません",
         "notFound": "PR が存在しないか、現在のアカウントでは閲覧できません",
         "statusUnknown": "状態の取得に失敗しました",
+        "statusNotFetched": "ステータスはまだ取得していません",
         "openAria": "PR #{{number}} をブラウザで開く",
-        "clickToOpen": "クリックしてブラウザで PR を開く",
         "guidance": {
           "login": {
             "hint": "クリックして GitHub に接続",
@@ -14500,7 +14500,40 @@
             "otherMethods": "その他の接続方法"
           }
         },
-        "unresolved": "未解決のレビューコメント: {{count}} 件"
+        "unresolved": "未解決のレビューコメント: {{count}} 件",
+        "summaryAria": "PR #{{number}} の概要を表示",
+        "unresolvedLabel": "未解決のレビューコメント",
+        "checks": "チェック",
+        "checksTotal": "全 {{count}} 件",
+        "failed": "失敗",
+        "passed": "成功",
+        "pending": "進行中",
+        "skippedLabel": "スキップまたは中立",
+        "manage": {
+          "title": "PR リンクを管理",
+          "hint": "上部に最大 3 件表示。固定した PR を優先します",
+          "empty": "GitHub PR のリンクを貼り付けて追加",
+          "removed": "削除済み：{{count}} 件",
+          "addLabel": "PR リンクを追加",
+          "add": "PR を追加",
+          "loading": "読み込み中…",
+          "restore": "PR を復元",
+          "pin": "上部に固定",
+          "unpin": "固定を解除",
+          "pinLimit": "固定できる PR は最大 3 件です",
+          "reorderHint": "Alt+↑/↓ で固定済みまたは未固定のグループ内の順序を変更します。",
+          "dragHandle": "{{repo}} #{{number}} をドラッグして並べ替え",
+          "remove": "PR を削除",
+          "errors": {
+            "duplicate": "この PR は関連付け済みです。削除したリンクは一覧から復元できます",
+            "notFound": "PR が見つからないか、アクセス権がありません",
+            "invalidUrl": "有効な GitHub PR リンクを入力してください",
+            "reorderFailed": "順序を保存できませんでした。もう一度お試しください。",
+            "verifyFailed": "PR を確認できません。GitHub のログイン状態とアクセス権を確認してください",
+            "unsupported": "このコンピューターのバージョンは PR リンクの管理に対応していません",
+            "failed": "PR リンクを更新できません"
+          }
+        }
       }
     },
     "schedule": {
@@ -18561,6 +18594,23 @@
     "groupHint": "オフにすると、このグループ経由のすべてのタスクは通常速度になります。Ultrafast も対象です。",
     "pending": "一部のコンピューターが設定を確認していません。接続を維持し、この設定に対応していないグループ内のコンピューターを更新してください。",
     "saveFailed": "設定は保存された可能性がありますが、一部の実行中タスクが通常速度への切り替えを確認していません。接続を確認して再試行してください。"
+  },
+  "usageCost": {
+    "title": "費用の内訳",
+    "conversation": "チャット",
+    "additional": "追加費用",
+    "unknownModel": "モデル未記録",
+    "estimate": "推定価値",
+    "charged": "従量料金",
+    "loading": "内訳を読み込み中…",
+    "unavailable": "この記録の内訳は取得できません。",
+    "explanation": "モデルと経路別に集計します。サブスクリプションの価値は推定であり、追加請求ではありません。記録済みの費用のみを含み、過去の内訳は不完全な場合があります。",
+    "source": {
+      "subscription": "サブスクリプション",
+      "cindy-ai": "Cindy AI",
+      "provider": "API プロバイダー",
+      "unknown": "経路未記録"
+    }
   },
   "performanceTrace": {
     "title": "パフォーマンスの記録",
