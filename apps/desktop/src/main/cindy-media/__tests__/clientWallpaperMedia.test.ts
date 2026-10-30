@@ -136,7 +136,7 @@ describe.each(['regular', 'redirected'] as const)('client wallpaper media scope 
       fs.writeFileSync(target, bytes);
       // Use the physical root so the Windows file-link fallback observes the
       // same filesystem identity as production after resolving userData.
-      const link = path.join(fs.realpathSync(h.dir), ...parts.slice(0, depth + 1));
+      const link = path.join(await fs.promises.realpath(h.dir), ...parts.slice(0, depth + 1));
       fs.mkdirSync(path.dirname(link), { recursive: true });
       const fixture = level === 'file' ? fileSymlinkFixture(target, link) : undefined;
       if (!fixture) fs.symlinkSync(external, link, directoryLinkType);

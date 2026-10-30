@@ -45,10 +45,10 @@ const blobStore = await import('../blobStore');
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);
 const PNG_HASH = createHash('sha256').update(PNG_BYTES).digest('hex');
 
-beforeAll(() => {
-  // Match the physical paths used by the store, including macOS /var aliases,
+beforeAll(async () => {
+  // Match the store's native realpath, including Windows 8.3 and macOS /var aliases,
   // so the replacement-race fixtures still intercept the actual file access.
-  tmpUserData = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-media-test-')));
+  tmpUserData = await fsp.realpath(fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-media-test-')));
   scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-media-scratch-'));
 });
 
