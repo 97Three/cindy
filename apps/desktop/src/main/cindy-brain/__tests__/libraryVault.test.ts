@@ -22,6 +22,9 @@ import {
 import { initCustomLibraryTree, openExistingCustomLibrary, parseExistingStdout, PROVABLE_STAGING_NAME } from '../libraryDirFd.js';
 import { relocateLibraryMetaOwner } from '../libraryBinding.js';
 
+const nativeReplace = vi.hoisted(() => vi.fn<(source: string, destination: string) => Promise<void>>());
+vi.mock('../../windowsAtomicRename.js', () => ({ atomicReplaceWindowsDirectoryEntry: nativeReplace }));
+
 const sha256Of = (s: string): string => createHash('sha256').update(s).digest('hex');
 
 describe('validateLibraryRelPath(路径纪律)', () => {
@@ -128,6 +131,36 @@ describe('LibraryVault', () => {
       await expect(vault.importStream({ path: 'stale.txt', source: revoked(), assertCurrent: () => { if (!current) throw new Error('revoked'); } })).rejects.toThrow('revoked');
       await expect(fs.promises.stat(path.join(libraryRoot, 'stale.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
       expect(await fs.promises.readdir(path.join(libraryRoot, '.cindy-library', 'tmp'))).toEqual([]);
+    });
+    // 4420270574, unit: importStream previously only covered new paths.
+    // A Windows replace error on an existing destination must still publish complete bytes.
+    // The native syscall is simulated; paths and file I/O use this machine's filesystem.
+    it.each(['EPERM', 'EEXIST'])('replaces an existing Library import after Windows %s', async code => {
+      const vault = makeVault();
+      await vault.open();
+      expect(await vault.write({ path: 'input.txt', content: 'previous' })).toMatchObject({ ok: true });
+      const target = path.join(libraryRoot, 'input.txt');
+      const rename = fs.promises.rename.bind(fs.promises);
+      nativeReplace.mockImplementation(async (source, destination) => {
+        await fs.promises.copyFile(source, destination);
+        await fs.promises.unlink(source);
+      });
+      const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+      const renameSpy = vi.spyOn(fs.promises, 'rename').mockImplementation(async (source, destination) => {
+        if (destination === target) throw Object.assign(new Error('cannot overwrite'), { code });
+        await rename(source, destination);
+      });
+      try {
+        async function* source() { yield Buffer.from('new'); }
+        expect(await vault.importStream({ path: 'input.txt', source: source(), assertCurrent: () => {} }))
+          .toMatchObject({ ok: true, bytes: 3, sha256: sha256Of('new') });
+        expect(await fs.promises.readFile(target, 'utf8')).toBe('new');
+        expect(await fs.promises.readdir(path.join(libraryRoot, '.cindy-library', 'tmp'))).toEqual([]);
+      } finally {
+        platform.mockRestore();
+        renameSpy.mockRestore();
+        nativeReplace.mockReset();
+      }
     });
     it('does not open a default library whose persisted owner differs from the plugin', async () => {
       const previous = makeVault({ ghostId: 'other-plugin' });

@@ -49,7 +49,7 @@ export function onPagePermissionSessionChanged(
 }
 /** Called only after the ordinary session mutation commits, with its owner fence intact. */
 export function pagePermissionSessionChanged(sessionId: string, patch: Record<string, unknown>) {
-  if ('clearedAt' in patch || ('status' in patch && patch.status !== 'active'))
+  if ('planModeEnabled' in patch || 'clearedAt' in patch || ('status' in patch && patch.status !== 'active'))
     pagePermissionGrants.clearSession(sessionId);
   for (const listener of listeners) listener(sessionId, patch);
 }

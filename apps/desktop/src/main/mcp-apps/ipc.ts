@@ -174,8 +174,9 @@ export function registerMcpAppsIpc(
     authorizeTool: async (sessionId, tool, args, signal, source) => {
       const { owner, session } = await assertSession(sessionId);
       signal.throwIfAborted();
+      if (session.planModeEnabled || session.permissionMode === 'plan')
+        throw new Error('MCP_APP_TOOL_DENIED');
       if (session.permissionMode === 'bypassPermissions') return;
-      if (session.permissionMode === 'plan') throw new Error('MCP_APP_TOOL_DENIED');
       const config = source ? readAppServer(source.serverId) : undefined;
       // Use the same trusted ghost_call envelope as model tool classification.
       // Plugin identity comes from Main's registry, never page arguments/annotations.
@@ -208,6 +209,7 @@ export function registerMcpAppsIpc(
         const current = await assertSession(sessionId);
         if (
           current.owner !== owner ||
+          current.session.planModeEnabled ||
           (current.session.permissionMode !== session.permissionMode &&
             current.session.permissionMode !== 'bypassPermissions') ||
           current.session.clearedAt !== session.clearedAt

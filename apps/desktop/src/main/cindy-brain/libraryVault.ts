@@ -25,6 +25,7 @@ import { randomUUID } from 'node:crypto';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { replaceFile } from '../utils/replaceFile.js';
 
 import { isSafeGhostRelativePath } from '../../shared/ghost.js';
 import {
@@ -1184,7 +1185,7 @@ export class LibraryVault {
         req.assertCurrent?.();
         await fs.promises.mkdir(path.dirname(resolved.target), { recursive: true });
         req.assertCurrent?.();
-        await fs.promises.rename(stream.tmpAbs, resolved.target);
+        await replaceFile(stream.tmpAbs, resolved.target);
       } catch (err) {
         await this.abortStreamUnlocked(stream.streamId).catch(() => {});
         return this.tmpFailure(err, '分块提交失败(主机 IO 错误)');

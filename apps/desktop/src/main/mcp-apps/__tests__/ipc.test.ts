@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
     status: 'active',
     clearedAt: null as number | null,
     permissionMode: 'default',
+    planModeEnabled: false,
   },
   row: null as Record<string, unknown> | null,
   updateResult: [] as Record<string, unknown>[],
@@ -97,7 +98,7 @@ beforeEach(() => {
   state.predicates = [];
   state.duringUpdate = () => {};
   state.beforePublish = () => {};
-  state.session = { id: 'task', status: 'active', clearedAt: null, permissionMode: 'default' };
+  state.session = { id: 'task', status: 'active', clearedAt: null, permissionMode: 'default', planModeEnabled: false };
   state.row = {
     id: 'row',
     sessionId: 'task',
@@ -466,6 +467,40 @@ describe('plugin page ghost_call approval policy', () => {
     expect(request).toHaveBeenCalledOnce();
     expect(request).toHaveBeenCalledWith('task', expect.objectContaining({ suggestions: expect.any(Array),
       metadata: { mcpApp: { ...source, scope: 'session' } } }), expect.any(AbortSignal));
+  });
+  // 4420282600, unit: the real page authorizer must observe the independent plan toggle.
+  // Existing coverage only used permissionMode; a remembered grant and an in-flight approval missed it.
+  it.each(['default', 'auto', 'bypassPermissions', 'media'] as const)('denies a page call in plan mode before %s policy can allow it', async mode => {
+    bind(mode === 'media' ? 'cindy-art' : 'notes');
+    state.session.permissionMode = mode === 'media' ? 'default' : mode;
+    state.session.planModeEnabled = true;
+    await expect(call(mode === 'media' ? { ...tool, name: 'gen_image' } : tool)).rejects.toThrow('MCP_APP_TOOL_DENIED');
+    expect(request).not.toHaveBeenCalled();
+  });
+  it('discards remembered page approval after entering and leaving plan mode', async () => {
+    bind();
+    request.mockResolvedValue({ kind: 'permission', behavior: 'allow', permissionUpdates: [{ destination: 'session' }] } as never);
+    await call(); await call();
+    expect(request).toHaveBeenCalledOnce();
+    state.session = { ...state.session, planModeEnabled: true };
+    pagePermissionSessionChanged('task', { planModeEnabled: true });
+    state.session = { ...state.session, planModeEnabled: false };
+    pagePermissionSessionChanged('task', { planModeEnabled: false });
+    await call();
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+  it.each(['default', 'auto'] as const)('rechecks plan mode after a pending %s approval', async mode => {
+    bind();
+    state.session.permissionMode = mode;
+    const enterPlan = () => {
+      state.session = { ...state.session, planModeEnabled: true };
+      pagePermissionSessionChanged('task', { planModeEnabled: true });
+    };
+    const prompt = vi.fn(async () => { enterPlan(); return { kind: 'permission' as const, behavior: 'allow' as const }; });
+    const review = vi.fn(async () => { enterPlan(); return { verdict: 'allow' as const }; });
+    registerMcpAppsIpc(async () => {}, prompt, review);
+    await expect(call()).rejects.toThrow('MCP_APP_TOOL_DENIED');
+    expect(mode === 'auto' ? review : prompt).toHaveBeenCalledOnce();
   });
   it.each(['bypassPermissions', 'media', 'media-auto'] as const)('does not ask for %s', async mode => {
     bind(mode === 'bypassPermissions' ? 'notes' : 'cindy-art');
