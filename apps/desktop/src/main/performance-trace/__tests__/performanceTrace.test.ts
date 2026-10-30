@@ -20,8 +20,10 @@ import { cleanupTraceReports, startTraceRetention, TRACE_RETENTION_MS } from '..
  * Existing log-upload tests cover logs only, not recordings/profiles. Minimal failures: concurrent
  * start/stop, a rejected upload, owner change, or one profiler frame/event with a secret field.
  * Minimal new failure: a missing chunk/marker, failed final request, or secret in a raw profile.
+ * Renderer recovery gap: a completed report retains a destroyed sender; the replacement main
+ * window must be able to reveal/upload it without allowing active or cross-owner takeover.
  * Tier: unit, injected clocks/network/profilers; bounded files in an isolated OS temp directory.
- * Standalone Vitest run: 0.773s on Windows (2026-10-30); test execution 156ms.
+ * Standalone Vitest run: 0.885s on Windows (2026-10-30); test execution 297ms.
  */
 function fixture() {
   let now = 1000,
@@ -341,6 +343,8 @@ describe('report boundary', () => {
       controller: f.controller,
       authorize,
       isSource: () => source,
+      isSourceDestroyed: () => false,
+      isMainWindow: () => true,
       selectSource: () => {
         source = true;
       },
@@ -365,6 +369,90 @@ describe('report boundary', () => {
     await expect(handler(event, 'show-local', undefined)).rejects.toThrow(
       '[INTERNAL] Performance recording operation failed',
     );
+  });
+  it.each(['state', 'show-local', 'upload'])(
+    'restores a completed report through %s after its source window is destroyed',
+    async (command) => {
+      const f = fixture();
+      const original = {} as IpcMainInvokeEvent;
+      const replacement = {} as IpcMainInvokeEvent;
+      let source = original;
+      let destroyed = false;
+      const handler = createTraceCommandHandler({
+        controller: f.controller,
+        authorize: () => {},
+        isSource: (event) => event === source,
+        isSourceDestroyed: () => destroyed,
+        isMainWindow: (event) => event === replacement,
+        selectSource: (event) => {
+          source = event;
+          destroyed = false;
+        },
+        showFolder: vi.fn(async () => {}),
+      });
+      await handler(original, 'start', undefined);
+      await handler(original, 'stop', undefined);
+      // Reloading the same WebContents already works without transferring ownership.
+      await handler(original, 'show-local', undefined);
+      destroyed = true;
+      const state = await handler(replacement, command, undefined);
+      expect(state.phase).toBe('ready');
+      expect(state.reportId).toBe('ABCD-EFGH');
+      expect(source).toBe(replacement);
+      await handler(replacement, 'show-local', undefined);
+      await handler(replacement, 'upload', 'recovered report');
+      expect(f.deps.reveal).toHaveBeenLastCalledWith('ABCD-EFGH');
+      expect(f.deps.upload).toHaveBeenCalledWith(
+        expect.objectContaining({ reportId: 'ABCD-EFGH' }),
+        expect.any(String),
+      );
+      expect(f.deps.begin).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('does not transfer reports to another window during capture or across owner boundaries', async () => {
+    const f = fixture();
+    const original = {} as IpcMainInvokeEvent;
+    const replacement = {} as IpcMainInvokeEvent;
+    let source = original;
+    let destroyed = true;
+    let main = true;
+    let trusted = true;
+    const handler = createTraceCommandHandler({
+      controller: f.controller,
+      authorize: () => {
+        if (!trusted) throw new Error('untrusted sender');
+      },
+      isSource: (event) => event === source,
+      isSourceDestroyed: () => destroyed,
+      isMainWindow: () => main,
+      selectSource: (event) => {
+        source = event;
+      },
+      showFolder: vi.fn(async () => {}),
+    });
+    await handler(original, 'start', undefined);
+    expect((await handler(replacement, 'state', undefined)).phase).toBe('recording');
+    await expect(handler(replacement, 'stop', undefined)).rejects.toThrow('PRECONDITION_FAILED');
+    expect(source).toBe(original);
+    await handler(original, 'stop', undefined);
+    destroyed = false;
+    await expect(handler(replacement, 'upload', undefined)).rejects.toThrow('PRECONDITION_FAILED');
+    destroyed = true;
+    main = false;
+    await expect(handler(replacement, 'show-local', undefined)).rejects.toThrow(
+      'PRECONDITION_FAILED',
+    );
+    main = true;
+    trusted = false;
+    await expect(handler(replacement, 'upload', undefined)).rejects.toThrow('untrusted sender');
+    trusted = true;
+    f.owner('bob:2');
+    expect((await handler(replacement, 'state', undefined)).phase).toBe('idle');
+    await expect(handler(replacement, 'upload', undefined)).rejects.toThrow('PRECONDITION_FAILED');
+    expect(source).toBe(original);
+    expect(f.deps.upload).not.toHaveBeenCalled();
+    expect(f.deps.reveal).not.toHaveBeenCalled();
   });
   it('projects only fixed event labels and bounded numeric timings', () => {
     const input = {

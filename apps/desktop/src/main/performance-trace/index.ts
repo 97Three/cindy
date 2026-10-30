@@ -29,7 +29,7 @@ import { cleanupTraceReports, startTraceRetention } from './retention';
 
 let registered = false;
 
-export function initPerformanceTraceService(): void {
+export function initPerformanceTraceService(getMainWindow: () => BrowserWindow | null): void {
   if (registered) return;
   registered = true;
   // Capture the owner's path at start; a later account switch must not redirect the save.
@@ -106,6 +106,8 @@ export function initPerformanceTraceService(): void {
       controller,
       authorize: assertTrustedAppRendererEvent,
       isSource: (event) => source === event.sender,
+      isSourceDestroyed: () => source?.isDestroyed() === true,
+      isMainWindow: (event) => event.sender === getMainWindow()?.webContents,
       selectSource: (event) => {
         source = event.sender;
       },
