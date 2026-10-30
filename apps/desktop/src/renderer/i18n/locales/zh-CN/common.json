@@ -3745,6 +3745,7 @@
           },
           "capabilityHint": "优先使用当前供应商声明的能力；未声明时，图片能力参考模型名称。",
           "imageInput": "图片输入",
+          "imageInputMixed": "各引擎不同",
           "supported": "支持",
           "unsupported": "不支持",
           "undeclared": "未声明",

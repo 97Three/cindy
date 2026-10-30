@@ -3745,6 +3745,7 @@
           },
           "capabilityHint": "このプロバイダーが宣言した機能を優先します。画像対応が未宣言の場合はモデル名から推定します。",
           "imageInput": "画像入力",
+          "imageInputMixed": "エンジンごとに異なる",
           "supported": "対応",
           "unsupported": "非対応",
           "undeclared": "宣言なし",

@@ -3745,6 +3745,7 @@
           },
           "capabilityHint": "優先使用目前供應商宣告的能力；未宣告時，圖片能力參考模型名稱。",
           "imageInput": "圖片輸入",
+          "imageInputMixed": "各引擎不同",
           "supported": "支援",
           "unsupported": "不支援",
           "undeclared": "未宣告",

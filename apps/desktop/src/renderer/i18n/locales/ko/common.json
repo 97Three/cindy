@@ -3745,6 +3745,7 @@
           },
           "capabilityHint": "이 공급업체가 명시한 기능을 우선합니다. 이미지 지원 정보가 없으면 모델 이름으로 추정합니다.",
           "imageInput": "이미지 입력",
+          "imageInputMixed": "엔진별로 다름",
           "supported": "지원",
           "unsupported": "지원 안 함",
           "undeclared": "선언되지 않음",
