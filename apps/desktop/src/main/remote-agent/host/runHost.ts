@@ -60,6 +60,7 @@ import { EXEC_SERVER_WS_PATH } from '../controller/execServerRelay';
 import { RemoteAgentRunClient, type RemoteAgentInvoke, type RemoteAgentPoller } from '../controller/runClient';
 import { EventLog, waitForAny } from '../eventLog';
 import { createExecServerShortcut, type ExecServerShortcutLayout } from './execServerShortcut';
+import { createExecServerStartupBatch } from './execServerStartupBatch';
 import { createGuestUsageMeter, type GuestUsageSample } from './guestUsage';
 import {
   GROUP_SWITCH_STATE_KEY,
@@ -127,7 +128,7 @@ const RELAY_SLOW_PUSH_MS = 2_000;
 /** 删除受邀者时没通知到的组内电脑(离线等)，多久后再试一次。 */
 const FORGET_RETRY_MS = 10 * 60_000;
 /** 那台上的任务以这些原因结束是正常收尾，不算失败。 */
-const NORMAL_RELAY_CLOSE_REASONS = new Set(['closed', 'detached', 'ended', 'superseded']);
+const NORMAL_RELAY_CLOSE_REASONS = new Set(['closed', 'detached', 'ended', 'superseded', 'controller-disconnected']);
 const UPLOAD_IDLE_MS = 2 * 60_000;
 const MAX_STAGED_BYTES_PER_CONTROLLER = REMOTE_AGENT_MAX_PAYLOAD_BYTES * 2;
 const MAX_DECOMPRESSED_BYTES = 128 * 1024 * 1024;
@@ -436,6 +437,7 @@ interface Run {
   closing: boolean;
   handle?: AgentSessionHandle;
   tunnel?: RunTunnel;
+  execStartupBatches?: Map<string, ReturnType<typeof createExecServerStartupBatch>>;
   attachmentsDir: string;
   /** 影子工作区根(按 hostSessionId 复用，任务收尾后清理)。 */
   workspaceDir?: string;
@@ -716,7 +718,8 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
   const guestDigest = (scope: string) => createHash('sha256').update(scope).digest('hex').slice(0, 32);
   let guestIndex: Promise<Map<string, GuestSessionRecord>> | null = null;
   let guestIndexWrite: Promise<void> = Promise.resolve();
-  const directRunStarts = new WeakMap<Run, { work: Promise<void>; disposal?: Promise<void> }>();
+  const runStarts = new WeakMap<Run, Promise<void>>();
+  const runDisposals = new Map<Run, Promise<void>>();
   const directGuestLocks = new Map<string, {
     tail: Promise<void>;
     forgets: Map<string, Promise<unknown>>;
@@ -1264,7 +1267,7 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
       ? ['workspace', ...Array.from({ length: MAX_ANCESTOR_LEVELS }, () => 'p')]
       : mirrorSegments(payload.workspace.workingDir);
     const shadowDir = path.join(mirrorRoot, ...segments);
-    await fsp.rm(sessionRoot, { recursive: true, force: true });
+    await fsp.rm(sessionRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     await fsp.mkdir(shadowDir, { recursive: true });
     if (payload.virtualWorkspace) await Promise.all(['home', 'tmp'].map((name) => fsp.mkdir(path.join(mirrorRoot, name), { recursive: true })));
     const foreignPath = payload.workspace.platform === 'win32' ? path.win32 : path.posix;
@@ -1473,6 +1476,19 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
             if (wsPath.split('?')[0] === EXEC_SERVER_WS_PATH) {
               execConns.add(connId);
               if (!startupComplete) execServerStats.connections += 1;
+              if (!startupComplete && shortcut) {
+                (run.execStartupBatches ??= new Map()).set(connId, createExecServerStartupBatch({
+                  shortcut,
+                  forward: data => {
+                    if (!startupComplete) execServerStats.forwarded += 1;
+                    append(run, { t: 'ws', connId, kind: 'message', data });
+                  },
+                  answer: data => {
+                    if (!startupComplete) execServerStats.answered += 1;
+                    run.tunnel?.sendWs(connId, data);
+                  },
+                }));
+              }
             }
             append(run, { t: 'ws', connId, kind: 'open', path: wsPath });
           },
@@ -1483,12 +1499,14 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
               run.tunnel?.sendWs(connId, local);
               return;
             }
+            if (run.execStartupBatches?.get(connId)?.request(data)) return;
             if (!startupComplete && execConns.has(connId)) execServerStats.forwarded += 1;
             append(run, { t: 'ws', connId, kind: 'message', data });
           },
           wsClose: (connId) => {
             run.localWs?.delete(connId);
             execConns.delete(connId);
+            run.execStartupBatches?.delete(connId);
             append(run, { t: 'ws', connId, kind: 'close' });
           },
         }),
@@ -1607,6 +1625,7 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
       await finishRun(run, 'start-failed', 'navigation', false);
     } finally {
       startupComplete = true;
+      for (const batch of run.execStartupBatches?.values() ?? []) batch.finish();
       timing.finish(status, execServerStats);
     }
   }
@@ -1658,6 +1677,7 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     run.ownerRoute?.release();
     run.ownerRoute = undefined;
     await run.tunnel?.close().catch(() => undefined);
+    run.execStartupBatches?.clear();
     await imagePreparation.get(run);
     run.tunnel = undefined;
     // 本机这次尝试里已告诉受邀者打开的连接一并关掉(隧道关闭不会逐个回调)；中转的连接编号带尝试前缀，不会撞上。
@@ -1712,6 +1732,9 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
       streamFailed = true;
       streamError = error;
     }
+    // Native close can end this stream. Its caller owns teardown; the event pump
+    // must not join that finish and become part of a close -> pump -> close wait.
+    if (run.closing) return;
     // RPC 的限额拒绝可能先到、没有原生终态；流结束或抛错都不能抢先作废切换入口。
     await waitForQuotaFailureDelivery(run).catch(error => {
       if (!streamFailed) streamError = error;
@@ -2273,7 +2296,8 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
   }
 
   /** 结束任务：关掉 Agent 与隧道，拒掉未完成的反向请求，写收尾事件。 */
-  async function finishRun(
+  const runFinishes = new WeakMap<Run, Promise<void>>();
+  function finishRun(
     run: Run,
     reason: string,
     teardown: RemoteAgentTeardownReason,
@@ -2281,8 +2305,24 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     skipClosedEvent = false,
     mode: 'close' | 'detach' = 'close',
   ): Promise<void> {
-    if (run.closing) { await imagePreparation.get(run); return; }
+    const pending = runFinishes.get(run);
+    if (pending) return pending;
     run.closing = true;
+    // Register before calling native close: it can synchronously trigger another
+    // finish entry. Every caller joins the first mode/reason and full teardown.
+    const finishing = Promise.resolve().then(() => finishRunOnce(run, reason, teardown, closeHandle, skipClosedEvent, mode));
+    runFinishes.set(run, finishing);
+    return finishing;
+  }
+
+  async function finishRunOnce(
+    run: Run,
+    reason: string,
+    teardown: RemoteAgentTeardownReason,
+    closeHandle: boolean,
+    skipClosedEvent: boolean,
+    mode: 'close' | 'detach',
+  ): Promise<void> {
     if (run.stateTimer) clearInterval(run.stateTimer);
     for (const pending of run.pending.values()) pending.reject(new Error('[REMOTE_AGENT_EXPIRED] task has ended'));
     run.pending.clear();
@@ -2313,6 +2353,7 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     run.ownerRoute?.release();
     run.ownerRoute = undefined;
     await run.tunnel?.close().catch(() => undefined);
+    run.execStartupBatches?.clear();
     // Native image materialization must finish before the log becomes unreadable.
     await imagePreparation.get(run);
     // 收尾事件绕过 closing 判断直接写入。
@@ -2322,14 +2363,28 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     deps.log?.info('remote agent run finished', { runId: run.id, reason, ...(run.idleReclaimed ? { idleReclaimed: true } : {}) });
   }
 
+  function finishForHostStop(run: Run, teardown: RemoteAgentTeardownReason): Promise<void> {
+    // Do not relabel an intentional disconnect already closing in parallel.
+    if (teardown === 'app-quit' && !run.closing && !busyForReclaim(run)) run.idleReclaimed = true;
+    // Old controllers silently close idle runs and keep their existing error path
+    // for busy runs; new controllers can reconnect either to the native session.
+    const reason = teardown === 'app-quit'
+      ? run.idleReclaimed ? 'ended' : 'provider-restarting'
+      : 'controller-disconnected';
+    return finishRun(run, reason, teardown);
+  }
+
   function disposeRun(run: Run): Promise<void> {
     // open ACKs before native startup, which may need poll/reply. Stop first
     // (finishRun rejects reverse requests), then drain startup's last writes.
     // Startup never acquires the guest lock. Keep it in runs until it drains,
     // and coalesce sweep/dispose calls instead of accumulating pending waits.
-    const startup = directRunStarts.get(run);
-    if (startup) return startup.disposal ??= startup.work.then(() => disposeRunFiles(run));
-    return disposeRunFiles(run);
+    const pending = runDisposals.get(run);
+    if (pending) return pending;
+    const work = (runStarts.get(run) ?? Promise.resolve()).then(() => disposeRunFiles(run));
+    runDisposals.set(run, work);
+    void work.then(() => runDisposals.delete(run), () => runDisposals.delete(run));
+    return work;
   }
 
   async function disposeRunFiles(run: Run): Promise<void> {
@@ -2526,8 +2581,17 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     for (let index = 0; index < wanted.length; index += 1) {
       const { runId, cursor } = wanted[(start + index) % wanted.length];
       const run = runs.get(key(controller, runId));
+      if (run && !delegatedRunAllowed(run)) {
+        // A sibling task may keep this guest peer authorized after this task's
+        // grant expires. Do not disguise that denial as a missing/restarted run,
+        // and never read the now-unauthorized task's buffered content.
+        void finishRun(run, 'access-revoked', 'navigation');
+        const data = Buffer.from(JSON.stringify({ t: 'closed', reason: 'access-revoked' }) + '\n');
+        out.runs.push({ runId, cursor: cursor + data.length, data: data.toString('base64'), done: true });
+        continue;
+      }
       // 不存在或游标超出已写范围(对端状态与本机不一致)：控制端按任务丢失处理。
-      if (!run || !delegatedRunAllowed(run) || !run.log.isValidCursor(cursor)) {
+      if (!run || !run.log.isValidCursor(cursor)) {
         out.runs.push({ runId, cursor, missing: true });
         continue;
       }
@@ -2676,6 +2740,7 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
   let forgetRetrying: Promise<void> | null = null;
   let forgetRetryAgain = false;
   let disposed = false;
+  let disposal: Promise<void> | undefined;
 
   /**
    * 逐台请组内电脑忘掉已删除的受邀者(见 GuestSessionRecord.forgetPending)：通知到的划掉，都通知到的登记删掉；
@@ -3226,6 +3291,7 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
           if (providerId && deps.providerAccess && !deps.providerAccess.isAllowed(providerId, controller, payload.options.model, payload.sessionId)) {
             failProviderNotAllowed();
           }
+          if (disposed) fail('REMOTE_AGENT_UNAVAILABLE', 'remote agent host has been disposed');
           assertRunCapacity(controller);
         } catch (error) {
           reserved?.release();
@@ -3270,18 +3336,20 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
           run.hostSessionId = hostSessionIdFor(controller, payload.sessionId);
           run.imageDeliveryEpoch = payload.imageDeliveryEpoch;
           const load = reserved;
-          void recordGuestSession(controller, undefined, run.hostSessionId, [])
+          const starting = recordGuestSession(controller, undefined, run.hostSessionId, [])
             .then(() => startRelay(run, payload, member, { fresh: !payload.options.resumeSessionId, avoid, ...(load ? { load } : {}) }))
             .catch(async (error) => {
               load?.release();
               append(run, { t: 'start-failed', error: relayErrorInfoFrom(error) });
               await finishRun(run, 'start-failed', 'navigation', false);
             });
+          runStarts.set(run, starting);
+          void starting;
         } else {
           // 组为受邀者的全新任务选中了本机这一台：本机起不来时与组内电脑一样换下一台。
           if (groupRouted && !payload.options.resumeSessionId) run.groupFreshStart = { avoid };
           const starting = startRun(run, payload);
-          if (directLocked) directRunStarts.set(run, { work: starting });
+          runStarts.set(run, starting);
           void starting;
         }
         return {};
@@ -3360,14 +3428,17 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
               // 单条消息拼接上限与反向请求载荷一致，防止无限累积。
               if (joined.length > REMOTE_AGENT_MAX_PAYLOAD_BYTES) {
                 run.pushParts.delete(frame.connId);
+                run.execStartupBatches?.delete(frame.connId);
                 run.tunnel?.closeWs(frame.connId);
               } else run.pushParts.set(frame.connId, joined);
               continue;
             }
             run.pushParts.delete(frame.connId);
-            run.tunnel?.sendWs(frame.connId, joined);
+            if (!run.execStartupBatches?.get(frame.connId)?.response(joined)) run.tunnel?.sendWs(frame.connId, joined);
           } else {
             run.pushParts.delete(frame.connId);
+            // closeWs removes its connection before the close event; wsClose will not run.
+            run.execStartupBatches?.delete(frame.connId);
             run.tunnel?.closeWs(frame.connId);
           }
         }
@@ -3422,7 +3493,7 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     },
     /** 远程控制关闭 / 退出时结束全部任务。 */
     async abortAll(reason: RemoteAgentTeardownReason = 'navigation'): Promise<void> {
-      await Promise.all([...runs.values()].map((run) => finishRun(run, 'aborted', reason)));
+      await Promise.all([...runs.values()].map((run) => finishForHostStop(run, reason)));
     },
     /** Old execution hosts cannot retain a newly introduced member restriction. */
     async revalidateModelAccess(): Promise<void> {
@@ -3483,14 +3554,24 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     runCount(): number {
       return [...runs.values()].filter((run) => run.closedAt === undefined).length;
     },
-    dispose(): void {
+    dispose(): Promise<void> {
+      if (disposal) return disposal;
       if (sweepTimer) clearInterval(sweepTimer);
       sweepTimer = null;
       disposed = true;
       if (forgetRetryTimer) clearTimeout(forgetRetryTimer);
       forgetRetryTimer = null;
       // 退出前尽力收尾：影子工作目录含同步过去的项目与个人说明，不能留到下次启动。
-      for (const run of runs.values()) void finishRun(run, 'aborted', 'app-quit').then(() => disposeRun(run));
+      const stopping = [...runs.values()].map(run =>
+        finishForHostStop(run, 'app-quit').then(() => disposeRun(run)),
+      );
+      // A sweep removes its run from the map before its filesystem cleanup ends.
+      disposal = Promise.allSettled([...stopping, ...runDisposals.values()]).then(results => {
+        for (const result of results) {
+          if (result.status === 'rejected') deps.log?.warn('remote agent disposal failed', { error: String(result.reason) });
+        }
+      });
+      return disposal;
     },
   };
 }

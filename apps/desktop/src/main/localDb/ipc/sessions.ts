@@ -43,7 +43,7 @@ import { getDbClient } from '../client/current';
 import * as currentDb from '../client/current';
 import type { DbClient } from '../client/DbClient';
 import type { SessionsSetTerminalStatusResult } from '../client/tx/types';
-import { sessions, messages } from '../schema';
+import { sessions, messages, botSessionLinks } from '../schema';
 import { clearSessionAttention } from '../../appBadgeService';
 import {
   selectSessionListRows,
@@ -144,6 +144,8 @@ import { recycleCindyMakeTask } from '../../cindy-make/taskManagement.js';
 import { broadcastSubagentRunsInvalidated } from './subagentRuns.js';
 import { compactSessionToolResultsBestEffort } from '../toolResultCompaction.js';
 import { consumeWritableDirectoryPickerGrants } from '../../maker-ipc/writableDirectoryPickerGrant.js';
+import { botSessionInputBlockReason, isShadowedCompanionSession } from '../../maker-ipc/botSessionInputGuard.js';
+import { isCompanionShadowed } from '../../companion-cloud/homes.js';
 
 export { setSessionRuntimeCleanup } from '../sessionRuntimeCleanup.js';
 
@@ -1863,7 +1865,11 @@ export function registerSessionIpc(
   // 正在跑的 turn 算进来。只服务本机顶层 renderer,不进 device-link allowlist。
   ipcMain.handle('local-db:sessions:interrupted-resume-candidates', async (event) => {
     assertTrustedAppRendererEvent(event);
-    const rows = await listInterruptedResumeCandidateRows();
+    const rows = await listInterruptedResumeCandidateRows(
+      ({ botId, role, profileStatus }) =>
+        botSessionInputBlockReason({ source: 'bot', role, profileStatus }) === null
+        && !isShadowedCompanionSession({ role, botId }, isCompanionShadowed),
+    );
     const wording = createLocalizedToolRowWording();
     return rows.map(({ sessionId, interruptedAt, lastToolUse }) => ({
       sessionId,
@@ -2670,7 +2676,8 @@ export async function restoreArchivedSessionForSend(
     if (!isOwnerScopeCurrent(ownerScope)) throwIpcError('PRECONDITION_FAILED', 'Task owner changed');
     if (row?.status === 'deleted') throwIpcError('NOT_FOUND', 'Session does not exist');
     if (row?.status !== 'archived') return;
-    if (row.source === 'bot' || row.orcaRole === 'worker' || row.orcaRemoteLead) {
+    if ((row.source === 'bot' && !(await isTaskListBotLane(db, sessionId)))
+      || row.orcaRole === 'worker' || row.orcaRemoteLead) {
       throwIpcError('PRECONDITION_FAILED', 'Restore the managed task before continuing');
     }
     await patchSessionMetaInDb(sessionId, { status: 'active' }, { ...options, routeLockHeld: true });
@@ -2798,7 +2805,24 @@ export async function patchSessionMetaInDb(
 }
 
 /**
- * Bot tasks are absent from the ordinary task pool, so their active/history/
+ * Routine and channel lanes are listed with ordinary tasks (`ordinaryTaskListFilter`)
+ * and hold no Profile pointer, so they archive, restore and delete like ordinary tasks.
+ * Their next trigger resumes an archived lane (`ensureBotOwnedLaneSession`).
+ */
+async function isTaskListBotLane(db: DbClient['drizzle'], sessionId: string): Promise<boolean> {
+  const [link] = await db
+    .select({ role: botSessionLinks.role })
+    .from(botSessionLinks)
+    .where(and(
+      eq(botSessionLinks.sessionId, sessionId),
+      inArray(botSessionLinks.role, ['routine', 'channel']),
+    ))
+    .limit(1);
+  return !!link;
+}
+
+/**
+ * Other Bot tasks are absent from the ordinary task pool, so their active/history/
  * route transitions must go through the Bot lifecycle service. That service
  * updates the Profile pointer and Session projection atomically.
  */
@@ -2811,7 +2835,7 @@ async function assertGenericSessionLifecycleAllowed(
     .from(sessions)
     .where(eq(sessions.id, sessionId))
     .limit(1);
-  if (target?.source === 'bot') {
+  if (target?.source === 'bot' && !(await isTaskListBotLane(db, sessionId))) {
     throwIpcError(
       'PRECONDITION_FAILED',
       'Bot task lifecycle is managed by teammate recovery and history controls',

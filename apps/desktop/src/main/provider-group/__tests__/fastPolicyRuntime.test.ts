@@ -11,6 +11,8 @@ import { providerShareGuestPeer, type ProviderShareOwned, type RemoteAgentFastPo
 
 const state = vi.hoisted(() => ({
   owner: 'test',
+  stopHost: () => Promise.resolve(),
+  hostHandler: null as null | { handle(controller: string, raw: unknown): Promise<unknown> },
   config: null as ProviderGroupConfig | null,
   subscription: true,
   old: new Set<string>(),
@@ -90,7 +92,9 @@ vi.mock('../../device-link/providerShareUsageStore.js', async (original) => ({
 }));
 vi.mock('../../remote-agent/host/runHost.js', () => ({
   createRemoteAgentHost: (deps: RemoteAgentHostDeps) => { state.hostDeps = deps; return {
-    dispose() {}, issueDirectGroupSwitchToken: () => randomUUID(),
+    dispose: state.stopHost,
+    handle: async () => ({ version: 1 }),
+    issueDirectGroupSwitchToken: () => randomUUID(),
   }; },
 }));
 vi.mock('../../remote-agent/controller/runClient.js', () => ({
@@ -114,7 +118,7 @@ vi.mock('../guestRelay.js', () => ({
 vi.mock('../../device-link/broadcast-tap.js', () => ({
   captureDataOwnerBroadcastScope: () => state.owner, isDataOwnerBroadcastScopeCurrent: () => true,
 }));
-vi.mock('../../device-link/dispatch.js', () => ({ setRemoteAgentHandler() {} }));
+vi.mock('../../device-link/dispatch.js', () => ({ setRemoteAgentHandler(handler: typeof state.hostHandler) { state.hostHandler = handler; } }));
 vi.mock('../../device-link/providerShareReshare.js', () => ({ handleProviderShareReshare() {}, providerShareReshareAllows() {} }));
 vi.mock('../reshareRuntime.js', () => ({ providerGroupReshare: {} }));
 vi.mock('../runtime.js', () => ({ getProviderGroupOwnerScope: () => state.owner }));
@@ -190,6 +194,7 @@ const { createProviderShareUsageStore } = await import('../../device-link/provid
 const { installRemoteAgentHost, disposeRemoteAgentHost } = await import('../../remote-agent/host/service.js');
 let sequence = 0;
 beforeEach(() => {
+  state.stopHost = () => Promise.resolve();
   state.self = 'self';
   state.direct = false;
   state.planDevice = 'one';
@@ -237,6 +242,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 afterAll(() => fs.rmSync(temporary, { recursive: true, force: true }));
+afterEach(() => vi.useRealTimers());
 
 const guestPeer = providerShareGuestPeer('share', 'member', 'laptop');
 const directTask = (sessionId: string) => hostSessionIdFor(guestPeer, sessionId);
@@ -257,6 +263,37 @@ function failAllocationAt(stage: 'Fast' | 'commit' | 'register') {
   else vi.spyOn(state.usage!, stage === 'commit' ? 'commitDirectReceiptRoute' : 'registerDirectReceiptRoute')
     .mockRejectedValue(Error('journal write failed'));
 }
+
+// #7976: service reinstall must fence the old filesystem cleanup, including
+// an intermediate host that is disposed before that cleanup finishes (unit).
+it('waits for retired hosts before dispatching and rejects an obsolete replacement', async () => {
+  let release!: () => void;
+  const cleaning = new Promise<void>(resolve => { release = resolve; });
+  state.stopHost = () => cleaning;
+  await installDirectHost();
+  disposeRemoteAgentHost();
+  state.stopHost = () => Promise.resolve();
+  await installDirectHost();
+  const obsolete = state.hostHandler!.handle('controller', { op: 'caps' }).catch(error => error);
+  disposeRemoteAgentHost();
+  await installDirectHost();
+  let completed = false;
+  const request = state.hostHandler!.handle('controller', { op: 'caps' }).then(result => {
+    completed = true;
+    return result;
+  });
+  try {
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    release();
+    await expect(request).resolves.toEqual({ version: 1 });
+    expect(await obsolete).toMatchObject({ message: expect.stringContaining('REMOTE_AGENT_UNAVAILABLE') });
+  } finally {
+    release();
+    await Promise.all([request, obsolete]);
+  }
+});
 
 // Unit / real installed O callbacks + durable journal. Previously only active
 // 30-minute receipts were tested: expiry/restart could send a native ID to M2.
@@ -470,8 +507,12 @@ describe('direct allocation authorization and Fast prebinding', () => {
 function blockCapabilitiesRequest() {
   let enter!: () => void;
   let unblock!: () => void;
-  const started = new Promise<void>((resolve) => { enter = resolve; });
-  const blocked = new Promise<void>((resolve) => { unblock = resolve; });
+  const started = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const blocked = new Promise<void>((resolve) => {
+    unblock = resolve;
+  });
   state.beforeCaps = () => {
     enter();
     return blocked;
@@ -486,6 +527,87 @@ function blockCapabilitiesRequest() {
 }
 
 describe('group owner to executor enforcement handshake', () => {
+  // #7848, unit: use the real sync/store and a failed peer, advancing virtual
+  // polling time. Existing tests cover in-flight coalescing, not later retries
+  // or the policy file's unchanged mtime after each unsuccessful poll.
+  it('backs off failed peers up to five minutes without rewriting unchanged policy on polls', async () => {
+    // Only virtualize the retry clock: filesystem lock mtimes use real Date.
+    vi.useFakeTimers({ toFake: ['performance', 'setInterval', 'clearInterval'] });
+    state.offline.add('one');
+    await runtime.syncGroupFastPolicy('openai');
+    const file = path.join(temporary, state.owner, 'provider-group-fast-policy.json');
+    const timestamp = new Date('2020-01-01T00:00:00Z');
+    fs.utimesSync(file, timestamp, timestamp);
+    const stop = runtime.startGroupFastPolicySync();
+    const attempts = (device: string) =>
+      state.calls.filter((call) => call.device === device && call.command.op === 'caps').length;
+    let count = 1;
+    try {
+      for (const delay of [5_000, 10_000, 20_000, 40_000, 80_000, 160_000, 300_000, 300_000]) {
+        // Drain each poll's real filesystem work before advancing to the next.
+        for (let elapsed = 5_000; elapsed < delay; elapsed += 5_000) {
+          await vi.advanceTimersByTimeAsync(5_000);
+          await runtime.syncGroupFastPolicy('openai');
+          expect(attempts('one')).toBe(count);
+        }
+        await vi.advanceTimersByTimeAsync(5_000);
+        await runtime.syncGroupFastPolicy('openai');
+        expect(attempts('one')).toBe(++count);
+        expect(attempts('two')).toBe(1);
+        expect(fs.statSync(file).mtimeMs).toBe(timestamp.getTime());
+        expect(runtime.groupFastPolicyPending('openai')).toBe(true);
+      }
+      state.offline.clear();
+      await vi.advanceTimersByTimeAsync(300_000);
+      await runtime.syncGroupFastPolicy('openai');
+      expect(runtime.groupFastPolicyPending('openai')).toBe(false);
+      expect(attempts('one')).toBe(count + 1);
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(attempts('one')).toBe(count + 1);
+    } finally {
+      stop();
+      await runtime.syncGroupFastPolicy('openai');
+    }
+  });
+
+  it('sends new revisions and removed-member releases immediately despite previous failures', async () => {
+    vi.useFakeTimers({ toFake: ['performance'] });
+    state.offline.add('one');
+    await runtime.syncGroupFastPolicy('openai');
+    const revision = groupFastPolicyStore.outgoing().openai.revision;
+    state.config!.allowFast = true;
+    await runtime.syncGroupFastPolicy('openai');
+    expect(state.calls.filter(({ device }) => device === 'one')).toHaveLength(2);
+    expect(groupFastPolicyStore.outgoing().openai.revision).toBe(revision + 1);
+    state.config!.members = state.config!.members.slice(1);
+    await runtime.syncGroupFastPolicy('openai');
+    expect(state.calls.filter(({ device }) => device === 'one')).toHaveLength(3);
+    expect(groupFastPolicyStore.outgoing().openai.targets.one).toBe(-1);
+    state.offline.clear();
+    await runtime.syncGroupFastPolicy('openai');
+    expect(state.calls.filter(({ device }) => device === 'one')).toHaveLength(3);
+    vi.advanceTimersByTime(5_000);
+    await runtime.syncGroupFastPolicy('openai');
+    expect(state.calls).toContainEqual({
+      device: 'one',
+      command: { op: 'fast-policy', group: 'openai', allowFast: true, revision: revision + 2 },
+    });
+    expect(groupFastPolicyStore.outgoing().openai.targets).not.toHaveProperty('one');
+    expect(runtime.groupFastPolicyPending('openai')).toBe(false);
+  });
+
+  it('does not carry failed-peer cooldown into a different owner with the same group and revision', async () => {
+    vi.useFakeTimers({ toFake: ['performance'] });
+    state.broken.add('one');
+    await runtime.syncGroupFastPolicy('openai');
+    await runtime.syncGroupFastPolicy('openai');
+    expect(state.calls.filter(({ device }) => device === 'one')).toHaveLength(1);
+    state.owner = `other-${state.owner}`;
+    await runtime.syncGroupFastPolicy('openai');
+    expect(state.calls.filter(({ device }) => device === 'one')).toHaveLength(2);
+    expect(groupFastPolicyStore.outgoing().openai.targets.two).toBe(1);
+  });
+
   it('coalesces repeated sync requests while the same offline revision is in flight', async () => {
     const caps = blockCapabilitiesRequest();
     // Only one remote endpoint makes the blocked request count unambiguous.
@@ -567,12 +689,14 @@ describe('group owner to executor enforcement handshake', () => {
   });
 
   it('keeps offline and old executors pending, retries after recovery, and releases removed members with a newer revision', async () => {
+    vi.useFakeTimers({ toFake: ['performance'] });
     state.old.add('one');
     state.offline.add('two');
     await runtime.syncGroupFastPolicy('openai');
     expect(runtime.groupFastPolicyPending('openai')).toBe(true);
     state.old.clear();
     state.offline.clear();
+    vi.advanceTimersByTime(5_000);
     await runtime.syncGroupFastPolicy('openai');
     expect(runtime.groupFastPolicyPending('openai')).toBe(false);
     const revision = groupFastPolicyStore.outgoing().openai.revision;
@@ -665,6 +789,7 @@ describe('group owner to executor enforcement handshake', () => {
   });
 
   it('shows local native failures as pending instead of acknowledging the whole group', async () => {
+    vi.useFakeTimers({ toFake: ['performance'] });
     state.config!.members.push({
       key: 'local',
       kind: 'local',
@@ -678,6 +803,7 @@ describe('group owner to executor enforcement handshake', () => {
     await expect(runtime.syncGroupFastPolicy('openai')).rejects.toThrow('native busy');
     expect(runtime.groupFastPolicyPending('openai')).toBe(true);
     state.notify.mockResolvedValue(undefined);
+    vi.advanceTimersByTime(5_000);
     await runtime.syncGroupFastPolicy('openai');
     expect(runtime.groupFastPolicyPending('openai')).toBe(false);
   });

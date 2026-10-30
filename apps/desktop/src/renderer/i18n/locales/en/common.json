@@ -1,5 +1,25 @@
 {
   "providerAccountUsage": {
+    "kimi": {
+      "refresh": "Refresh quota",
+      "usage": "View Kimi Code usage",
+      "error": {
+        "no-credentials": "No Kimi Code credentials are available. Connect this provider first.",
+        "auth": "Kimi Code rejected the credentials. Check the connection and retry.",
+        "rate-limited": "Kimi Code is limiting quota queries. Retry later.",
+        "network": "Cindy cannot reach Kimi Code. Check the network and retry.",
+        "server": "Kimi Code cannot return quota right now. Retry later.",
+        "invalid-response": "Kimi Code returned unreadable quota data. Retry later.",
+        "throttled": "Quota was just refreshed. Retry a bit later.",
+        "unknown": "Cindy cannot load Kimi Code quota. Retry later.",
+        "updating": "The connection changed. Refresh to retrieve its quota."
+      },
+      "limit_5h": "5 Hours",
+      "limit_7d": "Weekly",
+      "limit_month_total": "Monthly Total",
+      "limit_month_code": "Monthly Coding",
+      "stale": "Showing the last available quota. The latest update failed."
+    },
     "openDashboard": "Open DeepSeek usage dashboard",
     "deepSeek": {
       "balanceLine": "Balance {{total}} (topped up {{toppedUp}} / granted {{granted}})",
@@ -113,7 +133,11 @@
   "taskActionConfirmation": {
     "title": "Confirm session action",
     "once": "Review the target, action and full content below. Allow applies to this action once.",
-    "delegation": "Review this independent session’s objective and settings. Allow starts it and permits messages and stopping within this delegation until it ends. Answering questions, resuming a pause or changing models still requires a separate confirmation."
+    "remove": "This deletes automation. Review the target; approval applies only once.",
+    "permission": "This answers a permission request in another task on your behalf. Review the action; approval applies only once.",
+    "resume": "This resumes paused execution. Review the target; approval applies only once.",
+    "command": "This saves or runs a command on your computer outside the agent’s tool approval. Review the command and working folder; approval applies only once.",
+    "authority": "This creates or changes automation instructions that future runs will treat as standing authorization. Review the complete instructions; approval applies to this save."
   },
   "logSupport": {
     "title": "Logs and Feedback",
@@ -901,7 +925,10 @@
     }
   },
   "regionScreenshot": {
-    "editor": { "fitWidth": "Fit width", "loading": "Loading image…" },
+    "editor": {
+      "fitWidth": "Fit width",
+      "loading": "Loading image…"
+    },
     "moveToolbar": "Move toolbar left or right",
     "hint": "Click to select a window or element, or drag to select an area · Scroll to change scope · Space: full screen · C: copy color · Esc: exit",
     "hintWithLast": "Click to select a window or element, or drag to select an area · Scroll to change scope · Space: full screen · R: last area · C: copy color · Esc: exit",
@@ -1031,7 +1058,7 @@
   },
   "privacyExit": {
     "status": "This computer is being remotely controlled through Cindy",
-    "hint": "Click or press any key to disconnect…",
+    "hint": "To show this screen, turn off Computer privacy screen under Security on the device controlling it. Or click or press any key on this computer, then choose Disconnect.",
     "title": "Disconnect remote desktop?",
     "detail": "This will end remote control and restore this computer’s screen. The computer will lock if lock on exit is enabled.",
     "cancel": "Keep connected",
@@ -1407,6 +1434,8 @@
       "minutes": "{{m}}m"
     },
     "window": {
+      "kimiMonthTotal": "Monthly Total",
+      "kimiMonthCode": "Monthly Coding",
       "session": "{{hours}}-hour",
       "week": "Weekly",
       "scoped": "{{model}} weekly"
@@ -1675,6 +1704,7 @@
     }
   },
   "settings": {
+    "newChatDefaults": { "title": "Default permission for new tasks" },
     "imConnection": {
       "reconnect": "Reconnect",
       "savedNote": "Your saved binding is retained. You can retry the connection.",
@@ -3315,8 +3345,12 @@
         "modelsPending": "{{name}} is configured, but models could not be fetched. Retry in provider settings.",
         "busyWarning": "This change requires reloading the local Codex service and may interrupt {{count}} running sessions. Continue?",
         "close": "Close provider import",
-        "loadFailed": "This provider import link is invalid or has expired.",
-        "confirmFailed": "The provider could not be imported. Check the link or endpoint and try again.",
+        "fromFile": "Import from file",
+        "fileTooLarge": "The file exceeds 4 MiB. Reduce its size and try again.",
+        "fileInvalid": "This file is not a valid provider import configuration. Check the JSON format and configuration fields.",
+        "fileReadFailed": "The file could not be imported. Select it again and retry.",
+        "loadFailed": "This provider import is no longer valid. Open the link or select the file again.",
+        "confirmFailed": "The provider could not be imported. Check the configuration or endpoint and try again.",
         "oauthFailed": "The provider was added, but authorization did not finish. Try authorization again.",
         "done": "{{name}} was imported",
         "oauthDone": "{{name}} was added and authorized",
@@ -3340,6 +3374,47 @@
           "create": "A new local provider will be created as {{name}}.",
           "update": "The existing provider {{name}} will be updated.",
           "replace-key": "The locally stored API Key for {{name}} will be replaced."
+        },
+        "fileGuideDescription": "Cindy-format UTF-8 JSON files, up to 4 MiB.",
+        "fileGuideSteps": "Use the example to fill in the provider name, endpoint URL, API key and model details.",
+        "fileGuidePrivacy": "The example contains no real key. Keep files with your key private.",
+        "selectJsonFile": "Choose JSON file",
+        "downloadExample": "Download example",
+        "showFormat": "View format guide",
+        "hideFormat": "Collapse format guide",
+        "formatStructure": "The file contains one JSON object, without Base64, an import link or an extra wrapper. The fields below describe a custom API Key provider. Field names are case-sensitive; JSON does not allow comments.",
+        "formatIdentity": "Required. Set kind to \"custom\" and name to the provider name you want to display.",
+        "formatAuth": "Required. In this example, set method to \"apiKey\" and replace apiKey with the key from your provider.",
+        "formatEndpoint": "Required for each endpoint. protocol accepts \"openai-chat\", \"openai-responses\", \"anthropic-messages\" and \"google-generative-ai\". Set baseUrl to the full HTTP(S) endpoint URL; HTTPS is recommended.",
+        "formatTargets": "Optional engine array: \"claude-code\", \"codex\" or \"pi\". Omit it to match engines by protocol, or specify engines explicitly. Claude Code also supports OpenAI and Google protocols. The example enables only Pi.",
+        "formatModels": "Optional. Use model ID strings or objects with id (name is optional). Omit the list or leave it empty to fetch models after confirmation. A nonempty list skips automatic fetching.",
+        "formatMetadata": "Optional model fields: group is the model group, contextWindow is the context length, and maxOutputTokens is the output limit (both in tokens). Example numbers are illustrative; use the model’s actual capabilities.",
+        "formatEffort": "Optional model fields: efforts lists supported effort levels; defaultEffort selects one of them as the default. Remove both fields if unsure.",
+        "formatLimits": "Up to 8 endpoints per provider and 10,000 models per endpoint, within the 4 MiB file limit.",
+        "exampleTitle": "JSON example (same as the download)",
+        "fileGuidePrepare": "Prepare Your File",
+        "fileGuideReview": "Preview and Confirm",
+        "fileGuideReviewHint": "Import one or more providers. Review the file first; nothing is saved until you confirm.",
+        "formatConversion": "Convert exports from other clients to this format first.",
+        "downloadBatchExample": "Download Batch Example",
+        "formatBatch": "For a batch, use { \"providers\": [config1, config2] } with the single-provider structure below for each entry. Maximum 50 entries and 4 MiB total. Built-in key slots and explicit ids must not repeat. If any entry has an invalid structure, no import drafts are created for the file.",
+        "batchTitle": "Import Providers ({{count}})",
+        "batchNote": "Select providers to import together. Review individually to update an existing connection or authorize. Saved entries are kept if another entry fails.",
+        "batchImport": "Import Selected ({{count}})",
+        "batchProgress": "{{count}} of {{total}} added or updated",
+        "batchItem": "Configuration {{index}}",
+        "batchReviewOne": "Review Individually",
+        "batchStatus": {
+          "loading": "Loading preview…",
+          "ready": "Ready to import",
+          "saving": "Importing…",
+          "saved": "Imported",
+          "modelsPending": "Imported; retry model discovery in provider settings",
+          "failed": "Import failed; retry or review individually",
+          "manual": "Individual confirmation or authorization required",
+          "invalid": "Preview unavailable; check the configuration or select the file again",
+          "skipped": "Skipped; select the file again to import this entry",
+          "authorizationPending": "Connection added; complete authorization in provider settings"
         }
       },
       "order": {
@@ -3624,7 +3699,7 @@
           "modelsAutoNote": "Available models are discovered after sign-in"
         },
         "advanced": {
-          "label": "Advanced (models / headers)"
+          "label": "Advanced connection settings"
         },
         "runtimeFill": {
           "action": "Fill other runtimes",
@@ -3771,6 +3846,7 @@
           },
           "capabilityHint": "Uses capabilities declared by this provider. Image support falls back to model naming when undeclared.",
           "imageInput": "Image input",
+          "imageInputMixed": "Varies by engine",
           "supported": "Supported",
           "unsupported": "Not supported",
           "undeclared": "Not declared",
@@ -3782,16 +3858,16 @@
           "defaultEffort": "Default reasoning effort",
           "defaultEffortHint": "The initial effort for new tasks. You can still adjust it within a task.",
           "contextLimit": "Context limit",
-          "contextLimitHint": "Applies to all available engines for this model. Edit in whole K (1 K = 1,000 tokens); untouched values retain their precision. Saved changes apply to subsequent runs without interrupting a response. Actual capacity remains subject to the model service’s limits.",
+          "contextLimitHint": "Enter tokens directly, or use K or M (for example, 1000000 or 1M). Applies to all available engines for this model on subsequent runs. Actual capacity is still limited by the model service.",
           "contextLimitLocalMillionHint": "Native 256K (262,144 tokens), with optional expansion to 1M (1,000,000). If the service is running, restart it under Manage Service to apply changes; if stopped, they apply on next use. Longer inputs need more memory and take longer to process.",
-          "contextLimitAria": "Context limit (thousands of tokens)",
+          "contextLimitAria": "Context limit (tokens, K or M)",
           "compaction": {
             "title": "Automatic Compaction",
             "hint": "Compact context at the selected usage percentage. Lower values compact earlier; engine limits still apply.",
             "default": "{{pct}}% (Default)",
             "timing": "Applies to all available engines for this model and source on subsequent runs, without interrupting a response."
           },
-          "contextLimitRoute": "Current {{tokens}} tokens · 1 K = 1,000 tokens",
+          "contextLimitRoute": "Current {{tokens}} tokens",
           "contextLimitOverWindow": "Above the provider’s declared window; requests may fail.",
           "restoreDefault": "Restore default",
           "engines": "Engine support",
@@ -3818,7 +3894,7 @@
           "close": "Close",
           "maxOutput": "Maximum output",
           "catalogCapabilities": "Capabilities declared in the catalog",
-          "contextInvalid": "Enter a whole number from {{min}} to 100,000 K.",
+          "contextInvalid": "Enter {{min}}–{{max}} tokens; K and M are also accepted.",
           "contextWriteFailed": "Not saved. Please retry.",
           "contextMixed": "Existing harness settings differ. Editing or resetting applies to all harnesses.",
           "inputModalities": "Input types",
@@ -5257,7 +5333,7 @@
         "title": "Use my browser logins",
         "description": "The agent will open sites with your signed-in Chrome, Edge, or Brave accounts.",
         "toggleAria": "Use my browser logins",
-        "unavailableEmbedded": "Only available with the standalone external browser. The sidebar browser cannot load Chrome’s login files.",
+        "unavailableEmbedded": "Only applies to the standalone browser. Switching it off deletes the copied login files.",
         "confirmTitle": "Let the agent use your browser logins?",
         "confirmDescription": "The agent will be able to open sites with your signed-in accounts, including email, cloud drives, and work consoles. You can turn it off anytime; the copy will be deleted.",
         "confirmDescriptionMac": "The agent will be able to open sites with your signed-in accounts, including email, cloud drives, and work consoles. Reading Chrome’s login files also needs Full Disk Access. You can turn this off anytime; the copy will be deleted.",
@@ -5274,33 +5350,54 @@
       },
       "browserBackend": {
         "title": "Automation browser target",
-        "description": "Pick which browser the agent actually drives during automation. Login state is independent between the two modes.",
         "defaultTag": "Default",
         "resetToDefault": "Reset to default",
         "toggleFailed": "Failed to switch browser target",
         "health": {
-          "ready": "Embedded browser control is connected.",
-          "error": "Embedded browser connection failed: {{reason}}. Choose “Recover Browser” to rebuild the control connection.",
+          "ready": "Sidebar browser control is connected.",
+          "error": "Sidebar browser connection failed: {{reason}}. Choose “Recover Browser” to rebuild the control connection.",
           "reasons": {
             "disposing": "the previous shutdown has not completed",
-            "hostUnavailable": "the embedded browser interface is not ready or its connection was lost",
+            "hostUnavailable": "the sidebar browser interface is not ready or its connection was lost",
             "startFailed": "the replacement controller could not start",
             "statusFailed": "the controller status check failed",
-            "recoveryFailed": "the control connection could not be rebuilt"
+            "recoveryFailed": "the control connection could not be rebuilt",
+            "extensionDisconnected": "no browser extension is connected (install and enable the Cindy Chrome plugin and its extension)",
+            "pluginMissing": "the Cindy Chrome plugin is not installed or enabled"
           },
           "reconnect": "Reconnect Browser",
           "recover": "Recover Browser",
           "recovering": "Recovering Browser…",
-          "recovered": "Embedded browser reconnected",
-          "recoverFailed": "Failed to recover the embedded browser. Review the reason and try again."
+          "recovered": "Sidebar browser reconnected",
+          "recoverFailed": "Failed to recover the sidebar browser. Review the reason and try again.",
+          "userBrowserReady": "Your browser is connected: the agent can operate the browser you are using.",
+          "userBrowserError": "Your browser is unavailable: {{reason}}."
         },
         "rsbWebview": {
-          "title": "Sidebar embedded browser",
-          "description": "Agent operates inside the right-sidebar webview tabs. No popup window; sign-ins are kept separately."
+          "title": "Sidebar browser",
+          "description": "Opens pages in Cindy’s right sidebar so you can watch what the agent does. Sign-ins are kept separately."
         },
         "external": {
-          "title": "Standalone external browser",
-          "description": "Agent drives a dedicated Chrome window (vendored Playwright)."
+          "title": "Standalone browser",
+          "description": "A Chrome window just for Cindy, apart from the Chrome you use every day. Sign-ins are kept separately."
+        },
+        "userBrowser": {
+          "title": "My browser",
+          "description": "Works in the Chrome or Edge you are using, with your existing sign-ins. New pages open in a background window and stay out of your way."
+        },
+        "userBrowserSetup": {
+          "installPluginTitle": "Install the Cindy Chrome plugin",
+          "enablePluginTitle": "Enable the Cindy Chrome plugin",
+          "installExtensionTitle": "Add the Cindy extension to your browser",
+          "pluginBody": "My browser reaches your Chrome or Edge through the Cindy Chrome plugin and its browser extension. Install the plugin in Cindy first, then follow its prompt to add the extension.",
+          "extensionBody": "Add browser extension opens the Cindy extension’s store page in your browser; choose Add and this changes to connected on its own. Already added? Enable it in the browser’s extension settings.",
+          "installPlugin": "Install plugin",
+          "enablePlugin": "Enable",
+          "installExtension": "Add browser extension",
+          "updatePluginTitle": "Update the Cindy Chrome plugin",
+          "updatePluginBody": "The installed Cindy Chrome plugin is too old for My browser. Update it to the latest version, then follow its prompt to add the extension.",
+          "updatePlugin": "Update",
+          "storeOpened": "Opened the Cindy extension page in your browser. Choose Add to Chrome and it connects on its own."
         }
       },
       "android": {
@@ -5739,14 +5836,15 @@
           "showDetails": "Show Details",
           "check": {
             "checking": "Checking the server…",
+            "checkingHint": "Connecting to the server to check its system, ports and existing services.",
+            "idle": "After you choose a server, Cindy checks whether it can be deployed to.",
             "ready": "Ready to deploy",
             "blocked": "Can't deploy automatically",
             "recheck": "Check Again",
             "direct": "Ports 80 and 443 are free, so the relay uses them directly.",
             "nginx": "The relay connects through the server's existing Nginx and keeps your current sites.",
             "mine": "This server already runs a relay deployed from this computer. It is updated in place, and joined devices are not affected.",
-            "other": "This server runs a relay that wasn't deployed from this computer. Deploying removes it, and devices that joined it need to join again.",
-            "cleanup": "The unfinished deployment on {{server}} is cleaned up first."
+            "other": "This server runs a relay that wasn't deployed from this computer. Deploying removes it, and devices that joined it need to join again."
           },
           "running": {
             "deploy": "Deploying to your server…",
@@ -5754,7 +5852,7 @@
             "uninstall": "Removing the relay from your server…"
           },
           "done": {
-            "deploy": "Deployed. This computer now uses the relay on your server. Use Add device to bring in your phone and other computers.",
+            "deploy": "Deployed. Switch to it under Connection Route, then you can add devices.",
             "upgrade": "The relay on your server is now version {{version}}.",
             "uninstall": "Relay removed from your server"
           },
@@ -5778,7 +5876,6 @@
             "nginx-rollback": "Deployment did not complete. Restoring the previous Nginx configuration…"
           },
           "steps": {
-            "cleanup": "Clean up {{server}}",
             "connect": "Connect to the server",
             "check": "Check the server",
             "runtime": "Install the runtime",
@@ -5813,6 +5910,10 @@
           "deployingStep": "{{step}}…",
           "viewProgress": "View Progress",
           "resume": "Resume Deployment",
+          "rename": "Rename",
+          "renameHint": "Only changes the name shown on this computer. The server and joined devices keep the original name.",
+          "renameSave": "Save",
+          "renameCancel": "Cancel",
           "statusChecking": "Checking…",
           "statusOnline": "Online",
           "statusOffline": "Unreachable",
@@ -5827,14 +5928,15 @@
             "label": "Deployment steps",
             "form": "Choose Server",
             "deploy": "Deploy",
-            "done": "Add Devices"
+            "done": "Done"
           },
           "running": "Deploying to {{server}}…",
           "backgroundHint": "Closing this window doesn't stop the deployment",
           "background": "Continue in Background",
           "doneTitle": "{{name}} is ready",
-          "doneHint": "This computer now uses it. Scan with your phone, or send the link to another computer to join.",
-          "doneLater": "You can also add devices later under Connection Route",
+          "doneHint": "This computer is still on its current route. Choose Use This Route to switch, then add your phone and other computers.",
+          "doneLater": "You can also switch later under Connection Route",
+          "use": "Use This Route",
           "finish": "Done"
         },
         "manage": {
@@ -7369,9 +7471,11 @@
         "agentBackgroundDetail": "Does not require a click each time, but can only use sessions you previously connected to this plugin. Model charges may apply.",
         "agentTasksRequest": "Review task permission",
         "agentTasks": "Can create and manage its own Cindy tasks",
-        "agentTasksDetail": "Can send messages, read results and stop its own executions. Tasks remain visible to you. Uses this plugin’s AI settings and may incur model charges; does not grant access to other tasks.",
+        "agentTasksDetail": "The plugin can message, read results from, and stop its own tasks. Tasks remain visible to you, use the plugin’s AI settings, and may incur model charges. Agents in those tasks can use connected tools, including access to other tasks and account data, subject to task permissions and account ownership.",
+        "agentDelegation": "Can delegate scoped tasks to companions",
+        "agentDelegationDetail": "Companions may perform the delegated task under Auto review. Does not impersonate the owner or change companion permissions.",
         "agentTargets": "Can send messages to projects, existing tasks and companions",
-        "agentTargetsDetail": "Can view local project directories and task and companion names and IDs, create tasks in projects, and send text and images to existing tasks and companions. May trigger AI execution and model charges; does not grant access to other tasks’ history, settings or stop controls.",
+        "agentTargetsDetail": "Can view local project directories and task and companion names and IDs, create tasks in projects, and send text and images to existing tasks and companions. May trigger AI execution and model charges. This delivery API itself cannot read other tasks’ history, change their settings, or stop them.",
         "agentHiddenTasks": "Can create background tasks hidden from the task list",
         "agentHiddenTasksDetail": "Tasks this plugin creates can stay out of the task list, search and notifications. You can always view, open or show them in the task list from Background Tasks on this plugin’s page; uninstalling the plugin shows them again.",
         "agentErrand": "Create tasks, perform work, and read results",
@@ -7447,6 +7551,9 @@
         "sessionContextDetail": "Shares only location facts (session ID and project folder path) while it works for the current session — no file contents, and no file access is granted.",
         "preview": "Can open preview pages from the sites below in the sidebar browser",
         "previewDetail": "Only the sites listed below can be opened; every page it opens is attributed to this plugin.",
+        "browserExtension": "Lets its bundled browser extension connect to Cindy",
+        "browserExtensionDetail": "Only the extensions listed below can connect, over the local loopback address; Cindy hands requests the extension makes to this plugin.",
+        "browserExtensionPageControlDetail": "Only the extensions listed below can connect. The extension also implements page control: with “My browser” selected, the agent can read and operate pages in the browser you are using.",
         "nodeChildSpawn": "Its Node program can ask the host to start declared sub-processes from its package",
         "nodeChildSpawnDetail": "Only JS files declared inside its own package can be started (same local permissions as the main program); arbitrary commands cannot be executed. Sub-processes are closed together when the plugin is disabled or exits.",
         "skill": "Adds the skill \"{{name}}\" to your AI assistants",
@@ -8010,7 +8117,6 @@
         "versionContent": "Version content",
         "loadMoreVersions": "Load more versions",
         "notSubmitted": "Not submitted for review",
-        "submitVersion": "Submit {{version}} for review",
         "publishingVersion": "Version for Review · {{version}}",
         "refreshSummary": "Refresh publishing summary",
         "versionConsumedHint": "Once a submission is accepted for review, its version number cannot be reused, even after cancellation or rejection.",
@@ -9887,6 +9993,13 @@
     }
   },
   "bots": {
+    "avatarStatus": {
+      "awaiting": "Needs your confirmation",
+      "error": "Needs attention",
+      "running": "Working",
+      "done": "Completed",
+      "unread": "Unread"
+    },
     "workbench": {
       "ownedMark": "Belongs to {{names}}",
       "createdMark": "Created by {{names}}",
@@ -10256,6 +10369,72 @@
       "threadClosed": "This teammate conversation has ended · view only"
     },
     "groupChat": {
+      "mask": {
+        "toolAccess": "Tool access",
+        "catchup": {
+          "title": "Mentions of me",
+          "me": "Me",
+          "markAll": "Mark all as read",
+          "empty": "No unread mentions",
+          "thread": "Thread",
+          "main": "Group chat",
+          "answered": "Replied for you"
+        },
+        "title": "AI reply mode",
+        "settings": "AI reply settings",
+        "companion": "My teammate",
+        "choose": "Choose a teammate",
+        "enabled": "Automatic replies",
+        "triggerLabel": "Trigger",
+        "resumeAfter": "Resume after being away",
+        "start": "Start time",
+        "end": "End time",
+        "startManual": "Start now",
+        "stop": "Stop replies",
+        "todos": "Collect my to-dos",
+        "digestLabel": "Send me a digest",
+        "saving": "Saving…",
+        "saveError": "Couldn't save. Your previous settings still apply. Retry.",
+        "retry": "Retry",
+        "loading": "Loading your settings…",
+        "takeover": "I'll reply",
+        "resume": "Resume AI replies",
+        "status": {
+          "enabled": "Enabled",
+          "paused": "Paused",
+          "off": "Off",
+          "offline": "Offline",
+          "waiting": "Waiting",
+          "unbound": "Not set"
+        },
+        "detail": {
+          "paused": "You've taken over this exchange",
+          "off": "Automatic replies are off",
+          "offline": "Replies paused · Computer offline",
+          "waiting": "Waiting for you to start",
+          "unbound": "No teammate selected",
+          "enabled": "Your teammate is ready to reply for you."
+        },
+        "trigger": {
+          "always": "Always enabled",
+          "manual": "Manual",
+          "scheduled": "Scheduled"
+        },
+        "digest": {
+          "daily": "Daily",
+          "manual": "Manually"
+        },
+        "minutes": "{{count}} minutes",
+        "presence": "You're here · Resumes after {{minutes}} min away",
+        "scheduledWait": "Starts at {{time}}",
+        "attribution": "{{name}} replied for {{owner}}",
+        "digestNow": "Summarize now",
+        "digestWorking": "Summarizing…",
+        "digestSent": "Sent to your teammate chat",
+        "digestFailed": "Could not summarize. Try again.",
+        "digestEmpty": "Nothing new to summarize",
+        "joinSetup": "Set up AI replies after joining"
+      },
       "migrationPending": "Some earlier history is still uploading. It will retry automatically; this chat remains available.",
       "memberSeparator": ", ",
       "ownerOf": "{{name}}’s owner",
@@ -10601,8 +10780,10 @@
         "reactorsUnavailable_one": "Name unavailable for {{count}} more member",
         "reactorsUnavailable_other": "Names unavailable for {{count}} more members",
         "invite": "Invite to group",
+        "groupCreated": "Group Chat Created",
+        "inviteFriends": "Invite friends to join and work with your teammate.",
+        "generatingLink": "Generating invitation link…",
         "join": "Join group",
-        "inviteDescription": "People who accept the invitation join the group and can read its chat history.",
         "revokeLink": "Revoke this link",
         "revokeDescription": "This link will stop accepting new members. Other invitation links and existing members are unaffected.",
         "revokedLink": "This invitation link has been revoked.",
@@ -11562,6 +11743,7 @@
         "cancelled": "Cancelled"
       },
       "timeout": "Setup timed out",
+      "cancelled": "Plugin setup was cancelled; this call was not run.",
       "oauthCancelled": "Authorization was cancelled",
       "oauthFailed": "Authorization failed: {{detail}}",
       "pluginUninstalledDuringOauth": "The target plugin was uninstalled or is unavailable",
@@ -18319,10 +18501,5 @@
     "groupHint": "When off, all tasks routed through this group use standard speed, including Ultrafast.",
     "pending": "Some computers have not confirmed the setting. Keep them connected and update group computers that do not support this setting.",
     "saveFailed": "The setting may be saved, but some running tasks have not confirmed standard speed. Check the connection and retry."
-  },
-  "attachmentAccessConfirmation": {
-    "title": "Confirm Attachment Access",
-    "message": "Cindy cannot read this attachment. Select the original file to continue sending this message. Cancelling keeps your draft.",
-    "button": "Use Original File"
   }
 }
