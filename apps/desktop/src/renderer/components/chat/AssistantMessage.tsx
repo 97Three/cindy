@@ -352,6 +352,8 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   const actionBar = !isStreaming && showActionBar ? (
     <MessageActionBar
+      sessionId={currentSessionId}
+      clientId={messageClientId}
       createdAt={createdAt}
       copyText={richAnswerText(content)}
       copyLinkText={messageDeepLink}

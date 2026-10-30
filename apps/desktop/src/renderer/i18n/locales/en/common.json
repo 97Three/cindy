@@ -1704,7 +1704,9 @@
     }
   },
   "settings": {
-    "newChatDefaults": { "title": "Default permission for new tasks" },
+    "newChatDefaults": {
+      "title": "Default permission for new tasks"
+    },
     "imConnection": {
       "reconnect": "Reconnect",
       "savedNote": "Your saved binding is retained. You can retry the connection.",
@@ -4040,9 +4042,7 @@
         "metaOAuth": "Subscription account",
         "metaApiKey": "API key",
         "metaNoAuth": "Local / self-hosted · no authentication",
-        "customTitle": "Custom endpoint",
-        "customMeta": "Connect any OpenAI / Anthropic compatible source",
-        "pickHint": "Choose the account or service to connect.",
+        "customAction": "Not listed? Add custom",
         "oauthDesc": "Sign in through your browser. No API key required.",
         "deviceOAuthDesc": "Authorize on the provider's verification page with a one-time device code",
         "authorizeInBrowser": "Authorize in browser",
@@ -7941,8 +7941,9 @@
         "usesExplanation": "Cumulative shared tool calls across all releases in the authorized audience. Your calls below count only this account on this computer."
       },
       "contribution": {
-        "unreadReview": "New review result",
+        "unreadReview": "New plugin result",
         "viewReviewResult": "View review result for {{version}}",
+        "viewMarketResult": "View Market Result",
         "anonymous": "Publish anonymously",
         "anonymousHint": "Hide public attribution for the entire plugin. When disabled, each version shows the original author’s name saved when it was submitted.",
         "anonymousAuthorOnly": "Only the original author can change this",
@@ -8038,6 +8039,7 @@
           "rejected": "Returned",
           "enabled": "Published",
           "disabled": "Unlisted",
+          "archived": "Archived",
           "current_changed": "Community Version Changed",
           "revoked": "Version Revoked",
           "cancelled": "Cancelled"
@@ -18655,6 +18657,23 @@
     "groupHint": "When off, all tasks routed through this group use standard speed, including Ultrafast.",
     "pending": "Some computers have not confirmed the setting. Keep them connected and update group computers that do not support this setting.",
     "saveFailed": "The setting may be saved, but some running tasks have not confirmed standard speed. Check the connection and retry."
+  },
+  "usageCost": {
+    "title": "Cost details",
+    "conversation": "Conversation",
+    "additional": "Additional fees",
+    "unknownModel": "Model not recorded",
+    "estimate": "Estimated value",
+    "charged": "Usage charge",
+    "loading": "Loading details…",
+    "unavailable": "Details are unavailable for this record.",
+    "explanation": "Grouped by model and channel. Subscription value is an estimate, not an extra charge. Only recorded costs are included; older records may have incomplete details.",
+    "source": {
+      "subscription": "Subscription",
+      "cindy-ai": "Cindy AI",
+      "provider": "API provider",
+      "unknown": "Channel not recorded"
+    }
   },
   "performanceTrace": {
     "title": "Performance Trace",
