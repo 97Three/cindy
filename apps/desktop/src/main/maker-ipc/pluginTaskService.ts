@@ -66,8 +66,8 @@ export class PluginTaskError extends Error {
     this.name = 'PluginTaskError';
   }
 }
-/** Bounds legacy receipts before parsing; oversized authority never becomes a missing plan. */
-export function readPluginTaskPlanReceipt(payload: string): { teamPlan?: PluginTeamPlan; settledLabels?: string[]; route?: PluginTaskRoute; [key: string]: unknown } {
+/** Bounds stored batch metadata before parsing; existing receipt fields remain intact. */
+export function readPluginTaskPlanReceipt(payload: string): { teamPlan?: PluginTeamPlan; route?: PluginTaskRoute; [key: string]: unknown } {
   if (typeof payload !== 'string' || payload.length > PLUGIN_TASK_RECEIPT_MAX_JSON_CHARS)
     throw new PluginTaskError('INVALID_REQUEST', 'Task receipt exceeds the supported size');
   const data = JSON.parse(payload);
@@ -421,13 +421,6 @@ export function createPluginTaskService(deps: PluginTaskServiceDeps) {
       deps.assertAuthorized(pluginId);
       await save(row,{...data,teamPlan:plan});
       return {ok:true};
-    }),
-    settleWorkerLabel: (pluginId: string, taskId: string, label: string) => exclusive(async () => {
-      await ownTask(pluginId,taskId);
-      const row = (await deps.store.get(taskId))!;
-      const data = readPluginTaskPlanReceipt(row.payload);
-      if (!data.teamPlan?.items.some((x: {label:string})=>x.label===label)) return fail('INVALID_REQUEST','Worker is not in team plan');
-      await save(row,{...data,settledLabels:[...new Set([...(data.settledLabels||[]),label])]});
     }),
     assertDispatch,
     setModel: (pluginId: string, request: { taskId: string; expectedRevision: number; route: PluginTaskRoute | 'plugin-default' }) => exclusive(async () => {

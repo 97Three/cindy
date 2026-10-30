@@ -17,7 +17,7 @@ import {
 import { assertBotTaskCoordination, classifySessionMessagePurpose, coordinationInput } from './botTaskCoordination.js';
 import type { BotTaskCoordination, SessionMessagePurpose } from '../../shared/botTaskCoordination.js';
 import { openSession, setSessionOpeningModelAdmission } from '../localDb/sessionOpening.js';
-import { isPluginTaskPermissionAllowed, assertPluginTaskResult, createPluginTaskService, readPluginTaskPlanReceipt, PluginTaskError, type PluginTaskService } from './pluginTaskService.js';
+import { isPluginTaskPermissionAllowed, assertPluginTaskResult, createPluginTaskService, PluginTaskError, type PluginTaskService } from './pluginTaskService.js';
 import { resolvePluginWorkerDirectory } from './pluginWorkerDirectory.js';
 import { PluginWriteAccessGate } from './pluginWriteAccessGate.js';
 import { pluginWorkerCompletedAt } from './pluginWorkerCompletion.js';
@@ -14545,7 +14545,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const admission = (view: typeof task) => JSON.stringify([view.resolvedConfig, view.permissionMode, view.planModeEnabled, view.workingDir]);
         const expectedAdmission = admission(task);
         assertPluginWorkerAutoAuthorized(pluginId, task);
-        const result = await startOrcaTeamForCaller(task.taskId, 'auto', async (activationStarted) => {
+        const result = await startOrcaTeamForCaller(task.taskId, undefined, async (activationStarted) => {
           if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
           const fresh = await service.get(pluginId, task.taskId);
           if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
@@ -14578,13 +14578,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           const epoch = getCurrentDbClientSnapshot();
           await service.get(pluginId,request.taskId);
           if (!epoch) throw new PluginTaskError('HOST_NOT_READY','Task storage unavailable',true);
-          const [record] = await epoch.client.drizzle.select({id:orcaWorkers.id,sessionId:orcaWorkers.sessionId,label:orcaWorkers.label}).from(orcaWorkers).innerJoin(orcaTeams,eq(orcaWorkers.teamId,orcaTeams.id)).where(and(eq(orcaWorkers.id,request.workerId),eq(orcaTeams.leadSessionId,request.taskId))).limit(1);
+          const [record] = await epoch.client.drizzle.select({id:orcaWorkers.id,sessionId:orcaWorkers.sessionId}).from(orcaWorkers).innerJoin(orcaTeams,eq(orcaWorkers.teamId,orcaTeams.id)).where(and(eq(orcaWorkers.id,request.workerId),eq(orcaTeams.leadSessionId,request.taskId))).limit(1);
           if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED','Account changed');
           await service.get(pluginId,request.taskId);
           if (!record) throw new PluginTaskError('TASK_NOT_FOUND','Worker not found');
-          const planReceipt = await createPluginTaskStore(epoch.client).get(request.taskId);
-          const plan = planReceipt ? readPluginTaskPlanReceipt(planReceipt.payload).teamPlan : undefined;
-          if (plan && !plan.items.some((item: {label: string}) => item.label === record.label)) throw new PluginTaskError('INVALID_REQUEST', 'Worker is not in team plan');
           const [row] = await epoch.client.drizzle.select().from(sessions).where(eq(sessions.id,record.sessionId)).limit(1);
           if (!row || row.status === 'deleted') throw new PluginTaskError('TASK_NOT_FOUND','Worker not found');
           const validate = async () => {
@@ -14596,12 +14593,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           };
           if (row.status === 'archived') {
             await validate();
-            if (plan) await service.settleWorkerLabel(pluginId,request.taskId,record.label!);
             return {ok:true,workerId:record.id};
           }
           const result = await orcaTeamService.archiveWorker({callerLeadSessionId:request.taskId,workerId:record.id,onlyIfIdle:true,beforeArchive:validate});
           assertPluginTaskResult(result, 'Worker could not be released');
-          if (result.ok && plan) await service.settleWorkerLabel(pluginId,request.taskId,record.label!);
           return result;
         });
       }

@@ -271,9 +271,9 @@ text 与 context 合计不超过 64000；tasks.send 的 text 上限仍为 32768�
 
 原有 `cindy.tasks` 的归属限制不变。先调用 `capabilities()` 获取实际支持操作。当前仅支持本插件创建的本机普通任务：
 `models`、`create`、`get`、`setModel`、`list`、`send`、`getRun`、`listRuns`、`readMessages`、`cancel`、`setHidden`。
-可对自有任务调用 `startTeam({taskId})` 启用 Orca 主任务，并用 `getTeam({taskId})` 读取实际协同状态。通过此插件 API 启用团队需经用户授权 Auto，Worker 使用 Auto；任务中的 Agent 使用公共 Orca 工具时走普通权限流程。
+可对自有任务调用 `startTeam({taskId})` 启用 Orca 主任务，并用 `getTeam({taskId})` 读取实际协同状态。通过此插件 API 启用团队需经用户授权 Auto；开启团队不创建 Worker，也不改写全局 Worker 权限偏好，后续 Worker 使用普通 Orca 创建权限流程。
 插件直接调用的 `cindy.tasks` 仍只能管理本插件创建的任务；这些任务及其 Worker 中的 Agent 则按普通任务权限使用 `cindy_helper`、`cindy_memory` 等已连接工具，包括账号级历史、跨任务操作和个人插件投稿。协调仍可使用独立 Orca 工具，插件通过 `readMessages/getTeam` 读取自己的结果。任务创建来源不参与 Agent 工具授权；插件消息标签不额外收窄任务权限，原本要求用户当场输入的操作仍按通用规则判断。卸载撤销归属后，插件不能继续管理旧任务；保留任务中的 Agent 仍按任务权限工作。撤销不保证停止已接受执行，也不构成通用执行沙箱。
-若插件需要记录批次与结算 Worker，可在首次派发前调用 `setTeamPlan({taskId,plan:{concurrency,task,items}})`；每项包含 `label, workingDir, route, task`。`task` 是插件自己的说明，不是用户原话，也不会改变 Agent 的 Auto 审阅或工具权限。计划登记后不可改写；`releaseWorker` 按计划标签结算。没有计划的任务及 Worker 照常使用普通任务权限。
+若插件需要记录批次，可在首次派发前调用 `setTeamPlan({taskId,plan:{concurrency,task,items}})`；每项包含 `label, workingDir, route, task`。`task` 是插件自己的说明，不是用户原话，也不会改变 Agent 的 Auto 审阅或工具权限。计划登记后不可改写。`releaseWorker({taskId,workerId,completedAt})` 按 Worker ID 和成功完成凭据归档自有团队中的空闲 Worker，改名不影响释放；插件按 Worker ID 保存自己的结果和批次进度。没有计划的任务及 Worker 照常使用普通任务权限。
 
 插件直接调用 `cindy.tasks` 时仍需当前插件批准和自有任务归属。Agent 使用公共 Orca 工具创建、调度或管理 Worker 时，按普通任务的账号、权限档、团队成员关系和操作凭证检查；任务创建来源、插件输入标签、插件计划与卸载状态不额外设限。Worker 目录、模型和运行位置沿普通 Orca 规则，目录不是持续的 OS 隔离保证。
 

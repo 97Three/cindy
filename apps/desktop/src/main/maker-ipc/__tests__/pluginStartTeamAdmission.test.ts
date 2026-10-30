@@ -123,6 +123,9 @@ describe('plugin team activation uses the native lifecycle compensation', () => 
 
   async function exercise(existing: boolean, stage: typeof stages[number], change: typeof changes[number]) {
     let epoch = {}, unavailable = false, authorized = true, teamActive = existing;
+    // PR #7824: the real plugin startTeam + lifecycle must preserve a user's
+    // Full access default. Earlier Auto-only fixtures hid the global preference write (unit).
+    let workerPreference: 'auto' | 'bypassPermissions' = 'bypassPermissions';
     const cfg = { permissionMode: 'auto', workingDir: '/answer' };
     let role: 'lead' | null = existing ? 'lead' : null;
     let vendorActive = existing;
@@ -150,7 +153,8 @@ describe('plugin team activation uses the native lifecycle compensation', () => 
     const deps: OrcaLifecycleDeps = {
       getActiveTeamByLead: vi.fn(async () => { changeAt('lookup'); return existing ? { id: 'team', leadSessionId: 'task' } : null; }),
       createActiveTeam: vi.fn(async () => { teamActive = true; changeAt('create'); return { id: 'team', leadSessionId: 'task' }; }),
-      isOrphanedTeamInit: vi.fn(async () => false), getWorkerPermissionMode: () => 'auto', setWorkerPermissionMode: vi.fn(),
+      isOrphanedTeamInit: vi.fn(async () => false), getWorkerPermissionMode: () => workerPreference,
+      setWorkerPermissionMode: vi.fn(mode => { workerPreference = mode; }),
       createWorkerInTeam: vi.fn(), dispatchWorkerTask: vi.fn(),
       markTeamEnded: vi.fn(async () => { teamActive = false; }),
       setSessionOrcaRole: vi.fn(async (_id, next) => { role = next; task.revision++; if (next === 'lead') changeAt('role'); }),
@@ -161,13 +165,15 @@ describe('plugin team activation uses the native lifecycle compensation', () => 
     };
     const callbacks = { service, getCurrentDbClientSnapshot: () => epoch, PluginTaskError, assertPluginTaskResult, isPluginTaskPermissionAllowed,
       isPluginTaskAuthorized: () => authorized, getPluginTaskDefaults: () => ({ ...cfg }),
-      assertLeadCollabProjectEnabled: async () => {}, getWorkerPermissionModeFromCreationPrefs: () => 'auto',
+      assertLeadCollabProjectEnabled: async () => {}, getWorkerPermissionModeFromCreationPrefs: () => workerPreference,
       startOrcaTeamWithPermissionGate, orcaWorkerPermissionConfirmBridge: { request: vi.fn() }, t: (key: string) => key,
       orcaLifecycleService: createOrcaLifecycleService(deps) };
     const run = new Function(...Object.keys(callbacks), wired)(...Object.values(callbacks));
     const operation = run('plugin', { kind: 'startTeam', taskId: 'task' });
     if (change === 'healthy') {
-      await expect(operation).resolves.toMatchObject({ ok: true, teamId: 'team' });
+      await expect(operation).resolves.toMatchObject({ ok: true, teamId: 'team', workerPermissionMode: 'bypassPermissions' });
+      expect(workerPreference).toBe('bypassPermissions');
+      expect(deps.setWorkerPermissionMode).not.toHaveBeenCalled();
       expect(teamActive).toBe(true); expect(role).toBe('lead'); expect(vendorActive).toBe(true);
       expect(epoch).toBe(originalEpoch);
     } else {

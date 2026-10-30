@@ -263,7 +263,7 @@ Claude Code 适配层 `toSdkModelString` 会按目录窗口自动追加 `[1m]`�
 
 插件新增的 tasks 能力首次使用时复用宿主权限确认。拒绝、超时或确认失败后，同一账号代际和安装修订在当前宿主进程内不再自动弹窗；插件重载或重复调用不能清除该状态。用户可在本机插件详情权限区点击“确认任务权限”重新进入原确认流程，点击不等于批准；在途确认不并发，账号、安装修订或发起窗口改变时旧结果无效。旧插件的既有功能、启用态、凭证与设置不变。此显式入口不向插件页面或 device-link 暴露；重启宿主后可重新首次询问。
 
-逻辑页可调用 `cindy.tasks.requestWriteAccess({taskId, mode?})`。省略 mode 保留旧行为（acceptEdits，仅限未开始执行的任务）；`mode: auto` 请求宿主原生确认，为空闲自有任务启用 Auto。插件不能替用户确认，该接口不接受 Full access。插件直接调用 `tasks.startTeam` 仍须核对自己的任务、当前插件批准和 Auto 权限，并以 Auto 创建 Worker；此约束只属于插件 API，不附加到任务中的 Agent 工具调用。返回 granted 与更新后的 task/revision，插件应继续原批次。
+逻辑页可调用 `cindy.tasks.requestWriteAccess({taskId, mode?})`。省略 mode 保留旧行为（acceptEdits，仅限未开始执行的任务）；`mode: auto` 请求宿主原生确认，为空闲自有任务启用 Auto。插件不能替用户确认，该接口不接受 Full access。插件直接调用 `tasks.startTeam` 仍须核对自己的任务、当前插件批准和 Auto 权限，开启团队本身不创建 Worker，也不改写全局 Worker 权限偏好；后续 Worker 沿用普通 Orca 创建权限流程。返回 granted 与更新后的 task/revision，插件应继续原批次。
 
 ### 主任务协调评测
 
@@ -275,7 +275,7 @@ Claude Code 适配层 `toSdkModelString` 会按目录窗口自动追加 `[1m]`�
 
 首次协同计划检查落盘 user 消息与任务开始/结束时间；清空或回退对话不会抹除执行事实。目录核验到保存复用普通发送锁，同计划重放仍保持幂等。
 
-`tasks.startTeam({taskId})` 为本插件拥有的普通任务启用 Orca Lead，复用现有协同入口及 Worker 权限确认。插件不能指定 Worker 权限绕过确认。确认返回后检查原修订；团队查询、创建和 Lead 激活后复用同一准入回调，核对原账号、插件归属/批准、当前 Auto/Plan、任务路由与目录以及插件配置目录。正常成为 Lead 会改变包含角色的修订，原生阶段改比这些准入事实，不把本次角色变化误判为用户变更。`tasks.getTeam({taskId})` 只投影所属团队的 Worker 身份、实际模型配置、目录、队列和终态；不会将 Lead 一轮完成解释为整个团队完成。
+`tasks.startTeam({taskId})` 为本插件拥有的普通任务启用 Orca Lead，复用现有协同入口并沿用当前 Worker 创建权限偏好，不隐式改写偏好。插件不能指定 Worker 权限绕过确认。确认返回后检查原修订；团队查询、创建和 Lead 激活后复用同一准入回调，核对原账号、插件归属/批准、当前 Auto/Plan、任务路由与目录以及插件配置目录。正常成为 Lead 会改变包含角色的修订，原生阶段改比这些准入事实，不把本次角色变化误判为用户变更。`tasks.getTeam({taskId})` 只投影所属团队的 Worker 身份、实际模型配置、目录、队列和终态；不会将 Lead 一轮完成解释为整个团队完成。
 
 协同启动要求任务仍为 active；创建或激活中的归档、撤权、降权及配置变化会拒绝本次调用。新建团队沿原 lifecycle 补偿标为 failed，清理 Lead 角色及运行态选项，不删除任务或成果；复用已有团队时只拒绝本次调用，不结束原团队。检查与尽力补偿均处于原生操作的 drain 跟踪内；存储补偿失败仍返回失败，不保证跨账号数据库补偿，也不宣称最终复核与后续跨进程归档形成事务。
 
@@ -287,11 +287,11 @@ getTeam 的 completedAt 可由宿主落盘的 turnCompleted 终态恢复：仅�
 
 ### 已登记协同计划与释放
 
-`setTeamPlan({taskId,plan:{concurrency,items}})` 在本插件自己的创建收据中冻结计划。首次登记必须早于输入派发和 Worker 创建（包括创建预留）；同一计划的幂等重放不受此限制。每项含唯一 label、workingDir 和精确 route；重复设置必须一致。未登记计划的存量任务仍按普通任务权限执行。Worker 创建复用原子 reservation；计划作为插件的批次记录，不作为公共 Agent 工具的权限来源。已结算 label 持久保留，不因归档再次变成可派发项。
+`setTeamPlan({taskId,plan:{concurrency,items}})` 在本插件自己的创建收据中冻结计划。首次登记必须早于输入派发和 Worker 创建（包括创建预留）；同一计划的幂等重放不受此限制。每项含唯一 label、workingDir 和精确 route；重复设置必须一致。未登记计划的存量任务仍按普通任务权限执行。Worker 创建复用原子 reservation；计划作为插件的批次记录，不作为公共 Agent 工具的权限来源。历史收据中的计划与 settledLabels 保持原样兼容，不再用它们限制 Worker 创建或归档。
 
 计划保存目录准入返回的 canonical 路径，后续别名改链不会把冻结计划改成新目标；这不构成 OS 目录对象隔离。首版仅用于可信本地工作区，不防御同权限进程在最后校验后、harness 使用 cwd 前恶意替换目录对象；路径复核或 JS 锁不能消除该窗口，不把另建 OS 隔离后端列为本接口的发布前提。插件直接调用任务 API 时仍检查归属和权限；Agent 工具按当前任务权限检查。`getTeam` 先恢复 Lead 的持久输入队列，恢复失败或未确认时拒绝返回空闲；最终读取实时 Lead 状态，不以启动后的空内存队列报告批次完成。
 
-`releaseWorker({taskId,workerId,completedAt})` 仅释放本插件 Lead 内、结束时间仍匹配、无活动/排队输入的 Worker。它与 getTeam 共用宿主成功终态判据，不能以 Worker 更新时间或失败轮结束时间替代交卷凭据。调用方应先保存交卷快照和评分。复用 Orca 的归档路径、transition 锁和发送锁；持锁后再次核对 completedAt 与归属。有计划时必须在归档前确认标签归属；无计划的兼容调用不写标签结算。已有发送锁时直接拒绝释放，不等待而形成锁反转；只有归档成功才结算 label。拒绝正在发送或运行的 Worker，保留任务历史与作答文件。
+`releaseWorker({taskId,workerId,completedAt})` 仅释放本插件 Lead 内、结束时间仍匹配、无活动/排队输入的 Worker。它与 getTeam 共用宿主成功终态判据，不能以 Worker 更新时间或失败轮结束时间替代交卷凭据。调用方应先保存交卷快照和评分。复用 Orca 的归档路径、transition 锁和发送锁；持锁后再次核对 completedAt 与归属。Worker 按稳定的 workerId 与所属团队识别，改名不影响释放，也不要求匹配计划标签。已有发送锁时直接拒绝释放，不等待而形成锁反转；成功后以 Worker 归档状态记录释放，已归档重试仍复核完成凭据。拒绝正在发送或运行的 Worker，保留任务历史与作答文件。
 
 `getTeam` 增加包含创建预留的 capacity 快照（advisory；准入仍由创建事务裁决）、逐 Worker 的等待确认状态、首条输入/首条执行消息时间、最近轮结束时间，以及 Worker/Lead 分列的 session-total 用量。`host-message-window` 是可观测作答窗口，不是精确模型计算时长。无确切 USD 金额时返回 null，不把订阅估值或其他币种直接当美元。
 
@@ -308,7 +308,7 @@ DB 中下一条输入的 armed 值为 false 不代表原生执行已退出 Plan�
 
 插件创建的任务与普通任务共用 Host Auto 审阅、MCP 快捷放行、Ask/acceptEdits 逐次确认、Full access 与 Plan Mode 判据。Agent 审阅只使用当前任务权限和原有用户指令证据；插件计划中的 `task`、收据、任务创建来源及消息标签不构成额外授权或限制。Codex 原生 `on-request`、`workspace-write` / `auto_review` 仍按原生机制执行；任务说明不是 OS 沙箱。
 
-计划的顶层 `task` 及每项 `task` 仍可作为插件自己的批次说明，每段最多 8000 字符。完整计划 `JSON.stringify(plan).length` 最多 1,048,576 个 UTF-16 字符；超限返回 `INVALID_REQUEST`。计划整体不可变，`releaseWorker` 仍以计划标签结算插件批次。缺少计划不影响任务中的 Agent 使用普通 Auto 权限。
+计划的顶层 `task` 及每项 `task` 仍可作为插件自己的批次说明，每段最多 8000 字符。完整计划 `JSON.stringify(plan).length` 最多 1,048,576 个 UTF-16 字符；超限返回 `INVALID_REQUEST`。计划整体不可变，`releaseWorker` 按 workerId 归档，不再维护标签结算；插件按 Worker 身份记录自己的批次进度。缺少计划不影响任务中的 Agent 使用普通 Auto 权限。
 
 卸载撤销插件后续 API 控制，不保证停止已派发的原生工作；用户可使用原有任务停止入口。
 
