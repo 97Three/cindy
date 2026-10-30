@@ -49,6 +49,28 @@ describe('Responses tool history normalization', () => {
     expect(normalizeRepeatedResponseToolCallIds(valid)).toBeNull();
   });
 
+  it('avoids colliding with an existing call ID when creating a duplicate suffix', () => {
+    const body = {
+      input: [
+        { type: 'function_call', call_id: 'call_retry', name: 'write', arguments: '{}' },
+        { type: 'function_call_output', call_id: 'call_retry', output: 'first' },
+        { type: 'function_call', call_id: 'call_retry', name: 'write', arguments: '{}' },
+        { type: 'function_call_output', call_id: 'call_retry', output: 'second' },
+        { type: 'function_call', call_id: 'call_retry__cindy_dup_2', name: 'read', arguments: '{}' },
+        { type: 'function_call_output', call_id: 'call_retry__cindy_dup_2', output: 'independent' },
+      ],
+    };
+
+    const normalized = normalizeRepeatedResponseToolCallIds(body);
+
+    expect(normalized?.input).toEqual([
+      body.input[0], body.input[1],
+      { ...body.input[2], call_id: 'call_retry__cindy_dup_3' },
+      { ...body.input[3], call_id: 'call_retry__cindy_dup_3' },
+      body.input[4], body.input[5],
+    ]);
+  });
+
   it('provides a byte-body repair for the exact 400 recovery path', () => {
     const repaired = normalizeRepeatedResponseToolCallIdsFromBody(Buffer.from(JSON.stringify({
       input: [
