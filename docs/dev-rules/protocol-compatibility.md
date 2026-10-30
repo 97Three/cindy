@@ -277,6 +277,10 @@ Renderer → Main 输入附带可选 `projectDir`，旧输入缺字段时回落�
 旧缓存缺字段时继续回落到执行目录。移动菜单由共享组件按同一归属规则禁用当前项目，
 避免把仍在 checkout 执行的任务误移回项目根目录；不新增缓存或存储版本。
 
+跨电脑复制未另选目标项目时，沿用既有 destination 描述传递源项目的相对路径，
+优先读取显式归属（不折叠已登记的 worktree 项目）；旧任务仍从 cwd 推断。
+归属只决定目标项目位置，打包与恢复仍使用实际执行目录，不扩充复制协议或权限。
+
 本机 Agent 工具的新建模式要求 `project_path`；`list_projects` / `create_project`
 保留 `working_dir` 并新增 `project_path` 回执。旧调用缺参数明确失败，不静默新建。
 `send_to_session` 的既有任务投递不要求项目，跨电脑投递合同不变。
