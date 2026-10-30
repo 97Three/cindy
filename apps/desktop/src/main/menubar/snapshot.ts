@@ -630,6 +630,7 @@ class Builder {
         reserve: false,
         when: this.balanceWhen(source, days, roomy),
         whenLevel: 'normal',
+        resetsAtMs: source.quota?.resetsAtMs ?? null,
         accessibilityLabel: source.quota
           ? this.t('a11y.quota', { amount })
           : days === null

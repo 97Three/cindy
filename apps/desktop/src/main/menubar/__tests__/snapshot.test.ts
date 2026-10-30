@@ -312,6 +312,15 @@ describe('buildUsageWidgetSnapshot', () => {
     expect(snapshot?.strings['durationShort.daysHours']).toContain('{{d}}');
   });
 
+  it('carries a period quota reset so the widget counts it down like the subscriptions', () => {
+    const quota: MenubarSourceInput = {
+      kind: 'balance', id: 'cindy', logoSvg: MENUBAR_CINDY_LOGO, available: 20, fullAmount: 40, burnPerDay: null,
+      observedAtMs: NOW, currency: 'USD', quota: { resetsAtMs: NOW + DAY, todaySpend: null },
+    };
+    const snapshot = buildUsageWidgetSnapshot(buildMenubarView(input([quota])), NOW, () => null);
+    expect(snapshot?.sources[0]).toMatchObject({ logo: 'cindy', resetsAtMs: NOW + DAY });
+  });
+
   it('has nothing to show behind the sign-in gate', () => {
     const view = buildMenubarView({ ...input([]), gate: 'sign-in' });
     expect(buildUsageWidgetSnapshot(view, NOW, () => null)).toBeNull();
