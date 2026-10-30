@@ -398,3 +398,15 @@ it('serves the executor SDK and importmap without widening CSP', async () => {
   supplyMcpAppDocument(document);
   expect((await handler(new Request('cindy-mcp-app://untrusted-id-view/__cindy/sdk/ext-apps/app.js'))).status).toBe(404);
 });
+
+// Lead R7: parse once at publication, never on each resource GET.
+it('prepares each supplied document once for repeated resource requests', async () => {
+  const sdk = await import('@cindy/maker-shared/mcp-app-sdk');
+  const prepare = vi.spyOn(sdk, 'withHostAppSdk');
+  let handler!: (request: Request) => Promise<Response> | Response;
+  vi.spyOn(protocol, 'handle').mockImplementation((_scheme, callback) => { handler = callback; });
+  registerMcpAppProtocol();
+  supplyMcpAppDocument({ ...document, html: '<script type="module">import "@modelcontextprotocol/ext-apps"</script>', sdk: hostAppSdkAsset });
+  for (let i = 0; i < 2; i++) expect((await handler(new Request('cindy-mcp-app://untrusted-id-view/resource'))).status).toBe(200);
+  expect(prepare).toHaveBeenCalledTimes(1);
+});

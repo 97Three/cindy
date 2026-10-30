@@ -588,12 +588,12 @@ SDK 重新读取并恢复草稿；再次发送必须重新经过完整倒计时�
 
 ## MCP Apps
 
-McpAppDocument 增量增加可选的 sdk: { version, source }，由执行电脑从与 AppBridge 同版本的
-官方依赖提供，只随临时 View 转发，不写入卡片。新查看端按原 CSP 在页面同源地址提供 SDK；
+McpAppDocument 增量增加可选的 sdk: { source }，由执行电脑从与 AppBridge 同版本的
+官方依赖提供，仅 HTML 使用裸模块名且未自带映射时随临时 View 转发，不写入卡片。新查看端按原 CSP 在页面同源地址提供 SDK；
 旧查看端忽略此字段，旧 Host 缺字段时保留原文档行为，自带 SDK 的页面继续工作。
 接近远程响应大小上限的旧文档保留原预算，省略可选 SDK；依赖宿主 SDK 的页面须预留其体积。
 完整宿主 SDK 能力需执行端和查看端都升级，插件 minCindyVersion 暂以 0.1.123-beta 占位、发布前核定。
-重复 ui/initialize 仅更换当前 View 的文档代次：取消旧请求、审批并丢弃旧回复，不重放初始工具输入/结果，
+重复 ui/initialize 仅更换当前 View 的文档代次：取消旧请求、审批并丢弃旧回复，已发出的初始工具输入/结果不重放，未发出的在初始化后送达，
 保留卡片、已授予的附件投影与最新 hostContext；不改变安装批准、持久记录、channel 或手机原生配置。
 
 标准 MCP Apps 使用 `io.modelcontextprotocol/ui` 扩展及官方 `2026-01-26` 协议。

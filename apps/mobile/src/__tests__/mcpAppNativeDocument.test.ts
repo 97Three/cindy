@@ -186,8 +186,8 @@ it("waits for every server to stop before removing its files, even when one stop
 
 // Unit: real JS manifest/cache path; old-host cases do not cover SDK routing or cleanup.
 it('routes the executor SDK in the App origin and cleans it up with the View', async () => {
-  const sdk = { version: 'executor-version', source: 'export class App {}' };
-  const view = await prepareMcpAppNativeDocument({ ...document, sdk }, 'native-key');
+  const sdk = { source: 'export class App {}' };
+  const view = await prepareMcpAppNativeDocument({ ...document, html: '<script type="module">import "@modelcontextprotocol/ext-apps";window.app=true</script>', sdk }, 'native-key');
   expect(state.start.mock.calls[0][4]).toContainEqual(['__cindy/sdk/ext-apps/app.js', '3', 'text/javascript']);
   const root = 'file:///cache/mcp-apps/' + '01'.repeat(24);
   expect(state.files.get(root + '/3')).toBe(sdk.source);
@@ -197,4 +197,12 @@ it('routes the executor SDK in the App origin and cleans it up with the View', a
   expect(state.start.mock.calls[0][3]).toBe(document.csp);
   await view.close();
   expect(state.removed).toContain(root);
+});
+
+// Lead R6 cross-end compatibility: invalid optional SDK bytes must not add a broken route.
+it('ignores malformed optional SDK metadata on the phone', async () => {
+  const view = await prepareMcpAppNativeDocument({ ...document, sdk: { source: 7 } } as never, 'native-key');
+  expect(state.start.mock.calls[0][4]).toEqual([['initialize.html', '2', 'text/html'], ['resource.html', '0', 'text/html']]);
+  expect(state.files.get('file:///cache/mcp-apps/' + '01'.repeat(24) + '/0')).toBe(document.html);
+  await view.close();
 });
