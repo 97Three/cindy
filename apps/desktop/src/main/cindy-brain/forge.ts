@@ -1,4 +1,5 @@
 import { getPluginToolUi } from '@cindy/plugin-protocol';
+import { MCP_APPS_MAX_BYTES } from '../mcp-apps/protocol.js';
 import interactiveExampleManifest from '../../../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages/minimal/ghost.json?raw';
 import interactiveExampleMain from '../../../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages/minimal/main.js?raw';
 import interactiveExampleHtml from '../../../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages/minimal/ui/page.html?raw';
@@ -975,7 +976,8 @@ async function buildGhostPackage(
     }
 
     // 3) 清单声明的入口文件必须真实在场(打包期拦,别等装入后沙箱 404)。
-    const mustExist: string[] = (getPluginToolUi(manifest)?.resources ?? []).map(resource => resource.file);
+    const uiFiles = new Set((getPluginToolUi(manifest)?.resources ?? []).map(resource => resource.file));
+    const mustExist: string[] = [...uiFiles];
     if (manifest.entry) mustExist.push(manifest.entry);
     if (manifest.node?.entry) {
       mustExist.push(manifest.node.entry, ...(manifest.node.entries ?? []));
@@ -992,6 +994,9 @@ async function buildGhostPackage(
         // stat 会判"在场"而 walk 不收集它,装出的包缺入口、运行期才 404。
         const st = await fs.promises.lstat(path.join(dir, rel));
         if (!st.isFile()) throw new Error('not a file');
+        if (uiFiles.has(rel) && st.size > MCP_APPS_MAX_BYTES) {
+          return { ok: false, errorCode: 'MANIFEST_INVALID', message: `交互页面 ${rel} 超过 ${MCP_APPS_MAX_BYTES} 字节上限` };
+        }
       } catch {
         return { ok: false, errorCode: 'ENTRY_MISSING', message: `清单声明的文件不存在:${rel}` };
       }

@@ -1,4 +1,5 @@
 import { getPluginToolUi, pluginHasToolUi } from '@cindy/plugin-protocol';
+import { MCP_APPS_MAX_BYTES } from '../mcp-apps/protocol.js';
 import { findFeatureRetirement } from '../../shared/featureRetirements.js';
 import { FeatureRetirementStore } from './featureRetirementStore.js';
 import fs from 'node:fs';
@@ -250,6 +251,7 @@ export interface ApprovedGhostInstallEvidence {
 }
 
 interface ParsedGhostPackage {
+  unavailableUiResources?: true;
   manifest: GhostManifest;
   approvedManifest: GhostManifest;
   canonicalManifest: GhostManifest;
@@ -262,6 +264,11 @@ interface ParsedGhostPackage {
   iconDataUrl?: string;
   allEntries: JSZip.JSZipObject[];
   prefix: string;
+}
+
+/** Keep canonical metadata intact; only the runtime/consent projection loses invalid UI. */
+function withoutToolUi(manifest: GhostManifest): GhostManifest {
+  return { ...manifest, mcpApps: { ...(manifest.mcpApps as Record<string, unknown>), ui: undefined } };
 }
 
 function cloneParsedGhostPackage(parsed: ParsedGhostPackage): ParsedGhostPackage {
@@ -2962,7 +2969,7 @@ export class GhostManager {
         const enabled = disabledMarkers
           ? receipt.enabled && disabledMarkers.get(dir) === false
           : this.effectiveEnabled(dir, receipt.enabled);
-        const localizedManifest = this.localizeApprovedManifest(receipt);
+        const localizedManifest = this.projectAvailableToolUi(receipt, dir);
         const retired = findFeatureRetirement(receipt.manifest);
         let retirement: InstalledGhost['retirement'];
         if (retired) {
@@ -2994,7 +3001,7 @@ export class GhostManager {
           ...(retirement ? { retirement } : {}),
           approval: { state: 'approved', revision: receipt.revision },
           ...(receipt.taskCapabilityApproved === true ? { taskCapabilityApproved: true as const } : {}),
-          ...(receipt.uiCapabilityApproved === true ? { uiCapabilityApproved: true as const } : {}),
+          ...(receipt.uiCapabilityApproved === true && pluginHasToolUi(localizedManifest) ? { uiCapabilityApproved: true as const } : {}),
           ...(receipt.targetCapabilityApproved === true ? { targetCapabilityApproved: true as const } : {}),
           ...(receipt.delegationCapabilityApproved === true ? { delegationCapabilityApproved: true as const } : {}),
           trust: receipt.trust,
@@ -3123,6 +3130,24 @@ export class GhostManager {
     this.options.onChanged?.(this.list());
   }
 
+  /** Invalid historical pages only narrow runtime UI; never invalidate the installed receipt. */
+  private projectAvailableToolUi(receipt: GhostInstallReceipt, dir: string): GhostManifest {
+    const manifest = this.localizeApprovedManifest(receipt);
+    const ui = getPluginToolUi(manifest);
+    if (!ui) return manifest;
+    if (receipt.unavailableUiResources) return withoutToolUi(manifest);
+    try {
+      for (const resource of ui.resources) {
+        const file = resolveGhostContentPathSync(dir, resource.file, { expect: 'file', label: 'plugin App HTML' });
+        if (fs.lstatSync(file).size > MCP_APPS_MAX_BYTES) return withoutToolUi(manifest);
+      }
+      return manifest;
+    } catch {
+      // Missing historical pages never invalidate the plugin or its ordinary tools.
+      return withoutToolUi(manifest);
+    }
+  }
+
   /** receipt 内的 base manifest + 已批准 locale 资源；不再读取可变安装目录。 */
   private localizeApprovedManifest(receipt: GhostInstallReceipt): GhostManifest {
     const requestedLocale = this.options.getLocale?.();
@@ -3220,8 +3245,9 @@ export class GhostManager {
       const relId = this.approvalRelIdFor(id);
       if (!relId) return false;
       const approval = this.readApproval(relId);
+      const installed = findInstalledGhostByInstanceId(this.list(), id);
       if (!isCurrent() || approval.state !== 'approved' || approval.receipt.revision !== revision ||
-        !pluginHasToolUi(approval.receipt.manifest) || !findInstalledGhostByInstanceId(this.list(), id)?.enabled) return false;
+        !installed?.enabled || !pluginHasToolUi(installed.manifest)) return false;
       await this.receiptStore.write({ ...approval.receipt, uiCapabilityApproved: true }, {
         relId, assertCurrent: () => { if (!isCurrent()) throw new Error('Page capability approval expired'); },
       });
@@ -3646,18 +3672,31 @@ export class GhostManager {
         },
       };
     }
+    let unavailableUiResources = false;
     for (const resource of getPluginToolUi(v.manifest)?.resources ?? []) {
       const entry = zip.file(`${prefix}${resource.file}`);
-      if (!entry || entry.dir || isZipSymbolicLink(entry)) {
+      let valid = Boolean(entry && !entry.dir && !isZipSymbolicLink(entry));
+      if (valid) {
+        try {
+          await readZipEntryBufferWithLimit(entry!, MCP_APPS_MAX_BYTES, `plugin App ${resource.file}`);
+        } catch {
+          valid = false;
+        }
+      }
+      if (!valid) {
+        if (manifestSource === 'stored-release') {
+          unavailableUiResources = true;
+          break;
+        }
         return {
           rejection: {
             code: 'file-invalid',
-            reason: `清单声明了 mcpApps.ui.resources,但压缩包内缺少普通文件 ${resource.file}`,
+            reason: `mcpApps.ui.resources 文件 ${resource.file} 必须是包内普通文件且不超过 ${MCP_APPS_MAX_BYTES} 字节`,
           },
         };
       }
     }
-    let localizedManifest = withGhostResolvedLocale(v.manifest, locale);
+    let localizedManifest = withGhostResolvedLocale(unavailableUiResources ? withoutToolUi(v.manifest) : v.manifest, locale);
     const localeResources: Record<string, GhostManifestLocaleResource> = {};
     if (v.manifest.locales !== undefined) {
       const resources = new Map<string, GhostManifestLocaleResource>();
@@ -3875,6 +3914,7 @@ export class GhostManager {
     }
 
     const parsed: ParsedGhostPackage = {
+      ...(unavailableUiResources ? { unavailableUiResources: true as const } : {}),
       manifest: localizedManifest,
       approvedManifest: v.manifest,
       canonicalManifest: v.manifest,
@@ -3911,7 +3951,7 @@ export class GhostManager {
       taskCapabilityApproved?: true;
       targetCapabilityApproved?: true;
       uiCapabilityApproved?: boolean;
-      /** Main-only provenance: immutable market release, never local package authoring. */
+      /** Main-only provenance: immutable market release or shared installed snapshot, never local authoring. */
       manifestSource?: 'stored-release';
       delegationCapabilityApproved?: true;
       initiallyEnabled?: boolean;
@@ -3940,7 +3980,7 @@ export class GhostManager {
       taskCapabilityApproved?: true;
       targetCapabilityApproved?: true;
       uiCapabilityApproved?: boolean;
-      /** Main-only provenance: immutable market release, never local package authoring. */
+      /** Main-only provenance: immutable market release or shared installed snapshot, never local authoring. */
       manifestSource?: 'stored-release';
       delegationCapabilityApproved?: true;
       initiallyEnabled?: boolean;
@@ -4112,9 +4152,10 @@ export class GhostManager {
       try {
         receipt = createGhostInstallReceipt({
           manifest: approvedManifest,
+          ...(parsed.unavailableUiResources ? { unavailableUiResources: true as const } : {}),
           localeResources,
           enabled: initiallyEnabled,
-          ...(opts?.uiCapabilityApproved === true && pluginHasToolUi(approvedManifest) ? { uiCapabilityApproved: true as const } : {}),
+          ...(opts?.uiCapabilityApproved === true && pluginHasToolUi(manifest) ? { uiCapabilityApproved: true as const } : {}),
           ...(opts?.taskCapabilityApproved === true && approvedManifest.agent?.tasks === true ? {taskCapabilityApproved:true as const} : {}),
           ...(opts?.targetCapabilityApproved === true && approvedManifest.agent?.tasks === true && approvedManifest.agent.targets === true ? {targetCapabilityApproved:true as const} : {}),
           ...(opts?.delegationCapabilityApproved === true && approvedManifest.agent?.tasks === true && approvedManifest.agent.targets === true && approvedManifest.agent.delegation === true ? {delegationCapabilityApproved:true as const} : {}),
@@ -4242,7 +4283,7 @@ export class GhostManager {
       taskCapabilityApproved?: true;
       targetCapabilityApproved?: true;
       uiCapabilityApproved?: boolean;
-      /** Main-only provenance: immutable market release, never local package authoring. */
+      /** Main-only provenance: immutable market release or shared installed snapshot, never local authoring. */
       manifestSource?: 'stored-release';
       delegationCapabilityApproved?: true;
       expectedInstalledApproval: string;
@@ -4268,7 +4309,7 @@ export class GhostManager {
       taskCapabilityApproved?: true;
       targetCapabilityApproved?: true;
       uiCapabilityApproved?: boolean;
-      /** Main-only provenance: immutable market release, never local package authoring. */
+      /** Main-only provenance: immutable market release or shared installed snapshot, never local authoring. */
       manifestSource?: 'stored-release';
       delegationCapabilityApproved?: true;
       expectedInstalledApproval: string;
@@ -4541,9 +4582,10 @@ export class GhostManager {
         ...(retainedSimulatorRelId ? { simulatorPreviousRelId: retainedSimulatorRelId } : {}),
         ...(previousRelId && opts.simulatorMarketRelease ? { simulatorMarketRelease: opts.simulatorMarketRelease } : {}),
         manifest: approvedManifest,
+        ...(parsed.unavailableUiResources ? { unavailableUiResources: true as const } : {}),
         localeResources,
         enabled,
-        ...((opts.uiCapabilityApproved === true || (opts.uiCapabilityApproved !== false && archiveId === undefined && approvalResult.state === 'approved' && approvalResult.receipt.uiCapabilityApproved === true)) && pluginHasToolUi(approvedManifest) ? { uiCapabilityApproved: true as const } : {}),
+        ...((opts.uiCapabilityApproved === true || (opts.uiCapabilityApproved !== false && archiveId === undefined && approvalResult.state === 'approved' && approvalResult.receipt.uiCapabilityApproved === true)) && pluginHasToolUi(manifest) ? { uiCapabilityApproved: true as const } : {}),
         ...((opts.taskCapabilityApproved === true || (archiveId === undefined && approvalResult.state === 'approved' && approvalResult.receipt.taskCapabilityApproved === true)) &&
           approvedManifest.agent?.tasks === true ? { taskCapabilityApproved: true as const } : {}),
         ...((opts.targetCapabilityApproved === true || (archiveId === undefined && approvalResult.state === 'approved' && approvalResult.receipt.targetCapabilityApproved === true)) &&

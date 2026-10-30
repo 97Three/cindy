@@ -7366,6 +7366,7 @@ async function updateLocalGhostPackageLocked(
   installOrigin?: 'agent-forge',
   isCurrent?: () => boolean,
   expectedSourceChanged?: boolean,
+  manifestSource?: 'stored-release',
 ): Promise<InstalledGhost> {
   if (isCurrent?.() === false) {
     throwIpcError(
@@ -7442,6 +7443,7 @@ async function updateLocalGhostPackageLocked(
         instanceId,
         () =>
           manager.update(cindyFilePath, {
+          manifestSource,
           taskCapabilityApproved: confirmedTaskCapability(consent, previousGhost, inspected.manifest),
           targetCapabilityApproved: confirmedTaskCapability(consent, previousGhost, inspected.manifest, 'targets'),
           uiCapabilityApproved: confirmedUiCapability(consent, previousGhost, inspected.manifest),
@@ -8296,7 +8298,7 @@ export async function installLocalPluginSharePackage(file: string, options: {
   const owner = captureGhostMutationOwner();
   options.assertCurrent();
   const manager = getGhostManager();
-  const inspected = await manager.inspect(file);
+  const inspected = await manager.inspect(file, 'stored-release');
   options.assertCurrent();
   if ('rejection' in inspected) throwInstallError(inspected.rejection);
   if (inspected.packageSha256 !== options.sha256 || inspected.canonicalManifest.id !== options.ghostId ||
@@ -8319,9 +8321,9 @@ export async function installLocalPluginSharePackage(file: string, options: {
   try {
     if (existing) return await withGhostInstallLock(inspected.manifest.id, () => updateLocalGhostPackageLocked(
       manager, file, inspected, options.sha256, approval!, installedGhostStoragePart(existing), consent, undefined,
-      () => { options.assertCurrent(); return true; }, updateSource?.sourceChanged));
+      () => { options.assertCurrent(); return true; }, updateSource?.sourceChanged, 'stored-release'));
     return await installAndDock(manager, file, { ghostId: inspected.manifest.id, namespace: null, enable: true,
-      registrySource: 'manual', expectedPackageSha256: options.sha256,
+      registrySource: 'manual', manifestSource: 'stored-release', expectedPackageSha256: options.sha256,
       consent: { decision: consent, manifest: inspected.manifest }, beforePackagePlacement: options.assertCurrent });
   } finally { release(); }
 }

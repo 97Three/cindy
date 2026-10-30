@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import JSZip from 'jszip';
 import type { InstalledGhost } from '../../../shared/ghost.js';
 import type { GhostInstallConsentRequest } from '../../../shared/ghostInstallConsent.js';
 import { findInstalledGhostForDeliveryTarget, installedGhostStoragePart } from '../../../shared/pluginIdentity.js';
@@ -185,11 +186,13 @@ it.each(['new', 'update', 'cancel', 'cancel-update', 'different-bytes', 'owner-c
 
 // Same production entry with real archive inspection, placement and receipt.
 // This distinguishes a returned UI object from an actually committed manual install.
-it('commits a shared archive with its exact digest as an approved manual installation', async () => {
+it.each([false, true])('commits a shared archive with its exact digest (missing historical page=%s)', async (missingPage) => {
   const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-share-install-')));
   try {
     const file = await writeTestCindyPackage(path.join(directory, 'shared.cindy'), {
       schemaVersion: 3, minCindyVersion: '99.0.0', id: 'shared-example', name: 'Shared Example', version: '1.0.0', entry: 'main.js',
+      tools: [{ name: 'run', description: 'Run' }],
+      ...(missingPage ? { mcpApps: { ui: { resources: [{ uri: 'ui://page', file: 'missing.html' }], tools: { run: { resourceUri: 'ui://page' } } } } } : {}),
     });
     const sha256 = createHash('sha256').update(await fs.readFile(file)).digest('hex');
     const manager = new GhostManager({ getRootDir: () => path.join(directory, 'plugins'),
@@ -211,6 +214,8 @@ it('commits a shared archive with its exact digest as an approved manual install
     const receipt = manager.readApprovedInstallReceipt(installedGhostStoragePart(installed));
     expect(receipt?.packageSha256).toBe(sha256);
     expect(effectiveInstallOrigin(receipt!)).toBe('manual');
+    expect(pluginHasToolUi(installed.manifest)).toBe(false);
+    expect(pluginToolVisible(installed.manifest, 'run', 'model')).toBe(true);
     expect(await fs.readFile(path.join(installed.dir, 'main.js'), 'utf8')).toBe('// ok\n');
   } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
@@ -320,4 +325,92 @@ it('keeps remote share installation separate from later page capability approval
     active = false; service?.invalidate();
     await fs.rm(directory, { recursive: true, force: true });
   }
+});
+
+// #7924 / 4420763926 compatibility: real stored-release install/update and startup
+// scan must keep ordinary tools enabled when a syntactically valid UI loses HTML.
+// Existing legacy tests cover malformed declarations only. Unit: absent package page.
+it.each(['missing', 'directory', 'symlink', 'oversized'] as const)('installs and updates historical releases with %s pages without granting UI', async (kind) => {
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-missing-ui-')));
+  try {
+    const raw = { schemaVersion: 3, minCindyVersion: '0.1.122-beta', id: 'historical-ui', name: 'Historical', version: '1.0.0',
+      entry: 'main.js', tools: [{ name: 'run', description: 'Original tool' }],
+      mcpApps: { ui: { resources: [{ uri: 'ui://run', file: 'missing.html' }], tools: { run: { resourceUri: 'ui://run' } } } } };
+    const options: GhostManagerOptions = { getRootDir: () => path.join(directory, 'plugins'),
+      mutateSnapshot: async ({ parentDir, ...request }) => runGhostSnapshotWorkerRequest(request, parentDir) };
+    const manager = new GhostManager(options);
+    const historicalPackage = async (filename: string, version: string) => {
+      const file = await writeTestCindyPackage(path.join(directory, filename), { ...raw, version });
+      if (kind !== 'missing') {
+        const zip = await JSZip.loadAsync(await fs.readFile(file));
+        if (kind === 'directory') zip.folder('missing.html');
+        else if (kind === 'symlink') zip.file('missing.html', 'other.html', { unixPermissions: 0o120777 });
+        else zip.file('missing.html', 'x'.repeat(4 * 1024 * 1024 + 1));
+        await fs.writeFile(file, await zip.generateAsync({ type: 'nodebuffer', platform: 'UNIX' }));
+      }
+      return file;
+    };
+    const file = await historicalPackage('historical.cindy', '1.0.0');
+    const inspected = await manager.inspect(file, 'stored-release');
+    expect(inspected).not.toHaveProperty('rejection');
+    if ('rejection' in inspected) throw new Error(inspected.rejection.reason);
+    expect(pluginHasToolUi(inspected.manifest)).toBe(false);
+    expect(inspected.canonicalManifest.mcpApps).toEqual(raw.mcpApps);
+    expect(await manager.inspect(file)).toHaveProperty('rejection.code', 'file-invalid');
+    const result = await manager.install(file, { manifestSource: 'stored-release', registrySource: 'market', uiCapabilityApproved: true });
+    if ('rejection' in result) throw new Error(result.rejection.reason);
+    const token = ghostInstallApprovalToken(result.ghost.approval);
+    const next = await historicalPackage('update.cindy', '2.0.0');
+    expect(await manager.update(next, { expectedInstalledApproval: token, uiCapabilityApproved: true })).toHaveProperty('rejection.code', 'file-invalid');
+    const updated = await manager.update(next, { manifestSource: 'stored-release', expectedInstalledApproval: token, uiCapabilityApproved: true });
+    expect(updated).toHaveProperty('ghost');
+    const restarted = new GhostManager(options);
+    const ghost = restarted.list()[0]!;
+    expect(ghost).toMatchObject({ enabled: true, approval: { state: 'approved' }, manifest: { version: '2.0.0', tools: raw.tools } });
+    expect(pluginHasToolUi(ghost.manifest)).toBe(false);
+    expect(hasGhostUiPermission(ghost)).toBe(false);
+    expect(pluginToolVisible(ghost.manifest, 'run', 'model')).toBe(true);
+    const id = installedGhostStoragePart(ghost);
+    expect(restarted.readApprovedInstallReceipt(id)?.manifest.mcpApps).toEqual(raw.mcpApps);
+    if (ghost.approval.state !== 'approved') throw new Error('expected approved install');
+    expect(await restarted.approveUiCapability(id, ghost.approval.revision, () => true)).toBe(false);
+    expect(await fs.readFile(path.join(ghost.dir, 'main.js'), 'utf8')).toBe('// ok\n');
+    if (kind === 'missing') {
+      const repaired = await writeTestCindyPackage(path.join(directory, 'fixed.cindy'), { ...raw, version: '3.0.0' },
+        { 'main.js': '// ok\n', 'missing.html': '<p>Now available</p>' });
+      const fixed = await restarted.update(repaired, { manifestSource: 'stored-release', expectedInstalledApproval: ghostInstallApprovalToken(ghost.approval) });
+      if ('rejection' in fixed) throw new Error(fixed.rejection.reason);
+      expect(pluginHasToolUi(fixed.ghost.manifest)).toBe(true);
+      expect(hasGhostUiPermission(fixed.ghost)).toBe(false);
+      expect(restarted.readApprovedInstallReceipt(id)?.unavailableUiResources).toBeUndefined();
+      if (fixed.ghost.approval.state !== 'approved') throw new Error('expected approved update');
+      expect(await restarted.approveUiCapability(id, fixed.ghost.approval.revision, () => true)).toBe(true);
+    }
+
+  } finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
+
+// Startup must also ignore a missing UI in an older receipt with no availability
+// marker. Keep existing approval and ordinary tools; no forced migration/reinstall.
+it('keeps an already installed plugin enabled when its page is absent at startup', async () => {
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'cindy-old-ui-')));
+  try {
+    const raw = { schemaVersion: 3, minCindyVersion: '0.1.122-beta', id: 'old-ui', name: 'Old', version: '1.0.0', entry: 'main.js',
+      tools: [{ name: 'run', description: 'Run' }],
+      mcpApps: { ui: { resources: [{ uri: 'ui://run', file: 'page.html' }], tools: { run: { resourceUri: 'ui://run', visibility: ['app'] } } } } };
+    const file = await writeTestCindyPackage(path.join(directory, 'old.cindy'), raw, { 'main.js': '// ok\n', 'page.html': '<p>Page</p>' });
+    const options: GhostManagerOptions = { getRootDir: () => path.join(directory, 'plugins'),
+      mutateSnapshot: async ({ parentDir, ...request }) => runGhostSnapshotWorkerRequest(request, parentDir) };
+    const manager = new GhostManager(options);
+    const installed = await manager.install(file, { uiCapabilityApproved: true });
+    if ('rejection' in installed) throw new Error(installed.rejection.reason);
+    expect(hasGhostUiPermission(installed.ghost)).toBe(true);
+    await fs.unlink(path.join(installed.ghost.dir, 'page.html'));
+    const reloaded = new GhostManager(options).list()[0]!;
+    expect(reloaded).toMatchObject({ enabled: true, approval: installed.ghost.approval });
+    expect(hasGhostUiPermission(reloaded)).toBe(false);
+    expect(pluginHasToolUi(reloaded.manifest)).toBe(false);
+    expect(pluginToolVisible(reloaded.manifest, 'run', 'model')).toBe(true);
+    expect(await fs.readFile(path.join(reloaded.dir, 'main.js'), 'utf8')).toBe('// ok\n');
+  } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });

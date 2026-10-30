@@ -129,6 +129,8 @@ export interface GhostInstallReceipt {
   taskCapabilityApproved?: true;
   targetCapabilityApproved?: true;
   uiCapabilityApproved?: true;
+  /** Host-only: historical archive UI entries were absent, non-regular or oversized. Canonical manifest stays intact. */
+  unavailableUiResources?: true;
   delegationCapabilityApproved?: true;
   schemaVersion: typeof RECEIPT_SCHEMA_VERSION;
   id: string;
@@ -1271,6 +1273,8 @@ export function createGhostInstallReceipt(input: {
   taskCapabilityApproved?: true;
   targetCapabilityApproved?: true;
   uiCapabilityApproved?: true;
+  /** Host-only: historical archive UI entries were absent, non-regular or oversized. Canonical manifest stays intact. */
+  unavailableUiResources?: true;
   delegationCapabilityApproved?: true;
   manifest: GhostManifest;
   localeResources: Record<string, GhostManifestLocaleResource>;
@@ -1302,6 +1306,7 @@ export function createGhostInstallReceipt(input: {
     enabled: input.enabled,
     trust: input.trust,
     skillContentSha256: input.skillContentSha256,
+    ...(input.unavailableUiResources === true ? { unavailableUiResources: true as const } : {}),
     ...(input.uiCapabilityApproved === true ? { uiCapabilityApproved: true as const } : {}),
     ...(input.taskCapabilityApproved === true ? { taskCapabilityApproved: true as const } : {}),
     ...(input.targetCapabilityApproved === true ? { targetCapabilityApproved: true as const } : {}),
@@ -1517,6 +1522,7 @@ function validateReceipt(
       enabled: value.enabled,
       trust,
       skillContentSha256,
+      ...(value.unavailableUiResources === true ? { unavailableUiResources: true as const } : {}),
       ...(value.uiCapabilityApproved === true ? { uiCapabilityApproved: true as const } : {}),
       ...(value.taskCapabilityApproved === true ? { taskCapabilityApproved: true as const } : {}),
       ...(value.targetCapabilityApproved === true ? { targetCapabilityApproved: true as const } : {}),

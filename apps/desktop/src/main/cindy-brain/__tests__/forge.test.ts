@@ -2550,6 +2550,9 @@ it('packs the shared page, defaults its version floor, and rejects missing HTML 
       : { ok: false, errorCode: 'MANIFEST_INVALID' });
   }
   await fs.promises.writeFile(path.join(dir, 'ghost.json'), JSON.stringify(base));
+  // #4420969498: a new author package must not exceed the runtime page budget.
+  await fs.promises.writeFile(path.join(dir, 'ui/planner.html'), 'x'.repeat(4 * 1024 * 1024 + 1));
+  await expect(packGhostDir(dir)).resolves.toMatchObject({ ok: false, errorCode: 'MANIFEST_INVALID' });
   await fs.promises.unlink(path.join(dir, 'ui/planner.html'));
   await expect(packGhostDir(dir)).resolves.toMatchObject({ ok: false });
 });
