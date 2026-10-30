@@ -1,4 +1,40 @@
 import type { LinuxCloseBehavior } from '../shared/windowBehavior.js';
+import { hideWindowToWindowsTray, type WindowsTrayWindow } from './windowsTrayLifecycle.js';
+
+/** Hyprland has no native minimize surface, including for XWayland windows. */
+export function isHyprlandDesktop(env: NodeJS.ProcessEnv): boolean {
+  const desktop =
+    env.XDG_CURRENT_DESKTOP?.trim() ||
+    env.XDG_SESSION_DESKTOP?.trim() ||
+    env.DESKTOP_SESSION?.trim();
+  if (desktop) {
+    return desktop.split(':').some((name) => name.trim().toLowerCase() === 'hyprland');
+  }
+  return Boolean(env.HYPRLAND_INSTANCE_SIGNATURE?.trim());
+}
+
+/** Keep all main-window minimize entry points on the same compositor policy. */
+export function minimizeDesktopWindow(
+  window: LinuxCloseBehaviorWindow & WindowsTrayWindow,
+  options: {
+    platform: NodeJS.Platform;
+    env: NodeJS.ProcessEnv;
+    isMainWindow: boolean;
+    ensureTray(): boolean;
+    onTrayError(): void;
+  },
+): void {
+  if (options.platform !== 'linux' || !options.isMainWindow || !isHyprlandDesktop(options.env)) {
+    window.minimize();
+    return;
+  }
+  if (!options.ensureTray()) {
+    options.onTrayError();
+    return;
+  }
+  // This helper only leaves fullscreen and hides; it does not create a Windows tray.
+  hideWindowToWindowsTray(window);
+}
 
 /** BrowserWindow surface needed for Linux's keep-running close action. */
 export interface LinuxCloseBehaviorWindow {
@@ -10,9 +46,10 @@ export function applyLinuxMainWindowCloseBehavior(
   window: LinuxCloseBehaviorWindow,
   behavior: LinuxCloseBehavior,
   quit: () => void,
+  keepRunning: () => void = () => window.minimize(),
 ): void {
   if (behavior === 'minimize') {
-    window.minimize();
+    keepRunning();
   } else {
     quit();
   }

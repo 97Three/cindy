@@ -1055,6 +1055,7 @@ import { createLinuxTrayController } from './linuxTrayLifecycle.js';
 import {
   applyLinuxMainWindowCloseBehavior,
   createCloseBehaviorPromptFallbackController,
+  minimizeDesktopWindow,
   requestMainWindowCloseBehavior,
 } from './mainWindowCloseBehavior.js';
 import {
@@ -3511,6 +3512,22 @@ function showNativeWindowsCloseBehaviorPrompt(): WindowsCloseBehavior {
   return choice === 1 ? 'quit' : 'tray';
 }
 
+function minimizeWindow(window: BrowserWindow): void {
+  minimizeDesktopWindow(window, {
+    platform: process.platform,
+    env: process.env,
+    isMainWindow: window === mainWindowRef,
+    ensureTray: () => linuxTray.ensure(),
+    onTrayError: () => {
+      dialog.showMessageBoxSync(window, {
+        type: 'error',
+        title: t('settings.windowBehavior.trayError.title'),
+        message: t('settings.windowBehavior.trayError.message'),
+      });
+    },
+  });
+}
+
 function showNativeLinuxCloseBehaviorPrompt(): LinuxCloseBehavior {
   const options = {
     type: 'question' as const,
@@ -3576,7 +3593,12 @@ const linuxClosePromptFallback = createCloseBehaviorPromptFallbackController(
     applyBehavior: (behavior) => {
       const mainWindow = mainWindowRef;
       if (mainWindow && !mainWindow.isDestroyed()) {
-        applyLinuxMainWindowCloseBehavior(mainWindow, behavior, () => app.quit());
+        applyLinuxMainWindowCloseBehavior(
+          mainWindow,
+          behavior,
+          () => app.quit(),
+          () => minimizeWindow(mainWindow),
+        );
       } else {
         app.quit();
       }
@@ -4095,7 +4117,7 @@ const createWindow = () => {
       return;
     }
     // Windows and Linux ask once on first close, then reuse the persisted choice.
-    // The keep-running action follows each platform: tray on Windows, minimize on Linux.
+    // Hyprland has no native minimize surface, so it uses the Linux tray.
     event.preventDefault();
     if (process.platform === 'win32') {
       const behavior = readWindowBehaviorSettings().windowsCloseBehavior;
@@ -4112,7 +4134,12 @@ const createWindow = () => {
         linuxClosePromptFallback.request();
         return;
       }
-      applyLinuxMainWindowCloseBehavior(mainWindow, behavior, () => app.quit());
+      applyLinuxMainWindowCloseBehavior(
+        mainWindow,
+        behavior,
+        () => app.quit(),
+        () => minimizeWindow(mainWindow),
+      );
       return;
     }
     app.quit();
@@ -4120,8 +4147,7 @@ const createWindow = () => {
   void ensureMainAppPresence('main-window-created', mainWindow);
   // Keep diagnostics reachable from the tray even before login or if the renderer fails.
   if (process.platform === 'win32') ensureWindowsTray();
-  // Tray construction is not proof that a Linux panel hosts the icon. Keep the
-  // existing minimize/quit close choices so an absent tray never strands a hidden window.
+  // Register before the first hide; activation and second-instance both reveal the main window.
   if (process.platform === 'linux') linuxTray.ensure();
 
   installApplicationMenu(
@@ -5546,7 +5572,8 @@ const registerIpcHandlers = () => {
   // min/max 必须操作"点按钮的那个窗口"而非全局主窗。fallback 到 mainWindowRef 兜底
   // 极端情况(sender 已销毁等)。
   ipcMain.on('window-minimize', (event) => {
-    (BrowserWindow.fromWebContents(event.sender) ?? mainWindowRef)?.minimize();
+    const window = BrowserWindow.fromWebContents(event.sender) ?? mainWindowRef;
+    if (window) minimizeWindow(window);
   });
   ipcMain.on('window-maximize', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindowRef;
