@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import Svg, { G, Path } from 'react-native-svg';
 import { useTranslation } from 'react-i18next';
 import { Check, CircleCheck, CircleX, Clock, TriangleAlert } from 'lucide-react-native';
@@ -175,7 +175,7 @@ export function SessionImportSheet({ visible, onClose, onClosed, deviceId, devic
   </View> : undefined;
 
   return <CompanionSheet visible={visible} title={tr('title')} contentScrolls onClose={onClose} onClosed={onClosed} footer={footer} testID="sessionImport.sheet">
-    <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
+    <View style={styles.content}>
       {!online || error ? <Text accessibilityRole="alert" style={styles.note}>{!online ? t('devices.companionProfile.offline', { deviceName }) : tr('loadFailed')}</Text> : null}
       {error ? <MainWindowActionButton action={{ label: tr('retry'), disabled: !online, onPress: () => void load(true) }} /> : null}
       {job ? <>
@@ -231,12 +231,12 @@ export function SessionImportSheet({ visible, onClose, onClosed, deviceId, devic
           </View>
         </View>)}
       </>}
-    </ScrollView>
+    </View>
   </CompanionSheet>;
 }
 
 const makeStyles = (colors: ThemeColors) => StyleSheet.create({
-  content: { padding: spacing.lg, gap: spacing.md },
+  content: { gap: spacing.md },
   flex: { flex: 1, minWidth: 0 },
   heading: { fontSize: typeScale.bodySmall, lineHeight: lineHeight.bodySmall, fontWeight: fontWeight.semibold, color: colors.textPrimary, textAlign: 'center' },
   sub: { fontSize: typeScale.footnote, lineHeight: lineHeight.caption, color: colors.textSecondary, textAlign: 'center' },
@@ -244,11 +244,11 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   note: { fontSize: typeScale.footnote, lineHeight: lineHeight.caption, fontWeight: fontWeight.regular, color: colors.textSecondary },
   count: { fontSize: typeScale.footnote, lineHeight: lineHeight.caption, color: colors.textTertiary },
   warn: { fontSize: typeScale.footnote, lineHeight: lineHeight.caption, color: colors.warningFg },
-  input: { minHeight: 44, borderRadius: radius.pill, paddingHorizontal: spacing.lg, fontSize: typeScale.bodySmall, color: colors.textPrimary, backgroundColor: colors.surfaceElevated },
+  input: { minHeight: 44, borderRadius: radius.pill, paddingHorizontal: spacing.lg, fontSize: typeScale.bodySmall, color: colors.textPrimary, backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border },
   group: { gap: spacing.xs },
   groupHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.xs },
   groupName: { fontSize: typeScale.footnote, lineHeight: lineHeight.caption, fontWeight: fontWeight.medium, color: colors.textSecondary },
-  box: { backgroundColor: colors.surfaceElevated, borderRadius: radius.container, overflow: 'hidden' },
+  box: { backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border, borderRadius: radius.container, overflow: 'hidden' },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, minHeight: 48, paddingHorizontal: spacing.md + 2, paddingVertical: spacing.sm },
   resultRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md, paddingHorizontal: spacing.md + 2, paddingVertical: spacing.md },
   separator: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
@@ -261,5 +261,5 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   lineRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.xs + 2, marginTop: 2 },
   supported: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, justifyContent: 'center' },
   supportedItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  footer: { gap: spacing.sm, paddingHorizontal: spacing.lg, paddingTop: spacing.md },
+  footer: { gap: spacing.sm },
 });

@@ -1027,7 +1027,7 @@ function JobRow({
         <div className="truncate text-13 font-medium leading-[1.38] text-[var(--text-primary)]">
           {item.title || t('settings.sessionImport.untitled')}
         </div>
-        <div className="mt-[3px] flex min-w-0 items-center gap-1.5 text-12 leading-[1.33] text-[var(--text-secondary)]">
+        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-12 leading-[1.33] text-[var(--text-secondary)]">
           {icon}
           <span className="truncate tabular-nums">{line}</span>
         </div>
