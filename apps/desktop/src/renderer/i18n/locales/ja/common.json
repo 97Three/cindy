@@ -17239,6 +17239,18 @@
     "compression": "長い内容を短くまとめるために。"
   },
   "routines": {
+    "deliveryLabel": "結果の送信先",
+    "deliveryDirect": "パートナーのチャットに直接表示",
+    "deliveryProcess": "パートナーが処理して返信",
+    "deliveryIm": "メッセージボットで送信",
+    "deliveryNone": "実行タスクにのみ保存",
+    "deliveryHint": "直接表示では追加のモデル呼び出しは行いません。静かなチェックでは、変化がない場合は送信しません。",
+    "deliveryRecipient": "送信先",
+    "deliveryUnavailable": "送信先を利用できません",
+    "deliveryNoRecipients": "メッセージボットを接続して一度チャットした後、この設定を開き直してください。",
+    "deliveryFailed": "実行完了・送信失敗",
+    "deliveryFailedHint": "結果は保存されています。送信設定を確認してください。再送のために処理を再実行しないでください。",
+    "deliveryDelivered": "結果を送信しました",
     "onEvent": "イベント：{{source}} · {{event}}",
     "triggerDetails": "実行条件を表示（{{count}} 件・いずれかで実行）",
     "noTriggers": "実行条件は未設定",
