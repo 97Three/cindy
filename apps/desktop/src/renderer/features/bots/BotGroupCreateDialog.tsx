@@ -21,7 +21,6 @@ import { botGroupApi, refreshBotGroups } from './botGroupStore';
 import { BOT_GROUP_MAX_MEMBERS, BOT_GROUP_MIN_MEMBERS, botGroupErrorKey } from './botGroupPresentation';
 import { useBotProfiles, type BotProfile } from './botStore';
 
-/** Local Bots that may appear in the picker; archived and deleting ones never do. */
 function pickableBots(bots: readonly BotProfile[]): BotProfile[] {
   return bots
     .filter((bot) => bot.status !== 'archived' && bot.status !== 'deleting')
@@ -34,12 +33,11 @@ export function isSelectable(bot: Pick<BotProfile, 'status' | 'enabled'>): boole
 }
 
 export function BotGroupCreateDialog({
-  initialBotIds = [],
+  privateChatBotId,
   onOpenChange,
   onCreated,
 }: {
-  /** Preselected teammates, e.g. the one whose private chat started this group. */
-  initialBotIds?: readonly string[];
+  privateChatBotId?: string;
   onOpenChange: (open: boolean) => void;
   onCreated: (groupId: string) => void;
 }) {
@@ -47,12 +45,13 @@ export function BotGroupCreateDialog({
   const bots = useBotProfiles();
   type Candidate = Pick<BotProfile, 'id' | 'name' | 'avatar' | 'status' | 'enabled'>;
   const [cloudBots, setCloudBots] = useState<Candidate[]>([]);
-  const [loadingMembers, setLoadingMembers] = useState(true);
+  const [loadingMembers, setLoadingMembers] = useState(!privateChatBotId);
   const [membersLoadFailed, setMembersLoadFailed] = useState(false);
   const [serverBacked, setServerBacked] = useState(false);
   const candidates = useMemo(() => serverBacked ? cloudBots : pickableBots(bots), [bots, cloudBots, serverBacked]);
   const selectableCount = candidates.filter(isSelectable).length;
   useEffect(() => {
+    if (privateChatBotId) return;
     let disposed = false;
     const owner = getDataOwnerGeneration();
     const current = () => !disposed && isDataOwnerGenerationCurrent(owner);
@@ -77,10 +76,10 @@ export function BotGroupCreateDialog({
       }
     })();
     return () => { disposed = true; };
-  }, []);
-  const minMembers = serverBacked ? 0 : BOT_GROUP_MIN_MEMBERS;
+  }, [privateChatBotId]);
+  const minMembers = privateChatBotId ? 1 : serverBacked ? 0 : BOT_GROUP_MIN_MEMBERS;
   const [name, setName] = useState('');
-  const [selectedIds, setSelectedIds] = useState<string[]>(() => initialBotIds.slice(0, BOT_GROUP_MAX_MEMBERS));
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [nameError, setNameError] = useState(false);
   const [membersError, setMembersError] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -90,7 +89,7 @@ export function BotGroupCreateDialog({
   const firstMemberRef = useRef<HTMLButtonElement>(null);
 
   // Speaking order follows the picker's order, not the click order.
-  const orderedSelection = candidates
+  const orderedSelection = privateChatBotId ? [privateChatBotId] : candidates
     .filter((bot) => selectedIds.includes(bot.id))
     .map((bot) => bot.id);
   const atLimit = orderedSelection.length >= BOT_GROUP_MAX_MEMBERS;
@@ -130,6 +129,15 @@ export function BotGroupCreateDialog({
     const owner = getDataOwnerGeneration();
     try {
       if (!api) throw new Error('Bot group IPC is unavailable');
+      // This flow must create a shared group: a local-only group cannot invite people.
+      if (privateChatBotId) {
+        const status = await api.chatServer?.status();
+        if (!isDataOwnerGenerationCurrent(owner)) return;
+        if (!status?.enabled) {
+          setSubmitError(t('bots.groupChat.errors.chatUnavailable'));
+          return;
+        }
+      }
       const result = await api.createBotGroup({ name: trimmed, botIds: orderedSelection });
       if (!isDataOwnerGenerationCurrent(owner)) return;
       if (!result.ok) {
@@ -171,11 +179,12 @@ export function BotGroupCreateDialog({
             <Dialog.Title className="text-18 font-medium text-[var(--confirm-title)]">
               {t('bots.groupChat.create.title')}
             </Dialog.Title>
-            <Dialog.Description className="mt-1 text-13 leading-normal text-[var(--confirm-desc)]">
-              {t(serverBacked ? 'bots.groupChat.server.createDescription' : 'bots.groupChat.create.description')}
+            <Dialog.Description className={privateChatBotId ? 'sr-only' : 'mt-1 text-13 leading-normal text-[var(--confirm-desc)]'}>
+              {t(privateChatBotId || serverBacked ? 'bots.groupChat.server.createDescription' : 'bots.groupChat.create.description')}
             </Dialog.Description>
 
-            <div className="mt-4 flex min-h-0 flex-col gap-4 overflow-y-auto">
+            {/* Leave room for outer input rings inside the scroll container. */}
+            <div className="mt-4 -mx-1 -mb-1 flex min-h-0 flex-col gap-4 overflow-y-auto px-1 pb-1">
               <FormField
                 label={t('bots.groupChat.nameLabel')}
                 error={nameError ? t('bots.groupChat.create.nameRequired') : undefined}
@@ -204,7 +213,7 @@ export function BotGroupCreateDialog({
                 )}
               </FormField>
 
-              <div className="flex min-w-0 flex-col gap-2">
+              {!privateChatBotId && <div className="flex min-w-0 flex-col gap-2">
                 <div className="flex items-center justify-between gap-2">
                   <span
                     id="bot-group-create-members-label"
@@ -281,7 +290,7 @@ export function BotGroupCreateDialog({
                       : null}
                   </p>
                 </div>
-              </div>
+              </div>}
             </div>
 
             {submitError ? (

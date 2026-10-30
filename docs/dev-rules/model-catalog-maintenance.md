@@ -2,6 +2,19 @@
 
 > 权威入口：先读本页，再按问题打开专题。Server 为独立仓库，文档不代表已部署。
 
+## Cindy AI 身份图标
+
+供应商 ID 仍为 `xd`；个人、其他企业和未知身份默认使用 Chrome 插件的 Cindy 剪影。
+来源电脑按既有 `isXdOrgUser` 识别心动身份，临时投影 `logoKind: xd`，渲染原来的
+单色心动 SVG；其他身份投影 `logoKind: cindy`。心动图形跟随主题和选中状态的前景色。
+组织头像 `orgLogoUrl` 不用于模型图标，不新增图片 URL、图片请求或加载失败状态。
+
+同账号远程与手机沿用来源电脑的图标；跨账号分享清除企业图标身份，与名称后缀的
+边界一致。复用既有可选 `logoKind` 与能力协商；旧客户端不认识 `cindy` 时按既有
+provider ID 回退。中转只转发原目录载荷，无新帧、权限或恢复协议。
+显式模型品牌优先，`cindy/xd` 模型品牌使用 Cindy 剪影；不改 Auto 路由或 provider ID。
+企业专用模型图标配置需后续由服务端独立提供，不复用组织头像。
+
 ## 数据流
 
 ```text
@@ -53,6 +66,11 @@ Catalog (version)
 | 本地候选、包装、门槛、推荐 | `localModels.models` / `featuredIds` | 不自动安装、卸载、切换用户模型 |
 | 某个用户的显式设置 | 本机 `model-catalog-overrides.json` 等既有偏好 | 不写回 Server；刷新保留，恢复默认删除 override |
 | 新执行协议、SDK 参数、token 计量 | 本仓对应 host / harness / bridge | 加目录字段不会自动获得执行能力 |
+
+模型高级设置的「图片输入」可选跟随目录、支持、不支持。显式选择按账号、供应商、模型及引擎
+保存到本地覆盖；同一模型行的对话引擎别名一并更新。目录刷新保留选择，恢复默认只删除图片输入
+覆盖，保留其它自定义资料。已有任务的接口快照保留原传输协议，图片声明继续读取本地覆盖。
+这只修正客户端的能力声明，不改变上游服务实际能接收的内容。
 
 结构例外：条目没有 `models[].defaults`；Registry agents / perAgent 只接受 Claude Code、Codex，
 Pi 走 `providers[].models.pi`（用户补丁 perAgent.pi 另属合法 schema）。媒体 route 使用 `agents: []`。
@@ -126,9 +144,14 @@ Desktop 设置页模型详情有 `displayPricing.summary` 时优先按输入、�
 所有角色报价段数，且每个 item 能按 unit、quantity、price 一一匹配不同的摘要报价，
 匹配报价没有 maxPrice 或 tier。其余情况保留在摘要下方。设置页列表对带 displayPricing 的
 模型不显示价格；选择器、浮层和聊天价格档位逻辑保持原样。详情中的有效折扣仍单列显示。
+摘要的可选 `component` 标明收费项类别，与计价单位独立。格式为 `^[a-z][a-z0-9_]{0,31}$`；
+格式不合法只丢该字段，报价与摘要保留。合法但未知的类别保留在数据中，界面按缺失处理。
+已知类别为 text / image / audio / video：同一角色类别一致时显示「类别 + 方向」，混合类别时
+保留方向名并在各条报价金额前显示已知类别名；不从单位推断类别。唯一键沿用
+unit + quantity + tier，不加入 component；旧端忽略新增字段，协议版本不变。
 摘要的 tier 单独一行使用次要文字，金额、原价区间和单位分别保持完整，同一角色的多段报价逐条换行、靠右对齐，不插入分隔点。
 `price` / `maxPrice` 为每 `quantity` 个 `unit` 的折扣前报价，只在展示时应用一次折扣，保留币种
-与“约”的语义；items 另外保留“起价”语义。角色和已知单位本地化，label、tier、notes 仅按纯文本呈现，未知单位不猜换算。
+与“约”的语义；items 另外保留“起价”语义。角色和已知单位本地化；已发布的 Text / Image / Audio / Video 输入输出、Text 缓存读写、Image 缓存读取及 Duration 输入输出明细 label 本地化，其他 label、tier、notes 原样按纯文本呈现，未知单位不猜换算。
 数量 1 省略，百万按语言简写，其余按本地数字格式显示。共享目录可传递这些可选展示字段，旧端
 缺字段仍合法，不新增能力声明；此 UI 仅覆盖 Desktop 设置页。解析与展示回归见
 `modelDisplayPricing.test.ts`、`DisplayPricingDetails.test.tsx` 与 `ModelAdvancedDrawer.test.tsx`。
