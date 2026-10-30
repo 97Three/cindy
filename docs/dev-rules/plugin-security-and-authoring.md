@@ -1003,3 +1003,20 @@ public 身份归属；共享访客及插件托管/errand 任务与其 Worker 沿
 详见 [客户端实现与验证边界](../plugin-community-contribution.md) 和
 [HTTP 契约](../plugin-community-contribution-contract.md)。此改动涉及打包原语和授权边界，仍须人工 review
 及本规则第 5 节的插件基座白名单确认后方可合并；本地代码检查不替代该门禁。
+
+
+## 插件伙伴委派协议与回执（未发布）
+
+agent.delegation 为可选独立能力，依赖 tasks + targets，只有 Host 确认的
+delegationCapabilityApproved 才授予；历史未知字段、旧 tasks/targets 批准不推断新授权。
+缺省不改变旧权限项、批准、配置或回执摘要；已安装的历史字段保留，不因新校验停用。
+新包严格校验声明，旧 receipt 缺少新可选字段照常读取。无需 schema migration。
+
+targets.capabilities 新增只读协议发现；delegation.version=1 与 execution 就绪状态分开。
+执行端接入现有 Auto 审核后才报告 execution=true；未就绪时显式 delegation 请求在预留/投递前返回
+UNSUPPORTED_CAPABILITY，不降级为普通消息或另建任务。旧 Host 无入口时不发送。
+委派只允许 bot + queue，scope 最多 8000 字符并参与请求摘要，持久回执保存版本、
+执行范围及原目标/批准事实。取消、撤权、换批准版本和恢复排队沿原接口复核。
+Main 从当前接受的输入、原批准和持久回执读取 scope，交给现有 Auto 审核投影；
+不伪造主人原话，不提升伙伴权限，不新增团队，Core 不包含业务插件流程。
+作者契约见 cindy-plugin-creator/references/plugin-agent-tasks.md §4.11.7。
