@@ -1,6 +1,6 @@
 /** Explicit Electron integration check; never launches or restarts Cindy. */
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,7 @@ import process from 'node:process';
 import { setTimeout, clearTimeout } from 'node:timers';
 import { build } from 'esbuild';
 import { startMockAppServer, createMockAppServer } from './mcp-apps-mock.mjs';
+import { hostSdkFixture } from './mcp-apps-host-sdk-fixture.mjs';
 import { pluginUiFixture } from './plugin-ui-fixture.mjs';
 import { authorFixture } from './plugin-author-fixture.mjs';
 import { createRawAppServer } from './mcp-apps-raw-fixture.mjs';
@@ -19,7 +20,8 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'cindy-mcp-app-sandbox-'));
 const independent = process.argv.includes('--raw');
 const authorMode = process.argv.find(arg => arg.startsWith('--author='))?.split('=')[1];
-const pluginView = process.argv.includes('--plugin') || !!authorMode;
+const hostSdk = process.argv.includes('--host-sdk');
+const pluginView = process.argv.includes('--plugin') || !!authorMode || hostSdk;
 const remoteView = process.argv.includes('--remote');
 const measureMetrics = process.argv.includes('--metrics');
 const assets = http.createServer((req, res) => {
@@ -49,7 +51,7 @@ const endpoint = await startMockAppServer({
 });
 try {
   if (pluginView) await writeFile(path.join(temporary, 'fixture.txt'), 'host-only-file');
-  if (pluginView) await writeFile(path.join(temporary, 'plugin.json'), JSON.stringify(authorMode ? await authorFixture(authorMode, temporary) : await pluginUiFixture(independent, independent ? allowed : undefined, true)));
+  if (pluginView) await writeFile(path.join(temporary, 'plugin.json'), JSON.stringify(hostSdk ? hostSdkFixture() : authorMode ? await authorFixture(authorMode, temporary) : await pluginUiFixture(independent, independent ? allowed : undefined, true)));
   await writeFile(
     path.join(temporary, 'preload.cjs'),
     "require('electron').contextBridge.exposeInMainWorld('testHost', {invoke: input => require('electron').ipcRenderer.invoke('test:mcp-app', input)});",
@@ -97,6 +99,10 @@ try {
     outfile: path.join(temporary, 'verify.cjs'),
     external: ['electron'],
     plugins: [
+      { name: 'host-sdk-raw', setup(builder) {
+        builder.onResolve({ filter: /ext-apps\/app-with-deps\?raw$/ }, () => ({ path: createRequire(import.meta.url).resolve('@modelcontextprotocol/ext-apps/app-with-deps'), namespace: 'sdk-raw' }));
+        builder.onLoad({ filter: /.*/, namespace: 'sdk-raw' }, async args => ({ contents: await readFile(args.path, 'utf8'), loader: 'text' }));
+      } },
       {
         name: 'test-only-owner',
         setup(builder) {
@@ -150,7 +156,7 @@ try {
       const allowed=process.env.CINDY_MCP_APP_TEST_ALLOWED;
       let config={id:'example',url:process.env.CINDY_MCP_APP_TEST_URL,transport:'http'};
       const pluginMode=process.env.CINDY_MCP_APP_TEST_PLUGIN==='1';let executePlugin;
-      let authorVault; const shellCalls=[]; let shellResultOverride;
+      let authorVault; const shellCalls=[], sdkDispatched=[]; let shellResultOverride;
       const authorLibraryRoot=process.env.CINDY_MCP_APP_TEST_DIR+'/author-library';
       if(pluginMode){
         const fixture=JSON.parse(readFileSync(process.env.CINDY_MCP_APP_TEST_DIR+'/plugin.json','utf8'));
@@ -158,7 +164,7 @@ try {
         if(authorMode==='files'){authorVault=new LibraryVault({rootDir:()=>authorLibraryRoot,ghostId:ghost.manifest.id});await authorVault.open();}
         let handler;
         const dispatcher=new GhostPipeDispatcher({getGhost:()=>ghost,runtimeStateOf:()=>'running',spawn:async()=>({ok:true}),
-          sendToGhost:(_id,payload)=>{handler(payload);return true;}});
+          sendToGhost:(_id,payload)=>{if(payload.type==='tool-call')sdkDispatched.push(payload.args?.text);handler(payload);return true;}});
         runInNewContext(fixture.main,{setTimeout,cindy:{library:request=>{assert.ok(authorVault);assert.ok(['writeBegin','writeChunk','writeCommit','writeAbort'].includes(request.op));return authorVault[request.op](request);},onHostMessage:fn=>{handler=fn;},send:payload=>payload.type==='tool-progress'?dispatcher.handleToolProgress(ghost.manifest.id,payload):dispatcher.handleToolResult(ghost.manifest.id,payload)}});
         executePlugin=async(name,args,onProgress)=>{const reply=await dispatcher.callGhostTool({ghostId:ghost.manifest.id,tool:name,args,onProgress});assert.equal(reply.ok,true);if(authorMode==='shell'){shellCalls.push({name,args});return shellResultOverride??reply.result;}return reply.result;};
         config={id:'example',url:'',transport:'in-process',plugin:{instance:ghost.manifest.id,revision:'fixture',packageSha256:'fixture',title:ghost.manifest.name,trust:'unverified',domains:independent?[allowed]:[],assertCurrent(){},
@@ -166,12 +172,18 @@ try {
             call:(grant,args)=>executePlugin(grant.tool,args,grant.onProgress)})}};
       }
       connection=new AppConnection(config);const client=await connection.getClient();
+      let sdkUpstreamSignal; const sdkIds=[];
+      if(process.env.CINDY_MCP_APP_TEST_HOST_SDK==='1'){
+        const call=client.callTool.bind(client);
+        client.callTool=(params,schema,options)=>{if(params.arguments?.text==='old-upstream')sdkUpstreamSignal=options.signal;return call(params,schema,options);};
+      }
       const tool=(await connection.tools()).find(tool=>tool.name===(authorMode==='shell'?'open_view':authorMode==='files'?'open_showcase':authorMode?'open_planner':independent?'open_metrics':'draft_form'));
+      if(process.env.CINDY_MCP_APP_TEST_HOST_SDK==='1' && process.env.CINDY_MCP_APP_TEST_REMOTE!=='1') tool._meta['cindy/attachments']=[{type:'resource_link',name:'fixture.txt',uri:'library:fixture.txt'}];
       const args=authorMode==='shell'?{intent:'overview'}:independent?{threshold:75}:{title:'AI draft',body:'Review before creating'};
       const result=pluginMode?await executePlugin(tool.name,args):await client.callTool({name:tool.name,arguments:args});
       let record={version:1,serverId:'example',serverRevision:appServerRevision(config),resourceUri:tool._meta.ui.resourceUri,tool,arguments:args,result:authorMode==='shell'?pluginAppResult(result):result};
       if(authorMode==='shell'){assert.ok(result._meta.view.html.includes('<style>'));assert.deepEqual(Object.keys(pluginModelResult(result)),['content']);}
-      let turns=0, receivedImages=[], pageApprovals=0, approvalGate;
+      let turns=0, receivedImages=[], pageApprovals=0, approvalGate, sdkApprovalSignal, sdkReleaseApproval;
       host=new McpAppsHost({downloadFile:pluginMode?input=>saveAppDownload({...input,showSaveDialog:async name=>process.env.CINDY_MCP_APP_TEST_DIR+'/saved-'+name}):undefined,pluginFiles:pluginMode?{
         describe:async(_instance,uri)=>{if(authorVault&&uri.startsWith('library:')){const file=await authorVault.stat({path:uri.slice('library:'.length)});return file.ok&&file.kind==='file'?{mimeType:'text/plain',size:file.bytes}:null;}return uri==='library:fixture.txt'?{mimeType:'text/plain',size:14}:uri==='cindy-media://blobs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png'?{mimeType:'image/png',size:8}:null;},
         read:async(_instance,uri,request)=>{
@@ -179,7 +191,11 @@ try {
           const file=await openFile(process.env.CINDY_MCP_APP_TEST_DIR+'/fixture.txt','r');
           return buildRangedFileResponse({file,totalSize:14,mimeType:'text/plain',rangeHeader:request.headers.get('range'),cacheControl:'no-store',signal:request.signal});
         }
-      }:undefined,owner:()=>globalThis.mcpTestOwner,config:()=>config,readCard:async()=>record,writeCard:async(_s,_c,value)=>{record=value;},authorizeTool:async()=>{pageApprovals++;if(approvalGate)await approvalGate;},sendMessage:async(_s,_r,_c,_guard,files)=>{turns++;receivedImages=files??[];},disposeDocument:removeMcpAppDocument});
+      }:undefined,owner:()=>globalThis.mcpTestOwner,config:()=>config,readCard:async()=>record,writeCard:async(_s,_c,value)=>{record=value;},authorizeTool:async(_s,_t,args,signal)=>{pageApprovals++;if(args.text==='old-document'){sdkApprovalSignal=signal;await new Promise(resolve=>sdkReleaseApproval=resolve);}if(approvalGate)await approvalGate;},sendMessage:async(_s,_r,_c,_guard,files)=>{turns++;receivedImages=files??[];},disposeDocument:removeMcpAppDocument});
+      if(process.env.CINDY_MCP_APP_TEST_HOST_SDK==='1'){
+        const dispatch=host.dispatch.bind(host);
+        host.dispatch=(caller,session,id,message)=>{if(message.method==='tools/call'&&message.params.name==='echo')sdkIds.push({text:message.params.arguments.text,id:message.id});return dispatch(caller,session,id,message);};
+      }
       setMcpAppFileReader((id,token,request)=>host.readPluginFile(id,token,request));
       if(process.env.CINDY_MCP_APP_TEST_METRICS==='1'){
         setMcpAppsHost(host);registerAppServer(config.id,()=>config);
@@ -211,6 +227,7 @@ try {
         record=initialRecord;
       }
       record.connectionId=host.registerConnection(connection);
+      const sdkRecordSnapshot=JSON.stringify(record);
       registerMcpAppProtocol();
       const remoteViews=new RemoteMcpAppViews({owner:()=>globalThis.mcpTestOwner,closeEpoch:()=>0,
         invoke:async(device,session,input,preSend)=>{
@@ -237,6 +254,64 @@ try {
       const inner=()=>window.webContents.mainFrame.framesInSubtree.find(frame=>frame.url.includes('-view/resource'));
       assert.equal(await window.webContents.executeJavaScript(
         "window.testHost.invoke({op:'message',viewId:window.testController.document.viewId,message:{jsonrpc:'2.0',id:'forged',method:'tools/list'}}).then(()=>false,()=>true)"),true);
+      if (process.env.CINDY_MCP_APP_TEST_HOST_SDK==='1') {
+        stage='host SDK document replacement';
+        await wait(()=>inner()?.executeJavaScript('window.pageState?.ready===true'));
+        assert.equal(await inner().executeJavaScript('window.pageState.page'),1);
+        assert.equal(await inner().executeJavaScript('typeof window.App'),'undefined');
+        assert.equal(record.sdk,undefined);
+        const attachment=process.env.CINDY_MCP_APP_TEST_REMOTE!=='1'
+          ? await inner().executeJavaScript('window.sdkApp.getHostContext().toolInfo.tool._meta["cindy/attachments"][0]._meta["cindy/file"].url') : undefined;
+        // Hold an old request in approval, then replace the whole document. Both
+        // official App instances allocate the same first tools/call ID.
+        await inner().executeJavaScript('void window.sdkApp.callServerTool({name:"echo",arguments:{text:"old-document"}}).catch(()=>{});');
+        await wait(()=>!!sdkApprovalSignal);
+        await window.webContents.executeJavaScript('window.testController.context({theme:"dark"})');
+        await inner().executeJavaScript('document.querySelector("#next").click()');
+        await wait(()=>inner().executeJavaScript('window.pageState?.page===2&&window.pageState.ready'));
+        assert.equal(sdkApprovalSignal.aborted,true);
+        sdkReleaseApproval();
+        const answer=await inner().executeJavaScript('window.sdkApp.callServerTool({name:"echo",arguments:{text:"new-document"}})');
+        assert.equal(answer.content[0].text,'new-document');
+        assert.equal(sdkDispatched.includes('old-document'),false,'released old approval cannot dispatch main.js');
+        assert.equal(sdkIds.find(x=>x.text==='old-document').id,sdkIds.find(x=>x.text==='new-document').id);
+        assert.equal(await inner().executeJavaScript('window.pageState.theme'),'dark');
+        for (const page of [3,4]) {
+          if(page===4){
+            await inner().executeJavaScript('void window.sdkApp.callServerTool({name:"echo",arguments:{text:"old-upstream"}}).catch(()=>{});');
+            await wait(()=>!!sdkUpstreamSignal);
+          }
+          await inner().executeJavaScript('document.querySelector("#next").click()');
+          await wait(()=>inner().executeJavaScript('window.pageState?.page==='+page+'&&window.pageState.ready'));
+          if(page===4){
+            assert.equal(sdkUpstreamSignal.aborted,true);
+            const result=await inner().executeJavaScript('window.sdkApp.callServerTool({name:"echo",arguments:{text:"new-upstream"}})');
+            assert.equal(result.content[0].text,'new-upstream');
+            assert.equal(sdkIds.find(x=>x.text==='old-upstream').id,sdkIds.find(x=>x.text==='new-upstream').id);
+          }
+          assert.deepEqual(await inner().executeJavaScript('({inputs:pageState.inputs,results:pageState.results})'),{inputs:0,results:0});
+        }
+        if(attachment){
+          assert.equal(await inner().executeJavaScript('window.sdkApp.getHostContext().toolInfo.tool._meta["cindy/attachments"][0]._meta["cindy/file"].url'),attachment);
+          assert.equal(await inner().executeJavaScript('fetch('+JSON.stringify(attachment)+').then(r=>r.text())'),'host-only-file');
+        }
+        await window.webContents.executeJavaScript('window.testController.context({theme:"light"})');
+        await wait(()=>inner().executeJavaScript('window.pageState.theme==="light"'));
+        await inner().executeJavaScript('window.sdkApp.sendSizeChanged({width:680,height:317})');
+        await wait(()=>window.webContents.executeJavaScript('window.testState.size?.height===317'));
+        const previous=inner(), viewId=await window.webContents.executeJavaScript('window.testController.document.viewId');
+        await window.webContents.executeJavaScript('window.testController.close()');
+        assert.equal(await previous.executeJavaScript('window.pageState.tornDown'),true);
+        assert.equal((await net.fetch('cindy-mcp-app://'+viewId+'-view/resource')).status,404);
+        assert.equal((await net.fetch('cindy-mcp-app://'+viewId+'-view/__cindy/sdk/ext-apps/app.js')).status,404);
+        if(attachment)assert.equal((await net.fetch(attachment)).status,404);
+        await new Promise(resolve=>{window.webContents.once('did-finish-load',resolve);window.reload();});
+        await wait(()=>inner()?.executeJavaScript('window.pageState?.page===1&&window.pageState.ready'));
+        assert.notEqual(await window.webContents.executeJavaScript('window.testController.document.viewId'),viewId);
+        assert.equal(JSON.stringify(record),sdkRecordSnapshot,'replacement must not alter the persisted card');
+        console.log('HOST_SDK_VERDICT=passed (official import, loader replacement, repeated replacement, pending approval/upstream cancellation, late result isolation, reused request IDs, latest context, no replay)');
+        return;
+      }
       if(authorMode==='shell'){
         // Integration tier: actual packed shell, production result projection/dispatcher
         // and iframe without allow-forms. Existing fixed-template examples do not cover
@@ -516,6 +591,7 @@ try {
     CINDY_MCP_APP_TEST_PLUGIN: pluginView ? '1' : '0',
     CINDY_MCP_APP_TEST_URL: endpoint.url,
     CINDY_MCP_APP_TEST_RAW: independent ? '1' : '0',
+    CINDY_MCP_APP_TEST_HOST_SDK: hostSdk ? '1' : '0',
     CINDY_MCP_APP_TEST_REMOTE: remoteView ? '1' : '0',
     CINDY_MCP_APP_TEST_METRICS: measureMetrics ? '1' : '0',
     CINDY_MCP_APP_TEST_ALLOWED: allowed,

@@ -1,5 +1,8 @@
 ## 4.23 交互页面 MCP Apps（mcpApps.ui）
 
+宿主 SDK（`@modelcontextprotocol/ext-apps` 导入）及整页替换暂定 `0.1.123-beta`，两端升级，待核定。
+重握手取消旧请求、保留卡片/附件/hostContext，不重发初始输入/结果。
+
 交互页面适合工具结果里的表单、图表和连续操作：模型用 `ghost_call` 打开页面，用户在页面里
 继续调用插件 main.js 的同一组工具。页面使用 MCP Apps 标准协议，不需要 Node、额外 MCP
 服务或 `mcp.json`。`mcpApps` 是 **Cindy 自定义的包清单格式**，不是 MCP Apps 定义的包格式；

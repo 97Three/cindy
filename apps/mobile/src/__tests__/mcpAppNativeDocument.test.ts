@@ -183,3 +183,18 @@ it("waits for every server to stop before removing its files, even when one stop
   await result;
   expect(state.removed).toHaveLength(1);
 });
+
+// Unit: real JS manifest/cache path; old-host cases do not cover SDK routing or cleanup.
+it('routes the executor SDK in the App origin and cleans it up with the View', async () => {
+  const sdk = { version: 'executor-version', source: 'export class App {}' };
+  const view = await prepareMcpAppNativeDocument({ ...document, sdk }, 'native-key');
+  expect(state.start.mock.calls[0][4]).toContainEqual(['__cindy/sdk/ext-apps/app.js', '3', 'text/javascript']);
+  const root = 'file:///cache/mcp-apps/' + '01'.repeat(24);
+  expect(state.files.get(root + '/3')).toBe(sdk.source);
+  const html = state.files.get(root + '/0')!;
+  expect(html).toContain(new URL('/__cindy/sdk/ext-apps/app.js', view.resourceUrl).href);
+  expect(html.indexOf('type="importmap"')).toBeLessThan(html.indexOf('window.app'));
+  expect(state.start.mock.calls[0][3]).toBe(document.csp);
+  await view.close();
+  expect(state.removed).toContain(root);
+});

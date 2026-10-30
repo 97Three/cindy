@@ -93,7 +93,7 @@ const requests = [
   ['prompts/list', {}, 'listPrompts', { prompts: [{ name: marker }] }],
 ] as const;
 
-async function fixture(caller = 'renderer:1', plugin = false) {
+async function fixture(caller = 'renderer:1', plugin = false, html = '<p>Form</p>') {
   let owner = {};
   let enabled = true;
   let visible = true;
@@ -127,7 +127,7 @@ async function fixture(caller = 'renderer:1', plugin = false) {
     resource: async () => ({
       result: {
         contents: [
-          { uri: card.resourceUri, mimeType: 'text/html;profile=mcp-app', text: '<p>Form</p>' },
+          { uri: card.resourceUri, mimeType: 'text/html;profile=mcp-app', text: html },
         ],
       },
     }),
@@ -192,6 +192,7 @@ async function fixture(caller = 'renderer:1', plugin = false) {
   outgoing.length = 0;
   return {
     host,
+    document,
     viewId: document.viewId,
     readCard,
     poll: (after: number) => host.poll(caller, 'task', document.viewId, after),
@@ -701,4 +702,62 @@ it.each(['renderer:1', 'device:phone'])('requires plugin tool approval before is
   }
   expect(f.authorizeTool).toHaveBeenCalledTimes(2);
   expect(f.methods.callTool).not.toHaveBeenCalled();
+});
+
+// Host dispatch/poll must isolate reused JSON-RPC IDs across documents (unit).
+// Existing revocation cases close the whole View; none replace a document while
+// an approval or upstream call is pending. The old signal and late reply are observable.
+it.each(['approval', 'call'] as const)('reinitializes a document and cancels its old %s without replaying card input', async phase => {
+  const f = await fixture();
+  const old = deferred<{ content: { type: 'text'; text: string }[] }>();
+  let signal: AbortSignal | undefined;
+  if (phase === 'approval') f.authorizeTool.mockImplementationOnce(async (_s, _t, _a, value) => { signal = value; await old.promise; });
+  else f.methods.callTool.mockImplementationOnce((_p, _schema, options) => { signal = options.signal; return old.promise; });
+  f.methods.callTool.mockResolvedValue({ content: [{ type: 'text', text: 'new document' }] });
+  await f.dispatch({ jsonrpc: '2.0', id: 70, method: 'tools/call', params: { name: 'form' } });
+  await vi.waitFor(() => expect(signal).toBeDefined());
+  f.host.context('renderer:1', 'task', f.viewId, { theme: 'dark' });
+  await f.dispatch({ jsonrpc: '2.0', id: 1, method: 'ui/initialize', params: {
+    protocolVersion: '2026-01-26', appInfo: { name: 'Replacement', version: '1' }, appCapabilities: {},
+  } });
+  expect(signal!.aborted).toBe(true);
+  await vi.waitFor(() => expect(f.outgoing).toContainEqual(expect.objectContaining({ id: 1, result: expect.objectContaining({ hostContext: expect.objectContaining({ theme: 'dark' }) }) })));
+  await f.dispatch({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  await f.dispatch({ jsonrpc: '2.0', id: 70, method: 'tools/call', params: { name: 'form' } });
+  await vi.waitFor(() => expect(f.methods.callTool).toHaveBeenCalledTimes(phase === 'call' ? 2 : 1));
+  old.resolve({ content: [{ type: 'text', text: 'old document' }] });
+  await vi.waitFor(() => expect(f.outgoing).toContainEqual(expect.objectContaining({ id: 70, result: { content: [{ type: 'text', text: 'new document' }] } })));
+  const delivered = await f.poll(0);
+  const messages = delivered.flatMap(e => e.message ? [e.message] : []);
+  expect(f.methods.callTool).toHaveBeenCalledTimes(phase === 'call' ? 2 : 1);
+  expect(f.document.sdk).toBeDefined();
+  expect(messages.filter(m => 'id' in m && m.id === 70)).toEqual([{ jsonrpc: '2.0', id: 70, result: { content: [{ type: 'text', text: 'new document' }] } }]);
+  expect(messages.some(m => 'method' in m && ['ui/notifications/tool-input', 'ui/notifications/tool-result', 'ui/notifications/tool-cancelled'].includes(m.method))).toBe(false);
+});
+
+// Unit: adding SDK bytes must not reject an existing near-limit remote page.
+it('keeps an old large remote page usable without the optional SDK', async () => {
+  const html = 'x'.repeat(4 * 1024 * 1024 - 66 * 1024);
+  const f = await fixture('device:phone', false, html);
+  expect(f.document.html).toBe(html);
+  expect(f.document.sdk).toBeUndefined();
+});
+
+// Unit: a poll can snapshot old replies before its final authorization read.
+// Reinitialize during that read must discard the already-captured old snapshot.
+it('drops an old poll snapshot when its final authorization straddles a new document', async () => {
+  const f = await fixture();
+  const card = await f.readCard();
+  const pending = deferred<McpAppRecord>();
+  f.readCard.mockClear().mockResolvedValueOnce(card).mockReturnValueOnce(pending.promise);
+  const poll = f.poll(0);
+  await vi.waitFor(() => expect(f.readCard).toHaveBeenCalledTimes(2));
+  await f.dispatch({ jsonrpc: '2.0', id: 1, method: 'ui/initialize', params: {
+    protocolVersion: '2026-01-26', appInfo: { name: 'Replacement', version: '1' }, appCapabilities: {},
+  } });
+  pending.resolve(card);
+  expect(await poll).toEqual([]);
+  const next = await f.poll(0);
+  expect(next.some(e => e.message && 'id' in e.message && e.message.id === 1)).toBe(true);
+  expect(next.some(e => e.message && 'method' in e.message && e.message.method === 'ui/notifications/tool-input')).toBe(false);
 });

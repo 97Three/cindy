@@ -1,3 +1,4 @@
+import { parse, type DefaultTreeAdapterTypes } from 'parse5';
 /** Data-only, additive MCP Apps contract shared by Desktop and Mobile. */
 export const MCP_APPS_INVOKE = 'maker:mcp-apps:v1';
 export const MCP_APP_CARD = 'mcp-app';
@@ -41,6 +42,8 @@ export interface McpAppRecord {
   cancelled?: string;
 }
 export interface McpAppDocument {
+  /** Executor-owned SDK bytes for this View; absent on older hosts. Never persisted in cards. */
+  sdk?: { version: string; source: string };
   viewId: string;
   transport?: undefined;
   html: string;
@@ -52,6 +55,50 @@ export interface McpAppDocument {
     frameDomains?: string[];
     baseUriDomains?: string[];
   };
+}
+
+/** A same-origin module supplied by the execution computer, not the viewing device. */
+export const HOST_APP_SDK_PATH = '/__cindy/sdk/ext-apps/app.js';
+export function withHostAppSdk(html: string, sdkUrl = HOST_APP_SDK_PATH): string {
+  const document = parse(html, { sourceCodeLocationInfo: true });
+  let insertion = 0;
+  let authoredSdk = false;
+  let authoredMap: { start: number; end: number; value: Record<string, unknown> } | undefined;
+  const visit = (node: DefaultTreeAdapterTypes.Node) => {
+    if (node.nodeName === '#documentType') insertion = node.sourceCodeLocation?.endOffset ?? 0;
+    if ('tagName' in node) {
+      if (node.tagName === 'head' && node.sourceCodeLocation?.startTag)
+        insertion = node.sourceCodeLocation.startTag.endOffset;
+      if (node.tagName === 'script' && node.attrs.some(attr => attr.name === 'type' && attr.value.toLowerCase() === 'importmap')) {
+        const text = node.childNodes.map(child => 'value' in child ? child.value : '').join('');
+        try {
+          const map = JSON.parse(text);
+          // An existing page may intentionally bundle/map its own SDK. Leave it alone.
+          authoredSdk ||= typeof map?.imports?.['@modelcontextprotocol/ext-apps'] === 'string';
+          const location = node.sourceCodeLocation;
+          if (!authoredMap && map && typeof map === 'object' && !Array.isArray(map) &&
+              (map.imports === undefined || (map.imports && typeof map.imports === 'object' && !Array.isArray(map.imports))) &&
+              location?.startTag && location.endTag) {
+            authoredMap = { start: location.startTag.endOffset, end: location.endTag.startOffset, value: map };
+          }
+        } catch { /* The browser retains responsibility for invalid authored maps. */ }
+      }
+    }
+    if ('childNodes' in node) node.childNodes.forEach(visit);
+  };
+  visit(document);
+  if (authoredSdk) return html;
+  if (authoredMap) {
+    // Older WebViews accept a single importmap. Preserve authored imports/scopes.
+    const value = { ...authoredMap.value, imports: {
+      ...(authoredMap.value.imports as Record<string, unknown> | undefined),
+      '@modelcontextprotocol/ext-apps': sdkUrl,
+    } };
+    const json = JSON.stringify(value).replace(/</g, '\\u003c');
+    return html.slice(0, authoredMap.start) + json + html.slice(authoredMap.end);
+  }
+  const map = '<script type="importmap">' + JSON.stringify({ imports: { '@modelcontextprotocol/ext-apps': sdkUrl } }) + '</script>';
+  return html.slice(0, insertion) + map + html.slice(insertion);
 }
 /** Desktop UI metadata only; credential-backed App content stays in Main. */
 export interface McpAppSandboxView {

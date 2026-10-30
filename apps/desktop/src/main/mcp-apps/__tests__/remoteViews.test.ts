@@ -340,3 +340,12 @@ describe('Main-bound remote MCP App Views', () => {
     expect(state.mounts.size).toBe(0);
   });
 });
+
+// Unit: real remote open must preserve the optional executor SDK. Old hosts omit it.
+it.each([undefined, { version: 'executor-version', source: 'export class App {}' }])('forwards optional executor SDK %j', async sdk => {
+  const f = fixture();
+  f.invoke.mockResolvedValueOnce({ ...document, ...(sdk ? { sdk } : {}) });
+  const local = await f.open();
+  expect(state.mounts.get(local.viewId)!.document.sdk).toEqual(sdk);
+  await f.views.releaseCaller('renderer:1');
+});

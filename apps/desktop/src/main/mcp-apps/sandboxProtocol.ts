@@ -5,6 +5,8 @@ import { appCsp, MCP_APPS_MAX_BYTES } from './protocol.js';
 import {
   mcpAppSandboxDocument,
   mcpAppFrameUrlAllowed,
+  HOST_APP_SDK_PATH,
+  withHostAppSdk,
   type McpAppDocument,
 } from '../../shared/mcpApps.js';
 import { mcpAppDirectSandboxDocument } from './sandboxBridge.js';
@@ -230,6 +232,14 @@ export function registerMcpAppProtocol(): void {
     const doc = entry?.document;
     if (!doc || entry?.owner !== getCurrentDbClientSnapshot())
       return new Response(null, { status: 404 });
+    if (url.hostname === `${id}-view` && url.pathname === HOST_APP_SDK_PATH &&
+        request.method === 'GET' && !url.search && !url.hash && doc.sdk) {
+      return new Response(doc.sdk.source, { headers: {
+        'Content-Type': 'text/javascript; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      } });
+    }
     if (url.hostname === `${id}-view` && url.pathname.startsWith('/__cindy/files/')) {
       if (!fileReader || request.headers.get(frameHeader) !== entry.fileKey || url.search || url.hash)
         return new Response(null, { status: 404 });
@@ -264,7 +274,7 @@ export function registerMcpAppProtocol(): void {
       ? entry.bridge
         ? mcpAppDirectSandboxDocument(resourceUrl, `cindy-mcp-app://${id}/bridge`)
         : mcpAppSandboxDocument('', resourceUrl)
-      : doc.html, {
+      : doc.sdk ? withHostAppSdk(doc.html, new URL(HOST_APP_SDK_PATH, url).href) : doc.html, {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',

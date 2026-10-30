@@ -219,7 +219,7 @@ pnpm.cmd check:dev-docs
 | 工具发现与可见性     | 支持 `_meta.ui.resourceUri` 和旧键；默认 model+app；模型看不到 App-only 工具，View 不能调用 model-only 工具；工具分页不会漏项                                                                                              |
 | HTML 资源 | text/blob 两种编码；read/list metadata；拒绝错误 URI/MIME、非法 base64 和超过 4 MiB 的资源；远程完整文档按 UTF-8 JSON 计量，超限在保留 View 前拒绝 |
 | 远程响应大小与背压 | 完整文档及 poll 事件数组最多 4 MiB 减 64 KiB，预留 invoke-result 封装；UTF-8、JSON 转义、数组括号/分隔符计入；已消费事件按相同字节回收，另一控制端继续工作；见 `wireBudget.test.ts` |
-| 初始化、版本与 ping  | `ui/initialize` 协商 `2026-01-26`；未知请求版本返回实际支持版本；initialized 前不发输入/结果、拒绝工具调用；拒绝重复初始化；ping 正常                                                                                      |
+| 初始化、版本与 ping  | `ui/initialize` 协商 `2026-01-26`；未知请求版本返回实际支持版本；initialized 前不发输入/结果、拒绝工具调用；重复初始化切换文档代次、取消旧请求且不重放初始输入/结果；ping 正常                                                                                      |
 | 模型 MCP 初始化 | HTTP/SSE 上游 `instructions` 和实际 capabilities 在标准 initialize 中保留；SDK 的 serverInfo 和版本协商保留；owner 变化时明确回复错误；见 `interop.test.ts` 与 `serverProxy.test.ts` |
 | 模型 MCP 标准能力 | HTTP/SSE 补全、资源订阅/退订、日志级别/通知、task 方法/状态通知及扩展请求透传；任务式工具调用仍检查 model 可见性；取消不重放，迟到结果重新检查 owner/config；见 `serverProxy.test.ts` |
 | 输入、结果与模型隔离 | initialized 后按输入、结果顺序交付；text/image/audio、嵌入文本/二进制资源、resource_link、structuredContent 与 `_meta` 完整保留给 View；模型 facade 去掉结果根 `_meta`；加载期间完成或取消仍正确交付                       |

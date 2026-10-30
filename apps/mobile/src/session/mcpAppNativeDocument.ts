@@ -2,6 +2,8 @@ import { Directory, File, Paths } from "expo-file-system";
 import { getRandomBytes } from "expo-crypto";
 import {
   mcpAppSandboxDocument,
+  HOST_APP_SDK_PATH,
+  withHostAppSdk,
   type McpAppDocument,
 } from "@cindy/maker-shared/mcp-apps";
 import native from "../../modules/cindy-html-preview/src/CindyHtmlPreviewModule";
@@ -81,7 +83,13 @@ export async function prepareMcpAppNativeDocument(
   try {
     const resource = new File(directory, "0");
     resource.create();
-    resource.write(document.html);
+    const entries: string[][] = [["initialize.html", "2", "text/html"], ["resource.html", "0", "text/html"]];
+    if (document.sdk) {
+      const sdk = new File(directory, "3");
+      sdk.create();
+      sdk.write(document.sdk.source);
+      entries.push([HOST_APP_SDK_PATH.slice(1), "3", "text/javascript"]);
+    }
     const bootstrap = new File(directory, "2");
     bootstrap.create();
     bootstrap.write(MCP_APP_STORAGE_BOOTSTRAP);
@@ -91,8 +99,9 @@ export async function prepareMcpAppNativeDocument(
       "initialize.html",
       resourceToken,
       document.csp,
-      [["initialize.html", "2", "text/html"], ["resource.html", "0", "text/html"]],
+      entries,
     );
+    resource.write(document.sdk ? withHostAppSdk(document.html, new URL(HOST_APP_SDK_PATH, resourceUrl).href) : document.html);
     const resourceOrigin = new URL(resourceUrl).origin;
     const proxy = new File(directory, "1");
     proxy.create();

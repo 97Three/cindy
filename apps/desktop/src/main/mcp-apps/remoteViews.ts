@@ -9,6 +9,7 @@ import { assertMcpAppDocumentCaller, mountRemoteAppDocument, unmountRemoteAppDoc
 
 const id = z.string().min(1).max(256);
 const documentSchema = z.object({
+  sdk: z.object({ version: z.string().max(32), source: z.string().max(MCP_APPS_MAX_BYTES) }).optional(),
   viewId: id, html: z.string(), csp: z.string(), prefersBorder: z.boolean(),
   policy: z.object({
     connectDomains: z.array(z.string()).optional(), resourceDomains: z.array(z.string()).optional(),

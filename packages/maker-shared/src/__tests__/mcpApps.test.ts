@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Script } from 'node:vm';
-import { mcpAppSandboxDocument, mcpAppFrameUrlAllowed, mcpAppHistoryText, parseMcpAppRecord, parseMcpAppHistory, projectMcpAppContent } from '../mcpApps.js';
+import { withHostAppSdk, mcpAppSandboxDocument, mcpAppFrameUrlAllowed, mcpAppHistoryText, parseMcpAppRecord, parseMcpAppHistory, projectMcpAppContent } from '../mcpApps.js';
 describe('MCP Apps cross-platform document contract', () => {
   function proxy(resourceUrl?: string, requestedUrl = resourceUrl) {
     const attributes: Record<string, string> = {};
@@ -185,4 +185,26 @@ describe('MCP Apps cross-platform document contract', () => {
     expect(projectMcpAppContent(content, false)).toBe(content);
     expect(projectMcpAppContent(JSON.stringify(content), false)).toBe(JSON.stringify(content));
   });
+});
+
+// Unit: actual HTML preparation preserves a page's own SDK mapping and doctype;
+// comments/template heads must not swallow the host importmap before module scripts.
+it('adds a host importmap without overriding authored SDKs or parsing comments as the head', async () => {
+  const authored = '<!doctype html><head><script type="importmap">{"imports":{"@modelcontextprotocol/ext-apps":"/bundled.js"}}</script></head>';
+  expect(withHostAppSdk(authored)).toBe(authored);
+  const html = '<!doctype html><!-- <head> --><html><head><script type="module">import "@modelcontextprotocol/ext-apps"</script></head></html>';
+  const prepared = withHostAppSdk(html);
+  expect(prepared).toContain('<!-- <head> --><html><head><script type="importmap">');
+  expect(prepared.startsWith('<!doctype html>')).toBe(true);
+  expect(prepared.indexOf('type="importmap"')).toBeLessThan(prepared.indexOf('type="module"'));
+});
+
+// Unit: WebViews supporting one importmap must keep an existing unrelated mapping.
+// Minimal input is one authored map; SDK preparation must merge without creating a second.
+it('keeps other imports in one importmap when adding the host SDK', () => {
+  const html = '<head><base href="https://assets.example/"><script type="importmap">{"imports":{"chart":"/chart.js"},"scopes":{"/chart/":{"text":"/text.js"}}}</script></head>';
+  const prepared = withHostAppSdk(html, 'https://view.example/__cindy/sdk/ext-apps/app.js');
+  expect(prepared.match(/type="importmap"/g)).toHaveLength(1);
+  const map = JSON.parse(prepared.match(/<script type="importmap">(.*?)<\/script>/)![1]);
+  expect(map).toEqual({ imports: { chart: '/chart.js', '@modelcontextprotocol/ext-apps': 'https://view.example/__cindy/sdk/ext-apps/app.js' }, scopes: { '/chart/': { text: '/text.js' } } });
 });

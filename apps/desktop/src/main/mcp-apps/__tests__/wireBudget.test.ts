@@ -104,10 +104,11 @@ describe('MCP Apps serialized remote result budgets', () => {
   it('accepts the complete remote document at its limit, including CSP and JSON escaping', async () => {
     const f = fixture();
     const empty = await f.host.open('renderer:local', 'task', 'card', {});
-    const overhead = Buffer.byteLength(JSON.stringify(empty));
+    const overhead = Buffer.byteLength(JSON.stringify({ ...empty, sdk: undefined }));
     const html = 'x'.repeat(MCP_APPS_MAX_REMOTE_BYTES - overhead);
     f.resource.mockResolvedValue({ result: f.contents(html) });
     const document = await f.host.open('device:phone', 'task', 'card', {});
+    expect(document.sdk).toBeUndefined();
     expect(Buffer.byteLength(JSON.stringify(document))).toBe(MCP_APPS_MAX_REMOTE_BYTES);
     expect(() => encodeReliableFrames(wire(document), 'stream', 1)).not.toThrow();
     f.resource.mockResolvedValue({ result: f.contents(html + 'x') });
