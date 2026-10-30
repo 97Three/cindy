@@ -256,6 +256,10 @@ const duplicateResponsesToolCallRecoveryRule: RecoveryRule = {
   onRetry: (threadId, model) => responsesToolCallHistoryStripController.markActive(threadId, model),
   useUpstreamModel: true,
   applyOnUnmatchedRetry: false,
+  // 只修重复的工具 ID。这条规则的判据绑在「上游明确说 call_id 重复」上,不能顺带
+  // 叠洗别的 strip:encrypted-content 那条会在同一次透明重试里删掉上游从未拒绝过的
+  // 加密/reasoning 内容,并把删除带进后续轮次(与 responses_reasoning_content 同处理)。
+  allowExtraRules: false,
 };
 const xaiModelInputRecoveryRule = createXaiModelInputRecoveryRule({
   onRetry: (threadId, model) => xaiModelInputStripController.markActive(threadId, model),
@@ -4058,6 +4062,7 @@ function clearSessionThreads(sessionId: string): string[] {
       httpRecoveryReasonByThread.delete(threadId);
       pendingHttpRecoveryStripByThread.delete(threadId);
       responsesReasoningContentStripController.clear(threadId);
+      responsesToolCallHistoryStripController.clear(threadId);
     }
   }
   return threadIds;
@@ -4096,6 +4101,7 @@ export async function disposeCodexProxy(): Promise<void> {
   for (const threadId of threadToSession.keys()) {
     registry.delete(threadId);
     responsesReasoningContentStripController.clear(threadId);
+    responsesToolCallHistoryStripController.clear(threadId);
   }
   sessionToThread.clear();
   sessionToThreads.clear();
