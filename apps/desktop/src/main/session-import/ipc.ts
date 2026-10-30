@@ -13,6 +13,7 @@ import {
   relocateImportedSession,
   startImport,
 } from './executor.js';
+import { registerSessionImportRemoteResource } from './remoteResource.js';
 import { invalidateImportScan, scanImportSources } from './scan.js';
 import type { ImportJobView, ImportScanResult } from './types.js';
 
@@ -29,6 +30,7 @@ function keysOf(request: unknown): string[] {
 
 export function registerSessionImportIpc(): void {
   invalidateImportScan();
+  registerSessionImportRemoteResource();
 
   ipcMain.handle('local-db:session-import:scan', async (_e, request?: { force?: unknown }): Promise<ImportScanResult> => {
     void recoverInterruptedImports();

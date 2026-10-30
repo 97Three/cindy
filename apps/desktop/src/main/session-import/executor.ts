@@ -349,7 +349,17 @@ async function runJob(job: Job): Promise<void> {
 
 /** 开始导入。返回请求编号；进度通过 SESSION_IMPORT_PROGRESS_CHANNEL 推送。 */
 export async function startImport(keys: string[]): Promise<ImportJobView> {
-  const unique = [...new Set(keys)];
+  // 桌面、手机与 Agent 可能同时发起：已经在另一次导入里排队或进行中的条目不重复导入。
+  const inFlight = new Set<string>();
+  for (const other of jobs.values()) {
+    if (other.view.status !== 'running') continue;
+    for (const item of other.view.items) if (item.status === 'queued' || item.status === 'running') inFlight.add(item.key);
+  }
+  const unique = [...new Set(keys)].filter((k) => !inFlight.has(k));
+  if (unique.length === 0) {
+    const running = [...jobs.values()].find((j) => j.view.status === 'running' && keys.some((k) => j.keys.includes(k)));
+    if (running) return running.view;
+  }
   const sources = await resolveSourceSessions(unique);
   const view: ImportJobView = {
     requestId: randomUUID(),
