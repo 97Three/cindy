@@ -142,21 +142,57 @@ describeMigrationReplay('migration replay', () => {
   );
   // DB tier: a populated pre-137 PR row must survive the append-only migration.
   // Fresh replay cannot catch losing an existing association or defaulting it hidden.
-  it('preserves existing PR associations with visible, unpinned defaults', () => {
-    const { db, cleanup } = createTempDb();
-    try {
-      db.exec("CREATE TABLE migration_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE migration_history (seq INTEGER PRIMARY KEY, file_name TEXT NOT NULL, content_hash TEXT NOT NULL, applied_at INTEGER NOT NULL); CREATE TABLE sessions (id TEXT PRIMARY KEY)");
-      db.exec(readFileSync(path.join(drizzleDir(), '0045_living_namor.sql'), 'utf-8'));
-      db.exec("INSERT INTO sessions (id) VALUES ('s')");
-      db.prepare('INSERT INTO session_pr_refs VALUES (?,?,?,?,?,?,?,?)').run('r', 's', 'example', 'repo', 1, 'https://github.com/example/repo/pull/1', 10, 20);
-      runMigrationReplay(db, { drizzleDir: drizzleDir(), currentVersion: 136 });
-      expect(db.prepare('SELECT * FROM session_pr_refs').get()).toEqual({
-        id: 'r', session_id: 's', owner: 'example', repo: 'repo', pr_number: 1,
-        url: 'https://github.com/example/repo/pull/1', first_seen_at: 10, last_seen_at: 20,
-        pinned: 0, priority: 0, manually_added: 0, removed_at: null,
-      });
-    } finally { cleanup(); }
-  });
+  // Migration tier regression: replay 0137 through the production runner when
+  // a pre-137 database already has some/all columns; the old ALTER SQL failed.
+  // The existing fresh-schema test did not cover interrupted/replayed schemas.
+  it.each(['none', 'partial', 'all'])(
+    'preserves PR associations when %s management columns already exist',
+    (existing) => {
+      const { db, cleanup } = createTempDb();
+      try {
+        db.exec(
+          'CREATE TABLE migration_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE migration_history (seq INTEGER PRIMARY KEY, file_name TEXT NOT NULL, content_hash TEXT NOT NULL, applied_at INTEGER NOT NULL); CREATE TABLE sessions (id TEXT PRIMARY KEY)',
+        );
+        db.exec(readFileSync(path.join(drizzleDir(), '0045_living_namor.sql'), 'utf-8'));
+        db.exec("INSERT INTO sessions (id) VALUES ('s')");
+        db.prepare('INSERT INTO session_pr_refs VALUES (?,?,?,?,?,?,?,?)').run(
+          'r',
+          's',
+          'example',
+          'repo',
+          1,
+          'https://github.com/example/repo/pull/1',
+          10,
+          20,
+        );
+        if (existing !== 'none') {
+          db.exec('ALTER TABLE session_pr_refs ADD pinned integer DEFAULT false NOT NULL');
+          db.exec('ALTER TABLE session_pr_refs ADD priority integer DEFAULT 0 NOT NULL');
+        }
+        if (existing === 'all') {
+          db.exec('ALTER TABLE session_pr_refs ADD manually_added integer DEFAULT false NOT NULL');
+          db.exec('ALTER TABLE session_pr_refs ADD removed_at integer');
+        }
+        runMigrationReplay(db, { drizzleDir: drizzleDir(), currentVersion: 136 });
+        expect(db.prepare('SELECT * FROM session_pr_refs').get()).toEqual({
+          id: 'r',
+          session_id: 's',
+          owner: 'example',
+          repo: 'repo',
+          pr_number: 1,
+          url: 'https://github.com/example/repo/pull/1',
+          first_seen_at: 10,
+          last_seen_at: 20,
+          pinned: 0,
+          priority: 0,
+          manually_added: 0,
+          removed_at: null,
+        });
+      } finally {
+        cleanup();
+      }
+    },
+  );
 
   it('keeps existing tool usage when upgrading the invocation ledger', () => {
     const { db, cleanup } = createTempDb();

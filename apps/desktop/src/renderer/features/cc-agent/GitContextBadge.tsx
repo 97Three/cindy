@@ -75,8 +75,6 @@ function GitContextBadgeContent({ session }: { session: Session }) {
     );
   }, [prRefs]);
 
-  if (!head && prRefs.length === 0 && session.source === 'review') return null;
-
   // 工作目录 HEAD 的可读分支名(branch 名 / detached 短 sha)。
   const localBranch =
     head?.kind === 'branch'
@@ -138,7 +136,7 @@ function GitContextBadgeContent({ session }: { session: Session }) {
           setSummary={setSummary}
         />
       ))}
-      {session.source !== 'review' && <SessionPrManager key={session.id} session={session} />}
+      <SessionPrManager key={session.id} session={session} readOnly={session.source === 'review'} />
     </div>
   );
 }

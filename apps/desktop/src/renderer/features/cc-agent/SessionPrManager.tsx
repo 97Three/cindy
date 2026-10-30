@@ -12,6 +12,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import {
   prStatusKey,
+  sessionPrUrl,
   type PrStatusResult,
   type SessionPrRef,
   type SessionPrRefAction,
@@ -34,7 +35,13 @@ import type { Session } from '@/lib/ccAgent.types';
 const PR_STATUS_BATCH_SIZE = 10;
 
 /** Edits associations on their owning host; GitHub itself is never mutated. */
-export function SessionPrManager({ session }: { session: Session }) {
+export function SessionPrManager({
+  session,
+  readOnly = false,
+}: {
+  session: Session;
+  readOnly?: boolean;
+}) {
   const { t } = useTranslation();
   const { dataOwnerId } = useAuth();
   const { invalidateRemotePrRefs } = usePrActions();
@@ -70,7 +77,7 @@ export function SessionPrManager({ session }: { session: Session }) {
     return () => {
       generation.current += 1;
     };
-  }, [session.id, deviceId, dataOwnerId]);
+  }, [session.id, deviceId, dataOwnerId, readOnly]);
   useEffect(() => {
     if (open && !busy && focusInput.current) {
       focusInput.current = false;
@@ -155,9 +162,18 @@ export function SessionPrManager({ session }: { session: Session }) {
     setError('');
     setOpen(next);
     if (next) {
-      focusInput.current = true;
+      focusInput.current = !readOnly;
       void run({ action: 'list' });
     }
+  };
+
+  const invokeManage = async (operation: SessionPrRefAction | { action: 'list' }) => {
+    const input = { sessionId: session.id, ...operation };
+    return deviceId
+      ? ((await window.electronAPI.deviceLink.invoke(deviceId, 'git-context:pr-refs:manage', [
+          input,
+        ])) as SessionPrRef[])
+      : await window.electronAPI.gitContext.managePrRefs(input);
   };
 
   const run = async (operation: SessionPrRefAction | { action: 'list' }) => {
@@ -169,12 +185,7 @@ export function SessionPrManager({ session }: { session: Session }) {
     setBusy(true);
     setError('');
     try {
-      const input = { sessionId: session.id, ...operation };
-      const result = deviceId
-        ? ((await window.electronAPI.deviceLink.invoke(deviceId, 'git-context:pr-refs:manage', [
-            input,
-          ])) as SessionPrRef[])
-        : await window.electronAPI.gitContext.managePrRefs(input);
+      const result = await invokeManage(operation);
       if (!isCurrent()) return;
       setRows(result);
       void fetchStatuses(result, gen);
@@ -200,6 +211,16 @@ export function SessionPrManager({ session }: { session: Session }) {
                       ? 'errors.verifyFailed'
                       : 'errors.failed';
       setError(t(`ccAgent.gitContext.pr.manage.${key}`));
+      if (operation.action === 'reorder') {
+        try {
+          const refreshed = await invokeManage({ action: 'list' });
+          if (!isCurrent()) return;
+          setRows(refreshed);
+          void fetchStatuses(refreshed, gen);
+        } catch {
+          // Keep the reorder explanation and last known rows if refresh also fails.
+        }
+      }
     } finally {
       if (isCurrent()) {
         requestBusy.current = false;
@@ -240,83 +261,95 @@ export function SessionPrManager({ session }: { session: Session }) {
             />
           )}
           <div className="min-w-0">
+            <a
+              href={sessionPrUrl(ref)}
+              onClick={(event) => {
+                event.preventDefault();
+                void window.electronAPI.openExternal(sessionPrUrl(ref));
+              }}
+              className={`block truncate rounded-md hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] ${title ? 'text-13 text-[var(--text-primary)]' : 'text-12 text-[var(--text-secondary)]'}`}
+              title={title || `${ref.owner}/${ref.repo} #${ref.prNumber}`}
+            >
+              {title || `${ref.repo} #${ref.prNumber}`}
+            </a>
             {title && (
-              <div className="truncate text-13 text-[var(--text-primary)]" title={title}>
-                {title}
+              <div
+                className="truncate text-12 text-[var(--text-secondary)]"
+                title={`${ref.owner}/${ref.repo} #${ref.prNumber}`}
+              >
+                {ref.repo} #{ref.prNumber}
+                {kind && <> · {t(`ccAgent.gitContext.pr.status.${kind}`)}</>}
               </div>
             )}
-            <div
-              className="truncate text-12 text-[var(--text-secondary)]"
-              title={`${ref.owner}/${ref.repo} #${ref.prNumber}`}
-            >
-              {ref.repo} #{ref.prNumber}
-              {title && kind && <> · {t(`ccAgent.gitContext.pr.status.${kind}`)}</>}
-            </div>
           </div>
         </div>
-        <div className="flex shrink-0 items-center">
-          {removed ? (
-            <ChromeIconButton
-              disabled={busy}
-              aria-label={t('ccAgent.gitContext.pr.manage.restore')}
-              onClick={() => void run({ action: 'restore', id: ref.id })}
-            >
-              <RotateCcw size={14} />
-            </ChromeIconButton>
-          ) : (
-            <>
-              <ChromeIconButton
-                disabled={busy || (!ref.pinned && pinned >= 3)}
-                disabledTooltip={
-                  !ref.pinned && pinned >= 3
-                    ? t('ccAgent.gitContext.pr.manage.pinLimit')
-                    : undefined
-                }
-                aria-label={t(`ccAgent.gitContext.pr.manage.${ref.pinned ? 'unpin' : 'pin'}`)}
-                aria-pressed={ref.pinned === true}
-                onClick={() => void run({ action: ref.pinned ? 'unpin' : 'pin', id: ref.id })}
-              >
-                {ref.pinned ? <PinOff size={14} /> : <Pin size={14} />}
-              </ChromeIconButton>
+        {!readOnly && (
+          <div className="flex shrink-0 items-center">
+            {removed ? (
               <ChromeIconButton
                 disabled={busy}
-                aria-label={t('ccAgent.gitContext.pr.manage.remove')}
-                onClick={() => void run({ action: 'remove', id: ref.id })}
+                aria-label={t('ccAgent.gitContext.pr.manage.restore')}
+                onClick={() => void run({ action: 'restore', id: ref.id })}
               >
-                <Trash2 size={14} />
+                <RotateCcw size={14} />
               </ChromeIconButton>
-              <ChromeIconButton
-                data-pr-drag-handle=""
-                disabled={busy}
-                aria-label={t('ccAgent.gitContext.pr.manage.dragHandle', {
-                  repo: ref.repo,
-                  number: ref.prNumber,
-                })}
-                aria-description={t('ccAgent.gitContext.pr.manage.reorderHint')}
-                tooltip={t('ccAgent.gitContext.pr.manage.reorderHint')}
-                className="cursor-grab text-[var(--text-tertiary)] enabled:hover:text-[var(--text-secondary)] focus-visible:text-[var(--text-secondary)] active:cursor-grabbing disabled:cursor-default"
-                onKeyDown={(event) => {
-                  if (
-                    event.target !== event.currentTarget ||
-                    !event.altKey ||
-                    !['ArrowUp', 'ArrowDown'].includes(event.key)
-                  )
-                    return;
-                  event.preventDefault();
-                  const group = active.filter((row) => Boolean(row.pinned) === Boolean(ref.pinned));
-                  const index = group.findIndex((row) => row.id === ref.id);
-                  const next = index + (event.key === 'ArrowUp' ? -1 : 1);
-                  if (next < 0 || next >= group.length) return;
-                  const ids = group.map((row) => row.id);
-                  [ids[index], ids[next]] = [ids[next], ids[index]];
-                  reorder(ids, ref.id);
-                }}
-              >
-                <Menu size={14} aria-hidden="true" />
-              </ChromeIconButton>
-            </>
-          )}
-        </div>
+            ) : (
+              <>
+                <ChromeIconButton
+                  disabled={busy || (!ref.pinned && pinned >= 3)}
+                  disabledTooltip={
+                    !ref.pinned && pinned >= 3
+                      ? t('ccAgent.gitContext.pr.manage.pinLimit')
+                      : undefined
+                  }
+                  aria-label={t(`ccAgent.gitContext.pr.manage.${ref.pinned ? 'unpin' : 'pin'}`)}
+                  aria-pressed={ref.pinned === true}
+                  onClick={() => void run({ action: ref.pinned ? 'unpin' : 'pin', id: ref.id })}
+                >
+                  {ref.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+                </ChromeIconButton>
+                <ChromeIconButton
+                  disabled={busy}
+                  aria-label={t('ccAgent.gitContext.pr.manage.remove')}
+                  onClick={() => void run({ action: 'remove', id: ref.id })}
+                >
+                  <Trash2 size={14} />
+                </ChromeIconButton>
+                <ChromeIconButton
+                  data-pr-drag-handle=""
+                  disabled={busy}
+                  aria-label={t('ccAgent.gitContext.pr.manage.dragHandle', {
+                    repo: ref.repo,
+                    number: ref.prNumber,
+                  })}
+                  aria-description={t('ccAgent.gitContext.pr.manage.reorderHint')}
+                  tooltip={t('ccAgent.gitContext.pr.manage.reorderHint')}
+                  className="cursor-grab text-[var(--text-tertiary)] enabled:hover:text-[var(--text-secondary)] focus-visible:text-[var(--text-secondary)] active:cursor-grabbing disabled:cursor-default"
+                  onKeyDown={(event) => {
+                    if (
+                      event.target !== event.currentTarget ||
+                      !event.altKey ||
+                      !['ArrowUp', 'ArrowDown'].includes(event.key)
+                    )
+                      return;
+                    event.preventDefault();
+                    const group = active.filter(
+                      (row) => Boolean(row.pinned) === Boolean(ref.pinned),
+                    );
+                    const index = group.findIndex((row) => row.id === ref.id);
+                    const next = index + (event.key === 'ArrowUp' ? -1 : 1);
+                    if (next < 0 || next >= group.length) return;
+                    const ids = group.map((row) => row.id);
+                    [ids[index], ids[next]] = [ids[next], ids[index]];
+                    reorder(ids, ref.id);
+                  }}
+                >
+                  <Menu size={14} aria-hidden="true" />
+                </ChromeIconButton>
+              </>
+            )}
+          </div>
+        )}
       </div>
     );
   };
@@ -349,19 +382,21 @@ export function SessionPrManager({ session }: { session: Session }) {
           {t('ccAgent.gitContext.pr.manage.hint')}
         </p>
         <div className="max-h-60 overflow-y-auto">
-          {[true, false].map((isPinned) => (
-            <SortableList
-              key={String(isPinned)}
-              items={active.filter((ref) => Boolean(ref.pinned) === isPinned)}
-              getId={(ref) => ref.id}
-              onReorder={(ids) => reorder(ids)}
-              renderItem={(ref) => renderRow(ref)}
-              disabled={busy}
-              handle="[data-pr-drag-handle]"
-              filter="button:not([data-pr-drag-handle]), input, textarea, select, a, [data-no-drag]"
-              reducedMotion={reducedMotion}
-            />
-          ))}
+          {readOnly
+            ? active.map((ref) => renderRow(ref))
+            : [true, false].map((isPinned) => (
+                <SortableList
+                  key={String(isPinned)}
+                  items={active.filter((ref) => Boolean(ref.pinned) === isPinned)}
+                  getId={(ref) => ref.id}
+                  onReorder={(ids) => reorder(ids)}
+                  renderItem={(ref) => renderRow(ref)}
+                  disabled={busy}
+                  handle="[data-pr-drag-handle]"
+                  filter="button:not([data-pr-drag-handle]), input, textarea, select, a, [data-no-drag]"
+                  reducedMotion={reducedMotion}
+                />
+              ))}
           {rows !== null && active.length === 0 && (
             <p className="py-2 text-xs text-[var(--text-secondary)]">
               {t('ccAgent.gitContext.pr.manage.empty')}
@@ -376,35 +411,38 @@ export function SessionPrManager({ session }: { session: Session }) {
             </details>
           )}
         </div>
-        <form
-          className="mt-3 border-t border-[var(--border-default)] pt-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!busy && url.trim()) void run({ action: 'add', url: url.trim() });
-          }}
-        >
-          <label htmlFor={`pr-url-${session.id}`} className="mb-2 block text-xs">
-            {t('ccAgent.gitContext.pr.manage.addLabel')}
-          </label>
-          <div className="flex items-center gap-2">
-            <Input
-              inputRef={inputRef}
-              id={`pr-url-${session.id}`}
-              value={url}
-              onChange={setUrl}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault();
-              }}
-              disabled={busy || rows === null}
-              placeholder="https://github.com/…/pull/…"
-              maxLength={2048}
-              className="min-w-0 text-xs"
-            />
-            <Button size="sm" type="submit" disabled={busy || !url.trim()}>
-              {t('ccAgent.gitContext.pr.manage.add')}
-            </Button>
-          </div>
-        </form>
+        {!readOnly && (
+          <form
+            className="mt-3 border-t border-[var(--border-default)] pt-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!busy && url.trim()) void run({ action: 'add', url: url.trim() });
+            }}
+          >
+            <label htmlFor={`pr-url-${session.id}`} className="mb-2 block text-xs">
+              {t('ccAgent.gitContext.pr.manage.addLabel')}
+            </label>
+            <div className="flex items-center gap-2">
+              <Input
+                inputRef={inputRef}
+                id={`pr-url-${session.id}`}
+                value={url}
+                onChange={setUrl}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && event.nativeEvent.isComposing)
+                    event.preventDefault();
+                }}
+                disabled={busy || rows === null}
+                placeholder="https://github.com/…/pull/…"
+                maxLength={2048}
+                className="min-w-0 text-xs"
+              />
+              <Button size="sm" type="submit" disabled={busy || !url.trim()}>
+                {t('ccAgent.gitContext.pr.manage.add')}
+              </Button>
+            </div>
+          </form>
+        )}
         {busy && (
           <p role="status" className="mt-2 text-xs text-[var(--text-secondary)]">
             {t('ccAgent.gitContext.pr.manage.loading')}

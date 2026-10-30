@@ -454,7 +454,7 @@ describe('GitContextBadge', () => {
 // preserve keyboard navigation through a persisted reorder. Existing header
 // tests never opened management. Four active rows + one removed is minimal.
 describe('SessionPrManager', () => {
-  function fixture(deviceId?: string, activeCount = 4) {
+  function fixture(deviceId?: string, activeCount = 4, readOnly = false) {
     managerMocks.sortables.length = 0;
     managerMocks.invalidate.mockClear();
     let refs: SessionPrRef[] = Array.from({ length: activeCount + 1 }, (_, index) => index + 1).map(
@@ -503,16 +503,30 @@ describe('SessionPrManager', () => {
         return statuses((args[0] as { queries: { prNumber: number }[] }).queries);
       return manage(args[0] as SessionPrRefAction);
     });
+    const openExternal = vi.fn();
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
       value: {
+        openExternal,
         gitContext: { managePrRefs: manage, getPrStatuses: statuses },
         deviceLink: { invoke },
       },
     });
+    const session = { ...dialogueSession, deviceLinkDeviceId: deviceId };
+    if (readOnly)
+      gitContextMock.mockReturnValue({
+        head: null,
+        branchSource: null,
+        prRefs: refs.filter((row) => row.removedAt == null),
+        prStatuses: new Map(),
+      });
     const view = render(
       <Tooltip.Provider>
-        <SessionPrManager session={{ ...dialogueSession, deviceLinkDeviceId: deviceId }} />
+        {readOnly ? (
+          <GitContextBadge session={{ ...session, source: 'review' }} />
+        ) : (
+          <SessionPrManager session={session} />
+        )}
       </Tooltip.Provider>,
     );
     const open = async () => {
@@ -520,8 +534,100 @@ describe('SessionPrManager', () => {
         fireEvent.click(screen.getByRole('button', { name: 'ccAgent.gitContext.pr.manage.title' }));
       });
     };
-    return { ...view, open, manage, statuses, invoke, statusFor };
+    return {
+      ...view,
+      open,
+      manage,
+      statuses,
+      invoke,
+      statusFor,
+      openExternal,
+      addRef: (prNumber: number) => {
+        refs = [
+          ...refs,
+          {
+            ...refs[0],
+            id: `manager-${prNumber}`,
+            prNumber,
+            url: `https://github.com/octo/repo/pull/${prNumber}`,
+            pinned: false,
+          },
+        ];
+      },
+    };
   }
+
+  // Unit regressions: hidden header PRs need an actionable list link, including
+  // review tasks and removed/untitled refs. Earlier tests only read row text.
+  it.each([false, true])(
+    'opens PR links without exposing review-task mutations (%s)',
+    async (readOnly) => {
+      const f = fixture(undefined, 4, readOnly);
+      await f.open();
+      const panel = screen.getByRole('dialog');
+      for (const [name, number] of [
+        ['Title 4', 4],
+        ['repo #3', 3],
+      ] as const) {
+        const link = screen.getByRole('link', { name });
+        await act(async () => {
+          fireEvent.click(link);
+        });
+        expect(f.openExternal).toHaveBeenLastCalledWith(
+          `https://github.com/octo/repo/pull/${number}`,
+        );
+      }
+      panel.querySelector('details')!.open = true;
+      await act(async () => {
+        fireEvent.click(screen.getByRole('link', { name: 'repo #5' }));
+      });
+      expect(f.openExternal).toHaveBeenLastCalledWith('https://github.com/octo/repo/pull/5');
+      if (readOnly) {
+        expect(screen.queryByRole('textbox')).toBeNull();
+        expect(panel.querySelector('[data-pr-drag-handle]')).toBeNull();
+        expect(
+          screen
+            .getAllByRole('button')
+            .filter((b) => panel.contains(b))
+            .map((b) => b.getAttribute('aria-label')),
+        ).toEqual(['common.dismiss']);
+        expect(managerMocks.sortables).toHaveLength(0);
+        expect(f.manage.mock.calls.map(([op]) => op.action)).toEqual(['list']);
+      }
+    },
+  );
+
+  // Unit regression: adding a reference elsewhere invalidates the old complete
+  // reorder group. Refresh must expose that row and permit the next retry.
+  it('refreshes the group after rejected reorder and retains the retry explanation', async () => {
+    const f = fixture();
+    await f.open();
+    f.addRef(9);
+    f.manage.mockRejectedValueOnce(new Error('[INVALID_PARAMS] Incomplete group'));
+    const move = async () =>
+      act(async () => {
+        fireEvent.keyDown(
+          screen.getByRole('button', {
+            name: 'ccAgent.gitContext.pr.manage.dragHandle {"repo":"repo","number":2}',
+          }),
+          { key: 'ArrowDown', altKey: true },
+        );
+      });
+    await move();
+    expect(f.manage.mock.calls.map(([op]) => op.action)).toEqual(['list', 'reorder', 'list']);
+    expect(screen.getByRole('alert').textContent).toBe(
+      'ccAgent.gitContext.pr.manage.errors.reorderFailed',
+    );
+    expect(screen.getByText('Title 9')).toBeTruthy();
+    expect(f.statuses.mock.calls.at(-1)![0].map((q) => q.prNumber)).toEqual([9]);
+    await move();
+    expect(f.manage).toHaveBeenLastCalledWith({
+      sessionId: dialogueSession.id,
+      action: 'reorder',
+      ids: ['manager-3', 'manager-2', 'manager-4', 'manager-9'],
+    });
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
 
   it.each([undefined, 'device-2'])(
     'queries all active titles once and falls back on failed status (%s)',
