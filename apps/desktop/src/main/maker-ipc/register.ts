@@ -21953,6 +21953,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             );
             try {
               projection = enqueueInput(continuation);
+              // UI Continue may retry an existing queue head without retaining
+              // this input. Only a retained item can own the claimed run; throw
+              // through the existing preparation rollback before acknowledging.
+              if (!inputCoordinator.hasQueuedItemWhere(sid, (pending) =>
+                pending.clientId === clientId && pending.origin?.kind === 'scheduler'
+                && pending.origin.runId === req.origin.runId)) {
+                throwIpcError('PRECONDITION_FAILED', 'Interrupted scheduled continuation was not queued; please continue again');
+              }
               didEnqueue();
               return { clientId };
             } catch (error) {
