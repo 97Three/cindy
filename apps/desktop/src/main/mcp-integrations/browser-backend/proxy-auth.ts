@@ -125,6 +125,14 @@ const MAX_TRACKED_AUTH_ATTEMPTS = 512;
 
 const CDP_GONE_CONFIRM_WINDOW_MS = 1_500;
 const CDP_GONE_PROBE_INTERVAL_MS = 100;
+/**
+ * How long a signalled browser gets to release the CDP port before it counts
+ * as a survivor. A killed browser (SIGKILL / `taskkill /F`) drops the port
+ * almost immediately, so this only has to cover the scheduling delay — it is
+ * kept short so a stop does not sit on a dead browser for the whole
+ * quiescence window.
+ */
+const CDP_PORT_FREE_WAIT_MS = 3_000;
 
 /**
  * Whether no live Chrome owns the managed profile.
@@ -363,6 +371,39 @@ export async function isManagedBrowserGone(cdpHttpUrl: string): Promise<boolean>
  *
  * Returns true when the CDP port is free afterwards.
  */
+/**
+ * Wait until the CDP port stops being listened on, within a bounded window.
+ *
+ * Signalling a browser is not the same as its exit: `process.kill` on POSIX and
+ * `taskkill` on Windows return as soon as the signal is delivered, so the
+ * process may still hold the port for a moment. Probing once right after the
+ * signal therefore reports a survivor for a browser that is on its way out —
+ * which fails a launch reclaim and blocks the route for nothing. Probe inside
+ * a bounded window instead, and let the port decide.
+ */
+export async function waitForCdpPortFree(
+  cdpHttpUrl: string,
+  options?: {
+    /** Returns true while the port is still taken. */
+    probe?: () => Promise<boolean>;
+    deadlineMs?: number;
+    intervalMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+  },
+): Promise<boolean> {
+  const probe = options?.probe ?? (async () => await isCdpPortListening(cdpHttpUrl));
+  const deadlineMs = options?.deadlineMs ?? CDP_PORT_FREE_WAIT_MS;
+  const intervalMs = options?.intervalMs ?? CDP_GONE_PROBE_INTERVAL_MS;
+  const sleep = options?.sleep
+    ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const deadline = Date.now() + deadlineMs;
+  for (;;) {
+    if (!(await probe())) return true;
+    if (Date.now() >= deadline) return false;
+    await sleep(intervalMs);
+  }
+}
+
 export async function terminateManagedChromePortOwner(params: {
   cdpHttpUrl: string;
   cdpPort: number;
@@ -384,7 +425,14 @@ export async function terminateManagedChromePortOwner(params: {
     }
     await killPortOwner(owner, reclaimLogger);
   }
-  return !(await isCdpPortListening(params.cdpHttpUrl));
+  // Sending the signal is not the exit: `killPortOwner` returns as soon as the
+  // signal was delivered (`process.kill` on POSIX, `taskkill` on Windows), so
+  // the browser can still hold the port for a moment afterwards. Probing once
+  // right after the signal would call a browser that exits a second later a
+  // survivor — which fails the launch reclaim and blocks the route even
+  // though the browser is on its way out. Wait inside a bounded window
+  // instead, and let the port (not the first answer) decide.
+  return await waitForCdpPortFree(params.cdpHttpUrl);
 }
 
 /**

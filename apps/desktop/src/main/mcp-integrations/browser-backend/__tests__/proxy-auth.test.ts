@@ -11,6 +11,8 @@ import {
   closeAdoptedManagedBrowser,
   commandLineHasArgumentValue,
   commandLineHasExactArgument,
+  terminateManagedChromePortOwner,
+  waitForCdpPortFree,
 } from '../proxy-auth.js';
 
 interface CdpCommand {
@@ -251,6 +253,51 @@ describe('commandLineHasArgumentValue', () => {
 
   it('rejects a missing option', () => {
     expect(commandLineHasArgumentValue('chrome --headless', '--user-data-dir', dir)).toBe(false);
+  });
+});
+
+describe('waitForCdpPortFree', () => {
+  it('keeps probing until the port is released instead of trusting the first answer', async () => {
+    // The signal is delivered before the browser releases the port, so a
+    // single probe right after it reports a survivor and fails the launch
+    // reclaim even though the browser is on its way out.
+    let probes = 0;
+    const probe = vi.fn(async () => {
+      probes += 1;
+      return probes < 3;
+    });
+    const sleep = vi.fn(async () => {});
+
+    await expect(waitForCdpPortFree('http://127.0.0.1:45999', {
+      probe,
+      sleep,
+      deadlineMs: 1_000,
+    })).resolves.toBe(true);
+    expect(probe).toHaveBeenCalledTimes(3);
+  });
+
+  it('gives up when the port stays taken for the whole window', async () => {
+    const probe = vi.fn(async () => true);
+    const sleep = vi.fn(async () => {});
+
+    await expect(waitForCdpPortFree('http://127.0.0.1:45998', {
+      probe,
+      sleep,
+      deadlineMs: 0,
+    })).resolves.toBe(false);
+    expect(probe).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('terminateManagedChromePortOwner', () => {
+  it('reports the port free when nothing holds it', async () => {
+    // Nothing listens on that port, so the reclaim must succeed — otherwise a
+    // launch is refused because of a browser that is already gone.
+    await expect(terminateManagedChromePortOwner({
+      cdpHttpUrl: 'http://127.0.0.1:45997',
+      cdpPort: 45997,
+      userDataDir: '/managed/browser/Cindy/user-data',
+    })).resolves.toBe(true);
   });
 });
 
