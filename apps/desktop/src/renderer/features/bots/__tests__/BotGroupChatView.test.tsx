@@ -836,7 +836,8 @@ describe('BotGroupChatView', () => {
       const panel = screen.getByRole('complementary');
       button.focus();
       expect(panel.parentElement?.contains(button)).toBe(false);
-      if (button.getAttribute('aria-label') === 'bots.groupChat.settings.open') await screen.findByRole('tooltip');
+      // Header icon buttons with a tooltip: its Escape closes the tooltip first.
+      if (button.getAttribute('aria-label') === 'bots.groupChat.settings.open' || button.dataset.testid === 'chat-group-invite') await screen.findByRole('tooltip');
       fireEvent.keyDown(button, { key: 'Escape', isComposing: true, keyCode: 229 });
       const consumed = createEvent.keyDown(button, { key: 'Escape', bubbles: true, cancelable: true });
       consumed.preventDefault();

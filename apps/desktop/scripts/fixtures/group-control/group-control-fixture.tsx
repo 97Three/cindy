@@ -1,5 +1,5 @@
 import { makerChatStore } from '../../../src/renderer/lib/makerChatStore';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Route, Routes, useSearchParams } from 'react-router-dom';
 import { AppFrame, forbid, mountPage, subscription } from '../../ui-page/harness';
 import { BotGroupChatView } from '../../../src/renderer/features/bots/BotGroupChatView';
@@ -406,8 +406,15 @@ void mountPage({
 /** The drawer is route-owned: open it the way the header button does. */
 function OpenSettings() {
   const [, setSearchParams] = useSearchParams();
-  // The drawer reads the shared group list, which the sidebar normally loads.
-  useEffect(() => { refreshBotGroups(); setSearchParams({ [BOT_GROUP_SETTINGS_PARAM]: '1' }, { replace: true }); }, [setSearchParams]);
+  // The drawer reads the shared group list, which the sidebar normally loads. Open it once:
+  // setSearchParams changes with every page the drawer opens.
+  const opened = useRef(false);
+  useEffect(() => {
+    if (opened.current) return;
+    opened.current = true;
+    refreshBotGroups();
+    setSearchParams({ [BOT_GROUP_SETTINGS_PARAM]: '1' }, { replace: true });
+  }, [setSearchParams]);
   return <BotGroupSettingsDrawer />;
 }
 
