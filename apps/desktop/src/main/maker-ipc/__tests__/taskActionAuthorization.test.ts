@@ -28,6 +28,7 @@ import {
   captureTaskActionSyncGuard,
   captureTaskActionGuard,
   captureTaskActionDeliveryGuard,
+  isTaskActionRevoked,
 } from '../taskActionAuthorization.js';
 
 function fixture(ownerInput = false, delegated = false) {
@@ -284,6 +285,7 @@ function desktopFixture(kind: 'private' | 'group' | 'automatic' = 'group') {
     ownerContinuation: false,
     automatic: kind !== 'private',
     boundary: 'runtime-1',
+    clearBoundaryMs: null as number | null,
   };
   const confirm = vi.fn(async () => true);
   const runtime = {
@@ -434,7 +436,19 @@ describe('Owner-delegated scheduled task actions', () => {
     expect(effect).not.toHaveBeenCalled();
   });
 
-  it.each(['permission', 'plan', 'instance', 'account', 'input'] as const)('invalidates admission and delayed delivery after %s changes', async changed => {
+  // teammate-authority.md「延迟投递只认真实撤权」(2026-10-30): live turn facts still
+  // expire the admission, but only real revocation stops a queued message. Before,
+  // any of these rollovers between turns dropped every supplement still queued.
+  // A held app-session boundary alone proves nothing (a same-owner Ghost projection repair holds
+  // it too): the captured database client is the owner identity (review on #7969).
+  it.each([
+    ['permission', 'delivered'],
+    ['plan', 'delivered'],
+    ['instance', 'delivered'],
+    ['input', 'delivered'],
+    ['boundary', 'retryable'],
+    ['owner', 'revoked'],
+  ] as const)('invalidates admission after %s changes; delayed delivery is %s', async (changed, outcome) => {
     const h = scheduledFixture();
     const queued = input();
     const guard = await withToolCallAuthority(h.authorize, scheduledSend(), async () => {
@@ -447,10 +461,42 @@ describe('Owner-delegated scheduled task actions', () => {
     if (changed === 'permission') h.runtime.stablePermissionModeState.generation++;
     if (changed === 'plan') h.runtime.stablePlanModeState.generation++;
     if (changed === 'instance') h.getSession.mockReturnValue({ ...h.runtime });
-    if (changed === 'account') hostFacts.boundaryPending.mockReturnValue(true);
+    if (changed === 'boundary') hostFacts.boundaryPending.mockReturnValue(true);
+    if (changed === 'owner') hostFacts.getDb.mockReturnValue({});
     if (changed === 'input') h.activeInput.boundary = 'replacement-runtime';
     expect(() => guard()).toThrow('AUTHORIZATION_EXPIRED');
-    await expect(taskActionInputGuard('target', queued)!()).rejects.toThrow('AUTHORIZATION_EXPIRED');
+    const rejection = await taskActionInputGuard('target', queued)!().then(() => null, (error: unknown) => ({ error }));
+    if (outcome === 'delivered') expect(rejection).toBeNull();
+    else expect(rejection && isTaskActionRevoked(rejection.error)).toBe(outcome === 'revoked');
+  });
+
+  // Review on #7969: /clear moves the coordinator's boundary before cleared_at is persisted,
+  // and persisting may fail, so delivery reads that boundary too. A persisted boundary the
+  // coordinator merely loads late (restart) is older than the admission, not a new clear.
+  it.each([
+    { name: 'cleared in memory after admission', dbClearedAt: null, memoryAfter: 2_000, expired: true },
+    { name: 'older persisted boundary loaded late', dbClearedAt: 1_000, memoryAfter: 1_000, expired: false },
+  ])('queued delivery when $name (expired=$expired)', async ({ dbClearedAt, memoryAfter, expired }) => {
+    const h = scheduledFixture();
+    Object.assign(h.caller, { clearedAt: dbClearedAt });
+    const queued = input();
+    await withToolCallAuthority(h.authorize, scheduledSend(), async () => bindTaskActionInput('target', queued));
+    h.activeInput.clearBoundaryMs = memoryAfter;
+    const delivery = expect(taskActionInputGuard('target', queued)!());
+    if (expired) await delivery.rejects.toThrow('AUTHORIZATION_EXPIRED');
+    else await delivery.resolves.toBeUndefined();
+  });
+
+  // Only a proven revocation may destroy a queued message; a failed check keeps it for retry.
+  it.each([
+    [new Error('TASK_ACTION_AUTHORIZATION_EXPIRED'), true],
+    [new Error('TASK_ACTION_AUTHORIZATION_REQUIRED'), true],
+    [new Error('OWNER_SCOPE_CHANGED'), true],
+    [Object.assign(new Error('revoked'), { code: 'GROUP_AUTHORIZATION_REQUIRED' }), true],
+    [Object.assign(new Error('transport'), { code: 'GROUP_AUTHORIZATION_UNAVAILABLE' }), false],
+    [new Error('DbClient not ready'), false],
+  ])('classifies %s as revoked=%s', (error, revoked) => {
+    expect(isTaskActionRevoked(error)).toBe(revoked);
   });
 
   it.each(['permission', 'account', 'turn'] as const)('does not act or prompt if %s changes during review', async changed => {
@@ -513,7 +559,7 @@ describe('Desktop owner input task actions', () => {
   );
 
   it.each(['bypassPermissions', 'auto', 'ask'])(
-    'revokes the %s admission before execution and delayed delivery when live permissions change', async permissionMode => {
+    'revokes the %s admission before execution but keeps its queued message when live permissions change', async permissionMode => {
       const h = desktopFixture('private');
       let current = true;
       h.activeInput.permission = {
@@ -529,7 +575,7 @@ describe('Desktop owner input task actions', () => {
       current = false;
       const effect = vi.fn(async () => 'changed');
       await expect(decision.run(effect)).rejects.toThrow('AUTHORIZATION_EXPIRED');
-      await expect(taskActionInputGuard('target', queued)!()).rejects.toThrow('AUTHORIZATION_EXPIRED');
+      await expect(taskActionInputGuard('target', queued)!()).resolves.toBeUndefined();
       expect(() => syncGuard()).toThrow('AUTHORIZATION_EXPIRED');
       expect(effect).not.toHaveBeenCalled();
     },
