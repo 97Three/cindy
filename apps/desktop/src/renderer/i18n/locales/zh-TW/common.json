@@ -1674,7 +1674,9 @@
     }
   },
   "settings": {
-    "newChatDefaults": { "title": "新任務預設權限" },
+    "newChatDefaults": {
+      "title": "新任務預設權限"
+    },
     "imConnection": {
       "reconnect": "重新連線",
       "savedNote": "繫結資訊已保留，可直接重試連線。",
@@ -4008,9 +4010,7 @@
         "metaOAuth": "訂閱帳號",
         "metaApiKey": "API key",
         "metaNoAuth": "本機 / 自託管 · 無需鑑權",
-        "customTitle": "自定義端點",
-        "customMeta": "接入任意 OpenAI / Anthropic 相容的模型來源",
-        "pickHint": "選擇要連線的帳號或服務。",
+        "customAction": "找不到？新增自訂",
         "oauthDesc": "在瀏覽器中登入帳號，無需 API key。",
         "deviceOAuthDesc": "使用一次性裝置碼，在供應商驗證頁面完成授權",
         "authorizeInBrowser": "在瀏覽器中授權",
@@ -14412,8 +14412,8 @@
         "ghMissing": "未偵測到 GitHub CLI（gh），看不到 PR 狀態",
         "notFound": "PR 不存在，或目前帳號無權限檢視",
         "statusUnknown": "狀態獲取失敗",
+        "statusNotFetched": "尚未取得狀態",
         "openAria": "在瀏覽器開啟 PR #{{number}}",
-        "clickToOpen": "點擊在瀏覽器開啟 PR",
         "guidance": {
           "login": {
             "hint": "點擊連接 GitHub",
@@ -14501,7 +14501,40 @@
             "otherMethods": "其他連線方式"
           }
         },
-        "unresolved": "{{count}} 條未解決的 review 評論"
+        "unresolved": "{{count}} 條未解決的 review 評論",
+        "summaryAria": "查看 PR #{{number}} 摘要",
+        "unresolvedLabel": "未解決的 review 評論",
+        "checks": "檢查",
+        "checksTotal": "共 {{count}} 項",
+        "failed": "失敗",
+        "passed": "通過",
+        "pending": "進行中",
+        "skippedLabel": "略過或中立",
+        "manage": {
+          "title": "管理 PR 連結",
+          "hint": "頂列最多顯示 3 個，固定的 PR 優先顯示",
+          "empty": "貼上 GitHub PR 連結即可新增",
+          "removed": "已移除 {{count}} 個",
+          "addLabel": "新增 PR 連結",
+          "add": "新增 PR",
+          "loading": "正在讀取…",
+          "restore": "還原 PR",
+          "pin": "固定至頂列",
+          "unpin": "取消固定",
+          "pinLimit": "最多固定 3 個 PR",
+          "reorderHint": "按 Alt+↑/↓ 在已固定或未固定群組內調整順序。",
+          "dragHandle": "拖曳排序 {{repo}} #{{number}}",
+          "remove": "移除 PR",
+          "errors": {
+            "duplicate": "此 PR 已關聯；已移除的連結可在清單中還原",
+            "notFound": "找不到此 PR，或沒有存取權限",
+            "invalidUrl": "請輸入有效的 GitHub PR 連結",
+            "reorderFailed": "順序未儲存，請重試",
+            "verifyFailed": "無法驗證 PR，請檢查 GitHub 登入與存取權限",
+            "unsupported": "這台電腦的版本暫不支援管理 PR 連結",
+            "failed": "無法更新 PR 連結"
+          }
+        }
       }
     },
     "schedule": {
@@ -18562,6 +18595,23 @@
     "groupHint": "關閉後，經此組執行的任務使用普通模式，也適用於 Ultrafast。",
     "pending": "部分電腦尚未確認設定。請保持連線，並更新不支援此設定的組內電腦。",
     "saveFailed": "設定可能已儲存，但執行中的任務尚未全部確認切換為普通模式。請檢查連線後重試。"
+  },
+  "usageCost": {
+    "title": "費用明細",
+    "conversation": "對話",
+    "additional": "附加費用",
+    "unknownModel": "未記錄模型",
+    "estimate": "估算價值",
+    "charged": "按量費用",
+    "loading": "正在讀取明細…",
+    "unavailable": "這筆記錄暫無明細。",
+    "explanation": "按模型和渠道彙總。訂閱價值是估算，不是額外扣費。僅包含已記錄的費用，歷史記錄的明細可能不完整。",
+    "source": {
+      "subscription": "訂閱帳戶",
+      "cindy-ai": "Cindy AI",
+      "provider": "API 供應商",
+      "unknown": "未記錄渠道"
+    }
   },
   "performanceTrace": {
     "title": "效能追蹤",
