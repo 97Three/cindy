@@ -42,6 +42,8 @@ export interface SourceSession {
   dialogue?: boolean;
   /** 来源格式版本未适配：列出但不允许导入。 */
   unsupportedVersion?: string;
+  /** 记录是某个 Cindy 自己运行的任务（带 Cindy 附加的说明），默认隐藏。 */
+  ranByCindy?: boolean;
 }
 
 /** 扫描时的上下文。 */

@@ -49,6 +49,7 @@ import type {
 import {
   blocksText,
   firstNonEmpty,
+  hasCindyInjection,
   isInjectedContextText,
   isRecord,
   makeTitle,
@@ -56,6 +57,8 @@ import {
   parseMaybeJson,
   str,
   stringifyOutput,
+  stripCindyInjection,
+  stripSystemReminders,
   toMs,
   walkFiles,
 } from './common.js';
@@ -136,7 +139,7 @@ function readThreadRows(dbPath: string): SqlRow[] {
 
 /** 没有状态库行的 rollout：从 session_meta 与前若干行补出摘要。 */
 async function summaryFromRollout(file: string, mtimeMs: number): Promise<{
-  threadId: string; cwd: string; createdAt: number; title: string; internal: boolean; conversation: boolean;
+  threadId: string; cwd: string; createdAt: number; title: string; internal: boolean; conversation: boolean; cindy: boolean;
 } | null> {
   let threadId = '';
   let cwd = '';
@@ -145,6 +148,7 @@ async function summaryFromRollout(file: string, mtimeMs: number): Promise<{
   let internal = false;
   // 只有语音/实时事件、没有任何对话内容的记录不列出；分页历史的对话在祖先里。
   let conversation = false;
+  let cindy = false;
   let n = 0;
   for await (const line of readLines(file, { maxBytes: 512 * 1024 })) {
     n += 1;
@@ -163,15 +167,17 @@ async function summaryFromRollout(file: string, mtimeMs: number): Promise<{
       })) internal = true;
     } else if (obj.type === 'response_item') {
       if (parseCodexRolloutLine(obj, String(n), threadId).length > 0) conversation = true;
-      if (payload.type === 'message' && payload.role === 'user' && !title) {
-        const text = blocksText(payload.content).trim();
-        if (text && !isInjectedContextText(text)) title = makeTitle(text, '');
+      if (payload.type === 'message' && payload.role === 'user') {
+        const raw = blocksText(payload.content);
+        if (hasCindyInjection(raw)) cindy = true;
+        const text = stripCindyInjection(raw).trim();
+        if (!title && text && !isInjectedContextText(text)) title = makeTitle(text, '');
       }
     }
     if ((threadId && title && conversation) || n > 400) break;
   }
   if (!threadId) return null;
-  return { threadId: threadId.toLowerCase(), cwd, createdAt: createdAt || mtimeMs, title, internal, conversation };
+  return { threadId: threadId.toLowerCase(), cwd, createdAt: createdAt || mtimeMs, title, internal, conversation, cindy };
 }
 
 async function list(): Promise<SourceListResult> {
@@ -201,7 +207,7 @@ async function list(): Promise<SourceListResult> {
         rows = [];
       }
     }
-    const add = (thread: CodexThreadSummary, file: { file: string; size: number }) => {
+    const add = (thread: CodexThreadSummary, file: { file: string; size: number }, ranByCindy = false) => {
       const id = thread.threadId.toLowerCase();
       const existing = sessions.get(id);
       if (existing && existing.updatedAt >= thread.updatedAt) return;
@@ -224,6 +230,7 @@ async function list(): Promise<SourceListResult> {
         sizeBytes: file.size,
         locator: JSON.stringify(locator),
         dialogue: thread.workspaceKind === 'dialogue',
+        ...(ranByCindy ? { ranByCindy: true } : {}),
       });
     };
     for (const row of rows) {
@@ -246,7 +253,12 @@ async function list(): Promise<SourceListResult> {
         const summary = await summaryFromRollout(file.file, Date.now()).catch(() => null);
         if (summary && !summary.conversation) continue;
       }
-      add(thread, file);
+      const firstMessage = str(row.first_user_message);
+      const ranByCindy = hasCindyInjection(firstMessage) || hasCindyInjection(str(row.title));
+      const title = ranByCindy
+        ? makeTitle(firstNonEmpty(thread.title.startsWith('[UI language]') ? '' : stripCindyInjection(thread.title), stripCindyInjection(firstMessage)), 'Codex Session')
+        : thread.title;
+      add({ ...thread, title }, file, ranByCindy);
     }
     // 没有状态库行的 rollout（旧版 Codex、或状态库丢失）。
     for (const [id, list] of byThread) {
@@ -276,7 +288,7 @@ async function list(): Promise<SourceListResult> {
         createdAt: summary.createdAt,
         updatedAt: Math.max(newest.mtimeMs, indexEntry?.updatedAt ?? 0),
         archived: newest.file.includes(`${path.sep}archived_sessions${path.sep}`),
-      }, newest);
+      }, newest, summary.cindy);
     }
   }
   return { sessions: [...sessions.values()], internalCount, unreadableCount };
@@ -330,7 +342,7 @@ export function parseCodexRolloutLine(obj: Record<string, unknown>, key: string,
     const role = p.role === 'user' ? 'user' : p.role === 'assistant' ? 'assistant' : null;
     if (!role) return [];
     const raw = blocksText(p.content);
-    const text = (role === 'user' ? stripCompleteIdeOpenedFileBlocks(raw) : finalizeCodexCitationText(raw)).trim();
+    const text = (role === 'user' ? stripSystemReminders(stripCindyInjection(stripCompleteIdeOpenedFileBlocks(raw))) : finalizeCodexCitationText(raw)).trim();
     if (role === 'user' && isInjectedContextText(text)) return [];
     const images = role === 'user' && Array.isArray(p.content)
       ? p.content.flatMap((b) => {

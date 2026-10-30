@@ -65,6 +65,37 @@ export function isInjectedContextText(text: string): boolean {
   return t.endsWith(`</${m[1]}>`);
 }
 
+/**
+ * Cindy 运行任务时附在用户消息里给模型看的说明：界面语言提示、`[消息来源]` / `[客户端说明]` /
+ * `[渠道说明]` / `[系统]` / `[UI_ACTION_TRIGGER]` / 分叉上下文段落与 `<cindy-…>` / `<bot_persona>` 块。出现它们说明这条记录是某个 Cindy（例如另一个
+ * 测试版或另一个账号）自己运行的任务。
+ */
+const CINDY_UI_LANGUAGE_NOTE = /\[UI language\] System note appended each turn\.[\s\S]*?Only user-facing error reports must use the interface language\.[ \t]*\n*/g;
+const CINDY_HOST_BLOCK = /<(cindy-[a-z0-9-]+|bot_persona)>[\s\S]*?<\/\1>\s*/g;
+const CINDY_TAGGED_PARAGRAPH = /^\[(?:消息来源|客户端说明|渠道说明|系统|UI_ACTION_TRIGGER|Session fork · internal context)\][^\n]*(?:\n(?!\n)[^\n]*)*\n*/gm;
+
+/** 识别只看开头标记（记录里的摘要常被截断，结束标记不一定在）。 */
+const CINDY_MARKER = /\[UI language\] System note appended each turn|<(?:cindy-[a-z0-9-]+|bot_persona)>|(?:^|\n)\[(?:消息来源|客户端说明|渠道说明|系统|UI_ACTION_TRIGGER|Session fork · internal context)\]/;
+
+export function hasCindyInjection(text: string): boolean {
+  return CINDY_MARKER.test(text);
+}
+
+/** 去掉 Cindy 附加给模型的说明，只留下用户实际写的内容。 */
+export function stripCindyInjection(text: string): string {
+  if (!text.includes('[') && !text.includes('<')) return text;
+  return text
+    .replace(CINDY_UI_LANGUAGE_NOTE, '')
+    .replace(CINDY_HOST_BLOCK, '')
+    .replace(CINDY_TAGGED_PARAGRAPH, '')
+    .trim();
+}
+
+/** 工具自己附加给模型的 `<system-reminder>` 块（不是用户写的），从显示与标题里去掉。 */
+export function stripSystemReminders(text: string): string {
+  return text.includes('<system-reminder>') ? text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>\s*/g, '').trim() : text;
+}
+
 /** 递归列出目录下符合条件的文件（带深度上限与 mtime），读取失败的目录跳过。 */
 export async function walkFiles(
   root: string,

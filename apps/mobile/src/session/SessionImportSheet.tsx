@@ -220,7 +220,7 @@ export function SessionImportSheet({ visible, onClose, onClosed, deviceId, devic
               const on = selected.has(c.key);
               return <Pressable key={c.key} accessibilityRole="checkbox" accessibilityState={{ checked: on, disabled: c.unsupported }} accessibilityLabel={c.title}
                 disabled={c.unsupported || !!job} onPress={() => { toggle(c.key); setConfirming(false); }} style={[styles.row, i > 0 && styles.separator]} testID={`sessionImport.row.${c.key}`}>
-                <View style={[styles.check, on && styles.checkOn, c.unsupported && styles.dim]}>{on ? <Check size={iconSize.sm} strokeWidth={2.5} color={colors.ctaText} /> : null}</View>
+                <View style={[styles.check, on && styles.checkOn, c.unsupported && styles.dim]}>{on ? <Check size={iconSize.sm} strokeWidth={iconStroke.bold} color={colors.ctaText} /> : null}</View>
                 <View style={[styles.markSlot, c.unsupported && styles.dim]}><ImportSourceMarkNative source={c.source} color={colors.textPrimary} /></View>
                 <View style={styles.flex}>
                   <Text numberOfLines={1} style={[styles.title, c.unsupported && styles.dimText]}>{c.title}</Text>
@@ -247,7 +247,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   input: { minHeight: 44, borderRadius: radius.pill, paddingHorizontal: spacing.lg, fontSize: typeScale.bodySmall, color: colors.textPrimary, backgroundColor: colors.surfaceElevated },
   group: { gap: spacing.xs },
   groupHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.xs },
-  groupName: { fontSize: typeScale.footnote, lineHeight: lineHeight.caption, fontWeight: fontWeight.semibold, color: colors.textSecondary },
+  groupName: { fontSize: typeScale.footnote, lineHeight: lineHeight.caption, fontWeight: fontWeight.medium, color: colors.textSecondary },
   box: { backgroundColor: colors.surfaceElevated, borderRadius: radius.container, overflow: 'hidden' },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, minHeight: 48, paddingHorizontal: spacing.md + 2, paddingVertical: spacing.sm },
   resultRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md, paddingHorizontal: spacing.md + 2, paddingVertical: spacing.md },

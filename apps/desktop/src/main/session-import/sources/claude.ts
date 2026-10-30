@@ -31,7 +31,7 @@ import type {
   SourceSession,
   VerifyOutcome,
 } from '../types.js';
-import { firstNonEmpty, isRecord, makeTitle, num, str, toMs, walkFiles } from './common.js';
+import { firstNonEmpty, hasCindyInjection, isRecord, makeTitle, num, str, stripCindyInjection, stripSystemReminders, toMs, walkFiles } from './common.js';
 
 const HEAD_MAX_BYTES = 384 * 1024;
 const HEAD_MAX_LINES = 400;
@@ -57,9 +57,18 @@ function isSyntheticUserText(content: string): boolean {
     || t.startsWith('<task-notification>');
 }
 
+/** 用户消息里的原始文字（不做任何清理），用于识别 Cindy 附加的说明。 */
+function rawUserText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((b) => (isRecord(b) && (b.type === 'text' || b.type === 'input_text') && typeof b.text === 'string' ? b.text : ''))
+    .join('\n\n');
+}
+
 export function claudeUserText(content: unknown): string {
   if (typeof content === 'string') {
-    const text = stripCompleteIdeOpenedFileBlocks(content);
+    const text = stripSystemReminders(stripCindyInjection(stripCompleteIdeOpenedFileBlocks(content)));
     return isSyntheticUserText(text) ? '' : text;
   }
   if (!Array.isArray(content)) return '';
@@ -70,7 +79,7 @@ export function claudeUserText(content: unknown): string {
       parts.push(stripCompleteIdeOpenedFileBlocks(block.text));
     }
   }
-  return parts.join('\n\n');
+  return stripSystemReminders(stripCindyInjection(parts.join('\n\n')));
 }
 
 /** Cindy 自己的本地复核会话（review channel），不是用户的任务。 */
@@ -219,30 +228,42 @@ export function parseClaudeLine(obj: Record<string, unknown>, lineNo: number, sd
 }
 
 /** 头部有界读取：标题、工作目录；内部复核会话返回 internal。 */
-async function headSummary(file: string): Promise<{ title: string; cwd: string; internal: boolean; ok: boolean }> {
-  let title = '';
+async function headSummary(file: string): Promise<{ title: string; cwd: string; internal: boolean; ok: boolean; cindy: boolean }> {
+  let firstText = '';
+  let aiTitle = '';
+  let customTitle = '';
   let cwd = '';
   let saw = false;
+  let cindy = false;
   let lines = 0;
   for await (const line of readLines(file, { maxBytes: HEAD_MAX_BYTES })) {
     lines += 1;
-    if (lines > HEAD_MAX_LINES && title) break;
+    if (lines > HEAD_MAX_LINES && (firstText || aiTitle || customTitle)) break;
     const obj = parseJsonLine(line);
     if (!obj || obj.isSidechain === true) continue;
     const lineCwd = str(obj.cwd);
     if (lineCwd) cwd = lineCwd;
     const type = str(obj.type);
+    // Claude Code 自己记录的标题：用户改过的优先，其次是它生成的（取最后一条）。
+    if (type === 'custom-title') { customTitle = str(obj.customTitle) || customTitle; continue; }
+    if (type === 'ai-title') { aiTitle = str(obj.aiTitle) || aiTitle; continue; }
+    if (type === 'last-prompt') {
+      if (!cindy && hasCindyInjection(str(obj.lastPrompt))) cindy = true;
+      continue;
+    }
     if (type !== 'user' && type !== 'assistant') continue;
     // 只有本地命令回显（/model、/exit 等）的记录不算对话，不列出。
     if (!saw && parseClaudeLine(obj, lines, '').length > 0) saw = true;
-    if (type === 'user' && !title && isRecord(obj.message)) {
+    if (type === 'user' && !cindy && isRecord(obj.message) && hasCindyInjection(rawUserText(obj.message.content))) cindy = true;
+    // Claude Code 压缩上下文后把摘要写成一条用户消息（isCompactSummary），不是用户的提问。
+    if (type === 'user' && !firstText && isRecord(obj.message) && obj.isCompactSummary !== true) {
       const text = claudeUserText(obj.message.content).trim();
-      if (text && isInternalReviewText(text)) return { title: '', cwd, internal: true, ok: true };
-      if (text) title = makeTitle(text, '');
+      if (text && isInternalReviewText(text)) return { title: '', cwd, internal: true, ok: true, cindy };
+      if (text) firstText = text;
     }
-    if (title && cwd && saw) break;
   }
-  return { title, cwd, internal: false, ok: saw };
+  const title = makeTitle(firstNonEmpty(stripCindyInjection(customTitle), aiTitle, firstText), '');
+  return { title, cwd, internal: false, ok: saw, cindy };
 }
 
 async function list(): Promise<SourceListResult> {
@@ -272,6 +293,7 @@ async function list(): Promise<SourceListResult> {
       archived: false,
       sizeBytes: f.size + (await sidecarSize(f.file)),
       locator: JSON.stringify({ file: f.file } satisfies ClaudeLocator),
+      ...(head.cindy ? { ranByCindy: true } : {}),
     });
   }
   return { sessions, internalCount, unreadableCount };

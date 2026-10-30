@@ -108,7 +108,7 @@ async function runScan(scopeKey: string): Promise<ScanSnapshot> {
         continue;
       }
       sessions.set(key, s);
-      const hidden = hiddenCategoryFor(s.cwd, env);
+      const hidden = s.ranByCindy ? 'cindy' : hiddenCategoryFor(s.cwd, env);
       if (hidden) hiddenCounts[hidden] += 1;
       const group = groupFor(s.cwd, s.dialogue === true, env, resolveWorktree);
       candidates.push({
