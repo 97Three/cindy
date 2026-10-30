@@ -1674,7 +1674,9 @@
     }
   },
   "settings": {
-    "newChatDefaults": { "title": "새 작업의 기본 권한" },
+    "newChatDefaults": {
+      "title": "새 작업의 기본 권한"
+    },
     "imConnection": {
       "reconnect": "다시 연결",
       "savedNote": "연결 정보가 저장되어 있습니다. 바로 다시 연결할 수 있습니다.",
@@ -2850,7 +2852,8 @@
         "hint": "자동은 말한 언어를 감지합니다. 언어를 지정하면 다국어 환경의 오인식을 줄일 수 있습니다.",
         "ariaLabel": "언어 선택",
         "options": {
-          "auto": "자동"
+          "auto": "자동",
+          "es": "Español"
         },
         "optionDescriptions": {
           "auto": "인식 서비스가 자동 감지",
@@ -2858,7 +2861,8 @@
           "zh-TW": "중국어 번체(대만)",
           "en": "영어",
           "ja": "일본어",
-          "ko": "한국어"
+          "ko": "한국어",
+          "es": "스페인어"
         }
       },
       "shortcut": {
@@ -3600,6 +3604,7 @@
           "nameRequired": "표시 이름을 입력하세요",
           "runtimeRequired": "Runtime을 하나 이상 구성하세요(기본 URL과 모델)",
           "baseUrlInvalid": "기본 URL은 유효한 http(s) 주소여야 합니다",
+          "baseUrlRequired": "이 Runtime의 기본 URL을 입력하거나 프로토콜을 기본값으로 되돌리세요",
           "contextWindowInvalid": "컨텍스트 윈도우는 유효한 양의 정수여야 합니다(숫자 그룹 사이에 구분 기호 사용 가능)",
           "requestPathInvalid": "정확한 요청 경로는 단일 /로 시작해야 하며 프래그먼트나 . 또는 .. 경로 세그먼트를 포함하면 안 됩니다. 공백과 안전하지 않은 문자는 퍼센트 인코딩하세요.",
           "modelRequired": "모델을 하나 이상 추가하세요",
@@ -4008,9 +4013,7 @@
         "metaOAuth": "구독 계정",
         "metaApiKey": "API key",
         "metaNoAuth": "로컬 / 자체 호스팅 · 인증 없음",
-        "customTitle": "사용자 지정 엔드포인트",
-        "customMeta": "OpenAI / Anthropic 호환 모델 소스를 연결",
-        "pickHint": "연결할 계정이나 서비스를 선택하세요.",
+        "customAction": "찾는 항목이 없나요? 직접 추가",
         "oauthDesc": "브라우저에서 로그인합니다. API key는 필요하지 않습니다.",
         "deviceOAuthDesc": "일회용 기기 코드를 사용해 제공자 인증 페이지에서 인증하세요",
         "authorizeInBrowser": "브라우저에서 인증",
@@ -5682,7 +5685,7 @@
         },
         "host": {
           "title": "이 컴퓨터에서 중계 시작",
-          "hint": "다른 기기가 이 컴퓨터에 접속할 수 있어야 합니다. 같은 로컬 네트워크, 공유기 포트 포워딩, 터널, 메시 VPN 등으로 직접 확보해 주세요. 이 컴퓨터가 잠자기 상태가 되거나 Cindy를 종료하면 모든 기기의 연결이 끊어지므로 \"컴퓨터 깨어 있게 하기\"를 켭니다.",
+          "hint": "다른 기기가 이 컴퓨터에 접속할 수 있어야 합니다. 같은 로컬 네트워크, 공유기 포트 포워딩, 터널, 메시 VPN 등으로 직접 확보해 주세요. 이 컴퓨터가 잠자기 상태가 되거나 Cindy를 종료하면 모든 기기의 연결이 끊어지므로 \"컴퓨터를 절전 모드로 전환하지 않기\"를 켭니다.",
           "port": "포트",
           "scope": "연결 허용 범위",
           "scopeLocal": "이 컴퓨터만",
@@ -7909,8 +7912,9 @@
         "usesExplanation": "허용된 공유 범위의 모든 버전에서 누적된 도구 호출 수입니다. 아래 내 호출은 이 컴퓨터의 현재 계정만 집계합니다."
       },
       "contribution": {
-        "unreadReview": "새 심사 결과가 있습니다",
+        "unreadReview": "새 처리 결과가 있습니다",
         "viewReviewResult": "{{version}} 심사 결과 보기",
+        "viewMarketResult": "마켓 처리 결과 보기",
         "anonymous": "익명으로 게시",
         "anonymousHint": "플러그인 전체의 공개 작성자 이름을 숨깁니다. 끄면 각 버전의 심사 제출 시 저장된 원작자 이름이 표시됩니다.",
         "anonymousAuthorOnly": "원작자만 변경할 수 있습니다",
@@ -8006,6 +8010,7 @@
           "rejected": "반려됨",
           "enabled": "게시 시작",
           "disabled": "게시 중단",
+          "archived": "보관됨",
           "current_changed": "게시 버전 변경",
           "revoked": "버전 철회됨",
           "cancelled": "취소됨"
@@ -12605,6 +12610,7 @@
     "verificationFailed": "ChatGPT 로그인이 복구되었는지 확인할 수 없습니다. 다시 확인해 주세요."
   },
   "chat": {
+    "teammateProcess": {"record":"작업 내역","operations":"작업 기록","elapsed":"처리 중 {{duration}}","took":"소요 시간 {{duration}}","processing":"처리 중","worked":"작업 내역","thinking":"생각 중","thought":"생각함","failed_other":"호출 {{count}}회 실패","separator":" · ","actions":{"running":{"read":"파일 확인 중","edit":"파일 수정 중","search":"검색 중","web":"웹 확인 중","command":"명령 실행 중","tools":"도구 사용 중","delegate":"작업 위임 중","plan":"계획 정리 중"},"done":{"read":"파일 확인함","edit":"파일 수정함","search":"검색함","web":"웹 확인함","command":"명령 실행함","tools":"도구 사용함","delegate":"작업 위임함","plan":"계획 정리함"}}},
     "imageDelivery": {
       "stored": "이미지 전달 완료",
       "failed": "이미지 전달에 실패했습니다. 기존 이미지 전송을 다시 시도할 수 있습니다.",
@@ -14416,8 +14422,8 @@
         "ghMissing": "GitHub CLI(gh)를 찾을 수 없어 PR 상태를 볼 수 없습니다",
         "notFound": "PR이 없거나 현재 계정으로는 볼 수 없습니다",
         "statusUnknown": "상태를 가져오지 못했습니다",
+        "statusNotFetched": "아직 상태 정보가 없습니다",
         "openAria": "브라우저에서 PR #{{number}} 열기",
-        "clickToOpen": "클릭하여 브라우저에서 PR 열기",
         "guidance": {
           "login": {
             "hint": "클릭하여 GitHub 연결",
@@ -14505,7 +14511,40 @@
             "otherMethods": "다른 연결 방법"
           }
         },
-        "unresolved": "미해결 리뷰 코멘트: {{count}}건"
+        "unresolved": "미해결 리뷰 코멘트: {{count}}건",
+        "summaryAria": "PR #{{number}} 요약 보기",
+        "unresolvedLabel": "미해결 리뷰 코멘트",
+        "checks": "검사",
+        "checksTotal": "총 {{count}}개",
+        "failed": "실패",
+        "passed": "통과",
+        "pending": "진행 중",
+        "skippedLabel": "건너뜀 또는 중립",
+        "manage": {
+          "title": "PR 링크 관리",
+          "hint": "상단에 최대 3개 표시하며 고정한 PR이 먼저 표시됩니다",
+          "empty": "GitHub PR 링크를 붙여넣어 추가하세요",
+          "removed": "제거됨: {{count}}개",
+          "addLabel": "PR 링크 추가",
+          "add": "PR 추가",
+          "loading": "불러오는 중…",
+          "restore": "PR 복원",
+          "pin": "상단에 고정",
+          "unpin": "고정 해제",
+          "pinLimit": "PR은 최대 3개까지 고정할 수 있습니다",
+          "reorderHint": "Alt+↑/↓ 키로 고정 또는 고정되지 않은 그룹 안에서 순서를 변경합니다.",
+          "dragHandle": "{{repo}} #{{number}} 끌어서 순서 변경",
+          "remove": "PR 제거",
+          "errors": {
+            "duplicate": "이미 연결된 PR입니다. 제거한 링크는 목록에서 복원할 수 있습니다",
+            "notFound": "PR을 찾을 수 없거나 접근 권한이 없습니다",
+            "invalidUrl": "유효한 GitHub PR 링크를 입력하세요",
+            "reorderFailed": "순서가 저장되지 않았습니다. 다시 시도하세요.",
+            "verifyFailed": "PR을 확인할 수 없습니다. GitHub 로그인과 접근 권한을 확인하세요",
+            "unsupported": "이 컴퓨터의 버전은 PR 링크 관리를 지원하지 않습니다",
+            "failed": "PR 링크를 업데이트할 수 없습니다"
+          }
+        }
       }
     },
     "schedule": {
@@ -18566,6 +18605,23 @@
     "groupHint": "끄면 이 그룹을 통해 실행하는 모든 작업이 일반 속도로 실행됩니다. Ultrafast에도 적용됩니다.",
     "pending": "일부 컴퓨터가 설정을 확인하지 않았습니다. 연결을 유지하고 이 설정을 지원하지 않는 그룹 컴퓨터를 업데이트하세요.",
     "saveFailed": "설정은 저장되었을 수 있지만 일부 실행 중인 작업이 일반 속도 전환을 확인하지 않았습니다. 연결을 확인한 후 다시 시도하세요."
+  },
+  "usageCost": {
+    "title": "비용 내역",
+    "conversation": "채팅",
+    "additional": "추가 비용",
+    "unknownModel": "모델 미기록",
+    "estimate": "추정 가치",
+    "charged": "사용량 요금",
+    "loading": "내역 불러오는 중…",
+    "unavailable": "이 기록의 내역을 확인할 수 없습니다.",
+    "explanation": "모델과 경로별로 집계합니다. 구독 가치는 추정치이며 추가 청구 금액이 아닙니다. 기록된 비용만 포함되며 과거 내역은 불완전할 수 있습니다.",
+    "source": {
+      "subscription": "구독 계정",
+      "cindy-ai": "Cindy AI",
+      "provider": "API 제공자",
+      "unknown": "경로 미기록"
+    }
   },
   "performanceTrace": {
     "title": "성능 기록",

@@ -1,3 +1,5 @@
+import type { BotGroupProcessRef } from './botGroupProcess.js';
+export * from './botGroupProcess.js';
 /**
  * Bot group chat wire contract shared by Desktop main, preload and renderer.
  * Product rules: docs/product-rules/bot-group-chat.md.
@@ -148,6 +150,8 @@ export interface BotGroupMemberView {
 }
 
 export interface BotGroupMessageView {
+  /** Owner-only process reads use the existing task permission; this is only a public locator. */
+  process?: BotGroupProcessRef;
   /** Server-stamped identity at send time; rebinding never rewrites history. */
   maskAttribution?: { self: ChatMaskIdentity; companion: ChatMaskIdentity; sourceMessageId: string };
   /** Server tombstone; it cannot anchor a runtime failure notice. */
@@ -673,6 +677,10 @@ export type BotGroupChange = 'created' | 'updated' | 'deleted' | 'messages' | 'r
 export interface BotGroupChangedPayload {
   groupId: string;
   change: BotGroupChange;
+  /** Authenticated message deltas can render before the slower room metadata refresh. */
+  messages?: BotGroupMessageView[];
+  /** Only apply deltas to an already displayed projection of the same generation. */
+  historyRevision?: string;
   /** Personal state, only emitted after an authoritative account-scoped reply/event. */
   listState?: { hidden: boolean; revision: number };
 }

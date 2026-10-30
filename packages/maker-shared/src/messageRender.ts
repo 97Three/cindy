@@ -1,7 +1,7 @@
 import { hasRichAnswer } from './richAnswer';
 import { groupWorkRuns } from './workRunGrouping.js';
 import { isContinuationMessage } from './syntheticTrigger.js';
-export { groupWorkRuns, type WorkRunGroupingAdapter } from './workRunGrouping.js';
+export { groupWorkRuns, groupTeammateProcess, type WorkRunGroupingAdapter } from './workRunGrouping.js';
 import {
   type AgentTaskTerminalStatus,
   type AgentTaskUpdate,
@@ -213,6 +213,8 @@ export interface MessageRenderWorkGroupItem<
   TMessage extends MessageRenderNormalizedMessage = MessageRenderNormalizedMessage,
 > {
   type: 'work_group';
+  /** Teammate-only continuous public progress, with ordered activity segments. */
+  teammateJournal?: boolean;
   key: string;
   children: MessageRenderWorkChildItem<TMessage>[];
   deferred?: import('./historyView.js').DeferredHistoryWork;
