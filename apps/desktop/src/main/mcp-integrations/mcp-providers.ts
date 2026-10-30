@@ -612,6 +612,14 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       getPool: async () => (await loadRemoteSsh()).getRemoteSshPoolHydrated(),
       ensureReady: async (id: string) =>
         (await loadRemoteSsh()).ensureRemoteHostReady(id),
+      // 与设置页「添加」「重新读取」同一实现，Agent 与用户写的是同一份配置。
+      addHost: async (input) => {
+        await (await loadRemoteSsh()).addRemoteSshHost(input);
+      },
+      reloadConfig: async () => {
+        const result = await (await loadRemoteSsh()).reloadRemoteSshConfig();
+        return { diagnostic: result.diagnostic?.kind ?? null, warningCount: result.warningCount };
+      },
       redactSensitiveText: (snapshot, text) => {
         if (!redactSshText) throw new Error('SSH redactor is not initialized');
         return redactSshText(snapshot, text);
