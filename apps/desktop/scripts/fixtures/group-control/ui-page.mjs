@@ -31,7 +31,7 @@ export default {
   viewport: { width: 1280, height: 800 },
   real: 'BotGroupChatView (timeline, composer, send button, header registration), ControlledBanner, ContentHeader shell, Markdown, theme, fonts and translations',
   notCovered:
-    'Real IPC/network sending (send-status controls host receipts), round control, real device-link control and revocation, pending interactions, plans and attachments; the bubbles case shows a task snapshot, not a live task; the sidebar is an empty frame',
+    'Real IPC/network sending (send-status controls host receipts), round control, real device-link control and revocation, pending interactions, plans and attachments; the bubbles case shows a task snapshot, not a live task; the sidebar renders the real group row for work-state cases and is otherwise an empty frame',
   cases: {
     'send-status': {
       about: 'Mac send flicker regression: real composer/outbox/timeline, controlled slow receipt; row geometry stays stable and failed sends remain retryable',
@@ -42,6 +42,7 @@ export default {
       viewport: { width: 720, height: 700 },
       data: { ...base, sidebar: false, remoteLimits: true },
     },
+    'work-queued': { about: '#8047: queued execution is busy without speaking or elapsed work', data: { ...base, messages: 2, workState: 'queued' } },
     'work-thinking': { about: 'Actual group work status, scenario data: thinking', data: { ...base, messages: 2, workState: 'thinking' } },
     'work-tools': { about: 'Actual group work status, scenario data: command execution', data: { ...base, messages: 2, workState: 'testing' } },
     'work-reading': { about: 'Actual group work status, scenario data: file reading', data: { ...base, messages: 2, workState: 'reading-file' } },
@@ -191,6 +192,17 @@ export default {
         startedAtMs: Date.now() - 83_000, lastActivityAtMs: Date.now(), attention: false,
         gracefulStopState: state === 'stopping' ? 'requested' : 'none', source: 'live' }]);
       await page.getByTestId('bot-group-progress').first().waitFor();
+      if (state === 'queued') {
+        const header = await page.getByTestId('bot-group-content-header').innerText();
+        const progress = await page.getByTestId('bot-group-progress').innerText();
+        assert.ok(header.includes(await ui.t('bots.groupChat.header.queued', { name: 'Aster' })));
+        assert.ok((await page.getByTestId('bot-group-running').innerText()).includes(await ui.t('bots.groupChat.header.queued', { name: 'Aster' })));
+        assert.ok(progress.includes(await ui.t('bots.groupChat.progress.queued')));
+        const elapsedLabel = (await ui.t('bots.groupChat.progress.elapsed', { time: '__TIME__' })).replace('__TIME__', '').trim();
+        assert.ok(!progress.includes(elapsedLabel));
+        assert.equal(await page.getByTestId('bot-group-work-action').count(), 0);
+        assert.equal(await page.getByRole('button', { name: await ui.t('bots.groupChat.progress.stop'), exact: true }).isEnabled(), true);
+      }
       if (ui.case === 'work-parallel-stopping') {
         const stop = page.getByRole('button', { name: await ui.t('bots.groupChat.progress.stop'), exact: true });
         assert.equal(await stop.count(), 1);

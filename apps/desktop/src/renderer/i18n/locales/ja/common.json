@@ -10424,6 +10424,7 @@
       "header": {
         "stepRunning": "{{name}} がステップ {{step}} を作業中",
         "speaking": "{{name}} が返信中…",
+        "queued": "{{name}} は待機中",
         "planning": "{{name}} が役割分担を考え中…"
       },
       "memberCount_one": "メンバー {{count}} 人",

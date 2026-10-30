@@ -10424,6 +10424,7 @@
       "header": {
         "stepRunning": "{{name}} 님이 {{step}}단계 작업 중",
         "speaking": "{{name}} 님이 답하는 중…",
+        "queued": "{{name}} 대기 중",
         "planning": "{{name}} 님이 역할을 나누는 중…"
       },
       "memberCount_one": "멤버 {{count}}명",

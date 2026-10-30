@@ -113,10 +113,19 @@ export function BotGroupSidebarRow({
       {previewText(group, null)}
     </span>;
     // Several Bots may think at once in a broadcast round's first circle.
-    const speakers = group.speakingBotIds
+    const speakingIds = group.round?.speakers.filter(speaker => speaker.executionStatus !== 'queued').map(speaker => speaker.botId) ?? group.speakingBotIds;
+    const speakers = speakingIds
       .map((botId) => group.members.find((member) => member.botId === botId))
       .filter((member): member is BotGroupSummary['members'][number] => member !== undefined);
     const plan = botGroupSidebarPlanPreview(group);
+    const executions = group.round?.speakers.filter(speaker => speaker.activity !== 'planning');
+    const queued = executions?.find(speaker => speaker.executionStatus === 'queued');
+    if (queued && executions?.every(speaker => speaker.executionStatus === 'queued') && !group.planningBotId) {
+      const member = group.members.find(member => member.botId === queued.botId);
+      return <span data-testid="bot-group-running" className="min-w-0 flex-1 truncate text-12 leading-4 text-[var(--status-bar-accent)]">
+        {t('bots.groupChat.header.queued', { name: member ? botGroupMemberDisplayName(member) : '' })}
+      </span>;
+    }
     const activities = speakers.map((member) =>
       speakingLaneActivity(bots.find((bot) => bot.id === member.botId), islandActivity));
     const activity = activities[0];

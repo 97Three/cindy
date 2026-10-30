@@ -10424,6 +10424,7 @@
       "header": {
         "stepRunning": "{{name}} 正在做第 {{step}} 步",
         "speaking": "{{name}} 正在说…",
+        "queued": "{{name}} 排队中",
         "planning": "{{name}} 正在安排…"
       },
       "memberCount_one": "{{count}} 位成员",

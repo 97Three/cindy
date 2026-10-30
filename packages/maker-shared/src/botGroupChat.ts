@@ -454,6 +454,8 @@ export interface BotGroupRoundView {
 }
 
 export interface BotGroupSummary {
+  /** Execution snapshot already included by server-backed group summaries; absent on older hosts. */
+  round?: BotGroupRoundView;
   /** Public roster state, optional for older hosts. */
   teammateActivity?: { phase: string };
   /** Explicit direct-message landing; group management remains unavailable. */

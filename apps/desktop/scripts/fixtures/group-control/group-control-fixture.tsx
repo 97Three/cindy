@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import { Route, Routes, useSearchParams } from 'react-router-dom';
 import { AppFrame, forbid, mountPage, subscription } from '../../ui-page/harness';
+import type { BotGroupSummary } from '../../../src/shared/botGroupChat';
+import { BotGroupSidebarRow } from '../../../src/renderer/features/bots/BotGroupSidebarRow';
 import { BotGroupChatView } from '../../../src/renderer/features/bots/BotGroupChatView';
 import { BotGroupSettingsDrawer } from '../../../src/renderer/features/bots/BotGroupSettingsDrawer';
 import { BOT_GROUP_SETTINGS_PARAM } from '../../../src/renderer/features/bots/botGroupPresentation';
@@ -18,7 +20,7 @@ if (!crypto.randomUUID) {
 interface GroupData {
   /** Controlled receipts for the real renderer send/settle layout regression. */
   sendStatus?: boolean;
-  workState?: 'thinking' | 'reading-file' | 'testing' | 'waiting' | 'stopping' | 'unknown';
+  workState?: 'thinking' | 'reading-file' | 'testing' | 'waiting' | 'stopping' | 'unknown' | 'queued';
   workRemote?: boolean;
   workParallel?: boolean;
   workLastStopping?: boolean;
@@ -255,7 +257,7 @@ function groupFrom(data: GroupData) {
     organizerBotId: data.members[0]?.botId ?? null,
     projectDir: null,
     lastMessage: null,
-    speakingBotIds: [],
+    speakingBotIds: data.workState ? data.workParallel ? ['a', 'b'] : ['a'] : [],
     planningBotId: null,
     openPlan: null,
     createdAt: 1,
@@ -291,7 +293,7 @@ function groupFrom(data: GroupData) {
       createdAt: 1700000000000 + i,
     })),
     hasMoreBefore: false,
-    round: data.workState ? { status: 'running', speakers: [{ botId: 'a', executionId: 'fixture-execution', sessionId: data.workRemote || data.workState === 'unknown' ? null : 'fixture-work', activity: 'reply', executionStatus: data.workState === 'waiting' ? 'needs_input' : 'running', startedAt: Date.now() - 83_000, stopping: data.workState === 'stopping' },
+    round: data.workState ? { status: 'running', speakers: [{ botId: 'a', executionId: 'fixture-execution', sessionId: data.workRemote || data.workState === 'unknown' || data.workState === 'queued' ? null : 'fixture-work', activity: 'reply', executionStatus: data.workState === 'queued' ? 'queued' : data.workState === 'waiting' ? 'needs_input' : 'running', startedAt: Date.now() - 83_000, stopping: data.workState === 'stopping' },
       ...(data.workParallel ? [{ botId: 'b', executionId: 'fixture-second', sessionId: 'fixture-second-work', activity: 'reply', startedAt: Date.now() - 41_000, stopping: !!data.workLastStopping, executionStatus: data.workLastStopping ? 'stopping' : 'running' }] : [])], canContinue: false }
       : { status: 'idle', speakers: [], canContinue: false },
   };
@@ -361,7 +363,10 @@ void mountPage({
   },
   render: (ctx) => {
     const data = ctx.data as unknown as GroupData;
-    const sidebar = data.sidebar ? <div className="p-5" /> : undefined;
+    const sidebar = data.sidebar ? <div className="p-5">{data.workState ? <BotGroupSidebarRow
+      group={groupFrom(data) as BotGroupSummary} bots={[]} islandActivity={new Map()}
+      now={Date.now()} selected={true} onOpenGroup={() => undefined}
+    /> : null}</div> : undefined;
     return (
       <>
         <AppFrame sidebar={sidebar}>
