@@ -32,6 +32,7 @@ import {
   type VoiceInputDictionaryEntrySource,
   type VoiceInputLanguage,
 } from '@/hooks/useVoiceInputSettings';
+import { VOICE_INPUT_EXTRA_LANGUAGES } from '../../../shared/voiceInputData';
 import { getComposerSendShortcutPreference } from '@/hooks/useComposerSendShortcutPreference';
 import { useVoiceInputModelSelection } from '@/hooks/useVoiceInputModelSelection';
 import { useVoiceInputUsageStats } from '@/hooks/useVoiceInputUsageStats';
@@ -79,8 +80,13 @@ import type { VoiceInputConnectionTestFailureReason } from '../../../shared/voic
 
 const log = createLogger('VoiceInputSection');
 // Recognition-language availability is independent of UI localization.
-// Preserve the existing ASR choices when adding interface catalogs.
-const LANGUAGE_OPTIONS: ReadonlyArray<VoiceInputLanguage> = ['auto', 'zh-CN', 'zh-TW', 'en', 'ja', 'ko'];
+// Keep the established languages plus the dictation languages added upstream.
+const LANGUAGE_OPTIONS: ReadonlyArray<VoiceInputLanguage> = [
+  'auto', 'zh-CN', 'zh-TW', 'en', 'ja', 'ko',
+  ...VOICE_INPUT_EXTRA_LANGUAGES,
+];
+const isExtraVoiceInputLanguage = (language: VoiceInputLanguage): boolean =>
+  (VOICE_INPUT_EXTRA_LANGUAGES as readonly string[]).includes(language);
 const AUTO_MICROPHONE_VALUE = '__auto__';
 const DICTIONARY_FILTERS = ['all', 'automatic', 'manual'] as const;
 
@@ -1736,7 +1742,9 @@ export function VoiceInputSection() {
         label:
           language === 'auto'
             ? t('settings.voiceInput.language.options.auto')
-            : t(`settings.language.options.${language}`),
+            : isExtraVoiceInputLanguage(language)
+              ? t(`settings.voiceInput.language.options.${language}`)
+              : t(`settings.language.options.${language}`),
         description: t(`settings.voiceInput.language.optionDescriptions.${language}`),
       })),
     [t],

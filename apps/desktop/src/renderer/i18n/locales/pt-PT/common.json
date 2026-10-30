@@ -2922,7 +2922,8 @@
         "hint": "Deteta automaticamente o idioma falado. Escolha um para reduzir confusões entre idiomas.",
         "ariaLabel": "Seleção de idioma",
         "options": {
-          "auto": "Automática"
+          "auto": "Automática",
+          "es": "Español"
         },
         "optionDescriptions": {
           "auto": "Permitir que o serviço de reconhecimento detete o idioma",
@@ -2930,7 +2931,8 @@
           "zh-TW": "Chinês tradicional (Taiwan)",
           "en": "Inglês",
           "ja": "Japonês",
-          "ko": "Coreano"
+          "ko": "Coreano",
+          "es": "Espanhol"
         }
       },
       "shortcut": {

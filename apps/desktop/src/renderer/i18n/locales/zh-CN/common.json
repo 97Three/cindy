@@ -2857,7 +2857,8 @@
         "hint": "自动识别当前语音；指定语言可减少多语言误判。",
         "ariaLabel": "语言选择",
         "options": {
-          "auto": "自动"
+          "auto": "自动",
+          "es": "Español"
         },
         "optionDescriptions": {
           "auto": "由识别服务自动判断",
@@ -2865,7 +2866,8 @@
           "zh-TW": "繁体中文（台湾）",
           "en": "English",
           "ja": "日本語",
-          "ko": "한국어"
+          "ko": "한국어",
+          "es": "西班牙语"
         }
       },
       "shortcut": {

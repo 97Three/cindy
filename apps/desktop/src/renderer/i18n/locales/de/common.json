@@ -2887,7 +2887,8 @@
         "hint": "Erkennt die gesprochene Sprache automatisch. Wähle eine Sprache, um Verwechslungen zwischen Sprachen zu reduzieren.",
         "ariaLabel": "Sprachauswahl",
         "options": {
-          "auto": "Automatisch"
+          "auto": "Automatisch",
+          "es": "Español"
         },
         "optionDescriptions": {
           "auto": "Vom Erkennungsdienst erkennen lassen",
@@ -2895,7 +2896,8 @@
           "zh-TW": "Chinesisch, traditionell (Taiwan)",
           "en": "Englisch",
           "ja": "Japanisch",
-          "ko": "Koreanisch"
+          "ko": "Koreanisch",
+          "es": "Spanisch"
         }
       },
       "shortcut": {
