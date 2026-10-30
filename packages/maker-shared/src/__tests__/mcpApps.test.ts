@@ -246,6 +246,17 @@ it('supplies the SDK for a template-literal dynamic import', () => {
   expect(withHostAppSdk(html, sdkUrl)).toContain(sdkUrl);
 });
 
+// Codex review on 11284c6a52: HTML executes every JavaScript MIME type essence as a
+// classic script; a type with parameters is a data block the browser never runs.
+it.each([
+  { type: 'application/ecmascript', supplied: true },
+  { type: 'TEXT/X-JAVASCRIPT', supplied: true },
+  { type: 'text/javascript; charset=utf-8', supplied: false },
+])('follows HTML classic script types for dynamic SDK imports: $type', ({ type, supplied }) => {
+  const html = `<script type="${type}">import("@modelcontextprotocol/ext-apps");</script>`;
+  expect(withHostAppSdk(html, sdkUrl).includes(sdkUrl)).toBe(supplied);
+});
+
 // Codex 4427968307: built bundles may mention the package without importing it.
 // Production HTML preparation must leave their bytes (and remote budget) alone.
 // Unit tier: ordinary strings, license comments and source text in templates.
