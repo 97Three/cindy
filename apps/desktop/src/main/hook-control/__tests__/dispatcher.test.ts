@@ -3033,6 +3033,48 @@ describe('dispatcher 核心语义', () => {
     }
   });
 
+  // 断线只结束已开始的上传。Agent 还在生成时短暂断连，恢复后的首个上传必须仍可开始。
+  it.each([true, false])('uses the current relay capability after reconnecting while the Agent was generating (%s)', async (supportsRelay) => {
+    const fr = fakeRunner();
+    const { d } = makeDispatcher({ runner: fr.runner });
+    const c = collector();
+    const send = (message: HookMessage): boolean => {
+      const accepted = c.send(message);
+      if (message.type === 'x.media.init' || message.type === 'x.media.append' || message.type === 'x.media.finalize') {
+        d.handleXMediaResult('conn-1', {
+          uploadId: message.payload.uploadId,
+          step: message.type === 'x.media.init' ? 'init' : message.type === 'x.media.append' ? 'append' : 'finalize',
+          segmentIndex: message.type === 'x.media.append' ? message.payload.segmentIndex : null,
+          mediaId: message.type === 'x.media.finalize' ? '700' : null, error: null,
+        });
+      }
+      return accepted;
+    };
+    d.onConnected('conn-1', send, [HOOK_FEATURE_X_MEDIA_RELAY]);
+    d.handleDispatch('conn-1', dispatch({ source: { im: 'x' } }), send);
+    await tick();
+    d.onDisconnected('conn-1');
+    d.onConnected('conn-1', send, supportsRelay ? [HOOK_FEATURE_X_MEDIA_RELAY] : []);
+    const dir = mkdtempSync(path.join(tmpdir(), 'cindy-dispatch-relay-'));
+    const file = path.join(dir, 'clip.mp4');
+    writeFileSync(file, 'video');
+    try {
+      const upload = fr.calls[0]!.relayXVideo!(file, 'video/mp4');
+      if (supportsRelay) await expect(upload).resolves.toBe('700');
+      else {
+        await expect(upload).rejects.toMatchObject({ code: 'X_MEDIA_RELAY_OFFLINE' });
+        expect(c.ofType('x.media.init')).toHaveLength(0);
+        expect(c.ofType('x.media.abort')).toHaveLength(0);
+      }
+      fr.finish(supportsRelay ? { xMediaIds: ['700'] } : {});
+      await tick();
+      expect(c.ofType('turn.end').at(-1)?.payload).toMatchObject({ status: 'ok', ...(supportsRelay ? { xMediaIds: ['700'] } : {}) });
+    } finally {
+      d.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   // media id 必须随终稿发回, 否则视频已上传但回帖不带它。
   it('turn.end 带上已转传的 media id, 断线时结束等待中的上传', async () => {
     const fr = fakeRunner();
