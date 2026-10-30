@@ -11,6 +11,7 @@ import {
   paygSource,
   planLabel,
   type MenubarCollectDeps,
+  modelDisplayNames,
   usageScope,
 } from '../collect';
 import { topModels, type MenubarSubscriptionInput } from '../snapshot';
@@ -373,4 +374,23 @@ it('splits daily value and tokens by the five busiest models and sums the rest',
   expect(series.models.map((m) => m.name)).toEqual(['m1', 'm2', 'm3', 'm4', 'm5']);
   expect(series.daily).toEqual([[0, 0, 0, 0, 0, 4], [60, 50, 40, 30, 20, 10]]);
   expect(series.tokens[1]).toEqual([60_000, 50_000, 40_000, 30_000, 20_000, 10_000]);
+});
+
+// Usage rows keep wire ids; the panel and widgets show catalog names and count one model once,
+// whichever route (Claude Code, Pi through a namespaced provider) it ran on.
+it('labels usage with catalog display names and folds route variants together', () => {
+  const money = (amount: number) => ({ amount, currency: 'USD', approximate: false, kind: 'actual-cost' }) as const;
+  const days = dayKeysEndingAt('2026-10-11', 1);
+  const row = (agentKind: string, model: string) =>
+    ({ day: '2026-10-11', agentKind, model, tokens: 100, money: money(1), apiMoney: money(0), subscriptionEstimateMoney: money(1) });
+  const names = modelDisplayNames([
+    { models: { codex: [{ id: 'codex/gpt-6-astra', name: 'Codex GPT-6 Astra' }] } },
+    { models: { 'claude-code': [{ id: 'claude-opus-5-5[1m]', name: 'Opus 5.5' }], codex: [{ id: 'gpt-6-astra', name: 'GPT-6 Astra' }] } },
+  ] as never);
+  const payload = { todayKey: '2026-10-11', modelDaily: [
+    row('claude-code', 'claude-opus-5-5'), row('pi', 'anthropic/claude-opus-5-5'), row('codex', 'gpt-6-astra'), row('codex', 'mystery-1'),
+  ] } as unknown as UsageHistoryPayload;
+  const series = usageScope(payload, days, [], names).modelSeries!;
+  expect(series.models.map((m) => m.name)).toEqual(['Opus 5.5', 'GPT-6 Astra', 'mystery-1']);
+  expect(series.tokens[0]).toEqual([200, 100, 100, 0]);
 });

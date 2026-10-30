@@ -118,6 +118,7 @@ export async function collectMenubarInputs(deps: MenubarCollectDeps): Promise<Me
     safe('remote', async () => (await deps.readRemoteSubscriptions?.()) ?? [], [] as MenubarSubscriptionInput[]),
   ]);
 
+  const modelNames = modelDisplayNames(providers);
   const sources: MenubarSourceInput[] = [];
   if (balance) sources.push(balanceSource(balance));
   const subscriptionReads = providers.map(async (provider): Promise<MenubarSourceInput | null> => {
@@ -157,8 +158,8 @@ export async function collectMenubarInputs(deps: MenubarCollectDeps): Promise<Me
   const usage: MenubarUsageInput = {
     days,
     scopes: {
-      local: usageScope(localUsage, days, [{ name: deps.selfDeviceName, isSelf: true, syncedAtMs: null }]),
-      all: usageScope(allUsage ?? localUsage, days, devicesOf(allUsage, deps.selfDeviceName)),
+      local: usageScope(localUsage, days, [{ name: deps.selfDeviceName, isSelf: true, syncedAtMs: null }], modelNames),
+      all: usageScope(allUsage ?? localUsage, days, devicesOf(allUsage, deps.selfDeviceName), modelNames),
     },
   };
 
@@ -535,11 +536,38 @@ function emptyScope(days: readonly string[], devices: MenubarUsageScopeInput['de
   };
 }
 
+/** Usage rows store wire ids; one model reached through different routes shares a key. */
+export function usageModelKey(id: string): string {
+  return id.trim().toLowerCase()
+    .replace(/\[[^\]]*\]\s*$/, '') // SDK route suffix such as [1m]
+    .replace(/-\d{6,8}$/, '') // trailing release date
+    .replace(/^.*\//, ''); // provider namespace: anthropic/, xai/, codex/, openai-codex/ …
+}
+
+/** Catalog display names by usage key, so usage reads "GPT-6 Astra" rather than a wire id. */
+export function modelDisplayNames(providers: readonly ProviderView[]): Map<string, string> {
+  const names = new Map<string, string>();
+  for (const provider of providers) {
+    for (const models of Object.values(provider.models ?? {})) {
+      for (const model of models ?? []) {
+        const key = usageModelKey(model.id);
+        const name = model.name?.trim();
+        // Providers may brand the same model ("Codex GPT-6.1 Sol"); the plainest name wins.
+        const current = names.get(key);
+        if (name && usageModelKey(name) !== key && (!current || name.length < current.length)) names.set(key, name);
+      }
+    }
+  }
+  return names;
+}
+
 export function usageScope(
   payload: UsageHistoryPayload | null,
   days: readonly string[],
   devices: MenubarUsageScopeInput['devices'],
+  modelNames: ReadonlyMap<string, string> = new Map(),
 ): MenubarUsageScopeInput {
+  const label = (model: string) => modelNames.get(usageModelKey(model)) ?? formatModelShort(model);
   const scope = emptyScope(days, devices);
   if (!payload) return scope;
   const indexOfDay = new Map(days.map((day, index) => [day, index]));
@@ -558,12 +586,12 @@ export function usageScope(
     const age = days.length - 1 - index;
     for (const window of windows) {
       if (age < Number(window)) {
-        modelRows[window].push({ name: formatModelShort(row.model), harness, money, tokens: finite(row.tokens) });
+        modelRows[window].push({ name: label(row.model), harness, money, tokens: finite(row.tokens) });
       }
     }
   }
   for (const window of windows) scope.models[window] = topModels(modelRows[window]);
-  scope.modelSeries = modelSeries(payload, indexOfDay, days.length);
+  scope.modelSeries = modelSeries(payload, indexOfDay, days.length, label);
   return scope;
 }
 
@@ -571,13 +599,18 @@ const SERIES_MODELS = 5;
 const SERIES_DAYS = 30;
 
 /** Per-model daily value and tokens: the top models by tokens over the last 30 days, the rest summed last. */
-function modelSeries(payload: UsageHistoryPayload, indexOfDay: Map<string, number>, dayCount: number): MenubarModelSeries {
+function modelSeries(
+  payload: UsageHistoryPayload,
+  indexOfDay: Map<string, number>,
+  dayCount: number,
+  label: (model: string) => string,
+): MenubarModelSeries {
   type Entry = { harness: MenubarHarness; money: number[]; tokens: number[]; recent: number };
   const byModel = new Map<string, Entry>();
   for (const row of payload.modelDaily) {
     const index = indexOfDay.get(row.day);
     if (index === undefined) continue;
-    const name = formatModelShort(row.model);
+    const name = label(row.model);
     const entry = byModel.get(name)
       ?? { harness: harnessOf(row.agentKind), money: new Array<number>(dayCount).fill(0), tokens: new Array<number>(dayCount).fill(0), recent: 0 };
     const tokens = finite(row.tokens);
