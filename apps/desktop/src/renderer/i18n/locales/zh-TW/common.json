@@ -11636,6 +11636,7 @@
         "cancelled": "已取消"
       },
       "timeout": "等待超時",
+      "cancelled": "使用者取消了插件設定，本次呼叫未執行。",
       "oauthCancelled": "授權已取消",
       "oauthFailed": "授權失敗：{{detail}}",
       "pluginUninstalledDuringOauth": "目標插件已解除安裝或不可用",

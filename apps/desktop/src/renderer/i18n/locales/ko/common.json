@@ -11636,6 +11636,7 @@
         "cancelled": "취소됨"
       },
       "timeout": "설정 시간이 초과되었습니다",
+      "cancelled": "플러그인 설정이 취소되어 이번 호출은 실행되지 않았습니다.",
       "oauthCancelled": "인증이 취소되었습니다",
       "oauthFailed": "인증 실패: {{detail}}",
       "pluginUninstalledDuringOauth": "대상 플러그인이 제거되었거나 사용할 수 없습니다",
