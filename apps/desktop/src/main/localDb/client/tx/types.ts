@@ -7,6 +7,7 @@ export type DbTxName =
   | 'usage.recordMediaSpend'
   | 'authorization.readProjection'
   | 'pluginUsage.execute'
+  | 'sessionImport.execute'
   | 'taskTags.execute'
   | 'codex.importMessages'
   | 'claude.importMessages'
@@ -1430,6 +1431,7 @@ export type DbTxArgsByName = {
   'recentWorkdirs.mergeWindowsIdentity': RecentWorkdirsMergeWindowsIdentityArgs;
   'recentWorkdirs.removeWindowsIdentity': RecentWorkdirsRemoveWindowsIdentityArgs;
   'pluginUsage.execute': PluginUsageTransaction;
+  'sessionImport.execute': SessionImportTransactionArgs;
   'chatCache.execute': ChatCacheTransaction;
   'taskTags.execute': TaskTagRequest & { newId?: string; callerSessionId?: string };
   'projectAliases.replaceIdentity': ProjectAliasesReplaceIdentityArgs;
@@ -1528,6 +1530,7 @@ export type DbTxResultByName = {
   'recentWorkdirs.mergeWindowsIdentity': undefined;
   'recentWorkdirs.removeWindowsIdentity': { changes: number };
   'pluginUsage.execute': PluginUsageHandle | null;
+  'sessionImport.execute': SessionImportTransactionResult;
   'chatCache.execute': ChatCacheResult;
   'taskTags.execute': TaskTagResult;
   'projectAliases.replaceIdentity': {
@@ -1597,3 +1600,70 @@ export type DbTxResultByName = {
   'skillUsage.applyMutation': undefined;
   'session.importShare': { messageCount: number };
 };
+
+/** session-import 事务（实现见 worker/opHandlers/sessionImportTx.ts）。 */
+export type SessionImportTransactionArgs =
+  | {
+      action: 'begin';
+      now: number;
+      session: {
+        id: string;
+        title: string;
+        workingDir: string | null;
+        workspaceKind: 'project' | 'dialogue';
+        model: string;
+        providerId: string | null;
+        effort: string;
+        permissionMode: string;
+        status: 'active' | 'archived';
+        tokensUsed: number;
+        userSendAt: number;
+        agentKind: 'cc' | 'codex' | 'pi';
+        createdAt: number;
+        updatedAt: number;
+      };
+      record: {
+        source: string;
+        sourceSessionId: string;
+        fingerprint: string | null;
+        version: string | null;
+        mode: 'native' | 'handoff';
+        originalCwd: string | null;
+        requestId: string | null;
+      };
+    }
+  | {
+      action: 'messages';
+      sessionId: string;
+      clientIdPrefix: string;
+      idPrefix: string;
+      rows: Array<{
+        key: string;
+        role: string;
+        content: string;
+        toolUseId: string | null;
+        agentMeta: string | null;
+        agentKind: string | null;
+        createdAt: number;
+      }>;
+    }
+  | {
+      action: 'commit';
+      sessionId: string;
+      now: number;
+      status: 'ready' | 'action' | 'failed';
+      mode?: 'native' | 'handoff';
+      issue: string | null;
+      unhide: boolean;
+      sessionPatch?: { sdkSessionId?: string | null; workingDir?: string };
+      marker?: { id: string; clientId: string; content: string; createdAt: number };
+    }
+  | { action: 'adopt'; sessionId: string; source: string; sourceSessionId: string; now: number }
+  | { action: 'abort'; sessionId: string };
+
+export type SessionImportTransactionResult =
+  | { created: boolean }
+  | { changed: number }
+  | { ok: true }
+  | { removed: number }
+  | { adopted: boolean };

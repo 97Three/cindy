@@ -225,6 +225,7 @@ export function batchAutoReviewProjection<T>(
     ![
       'codex.importMessages',
       'claude.importMessages',
+      'sessionImport.execute',
       'rewind.commit',
       'session.treeRehydrate',
       'fork.session',
