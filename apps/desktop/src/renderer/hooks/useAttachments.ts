@@ -187,6 +187,11 @@ export function useAttachments(sessionId?: string, draftKey?: string): UseAttach
   const { t } = useTranslation();
   const [attachments, setAttachments] = useState<AttachedFile[]>([]);
   const attachmentsRef = useRef<AttachedFile[]>(attachments);
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // The persistence layer is keyed by draftKey when provided, else sessionId.
   const storageKey = draftKey ?? sessionId;
@@ -242,6 +247,7 @@ export function useAttachments(sessionId?: string, draftKey?: string): UseAttach
 
   const isAttachmentOperationScopeCurrent = useCallback(
     (scope: AttachmentOperationScope): boolean =>
+      mountedRef.current &&
       isAttachmentDraftScopeActive(scope) &&
       isSameAttachmentOperationScope(attachmentOperationScopeRef.current, scope),
     [],
@@ -263,7 +269,7 @@ export function useAttachments(sessionId?: string, draftKey?: string): UseAttach
         cleanupStagedChatAttachmentFiles(items);
         return;
       }
-      if (isSameAttachmentOperationScope(attachmentOperationScopeRef.current, scope)) {
+      if (isAttachmentOperationScopeCurrent(scope)) {
         appendAttachments(items);
         return;
       }
@@ -276,17 +282,15 @@ export function useAttachments(sessionId?: string, draftKey?: string): UseAttach
       saveComposerDraft(
         scope.storageKey,
         {
+          ...existing,
           text: existing?.text ?? null,
           attachments: mergeAttachmentsById(existing?.attachments ?? [], items),
-          quotes: existing?.quotes ?? [],
-          browserComments: existing?.browserComments ?? [],
-          ...(existing?.pendingGhostId ? { pendingGhostId: existing.pendingGhostId } : {}),
-          ...(existing?.focusAtEnd ? { focusAtEnd: true } : {}),
         },
-        { silent: true },
+        // A reopened composer must receive results owned by the unmounted one.
+        { silent: mountedRef.current, preserveRemoteOptimisticRecovery: true },
       );
     },
-    [appendAttachments],
+    [appendAttachments, isAttachmentOperationScopeCurrent],
   );
 
   // ── Per-session draft (composer-draft-per-session) ──

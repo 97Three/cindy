@@ -817,6 +817,37 @@ describe('chat interaction controls', () => {
     await waitFor(() => expect((send as HTMLButtonElement).disabled).toBe(true));
   });
 
+  // #8084 / r4428010998: existing remount cases start after caching, missing this late result.
+  // Unit: real panel/hook, one deferred image cache, close then reopen on either side of completion.
+  it.each(['before', 'after'] as const)('keeps a pending image when the thread reopens %s cache completion', async reopen => {
+    const scope = botGroupThreadDraftKey(group.id, 'root');
+    const url = 'cindy-media://blobs/late-thread-photo.png';
+    let finishCache!: (value: { url: string }) => void;
+    const cached = new Promise<{ url: string }>(resolve => { finishCache = resolve; });
+    const cacheImageFromPath = vi.fn(() => cached);
+    Object.assign(window.electronAPI, { getFilePath: () => '/fixture/late.png', cacheImageFromPath });
+    const open = () => render(<StrictMode><ChatThreadPanel group={group} rootId="root" onClose={vi.fn()} /></StrictMode>);
+    const first = open();
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Original draft' } });
+    fireEvent.change(first.container.querySelector('input[type="file"]')!, {
+      target: { files: [new File(['image-bytes'], 'late.png', { type: 'image/png' })] },
+    });
+    await waitFor(() => expect(cacheImageFromPath).toHaveBeenCalledTimes(1));
+    first.unmount();
+    const second = reopen === 'before' ? open() : null;
+    if (second) fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Newer draft' } });
+    await act(async () => {
+      finishCache({ url });
+      await cached;
+    });
+    expect(getDraft(scope)?.attachments).toEqual([expect.objectContaining({ name: 'late.png', url })]);
+    const reopened = second ?? open();
+    expect(screen.getByAltText('late.png').getAttribute('src')).toBe(url);
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe(second ? 'Newer draft' : 'Original draft');
+    reopened.unmount();
+    expect(getDraft(scope)?.attachments).toEqual([expect.objectContaining({ name: 'late.png', url })]);
+  });
+
   // Review regression: id-only settlement erased newer annotations after reopening during upload.
   // Unit tier: real panel/hook, one image, one delayed reply; selection/retry is covered above.
   it('preserves a newer attachment draft when an earlier thread upload settles after reopening', async () => {
