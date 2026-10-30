@@ -44,7 +44,7 @@ export function GroupMaskSettings({ groupId }: { groupId: string }) {
         <SettingsRow title={t(key('enabled'))} trailing={<Switch checked={config.enabled} disabled={saving || !config.companionId} aria-label={t(key('enabled'))}
           onCheckedChange={enabled => update({ enabled })} />} />
         {mask.toolAccessSupported && <SelectRow label={t(key('toolAccess'))} value={config.access ?? 'chat'} disabled={saving}
-          options={(['chat', 'tools'] as const).map(value => ({ value, label: t(`bots.groupChat.server.settings.${value}`) }))}
+          options={(['chat', 'tools'] as const).map(value => ({ value, label: t(`bots.groupChat.server.settings.${value === 'tools' ? 'accessTools' : 'accessChat'}`) }))}
           onValueChange={async access => {
             const owner = getDataOwnerGeneration(), companionId = config.companionId;
             if (access === 'tools' && !await confirm({ presentation: 'standard',
