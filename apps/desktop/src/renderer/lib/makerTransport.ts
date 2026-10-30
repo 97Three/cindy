@@ -755,7 +755,8 @@ export function estimatedSessionValueFor(sessionId: string, options?: { includeB
   }>;
 }> {
   const deviceId = getStickySessionDeviceId(sessionId);
-  if (!deviceId) return messageService.estimatedSessionValue(sessionId, options);
+  if (!deviceId) return options ? messageService.estimatedSessionValue(sessionId, options)
+    : messageService.estimatedSessionValue(sessionId);
   return invokeRemote(deviceId, 'local-db:messages:estimatedSessionValue', [
     sessionId,
     ...(options ? [options] : []),

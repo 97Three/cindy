@@ -1543,16 +1543,43 @@ describe('media user-round costs', () => {
     expect(await refreshMediaUserTurnCost(db, 's1', 'user')).toBeNull();
   });
 
-  it('hydrates historical additional fees for the message footer without rewriting billing', async () => {
+  it('reads only the target round through the target message, including same-timestamp and auto-resume rows', async () => {
+    const { sqlite, db } = fixture();
+    insertCostMessage(sqlite, { id: 'old-user', role: 'user', createdAt: 1 });
+    insertCostMessage(sqlite, { id: 'old-answer', role: 'assistant', createdAt: 1, agentMeta: { turnCost: actual(50) } });
+    insertCostMessage(sqlite, { id: 'user', role: 'user', createdAt: 2, agentMeta: { mediaCosts: [actual(.75)] } });
+    insertCostMessage(sqlite, { id: 'resume', role: 'user', createdAt: 2, agentMeta: { autoResume: true } });
+    insertCostMessage(sqlite, { id: 'answer', role: 'assistant', createdAt: 2, agentMeta: { turnCost: actual(1) } });
+    insertCostMessage(sqlite, { id: 'later', role: 'assistant', createdAt: 2, agentMeta: { turnCost: actual(20) } });
+    insertCostMessage(sqlite, { id: 'next-user', role: 'user', createdAt: 2 });
+    const query = vi.spyOn(db, 'query');
+    expect((await readSessionCostDetails(db, 's1', 'answer')).map(row => row.money.amount)).toEqual([.75, 1]);
+    const fetched = await query.mock.results[0].value as Array<{ clientId: string }>;
+    expect(fetched.map(row => row.clientId)).toEqual(['user', 'resume', 'answer']);
+    expect(await readSessionCostDetails(db, 's1', 'missing')).toEqual([]);
+    const select = vi.spyOn(h.db!, 'select');
+    registerMessageIpc();
+    const result = await h.handlers.get('local-db:messages:estimatedSessionValue')!({}, 's1', {
+      includeBreakdown: true, clientId: 'answer',
+    }) as { costBreakdown: Array<{ money: { amount: number } }> };
+    expect(result.costBreakdown.map(row => row.money.amount)).toEqual([.75, 1]);
+    expect(select).not.toHaveBeenCalled();
+    select.mockRestore();
+  });
+
+  it.each([false, true])('hydrates additional fees without rewriting billing even with a source and stale total (stale=%s)', async (stale) => {
     const { sqlite } = fixture();
     insertCostMessage(sqlite, { id: 'user', role: 'user', createdAt: 1,
       agentMeta: { mediaCosts: [actual(.75)] } });
-    const original = { turnCost: actual(1), userTurnCost: actual(1.75) };
+    const original = { turnCost: actual(1), userTurnCost: actual(stale ? 1 : 1.75),
+      turnUsageDetails: { inputTokens: 1, billingSource: 'cindy-ai', model: 'existing' } };
     insertCostMessage(sqlite, { id: 'answer', role: 'assistant', createdAt: 2, agentMeta: original });
     registerMessageIpc();
     const rows = await h.handlers.get('local-db:messages:list')!({}, 's1', { limit: 10 }) as Array<{ id: string; agentMeta: unknown }>;
     expect(rows.find(row => row.id === 'answer')?.agentMeta).toMatchObject({
-      ...original, turnUsageDetails: { additionalCosts: [actual(.75)] },
+      ...original, userTurnCost: actual(1.75), turnUsageDetails: {
+        ...original.turnUsageDetails, additionalCosts: [actual(.75)],
+      },
     });
     expect(JSON.parse((sqlite.prepare("SELECT agent_meta FROM messages WHERE id = 'answer'").get() as { agent_meta: string }).agent_meta)).toEqual(original);
   });

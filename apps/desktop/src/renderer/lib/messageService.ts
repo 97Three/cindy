@@ -43,7 +43,8 @@ export async function estimatedSessionValue(
     turnUsageDetails?: unknown;
   }>;
 }> {
-  return wrap(window.electronAPI.localDb.messages.estimatedSessionValue(sessionId, options));
+  return wrap(options ? window.electronAPI.localDb.messages.estimatedSessionValue(sessionId, options)
+    : window.electronAPI.localDb.messages.estimatedSessionValue(sessionId));
 }
 
 export async function around(

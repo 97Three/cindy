@@ -207,7 +207,12 @@ export function messageUsageCostRows(
   const perModel = Array.isArray(usage.perModelCost) ? usage.perModelCost : [];
   const rows: UsageCostRow[] = perModel.flatMap((value) => {
     const item = record(value);
-    const money = normalizeUsageCostMoney(item.money);
+    const money = normalizeUsageCostMoney(item.money) ?? normalizeUsageCostMoney({
+      amount: item.costUsd,
+      currency: "USD",
+      approximate: meta.turnCostIsEstimate === true,
+      kind: meta.turnCostIsEstimate === true ? "value-estimate" : "actual-cost",
+    });
     return money && typeof item.model === "string"
       ? [
           {

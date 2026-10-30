@@ -671,6 +671,14 @@ export function registerMessageIpc(
 
   ipcMain.handle('local-db:messages:estimatedSessionValue', async (_e, sessionId: unknown, options?: { includeBreakdown?: boolean; clientId?: unknown }) => {
     const sid = requireString(sessionId, 'sessionId');
+    // Message panels request only their own round; avoid the task-wide estimate scan as well.
+    if (options?.includeBreakdown === true && options.clientId !== undefined) {
+      return {
+        costBreakdown: await readSessionCostDetails(getDbClient(), sid, requireString(options.clientId, 'clientId')),
+        totalValueMoney: null,
+        entries: [],
+      };
+    }
     const db = getDbClient().drizzle;
 
     const [sessionRow] = await db
@@ -2333,10 +2341,9 @@ export async function readPriorUserRoundCost(
  * agent_meta blobs on every history page.
  */
 async function hydrateLegacyUserTurnCosts(history: Message[]): Promise<Message[]> {
-  const needsAdditionalSnapshot = history.some(message => message.role === 'assistant' &&
+  const additionalSnapshotClientIds = new Set(history.filter(message => message.role === 'assistant' &&
     (message.agentMeta?.userTurnCost || message.agentMeta?.userTurnCostUsd) &&
-    !normalizeTurnUsageDetails(message.agentMeta?.turnUsageDetails)?.billingSource &&
-    !normalizeTurnUsageDetails(message.agentMeta?.turnUsageDetails)?.additionalCosts);
+    !normalizeTurnUsageDetails(message.agentMeta?.turnUsageDetails)?.additionalCosts).map(message => message.clientId));
   const legacyClientIds = new Set(
     history.flatMap((message) => {
       const agentMeta = message.agentMeta;
@@ -2352,7 +2359,7 @@ async function hydrateLegacyUserTurnCosts(history: Message[]): Promise<Message[]
         : [];
     }),
   );
-  if (legacyClientIds.size === 0 && !needsAdditionalSnapshot) return history;
+  if (legacyClientIds.size === 0 && additionalSnapshotClientIds.size === 0) return history;
 
   const sessionId = history[0]?.sessionId;
   if (!sessionId) return history;
@@ -2428,6 +2435,8 @@ async function hydrateLegacyUserTurnCosts(history: Message[]): Promise<Message[]
 
   const totalsByClientId = new Map<string, PriorUserRoundCost>();
   const additionalByClientId = new Map<string, RegionalMoney[]>();
+  const roundMoneyByClientId = new Map<string, { money: RegionalMoney; isEstimate: boolean }>();
+  let roundValues: RegionalMoney[] = [];
   let additionalCosts: RegionalMoney[] = [];
   let hasRealUserBoundary = false;
   let costUsd = 0;
@@ -2438,6 +2447,7 @@ async function hydrateLegacyUserTurnCosts(history: Message[]): Promise<Message[]
       const recorded = parseAgentMetaRecord(row.agentMeta)?.mediaCosts;
       additionalCosts = Array.isArray(recorded) ? recorded.map(normalizeRegionalMoney)
         .filter((value): value is RegionalMoney => !!value && value.amount > 0) : [];
+      roundValues = [...additionalCosts];
       costUsd = additionalCosts.filter(value => value.currency === 'USD').reduce((sum, value) => sum + value.amount, 0);
       hasEstimatedValue = false;
       continue;
@@ -2445,6 +2455,19 @@ async function hydrateLegacyUserTurnCosts(history: Message[]): Promise<Message[]
     if (row.role !== 'assistant') continue;
     if (additionalCosts.length) additionalByClientId.set(row.clientId, additionalCosts);
     const meta = parseAgentMetaRecord(row.agentMeta);
+    const rawMoney = normalizeRegionalMoney(meta?.turnCost) ??
+      (typeof meta?.turnCostUsd === 'number' && Number.isFinite(meta.turnCostUsd) && meta.turnCostUsd > 0
+        ? legacyUsdMoney(meta.turnCostUsd) : null);
+    const segmentMoney = rawMoney && meta?.turnCostIsEstimate === true ? asValueEstimateMoney(rawMoney) : rawMoney;
+    if (segmentMoney) roundValues.push(segmentMoney);
+    roundValues.push(...supplementalConversationEstimates(meta));
+    // Only calculate recovery totals for messages on this history page, not every older segment.
+    const roundMoney = additionalCosts.length && additionalSnapshotClientIds.has(row.clientId)
+      ? addCompatibleRegionalMoney(roundValues, segmentMoney?.currency) : null;
+    if (hasRealUserBoundary && roundMoney) roundMoneyByClientId.set(row.clientId, {
+      money: roundMoney,
+      isEstimate: roundValues.some(value => value.currency === roundMoney.currency && value.kind === 'value-estimate'),
+    });
     const segmentCost = meta?.turnCostUsd;
     if (
       !hasRealUserBoundary ||
@@ -2471,8 +2494,14 @@ async function hydrateLegacyUserTurnCosts(history: Message[]): Promise<Message[]
     const agentMeta = message.agentMeta;
     const additional = additionalByClientId.get(message.clientId);
     if (additional && agentMeta && !normalizeTurnUsageDetails(agentMeta.turnUsageDetails)?.additionalCosts) {
+      const round = roundMoneyByClientId.get(message.clientId);
       hydrated ??= history.slice();
       hydrated[index] = { ...message, agentMeta: { ...agentMeta,
+        ...(round ? {
+          userTurnCost: round.money,
+          userTurnCostUsd: round.money.currency === 'USD' ? round.money.amount : undefined,
+          userTurnCostIsEstimate: round.isEstimate,
+        } : {}),
         turnUsageDetails: buildTurnUsageDetails({ ...normalizeTurnUsageDetails(agentMeta.turnUsageDetails), additionalCosts: additional }) ?? undefined,
       } };
     }

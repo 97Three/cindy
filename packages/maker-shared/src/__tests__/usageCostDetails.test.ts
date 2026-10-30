@@ -90,6 +90,23 @@ describe("model and channel cost details", () => {
     expect(split.conversation.amount).toBeCloseTo(1.11);
     expect(split.additional.map((item) => item.amount)).toEqual([1.35, 8]);
   });
+  // Historical production rows used costUsd before structured money existed.
+  it.each([false, true])("retains legacy per-model USD amounts (estimate=%s)", (estimate) => {
+    const rows = messageUsageCostRows({
+      turnCostUsd: 3,
+      turnCostIsEstimate: estimate,
+      turnUsageDetails: { perModelCost: [
+        { model: "legacy-a", costUsd: 1 },
+        { model: "legacy-b", costUsd: 2 },
+        { model: "invalid", costUsd: NaN },
+      ] },
+    }, "assistant");
+    expect(rows.map(item => [item.model, item.money.amount, item.money.kind]))
+      .toEqual([["legacy-a", 1, estimate ? "value-estimate" : "actual-cost"],
+        ["legacy-b", 2, estimate ? "value-estimate" : "actual-cost"]]);
+    expect(rows.every(item => item.billingSource === undefined)).toBe(true);
+    expect(usageCostTotals(rows)[0].amount).toBe(3);
+  });
   it("rejects malformed remote billing rows without inventing zero-cost records", () => {
     expect(
       normalizeUsageCostRows([
