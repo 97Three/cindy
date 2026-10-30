@@ -1421,11 +1421,17 @@ describe('scaffoldGhostDir', () => {
   });
 
   // The withUi overlay must preserve each template and execute its example handler.
-  // Existing plain scaffolds did not cover mixed handlers or a packaged resource. Tier: unit.
+  // The old overlay packaged a raw JSON-RPC page; an SDK page must raise a 0.1.122-beta
+  // request to its own minimum without lowering newer declarations. Tier: unit.
+  // The SDK import guard protects the host-provided module contract in the generated asset.
   it.each((['plain', 'agent-action', 'node-json-rpc', 'node-mcp'] as ForgeScaffoldTemplate[])
-    .flatMap(template => [false, true].map(withUi => ({ template, withUi }))))(
-    '生成 $template 模板（withUi=$withUi），随后可以直接打包并通过装入检查',
-    async ({ template, withUi }) => {
+    .flatMap(template => [
+      { template, withUi: false, minCindyVersion: '1.2.3', expectedMin: '1.2.3' },
+      { template, withUi: true, minCindyVersion: '0.1.122-beta', expectedMin: '0.1.123-beta' },
+      { template, withUi: true, minCindyVersion: '1.2.3', expectedMin: '1.2.3' },
+    ]))(
+    '生成 $template 模板（withUi=$withUi，min=$minCindyVersion），随后可以直接打包并通过装入检查',
+    async ({ template, withUi, minCindyVersion, expectedMin }) => {
       const dir = path.join(workDir, template);
       const result = await scaffoldGhostDir(
         {
@@ -1433,6 +1439,7 @@ describe('scaffoldGhostDir', () => {
           template,
           id: `demo-${template}`,
           withUi,
+          minCindyVersion,
           name: `演示 ${template}`,
           description: `${template} 起步插件`,
         },
@@ -1451,7 +1458,7 @@ describe('scaffoldGhostDir', () => {
       ) as Record<string, unknown>;
       expect(manifestJson.icon).toBe('assets/icon.png');
       expect(manifestJson.schemaVersion).toBe(3);
-      expect(manifestJson.minCindyVersion).toBe('1.2.3');
+      expect(manifestJson.minCindyVersion).toBe(expectedMin);
       expect(manifestJson).not.toHaveProperty('slots');
       const iconBytes = await fs.promises.readFile(path.join(dir, 'assets/icon.png'));
       expect(iconBytes.subarray(0, 8)).toEqual(
@@ -1467,13 +1474,21 @@ describe('scaffoldGhostDir', () => {
       const mainSource = await fs.promises.readFile(path.join(dir, 'main.js'), 'utf8');
       if (withUi) {
         expect(result.files).toContain('ui/page.html');
-        expect(getPluginToolUi(packed.manifest)?.resources[0].uri).toBe('ui://planner/v1');
+        expect(getPluginToolUi(packed.manifest)?.resources[0].uri).toBe('ui://interactive-records/v1');
+        const page = await fs.promises.readFile(path.join(dir, 'ui/page.html'), 'utf8');
+        expect(page).toContain("import { App } from '@modelcontextprotocol/ext-apps'");
         let handler: ((message: unknown) => unknown) | undefined;
         const results: Array<{ result: { structuredContent: unknown } }> = [];
         runInNewContext(mainSource, { cindy: { onHostMessage: (callback: typeof handler) => { handler = callback; }, send: (message: typeof results[number]) => { results.push(message); } } });
-        await handler!({ type: 'tool-call', tool: 'save_plan', callId: 'page', args: { title: '用户修改' } });
+        await handler!({ type: 'tool-call', tool: 'save_record', callId: 'page', args: { title: '用户修改', idempotencyKey: 'request-1' } });
         expect(results).toHaveLength(1);
-        expect(results[0].result.structuredContent).toEqual({ title: '用户修改', savedPlans: 1 });
+        expect(results[0].result.structuredContent).toEqual({ title: '用户修改', saved: 1 });
+        await handler!({ type: 'tool-call', tool: 'save_record', callId: 'retry', args: { title: '用户修改', idempotencyKey: 'request-1' } });
+        expect(results[1].result.structuredContent).toEqual({ title: '用户修改', saved: 1 });
+        if (template === 'plain') {
+          await handler!({ type: 'tool-call', tool: 'hello', callId: 'original' });
+          expect(results[2].result).toEqual({ message: '插件已经正常工作。' });
+        }
       } else expect(packed.manifest).not.toHaveProperty('mcpApps');
 
       if (template === 'agent-action') {

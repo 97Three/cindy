@@ -1,8 +1,8 @@
 import { getPluginToolUi } from '@cindy/plugin-protocol';
 import { MCP_APPS_MAX_BYTES } from '../mcp-apps/protocol.js';
-import interactiveExampleManifest from '../../../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages/minimal/ghost.json?raw';
-import interactiveExampleMain from '../../../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages/minimal/main.js?raw';
-import interactiveExampleHtml from '../../../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages/minimal/ui/page.html?raw';
+import interactiveExampleManifest from '../../../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages/static/ghost.json?raw';
+import interactiveExampleMain from '../../../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages/static/main.js?raw';
+import interactiveExampleHtml from '../../../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages/static/ui/page.html?raw';
 import { PLUGIN_UI_MIN_CINDY_VERSION, compareCindyVersions, pluginHasToolUi } from '@cindy/plugin-protocol';
 /**
  * forge.ts — 意识锻造(agent 帮用户做意识的主机真身,2026-07-11 Lizi 定案)。
@@ -552,7 +552,13 @@ const SCAFFOLD_ICON_PNG_BASE64 =
 function scaffoldFiles(input: ForgeScaffoldInput): Record<string, string | Buffer> {
   const manifest = scaffoldManifest(input);
   if (input.withUi) {
-    const example = JSON.parse(interactiveExampleManifest) as { tools: unknown[]; mcpApps: unknown };
+    const example = JSON.parse(interactiveExampleManifest) as {
+      minCindyVersion: string; tools: unknown[]; mcpApps: unknown;
+    };
+    // SDK 示例最低版本暂定 0.1.123-beta，发布版本待核定；不降低作者声明的更高版本。
+    // 这里只提升生成骨架的要求，不改变已有插件的通用打包门槛。
+    if ((compareCindyVersions(input.minCindyVersion, example.minCindyVersion) ?? -1) < 0)
+      manifest.minCindyVersion = example.minCindyVersion;
     manifest.tools = [...(manifest.tools as unknown[]), ...example.tools];
     manifest.mcpApps = example.mcpApps;
   }

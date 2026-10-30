@@ -1,7 +1,7 @@
 const requests = new Map();
 let saved = 0;
-cindy.onHostMessage(msg => {
-  if (msg.type !== 'tool-call') return;
+function handleInteractivePage(msg) {
+  if (msg.type !== 'tool-call' || !['open_view', 'save_record'].includes(msg.tool)) return false;
   const { title = '记录', idempotencyKey } = msg.args || {};
   let result;
   if (msg.tool === 'open_view') {
@@ -15,4 +15,6 @@ cindy.onHostMessage(msg => {
     result = requests.get(idempotencyKey);
   } else result = { isError: true, content: [{ type: 'text', text: '工具或参数不正确。' }] };
   cindy.send({ type: 'tool-result', callId: msg.callId, ok: true, result });
-});
+  return true;
+}
+cindy.onHostMessage(handleInteractivePage);

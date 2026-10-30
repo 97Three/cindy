@@ -127,7 +127,7 @@ resource_link，不能让页面直接请求接口或把令牌拼进图片 URL。
 | 页面一直等初始结果 | 是否在加载器之后再次等待 ontoolresult；数据应已在首屏 HTML 中 |
 | MCP_APP_TOOL_NOT_VISIBLE | 工具是否在清单中对 app 可见，名字是否一致 |
 | fetch ok:true 但业务失败 | 检查 HTTP status，非 2xx 不当成功 |
-| HTTP 401 | 安装范围、凭证配置、后端 issuer/audience/有效期；写操作不要自动重发 |
+| HTTP 401 | 凭证配置和后端的校验规则；写操作不要自动重发 |
 | CSP 拦截 | 是否误用页面 fetch；确需外部资源才精确声明 origin |
 | 表单没有效果 | 拦截点击和 Enter，调用工具；原生 form-action 不可用 |
 | 文件读取失败 | 使用本次结果提供的 URL，文件是否仍存在，是否在执行电脑查看 |

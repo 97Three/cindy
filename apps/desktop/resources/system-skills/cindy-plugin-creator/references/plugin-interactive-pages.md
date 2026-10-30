@@ -219,9 +219,7 @@ document.open/write/close，由新页面重新连接。不要让旧页未确定�
 验证当前用户对记录的权限，路径白名单不能代替后端鉴权。
 
 凭证只由 main.js 发起的 cindy.fetch 使用，值由 Cindy 注入；页面和 main.js 都不要
-尝试读回。企业身份可声明 `oidc-token`，后端验证签名、issuer、audience 和有效期。
-必须安装到当前组织；个人安装不取得企业身份。声明及验签见[网络 §4.7](plugin-network.md)，
-不必把凭证方案复制进每份页面。
+尝试读回。声明方式见[网络 §4.7](plugin-network.md)。
 
 文件有两种常用入口：页面调用 pick_files 选择文件，再 upload_files 上传；或者 AI
 用 `ghost_call.dir` 交接单文件，import_file 在这次调用里立即上传暂存，只把批次号
@@ -236,6 +234,7 @@ document.open/write/close，由新页面重新连接。不要让旧页未确定�
 
 | 必须做到 | 原因和写法 |
 | --- | --- |
+| 每个页面只创建一个 App | 所有交互共用该实例；替换文档前关闭旧实例 |
 | 页面不接触凭证 | 经 main.js 的 cindy.fetch 代发，不将 token 放进 HTML、日志或结果 |
 | 表单走桥接 | 拦截点击和 Enter，不使用原生 action 提交 |
 | 数据用 textContent | 后端模板转义动态值，不把用户数据拼进脚本或事件属性 |

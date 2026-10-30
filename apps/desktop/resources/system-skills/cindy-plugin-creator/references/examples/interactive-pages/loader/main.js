@@ -39,7 +39,7 @@ async function request(msg, path, method, data, query) {
   return JSON.parse(response.body);
 }
 
-// 以下是模拟企业后端：同一份模板生成首屏，后续只返回 #content 的内容。
+// 以下是模拟后端：同一份模板生成首屏，后续只返回 #content 的内容。
 function viewFragment(intent, fields = {}) {
   const title = intent === 'chart' ? 'Chart' : intent === 'form' ? 'Form' : 'Items';
   const hint = ['items', 'chart', 'form', 'overview'].includes(intent) ? '可查询记录或保存表单。' : '未识别此意图，请选择 Items、Form 或 Chart。';
