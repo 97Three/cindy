@@ -85,10 +85,11 @@ class ViewTransport implements Transport {
   constructor(private readonly maxBytes: number, private readonly localFilesAllowed = true) {}
   async start(): Promise<void> {}
   async send(message: JSONRPCMessage): Promise<void> {
-    this.enqueue({ seq: ++this.seq, ...(this.generation ? { generation: this.generation } : {}), message });
+    // Always tag events: viewers treat a missing generation as a legacy Host.
+    this.enqueue({ seq: ++this.seq, generation: this.generation, message });
   }
   openLink(id: string, url: string): void {
-    this.enqueue({ seq: ++this.seq, ...(this.generation ? { generation: this.generation } : {}), openLink: { id, url } });
+    this.enqueue({ seq: ++this.seq, generation: this.generation, openLink: { id, url } });
   }
   private enqueue(event: (typeof this.events)[number]): void {
     if (!this.localFilesAllowed && hasExecutionComputerFile(event)) {

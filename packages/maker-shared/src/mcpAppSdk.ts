@@ -3,6 +3,12 @@ import { parse as parseJavaScript, type AnyNode } from 'acorn';
 
 const moduleName = '@modelcontextprotocol/ext-apps';
 const htmlNamespace = 'http://www.w3.org/1999/xhtml';
+// HTML runs these exact essences as classic scripts; any other type is a data block.
+const classicScriptTypes = new Set(['', 'application/ecmascript', 'application/javascript',
+  'application/x-ecmascript', 'application/x-javascript', 'text/ecmascript', 'text/javascript',
+  'text/javascript1.0', 'text/javascript1.1', 'text/javascript1.2', 'text/javascript1.3',
+  'text/javascript1.4', 'text/javascript1.5', 'text/jscript', 'text/livescript',
+  'text/x-ecmascript', 'text/x-javascript']);
 function importsSdk(source: string, module: boolean): boolean {
   if (!source.includes(moduleName)) return false;
   try {
@@ -43,7 +49,7 @@ function sdkPlan(html: string) {
         const type = (node.attrs.find(attr => attr.name === 'type')?.value ?? '')
           .replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '').toLowerCase();
         const text = node.childNodes.map(child => 'value' in child ? child.value : '').join('');
-        if (!node.attrs.some(attr => attr.name === 'src') && ['module', '', 'text/javascript', 'application/javascript'].includes(type))
+        if (!node.attrs.some(attr => attr.name === 'src') && (type === 'module' || classicScriptTypes.has(type)))
           imported ||= importsSdk(text, type === 'module');
         if (type === 'importmap') {
           try {

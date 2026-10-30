@@ -595,8 +595,8 @@ McpAppDocument 增量增加可选的 sdk: { source }，由执行电脑从与 App
 完整宿主 SDK 能力需执行端和查看端都升级，插件 minCindyVersion 暂以 0.1.123-beta 占位、发布前核定。
 重复 ui/initialize 仅更换当前 View 的文档代次：取消旧请求、审批并丢弃旧回复，已发出的初始工具输入/结果不重放，未发出的在初始化后送达，
 保留卡片、已授予的附件投影与最新 hostContext；不改变安装批准、持久记录、channel 或手机原生配置。
-Host 事件增量携带可选 generation，缺省为首份文档的 0。查看端在转发前按当前代次丢弃途中旧回复；
-旧查看端忽略该字段，完整换页隔离仍要求执行端和查看端均升级。
+新 Host 的每个事件都携带 generation（首份文档为 0）。查看端在转发前按当前代次丢弃途中旧回复；
+事件缺 generation 表示旧执行端，新查看端不按代次过滤、保持旧行为；旧查看端忽略该字段。完整换页隔离仍要求执行端和查看端均升级。
 
 标准 MCP Apps 使用 `io.modelcontextprotocol/ui` 扩展及官方 `2026-01-26` 协议。
 客户端新增独立 `maker:mcp-apps:v1` channel，复用 device-link 的同账号调用与错误协议，
