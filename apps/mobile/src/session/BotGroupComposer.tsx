@@ -76,8 +76,10 @@ type MentionOption =
   | { kind: 'member'; label: string; member: BotGroupMemberView };
 
 export function BotGroupComposer({
-  members, identityFor, deviceId, online, running, planState, attachmentsSupported, divisionSupported = true, uploadAttachment, quoteMessageId, focusRequest, onSend, onStop,
+  members, identityFor, deviceId, online, running, planState, attachmentsSupported, divisionSupported = true, uploadAttachment, quoteMessageId, focusRequest, onSend, onStop, maskIndicator, onParticipate,
 }: {
+  maskIndicator?: import('react').ReactNode;
+  onParticipate?(): void;
   members: readonly BotGroupMemberView[];
   identityFor: BotGroupIdentityLookup;
   deviceId: string;
@@ -165,7 +167,7 @@ export function BotGroupComposer({
   const showStop = running && trimmed.length === 0 && !hasAttachments;
   const divisionBlocked = isBotGroupDivisionBlocked(planState);
   // Same as the task composer: the tray shows inside the focused card, a badge otherwise.
-  const cardActive = focused && hasAttachments;
+  const cardActive = (focused && hasAttachments) || !!maskIndicator;
 
   const choose = (option: MentionOption) => {
     if (!query) return;
@@ -347,6 +349,7 @@ export function BotGroupComposer({
       selectionColor={colors.inputCaret}
       selection={forcedSelection}
       onChangeText={(value) => {
+        onParticipate?.();
         const { start: editStart, end: editEnd } = selectionRef.current;
         setText(value);
         setTracked(current => retainBotGroupTrackedMentions(text, value, {
@@ -381,7 +384,7 @@ export function BotGroupComposer({
         onPreview={setPreviewId} onRemove={tray.removeAttachment} onRemovePending={tray.removePendingUpload}
         onRetryPending={tray.retryPendingUpload} removeDisabled={sending} testIDPrefix="botGroup" /> : null}
       toolbar={cardActive ? <>
-        <ComposerToolbarLeftGroup>{plus}</ComposerToolbarLeftGroup>
+        <ComposerToolbarLeftGroup>{plus}{maskIndicator}</ComposerToolbarLeftGroup>
         <ComposerToolbarSpacer />
         {trailing}
       </> : undefined}

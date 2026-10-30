@@ -3,6 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { useTranslation } from 'react-i18next';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts/dataOwnerGeneration';
@@ -16,12 +17,18 @@ import { chatErrorKey } from './chatError';
 const key = (name: string) => `bots.groupChat.server.${name}`;
 const api = () => window.electronAPI.maker.chatServer;
 
-/** Share a group's invitation or preview a received link before joining. */
+/**
+ * Without `groupId` this joins a group: either from a clicked invitation
+ * (`initialLink`, previewed immediately, no paste field) or from a pasted link.
+ * `malformedLink` reports a clicked link whose token could not be read.
+ */
 export function ChatInviteDialog({ groupId, initialLink = '', malformedLink = false, created = false, members = [], onClose, onJoined }: {
-  groupId?: string; initialLink?: string; malformedLink?: boolean; created?: boolean; onClose: () => void; onJoined?: (id: string) => void;
+  groupId?: string; initialLink?: string; malformedLink?: boolean; created?: boolean; onClose: () => void; onJoined?: (id: string, configureMask?: boolean) => void;
   members?: readonly BotGroupMemberView[];
 }) {
   const { t, i18n } = useTranslation();
+  const [configureMask, setConfigureMask] = useState(false);
+  const [maskSupported, setMaskSupported] = useState(false);
   const fromLink = !groupId && (Boolean(initialLink) || malformedLink);
   const [link, setLink] = useState(initialLink);
   const [expiresAt, setExpiresAt] = useState<string | null | undefined>();
@@ -108,6 +115,9 @@ export function ChatInviteDialog({ groupId, initialLink = '', malformedLink = fa
         }
         // Already a member: the invitation's only remaining purpose is to open the group.
         if (result.joined) { onJoined?.(result.groupId); onClose(); return; }
+        const status = await api().status().catch(() => undefined);
+        if (!current()) return;
+        setMaskSupported(status?.personalMask === true);
         setPreview(result); setNow(Date.now());
       } else {
         if (expired || (typeof expiry === 'string' && Date.parse(expiry) <= Date.now())) return;
@@ -117,7 +127,9 @@ export function ChatInviteDialog({ groupId, initialLink = '', malformedLink = fa
           if (['INVITATION_NOT_FOUND', 'INVITATION_UNAVAILABLE'].includes(result.errorCode)) { setPreview(null); setUnusable(fromLink); }
           setError(t(chatErrorKey(result.errorCode))); return;
         }
-        refreshBotGroups(); onJoined?.(result.groupId); onClose();
+        refreshBotGroups();
+        if (configureMask && maskSupported) onJoined?.(result.groupId, true); else onJoined?.(result.groupId);
+        onClose();
       }
     } catch {
       if (current()) { setRevokeConfirm(false); setError(t(key(action === 'copy' ? 'copyFailed' : 'requestFailed'))); }
@@ -168,6 +180,9 @@ export function ChatInviteDialog({ groupId, initialLink = '', malformedLink = fa
         {!fromLink && (!groupId || link) && <Input aria-label={t(key('inviteLink'))} value={link} readOnly={!!groupId} disabled={busy || revoked}
           size={groupId ? 'md' : 'lg'} inputClassName={groupId ? 'text-12 text-[var(--text-secondary)]' : undefined}
           placeholder={t(key('pasteLink'))} onChange={value => { setLink(value); setPreview(null); setError(''); operation.current = crypto.randomUUID(); }} />}
+        {!groupId && preview && maskSupported && <label className="flex min-h-10 items-center justify-between gap-4 text-13">
+          <span>{t('bots.groupChat.mask.joinSetup')}</span><Switch checked={configureMask} disabled={busy} onCheckedChange={setConfigureMask} aria-label={t('bots.groupChat.mask.joinSetup')} />
+        </label>}
         {fromLink && !preview && !error && <p role="status" className="text-13 leading-normal text-[var(--text-secondary)]">{t(key('loadingInvite'))}</p>}
         {preview && <div className="space-y-1 rounded-lg bg-[var(--surface-elevated)] p-3">
           <p className="text-15 font-medium text-[var(--text-primary)]">{preview.name}</p>

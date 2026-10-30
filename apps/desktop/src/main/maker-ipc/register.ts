@@ -334,7 +334,11 @@ import {
   RenameSessionsConfirmBridge,
   type RenameSessionsConfirmInteractionSnapshot,
 } from '../session-title-rename/index.js';
-import { getBrowserAvailability, openBrowserForLogin } from '../mcp-integrations/browser.js';
+import {
+  clearUserBrowserMarksForSession,
+  getBrowserAvailability,
+  openBrowserForLogin,
+} from '../mcp-integrations/browser.js';
 import { readComputerStatusForSettings, type ComputerStatusRequest } from './computerStatusHandler.js';
 import { isBrowserOpenForLoginError } from '../../shared/browserBackend.js';
 import {
@@ -666,6 +670,8 @@ import { readSessionNotificationPreview } from '../localDb/sessionNotificationPr
 import { createBotGroupWorkDir } from './botGroupWorkDir.js';
 import { createBotGroupAttachmentStore } from './botGroupAttachments.js';
 import { requestUtilityText } from '../utility-model/oneShotCandidates.js';
+import { getEffectiveAuxiliaryModelChainSnapshot, getEffectiveAuxiliaryModelRefs } from '../utility-model/resolveAuxiliaryModelChain.js';
+import { auxiliaryChainSessionCandidates, pluginTaskRouteAttempts, pluginTaskSelectionIsOpen } from './pluginTaskDefaultRoute.js';
 import { validateExistingLocalProjectDirectory } from '../mcp-integrations/createProject.js';
 import { gitExec } from '../worktree/gitExec.js';
 import { BOT_GROUP_CLIENT_ID_PREFIX } from '../../shared/botGroupChat.js';
@@ -1189,6 +1195,7 @@ import {
 import { registerStopAgentTaskHandler } from './stopAgentTaskHandler.js';
 import { registerStopSessionBackgroundTasksHandler } from './stopSessionBackgroundTasksHandler.js';
 import { registerProviderHandlers } from './providerHandlers.js';
+import { readModelImageInputOverride, writeModelImageInputOverride } from '../maker-host/model-catalog-override-store.js';
 import { createLocalCliScanDeps, scanLocalCliAuth } from './localCliDetect.js';
 import { registerMcpHandlers } from './mcpHandlers.js';
 import {
@@ -1200,6 +1207,7 @@ import {
   getDesktopSelectableCatalog,
   refreshActiveCatalogFromSource,
   refreshCustomProvidersIntoCatalog,
+  syncLocalCatalogOverridesIntoActiveCatalog,
 } from '../maker-host/createDesktopProviderService.js';
 import {
   deviceAvailableModels,
@@ -1339,7 +1347,7 @@ import {
   closeRejectedRuntimeAndRestoreControlStores,
   isRemoteModelSwitchRouteChangeError,
 } from './runtimeSetModel.js';
-import { updateSessionInDb } from '../localDb/ipc/sessions.js';
+import { patchSessionMetaInDb, updateSessionInDb } from '../localDb/ipc/sessions.js';
 import { codexThreadTransferSourcePredicate, commitCodexThreadTransfer, relinkCodexProviderThread } from './codexProviderThreadRelink.js';
 import {
   codexCustomProviderConfigSignature,
@@ -3650,6 +3658,7 @@ initGhostSetupCoordinator({
     }),
   executeInlineAction: executeGhostSetupInlineAction,
   timeoutMessage: () => t('newChat.pluginSetup.timeout'),
+  cancelledMessage: () => t('newChat.pluginSetup.cancelled'),
   logger: log,
 });
 
@@ -4488,11 +4497,13 @@ async function syncLibraryReadonlyExtraDir(
       visible, new Set(getMaker().listActiveSessions().map((session) => session.id)), focused,
     );
     let granted = false;
+    let focusedLocal = false;
     for (const sessionId of targets) {
       if (generation !== libraryExtraDirSyncGeneration) return 'superseded';
       const remote = await sessionIsRemote(sessionId);
       if (generation !== libraryExtraDirSyncGeneration) return 'superseded';
       const nextRoot = !remote && grantRoot && sessionId === focused ? grantRoot : null;
+      if (nextRoot) focusedLocal = true;
       // 没有 Library 槽可撤、这次也不给：什么都不变，不碰运行中的会话。否则每次切换焦点都要把每个开着的任务的附加
       // 目录重新下发一遍，远程 Agent 那台恰好连不上时回滚失败、会话被关，正在跑的一轮就此中断(2026-10-11 实测)。
       // 运行时的 Library 槽只会来自已落库的那份(启动从库里读，改动先改运行时再落库，落库失败回滚)，库里没有即运行时没有。
@@ -4513,6 +4524,10 @@ async function syncLibraryReadonlyExtraDir(
       }
       if (generation !== libraryExtraDirSyncGeneration) return 'superseded';
     }
+    // A plugin writing its library with no local agent session focused (a hidden
+    // background task, or the plugin panel open on its own) has nobody to grant to;
+    // that is an ordinary not-granted, not a failure to warn about on every write.
+    if (grantRoot && !granted && !focusedLocal) return 'not-granted';
     if (grantRoot && !granted) {
       throw new Error('library extraDirs not granted to focused session');
     }
@@ -4934,6 +4949,7 @@ export function getTaskActionInputState(sessionId: string) {
     automatic: !!input.input && !isActiveInputOwnerAuthored(sessionId),
     orcaSenderSessionId: input.input?.orcaSenderSessionId,
     boundary: `${session?.instanceId ?? ''}:${agentInputCoordinatorHolder?.getGeneration(sessionId) ?? -1}`,
+    clearBoundaryMs: agentInputCoordinatorHolder?.getClearBoundaryMs(sessionId) ?? null,
   };
 }
 
@@ -7742,6 +7758,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // Expose the actual next-start configuration, explicitly marked as pending.
       return configured && sessionId ? { ...configured, pendingApply: true } : configured;
     },
+    readModelImageInputOverride,
+    writeModelImageInputOverride: (targets, value) => writeModelImageInputOverride(targets, value, async () => {
+      syncLocalCatalogOverridesIntoActiveCatalog();
+      // Claude/Codex consume live catalog and interface metadata at dispatch.
+      // Only Pi caches input modalities in its native model registry.
+      const piTargets = targets.filter(target => target.agent === 'pi');
+      if (piTargets.length) await refreshContextSettings(piTargets);
+    }),
     readModelContextLimit: (target) => ({
       limit: readModelContextLimit(target.agent, target.providerId, target.modelId),
       isCustomized: isModelContextLimitCustomized(
@@ -11691,6 +11715,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   const leaseReporter = providerGroupLeaseReporter;
   setProviderGroupApplicationLoadListener((id) => leaseReporter.notify(id));
   sessionTurnActivityTracker.setSessionTurnChangeListener((sessionId) => leaseReporter.notify(sessionId));
+  // 「我的浏览器」:任务真正停下(稍等确认没有紧接着的续跑)后清掉它在用户浏览器里的操作标记。
+  sessionTurnActivityTracker.addSessionTurnObserver((sessionId) => {
+    if (sessionTurnActivityTracker.isSessionInTurn(sessionId)) return;
+    const settle = setTimeout(() => {
+      if (!sessionTurnActivityTracker.isSessionInTurn(sessionId)) clearUserBrowserMarksForSession(sessionId);
+    }, 1500);
+    (settle as { unref?: () => void }).unref?.();
+  });
   // 经另一台电脑的组用掉的用量：启动后(账号确定之后)与之后换了账号时，把当前账号还没送到的整份报一次。
   const usageReportTimer = setInterval(() => ensureProviderGroupUsageReporter(), PROVIDER_GROUP_USAGE_ENSURE_INTERVAL_MS);
   (usageReportTimer as { unref?: () => void }).unref?.();
@@ -13850,6 +13882,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   // Bot group chat is local to this Desktop in phase 1; device-link does not route these channels.
   const botGroupNotReady = { ok: false as const, errorCode: 'HOST_NOT_READY' as const, message: '伙伴群聊服务尚未就绪' };
   // Narrow chat operations; credentials and transport stay in main.
+  ipcMain.handle(MAKER_INVOKE.CHAT_SERVER_MASK, async (event, input) => {
+    assertTrustedAppRendererEvent(event);
+    return botGroupChatServiceHolder?.chatServer?.mask?.(input) ?? { ok: false, errorCode: 'HOST_NOT_READY' };
+  });
+  ipcMain.handle(MAKER_INVOKE.CHAT_SERVER_MENTIONS, async (event, input) => {
+    assertTrustedAppRendererEvent(event);
+    return botGroupChatServiceHolder?.chatServer?.mentions?.(input) ?? { ok: false, errorCode: 'HOST_NOT_READY' };
+  });
   ipcMain.handle(MAKER_INVOKE.CHAT_SERVER_STATUS, async (event, input) => {
     assertTrustedAppRendererEvent(event);
     const chat = botGroupChatServiceHolder?.chatServer;
@@ -14299,7 +14339,21 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       const sourceSessionId = getPluginTaskSourceSessionId(pluginId, callId);
       if (callId && !sourceSessionId && !(selection.agentKind && selection.model && selection.providerId)) throw new PluginTaskError('ROUTE_UNAVAILABLE', '发起任务已不可用，请重新调用，或在面板选择模型后创建任务');
       try {
-        const execution = await resolveSessionExecution(selection, sourceSessionId);
+        let execution: Awaited<ReturnType<typeof resolveSessionExecution>> | undefined;
+        if (!sourceSessionId && pluginTaskSelectionIsOpen(selection)) {
+          // A plugin's own task with no originating session follows the auxiliary
+          // chain at the lightest effort any candidate offers; only when none has a
+          // light level do candidates run at their default, and the new-task
+          // selection remains the last resort.
+          for (const { candidate, effort } of pluginTaskRouteAttempts(auxiliaryChainSessionCandidates(getEffectiveAuxiliaryModelRefs()))) {
+            try {
+              execution = await resolveSessionExecution({ ...selection, ...candidate, ...(effort ? { effort } : {}) });
+              assertPlugin(pluginId);
+              break;
+            } catch { execution = undefined; }
+          }
+        }
+        execution ??= await resolveSessionExecution(selection, sourceSessionId);
         assertPlugin(pluginId);
         if (!execution.providerId) return routeUnavailable();
         return { ...execution, agentKind: execution.agentKind === 'claude-code' ? 'cc' : execution.agentKind,
@@ -14326,8 +14380,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         // inherit the new-task selection; partial/reset settings can do so.
         const fallback = config.agentKind && config.model && config.providerId
           ? undefined : getSelectedNewMakerRoute(activeOwnerScopeKey());
-        return { ...config, inheritedDefault: fallback ? JSON.stringify([
-          fallback.harness, fallback.model, fallback.providerId, fallback.effort, fallback.fastMode,
+        // An open selection also follows the auxiliary chain; its snapshot is part of the fingerprint.
+        const chain = pluginTaskSelectionIsOpen(config) ? getEffectiveAuxiliaryModelChainSnapshot() : undefined;
+        return { ...config, inheritedDefault: fallback || chain ? JSON.stringify([
+          fallback?.harness, fallback?.model, fallback?.providerId, fallback?.effort, fallback?.fastMode, chain,
         ]) : undefined };
       },
       readPermissionMode: pluginId => {
@@ -14423,6 +14479,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       setHidden: async (taskId, hidden, assertAllowed) => {
         await setSessionHidden({ sessionId: taskId, hidden, db: snapshot.client, assertCurrent: assertAllowed });
       },
+      // Same archive path as the sidebar and remote archive: status persisted plus sessions:patched broadcast.
+      archive: async (taskId, assertAllowed) => {
+        await patchSessionMetaInDb(taskId, { status: 'archived' }, { beforeWrite: assertAllowed });
+      },
+      // Synchronous, so the archive can look again under the session write lock.
+      isBusy: taskId => Boolean(readExecution(taskId))
+        || inputCoordinator.getQueueControlSnapshot(taskId).pendingQueue.length > 0,
       revealPluginTasks: async pluginId => {
         // 不受详情页列表的展示上限约束：分批恢复全部，避免卸载撤销归属后仍有任务隐藏。
         await revealAllPluginHiddenTasks(snapshot.client, pluginId, taskId =>
@@ -14787,6 +14850,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       case 'create': return service.create(pluginId, request);
       case 'get': return service.get(pluginId, request.taskId);
       case 'setHidden': return service.setHidden(pluginId, request);
+      case 'archive': return service.archive(pluginId, request);
       case 'list': return service.list(pluginId, request.after, request.limit);
       case 'send': return service.send(pluginId, request);
       case 'readMessages': {

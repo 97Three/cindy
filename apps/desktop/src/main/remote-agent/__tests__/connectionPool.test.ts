@@ -660,6 +660,12 @@ describe('remote connection pool with a real host', () => {
       expect(session.isTurnRunning()).toBe(false);
       expect(seen.filter(event => event.type === 'done')).toHaveLength(2);
       await sending;
+      // dispose() schedules filesystem cleanup without awaiting it. Model a
+      // completed process exit before restarting: two in-process hosts otherwise
+      // race to remove the same shadow tree (EPERM on Windows, CI #7829).
+      await vi.waitFor(() => expect(
+        fs.readdirSync(path.join(hostRoot, 'workspaces'), { recursive: true }),
+      ).not.toContainEqual(expect.stringContaining(scenario.started[0]!.hostSessionId)));
       // Same production lazy-rebuild boundary: a closed Session is replaced,
       // carrying its native resume ID rather than a fresh conversation.
       host = createHost();
