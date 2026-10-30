@@ -243,15 +243,16 @@ export default {
 
     if (ui.case === 'settings') {
       const drawer = page.getByRole('dialog');
-      await drawer.getByText(await ui.t('bots.groupChat.server.settings.name'), { exact: true }).waitFor();
+      // Group-wide defaults live in 群管理, which owners and admins open from the settings tab.
+      await drawer.getByRole('button', { name: new RegExp(`^${await ui.t('bots.groupChat.server.settings.manage')}`) }).click();
       const replyMode = drawer.getByRole('combobox', { name: await ui.t('bots.groupChat.settings.replyMode'), exact: true });
-      await replyMode.click();
-      await page.getByRole('option', { name: await ui.t('bots.groupChat.settings.replyModeMentioned'), exact: true }).click();
-      assert.equal(await replyMode.innerText(), await ui.t('bots.groupChat.settings.replyModeMentioned'));
+      await replyMode.waitFor();
+      assert.equal(await replyMode.innerText(), await ui.t('bots.groupChat.settings.replyModeAll'));
       // Reply mode and the 分工 settings stay; one teammate at a time leaves no speaking mode (bot-group-chat.md §4.0).
       assert.equal(await drawer.getByText(await ui.t('bots.groupChat.settings.speakingMode'), { exact: true }).count(), 0, 'speakingMode');
-      for (const key of ['bots.groupChat.organizer', 'bots.groupChat.settings.projectDir', 'bots.groupChat.settings.handoff'])
+      for (const key of ['bots.groupChat.organizer', 'bots.groupChat.settings.projectDir', 'bots.groupChat.plan.autoContinue'])
         assert.ok(await drawer.getByText(await ui.t(key), { exact: true }).count() > 0, key);
+      await ui.capture('manage');
       return;
     }
     if (ui.case === 'division-waiting' || ui.case === 'division-auto') {

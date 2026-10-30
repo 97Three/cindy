@@ -1053,6 +1053,8 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
     openSearchRequest?: string;
     visualOpenSearch?: string;
     visualSearchQuery?: string;
+    /** Open the teammate's settings on this page (群设置 → 伙伴在本群 → 工具与授权). */
+    companionSettings?: string;
   }>();
   const sessionId = readRouteParam(params.sessionId) ?? '';
   const notificationResponse = readRouteParam(params.notificationResponse);
@@ -6202,6 +6204,14 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
   const companionDisplay = useCompanionDisplayResource(deviceId, sessionId, companionResource, companionChat);
   const [companionSettingsRequest, setCompanionSettingsRequest] = useState<{ sessionId: string; page: 'memory' | 'capabilities'; sequence: number }>();
   const openCompanionSettings = useCallback((page: 'memory' | 'capabilities') => setCompanionSettingsRequest(previous => ({ sessionId, page, sequence: (previous?.sequence ?? 0) + 1 })), [sessionId]);
+  const routeCompanionSettings = readRouteParam(params.companionSettings);
+  const openedCompanionSettings = useRef('');
+  useEffect(() => {
+    // Once per arrival: the param stays on the route while the user moves on.
+    if (routeCompanionSettings !== 'capabilities' || openedCompanionSettings.current === sessionId) return;
+    openedCompanionSettings.current = sessionId;
+    openCompanionSettings('capabilities');
+  }, [routeCompanionSettings, sessionId, openCompanionSettings]);
   const followUpScope = JSON.stringify([auth.accountGeneration, deviceId, sessionId]);
   const [followUpEngaged, setFollowUpEngaged] = useState<string | null>(null);
   useEffect(() => setFollowUpEngaged(null), [followUpScope]);

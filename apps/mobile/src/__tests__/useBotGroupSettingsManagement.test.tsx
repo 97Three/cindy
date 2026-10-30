@@ -72,12 +72,18 @@ it.each(['member', 'guest'] as const)('keeps %s read-only based on account membe
   expect(result.reason).toBe('permission');
   await expect(result.act('update', { name: 'Denied' })).rejects.toThrow('PERMISSION_DENIED');
   expect(writes()).toHaveLength(0);
+  // Your own nickname and teammates are written as yourself, never through a manager.
+  await act(async () => { await result.act('nickname', { actorId: id(2), nickname: ' Nana ' }); await result.act('add-member', { actorId: id(4) }); });
+  expect(writes().map(call => [call[0], call[2], call[3]])).toEqual([
+    [`/conversations/${id(1)}/nickname`, { operationId: 'operation-1', actorId: id(2), nickname: 'Nana' }, undefined],
+    [`/conversations/${id(1)}/members`, { operationId: 'operation-2', actorId: id(4), action: 'invite' }, undefined],
+  ]);
 });
 
 it('selects only an owned manager, never a foreign owner', async () => {
   snapshot.members[0].role = 'member'; snapshot.members[1].role = 'admin';
   snapshot.members.push({ ...snapshot.members[0], id: id(9), ownerActorId: id(9), role: 'owner' });
-  await render(); await act(async () => { await result.act('add-member', { botId: id(4) }); });
+  await render(); await act(async () => { await result.act('remove-member', { actorId: id(4) }); });
   expect(writes()[0][3]).toBe(id(3));
 });
 
@@ -152,4 +158,18 @@ it('discards account and closed-sheet read results and never revives their autho
   expect(result.group).toBeUndefined(); expect(result.editable).toBe(false);
   await expect(oldAct('update', { name: 'Late' })).rejects.toThrow('PERMISSION_DENIED');
   expect(writes()).toHaveLength(0);
+});
+
+// New on the phone: join links come from the manager you control and are checked before shown.
+it('creates an invite link as the manager and rejects a malformed token', async () => {
+  await render();
+  const token = 'A'.repeat(43);
+  request.mockImplementationOnce(async () => ({ token, expiresAt: null, reusable: true }));
+  let link: Awaited<ReturnType<typeof result.invite>> = null;
+  await act(async () => { link = await result.invite(); });
+  expect(link).toEqual({ link: `cindy://chat-invite/${token}`, expiresAt: null, reusable: true });
+  expect(writes().at(-1)?.slice(0, 2)).toEqual([`/conversations/${id(1)}/invite-links`, 'POST']);
+  expect(writes().at(-1)?.[3]).toBe(id(2));
+  request.mockImplementationOnce(async () => ({ token: 'short', expiresAt: null, reusable: true }));
+  await act(async () => { await expect(result.invite()).rejects.toThrow('CHAT_RESPONSE_INVALID'); });
 });
