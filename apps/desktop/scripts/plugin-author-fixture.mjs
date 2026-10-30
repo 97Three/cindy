@@ -5,22 +5,72 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { build } from 'esbuild';
+import { runInNewContext } from 'node:vm';
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const examples = path.resolve(scriptDir, '../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages');
 export async function authorFixture(mode, temporary, transform = fixture => fixture) {
-  const source = path.join(examples, mode === 'shell' ? 'shell' : mode === 'files' ? 'files' : mode === 'sdk' ? 'sdk' : 'minimal');
+  assert.ok(['static', 'loader', 'files'].includes(mode), 'Unknown author example');
+  const source = path.join(examples, mode);
   const manifest = JSON.parse(await readFile(path.join(source, 'ghost.json'), 'utf8'));
   const main = await readFile(path.join(source, 'main.js'), 'utf8');
-  let html;
-  if (mode === 'sdk') {
-    const result = await build({ entryPoints: [path.join(source, 'ui/app.js')], bundle: true, write: false, format: 'esm', minify: true });
-    const script = result.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
-    html = (await readFile(path.join(source, 'ui/page.template.html'), 'utf8')).replace('<!-- APP_SCRIPT -->', () => `<script type="module">${script}</script>`);
-  } else html = await readFile(path.join(source, 'ui/page.html'), 'utf8');
+  const html = await readFile(path.join(source, 'ui/page.html'), 'utf8');
   const assets = mode === 'files' ? Object.fromEntries(await Promise.all(['settings.html', 'settings.js'].map(async name => [name, await readFile(path.join(source, name), 'utf8')]))) : {};
   const fixture = transform({ manifest, main, html, assets });
+  if (mode === 'loader') await verifyLoaderMain(fixture.main);
   await packAuthorFixture(fixture, temporary);
   return fixture;
+}
+// Integration: execute the shipped tool handler. The old shell only returned HTML;
+// it did not cover fixed network routing, write retries or immediate file handoff.
+// Minimal inputs: forbidden path, HTTP 500 with ok:true, duplicate write key.
+async function verifyLoaderMain(main) {
+  function runtime(source, overrides = {}) {
+    let handler, reply;
+    runInNewContext(source, { cindy: {
+      onHostMessage: fn => { handler = fn; }, send: value => { reply = value.result; },
+      ...overrides,
+    } });
+    return async (tool, args = {}) => { await handler({ type: 'tool-call', tool, args, callId: 'fixture' }); return reply; };
+  }
+  const call = runtime(main);
+  assert.ok((await call('open_view', { intent: 'items' }))._meta.view.html.includes('type="module"'));
+  const fragment = await call('load_view', { intent: 'form', fields: { title: '<img onerror=bad>' } });
+  assert.ok(fragment._meta.view.html.includes('&lt;img onerror=bad&gt;'));
+  assert.ok(!fragment._meta.view.html.includes('<script'));
+  assert.ok((await call('load_view', { intent: 'unknown' }))._meta.view.html.includes('未识别'));
+  const request = { path: '/api/records', body: { title: 'record' }, idempotencyKey: 'one' };
+  assert.equal((await call('api_write', request)).structuredContent.id, 'R-1');
+  assert.equal((await call('api_write', request)).structuredContent.id, 'R-1');
+  assert.equal((await call('api_read', { path: '/api/items' })).structuredContent.items.length, 3);
+  const imported = await call('import_file');
+  assert.ok(imported._meta.view.html.includes('confirm-import'));
+  assert.equal((await call('api_write', { path: '/api/imports/confirm', body: { batchId: 'demo-batch' }, idempotencyKey: 'two' })).structuredContent.status, 'confirmed');
+  const network = []; let response = { ok: true, status: 200, body: '{"items":[]}' };
+  const live = runtime(main.replace('const USE_MOCK = true;', 'const USE_MOCK = false;'), {
+    fetch: async request => { network.push(request); return response; },
+  });
+  for (const path of ['https://other.example/api/items', '//other.example/api/items', '/api/items/../records', '/api/items/%2e%2e', '/api/items?url=https://other.example']) {
+    assert.equal((await live('api_read', { path })).isError, true);
+  }
+  assert.equal((await live('unknown')).isError, true);
+  assert.equal(network.length, 0);
+  await live('api_read', { path: '/api/items', query: { keyword: '../https://other.example/' } });
+  assert.equal(new URL(network.at(-1).url).origin, 'https://api.example.com');
+  assert.equal(new URL(network.at(-1).url).pathname, '/api/items');
+  assert.equal(new URL(network.at(-1).url).searchParams.get('keyword'), '../https://other.example/');
+  response = { ok: true, status: 500, body: 'private backend diagnostics' };
+  const before = network.length;
+  const failed = await live('api_write', request);
+  assert.equal(failed.isError, true);
+  assert.ok(!JSON.stringify(failed).includes('private backend'));
+  assert.equal(network.length - before, 1, 'write must not retry automatically');
+  response = { ok: true, status: 201, body: '{"batchId":"B-1","rows":[{"value":"<b>data</b>"}]}' };
+  const preview = await live('import_file', { dir_deposit: { token: 'test-handoff' } });
+  assert.equal(network.at(-1).uploadDir.fileField, 'file');
+  assert.equal(network.at(-1).callId, 'fixture');
+  assert.ok(preview._meta.view.html.includes('&lt;b&gt;data&lt;/b&gt;'));
+  assert.ok(!JSON.stringify(preview).includes('test-handoff'));
+  console.log('AUTHOR_MAIN_VERDICT=passed (loader routing, private HTML, HTTP errors, no retry, deduplication, handoff)');
 }
 export async function packAuthorFixture({ manifest, main, html, assets = {} }, temporary) {
   const dir = path.join(temporary, manifest.id);
