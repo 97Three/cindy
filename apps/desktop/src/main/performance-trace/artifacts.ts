@@ -1,7 +1,7 @@
 import { lstat, open, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { setImmediate } from 'node:timers/promises';
-import { redact } from '../log-upload/redact';
+// eslint-disable-next-line no-restricted-imports -- Whole-artifact JSON processing must not block main.
+import { Worker } from 'node:worker_threads';
 import { throwIpcError } from '../utils/ipcValidate';
 
 export const TRACE_ARTIFACT_NAMES = [
@@ -63,41 +63,43 @@ export async function readTraceArtifacts(directory: string): Promise<TraceArtifa
   return files;
 }
 
-/** Preserve every event/sample/field. Redact values rather than raw JSON so replacements
- * cannot corrupt trace syntax. Yield while walking large recordings. */
+/** Parse, redact and serialize in one disposable worker. Only byte buffers cross
+ * the boundary; cloning a parsed object back to main would recreate the stall. */
 export async function redactTraceArtifact(bytes: Buffer): Promise<Buffer> {
-  const root: unknown = JSON.parse(bytes.toString('utf8'));
-  if (!root || typeof root !== 'object')
-    throwIpcError('LOG_UPLOAD_FAILED', 'Recording is not a JSON object');
-  const stack: Array<Record<string, unknown> | unknown[]> = [root as Record<string, unknown>];
-  const sensitiveKeys = new Map<string, boolean>();
-  const strings = new Map<string, string>();
-  let visited = 0;
-  while (stack.length) {
-    const node = stack.pop()!;
-    const array = Array.isArray(node);
-    for (const key of Object.keys(node)) {
-      if (++visited % 256 === 0) await setImmediate();
-      const record = node as Record<string, unknown>;
-      const value = record[key];
-      let sensitive = false;
-      if (!array) {
-        sensitive =
-          sensitiveKeys.get(key) ??
-          (() => {
-            const probe = JSON.stringify({ [key]: 'redaction-probe' });
-            const result = redact(probe) !== probe;
-            if (sensitiveKeys.size < 256) sensitiveKeys.set(key, result);
-            return result;
-          })();
+  let worker: Worker | undefined;
+  try {
+    if (bytes.length > MAX_TRACE_FILE_BYTES) throw new Error('oversized artifact');
+    worker = new Worker(path.join(__dirname, 'traceRedactionWorker.js'));
+    const current = worker;
+    // Never detach the caller's buffer or a pooled Buffer slab: retries need it.
+    const input = Uint8Array.from(bytes);
+    return await new Promise<Buffer>((resolve, reject) => {
+      let settled = false;
+      const finish = (result?: ArrayBuffer) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (result) resolve(Buffer.from(result));
+        else reject(new Error('artifact preparation failed'));
+      };
+      const timer = setTimeout(() => finish(), 60_000);
+      timer.unref?.();
+      current.once('message', (message: { bytes?: unknown } | null) => {
+        const result = message?.bytes;
+        finish(result instanceof ArrayBuffer && result.byteLength <= MAX_TRACE_FILE_BYTES ? result : undefined);
+      });
+      current.once('error', () => finish());
+      current.once('exit', () => finish());
+      try {
+        current.postMessage(input.buffer, [input.buffer]);
+      } catch {
+        finish();
       }
-      if (sensitive) record[key] = '<redacted:sensitive-field>';
-      else if (typeof value === 'string') {
-        const cleaned = strings.get(value) ?? redact(value);
-        if (strings.size < 1024 && value.length <= 1024) strings.set(value, cleaned);
-        record[key] = cleaned;
-      } else if (value && typeof value === 'object') stack.push(value as Record<string, unknown>);
-    }
+    });
+  } catch {
+    // Worker/JSON errors can contain raw recording content. Return only a fixed error.
+    return throwIpcError('LOG_UPLOAD_FAILED', 'Recording preparation failed; local files are preserved');
+  } finally {
+    await worker?.terminate().catch(() => undefined);
   }
-  return Buffer.from(JSON.stringify(root));
 }

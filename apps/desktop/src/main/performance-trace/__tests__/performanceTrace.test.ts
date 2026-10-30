@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { build } from 'esbuild';
+import { fileURLToPath } from 'node:url';
 import { PerformanceTraceController, type TraceControllerDeps } from '../controller';
 import { projectCpuProfile, projectTraceEvent, type TraceReport } from '../report';
 import { measureTraceOperation, setTraceOperationObserver } from '../measure';
@@ -11,9 +13,40 @@ import { randomBytes } from 'node:crypto';
 import { mkdtemp, writeFile, rm, readFile, mkdir, utimes, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { readTraceArtifacts, TRACE_ARTIFACT_NAMES, type TraceArtifact } from '../artifacts';
+import { readTraceArtifacts, redactTraceArtifact, TRACE_ARTIFACT_NAMES, type TraceArtifact } from '../artifacts';
 import { restorePerformanceFiles } from '../restore';
 import { cleanupTraceReports, startTraceRetention, TRACE_RETENTION_MS } from '../retention';
+
+const redactionWorker = vi.hoisted(() => ({
+  script: '', exitScript: '', hangScript: '', mode: 'normal', active: 0,
+}));
+vi.mock('node:worker_threads', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:worker_threads')>();
+  return { ...actual, Worker: class extends actual.Worker {
+    constructor(filename: string | URL, options?: import('node:worker_threads').WorkerOptions) {
+      const script = redactionWorker.mode === 'exit' ? redactionWorker.exitScript
+        : redactionWorker.mode === 'hang' ? redactionWorker.hangScript
+        : redactionWorker.mode === 'missing' ? `${redactionWorker.script}.missing` : redactionWorker.script;
+      super(String(filename).endsWith('traceRedactionWorker.js') ? script : filename, options);
+      redactionWorker.active++;
+      this.once('exit', () => { redactionWorker.active--; });
+    }
+  } };
+});
+let workerDirectory: string;
+beforeAll(async () => {
+  workerDirectory = await mkdtemp(path.join(os.tmpdir(), 'cindy-trace-worker-'));
+  redactionWorker.script = path.join(workerDirectory, 'traceRedactionWorker.cjs');
+  redactionWorker.exitScript = path.join(workerDirectory, 'exit.cjs');
+  redactionWorker.hangScript = path.join(workerDirectory, 'hang.cjs');
+  await build({
+    entryPoints: [fileURLToPath(new URL('../traceRedactionWorker.ts', import.meta.url))],
+    outfile: redactionWorker.script, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent',
+  });
+  await writeFile(redactionWorker.exitScript, 'process.exit(0);');
+  await writeFile(redactionWorker.hangScript, "require('node:worker_threads').parentPort.on('message', () => {});");
+});
+afterAll(async () => { await rm(workerDirectory, { recursive: true, force: true }); });
 
 /** Test value: production recording lifecycle and upload projection. User-requested diagnostics
  * must preserve local evidence on failure and isolate owners. Full-file uploads retain all
@@ -25,8 +58,12 @@ import { cleanupTraceReports, startTraceRetention, TRACE_RETENTION_MS } from '..
  * window must be able to reveal/upload it without allowing active or cross-owner takeover.
  * Review gaps: owner changes during summary save, replacement window during auto-stop,
  * and a trusted secondary renderer invoking start directly (unit, deferred I/O/windows).
+ * Worker regression: upload used main-thread JSON.parse/stringify. Real bundled worker
+ * tests forbid caller-thread JSON work and require unchanged input, complete samples,
+ * redacted secrets and no requests after malformed input/worker exit/startup failure.
+ * Bundle once per file; byte transfers and worker cleanup use the production upload entry.
  * Tier: unit, injected clocks/network/profilers; bounded files in an isolated OS temp directory.
- * Standalone Vitest run: 0.629s on Windows (2026-10-30); test execution 162ms.
+ * Standalone Vitest run: 1.02s on Windows (2026-10-30); test execution 564ms.
  */
 function fixture() {
   let now = 1000,
@@ -60,11 +97,53 @@ function fixture() {
   };
 }
 afterEach(() => {
+  redactionWorker.mode = 'normal';
+  expect(redactionWorker.active).toBe(0);
   setTraceOperationObserver(null);
   vi.useRealTimers();
 });
 
 describe('performance recording', () => {
+  it('terminates a stalled preparation worker at the deadline', async () => {
+    redactionWorker.mode = 'hang';
+    vi.useFakeTimers();
+    try {
+      const result = expect(redactTraceArtifact(Buffer.from('{}'))).rejects.toThrow('LOG_UPLOAD_FAILED');
+      await vi.advanceTimersByTimeAsync(60_000);
+      await result;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('redacts in the worker without parsing or serializing JSON on the caller thread', async () => {
+    const original = Buffer.from(JSON.stringify({ samples: [1, 2, 3], token: 'test-only-secret' }));
+    const before = Buffer.from(original);
+    const parse = vi.spyOn(JSON, 'parse').mockImplementation(() => { throw new Error('main-thread parse'); });
+    const stringify = vi.spyOn(JSON, 'stringify').mockImplementation(() => { throw new Error('main-thread stringify'); });
+    let cleaned: Buffer;
+    try {
+      cleaned = await redactTraceArtifact(original);
+    } finally {
+      parse.mockRestore();
+      stringify.mockRestore();
+    }
+    expect(original.equals(before)).toBe(true);
+    expect(JSON.parse(cleaned.toString())).toEqual({ samples: [1, 2, 3], token: '<redacted:sensitive-field>' });
+  });
+
+  it.each(['malformed', 'exit', 'missing'])('fails closed before upload for %s artifact preparation', async (kind) => {
+    const f = fixture();
+    await f.controller.start();
+    await f.controller.stop();
+    const report = { ...f.reports[0], partial: true };
+    const bytes = Buffer.from(kind === 'malformed' ? '{"token":"test-only-secret"' : JSON.stringify(report));
+    const before = Buffer.from(bytes);
+    const deps = uploadDeps([{ name: 'report.json', bytes }], []);
+    redactionWorker.mode = kind;
+    await expect(submitPerformanceReport(deps, report, '')).rejects.toThrow('LOG_UPLOAD_FAILED');
+    expect(deps.fetch).not.toHaveBeenCalled();
+    expect(bytes.equals(before)).toBe(true);
+  });
   it.each([false, true])(
     'discards a report when ownership changes during saving (save fails: %s)',
     async (fails) => {
