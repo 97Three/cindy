@@ -37,7 +37,7 @@
 | **Credits** | 点数 | 點數 | クレジット | 크레딧 | crédits | Créditos | `Credits`（保留英文） | Créditos | Créditos | zh-CN: 额度（仅当英文含 Credit）；zh-TW: 額度（仅当英文含 Credit） |
 | **Directory** | 目录 | 目錄 | ディレクトリ | 디렉터리 | répertoire | Directorio | Verzeichnis | Diretório | Diretório | — |
 | **Dismiss** | 关闭 | 關閉 | 閉じる | 닫기 | Fermer | Cerrar | Schließen | Fechar | Fechar | zh-CN: 忽略（仅当英文含 Dismiss）；zh-CN: 知道了（仅当英文含 Dismiss）；zh-TW: 忽略（仅当英文含 Dismiss）；zh-TW: 知道了（仅当英文含 Dismiss） |
-| **Effort** | 推理强度 | 推理強度 | 推論強度 | 추론 강도 | effort de raisonnement | Intensidad de razonamiento | Denkintensität | Intensidade de raciocínio | Intensidade de raciocínio | zh-CN: 思考强度；zh-CN: 思考深度；zh-CN: 推理深度；zh-CN: 努力程度；zh-CN: 推理力度；zh-TW: 思考強度；zh-TW: 思考深度；zh-TW: 推理深度；zh-TW: 努力程度；zh-TW: 推理力度；ja: 推論レベル；ja: 推論の強度 |
+| **Effort** | 推理强度 | 推理強度 | 推論強度 | 추론 강도 | effort de raisonnement | Intensidad de razonamiento | Denkintensität | Esforço de raciocínio | Esforço de raciocínio | zh-CN: 思考强度；zh-CN: 思考深度；zh-CN: 推理深度；zh-CN: 努力程度；zh-CN: 推理力度；zh-TW: 思考強度；zh-TW: 思考深度；zh-TW: 推理深度；zh-TW: 努力程度；zh-TW: 推理力度；ja: 推論レベル；ja: 推論の強度 |
 | **Issue** | `Issue`（保留英文） | `Issue`（保留英文） | `Issue`（保留英文） | 이슈 | issue | Incidencia | `Issue`（保留英文） | `Issue`（保留英文） | `Issue`（保留英文） | zh-CN: 工单；zh-CN: 议题；zh-TW: 工單；zh-TW: 議題；ja: 課題（仅当英文含 Issue） |
 | **Message** | 消息 | 訊息 | メッセージ | 메시지 | message | Mensaje | Nachricht | Mensagem | Mensagem | zh-CN: 条对话（仅当英文含 Message）；zh-TW: 條對話（仅当英文含 Message） |
 | **Plugin** | 插件 | 插件 | プラグイン | 플러그인 | plugin | Complemento | `Plugin`（保留英文） | plugin | plugin | zh-CN: Plugin；zh-CN: plugin；zh-TW: Plugin；zh-TW: plugin；zh-TW: 外掛 |
@@ -48,12 +48,12 @@
 | **Quota** | 配额 | 配額 | クォータ | 할당량 | quota | Cuota | Kontingent | `Quota`（保留英文） | Cota | ja: 残量；zh-CN: 额度（仅当英文含 Quota）；zh-TW: 額度（仅当英文含 Quota） |
 | **Running** | 运行中 | 執行中 | 実行中 | 실행 중 | en cours d'exécution | En ejecución | Wird ausgeführt | Em execução | Em execução | zh-CN: 执行中（仅当英文含 Running）；zh-CN: 进行中（仅当英文含 Running）；zh-TW: 進行中（仅当英文含 Running） |
 | **Session** | 任务 | 任務 | セッション | 세션 | session | Sesión | Sitzung | Sessão | Sessão | zh-CN: 会话；zh-TW: 會話 |
-| **Skill** | 技能 | 技能 | スキル | 스킬 | skill | Habilidad | `Skill`（保留英文） | Competência | Habilidade | ja: 技能；ko: 기술 |
+| **Skill** | 技能 | 技能 | スキル | 스킬 | skill | Habilidad | `Skill`（保留英文） | `Skill`（保留英文） | `Skill`（保留英文） | ja: 技能；ko: 기술 |
 | **SkillHub** | `SkillHub`（保留英文） | `SkillHub`（保留英文） | `SkillHub`（保留英文） | `SkillHub`（保留英文） | `SkillHub`（保留英文） | `SkillHub`（保留英文） | `SkillHub`（保留英文） | `SkillHub`（保留英文） | `SkillHub`（保留英文） | ja: スキルハブ；ko: 스킬 허브 |
 | **Subagent** | `Subagent`（保留英文） | `Subagent`（保留英文） | サブエージェント | 하위 에이전트 | sous-Agent | `Subagent`（保留英文） | `Subagent`（保留英文） | `Subagent`（保留英文） | `Subagent`（保留英文） | zh-CN: 代理（仅当英文含 Subagent）；zh-TW: 代理（仅当英文含 Subagent） |
 | **Task** | 任务 | 任務 | タスク | 작업 | tâche | Tarea | Aufgabe | Tarefa | Tarefa | — |
 | **Thread** | 任务 | 任務 | スレッド | 스레드 | fil | Hilo | `Thread`（保留英文） | Tópico | Tópico | zh-CN: 线程；zh-TW: 執行緒 |
-| **Turn** | 轮 | 輪 | ターン | 턴 | tour | Turno | Austausch | Interação | Interação | — |
+| **Turn** | 轮 | 輪 | ターン | 턴 | tour | Turno | Runde | Turno | Turno | — |
 | **Usage** | 用量 | 用量 | 使用量 | 사용량 | consommation | Uso | Nutzung | Utilização | Uso | zh-CN: 使用情况；zh-CN: 使用表现；zh-TW: 使用情況；zh-TW: 使用表現；ja: 使用状況；ja: 利用状況；ko: 사용 현황 |
 | **Worker** | `Worker`（保留英文） | `Worker`（保留英文） | `Worker`（保留英文） | `Worker`（保留英文） | `Worker`（保留英文） | `Worker`（保留英文） | `Worker`（保留英文） | `Worker`（保留英文） | `Worker`（保留英文） | — |
 | **Working directory** | 工作目录 | 工作目錄 | 作業ディレクトリ | 작업 디렉터리 | répertoire de travail | Directorio de trabajo | Arbeitsverzeichnis | Diretório de trabalho | Diretório de trabalho | zh-CN: 任务空间；zh-CN: 工作空间；zh-TW: 任務空間；zh-TW: 工作空間 |
@@ -69,10 +69,60 @@
 | Active | zh-CN | 生效中 | 计费语境（"no active subscription"→没有生效中的订阅），指订阅状态而非活跃度 |
 | **Active** | zh-TW | 活躍 | 默认 |
 | Active | zh-TW | 生效中 | 計費語境（"no active subscription"→沒有生效中的訂閱），指訂閱狀態而非活躍度 |
+| **Active** | es | Activo | 默认 |
+| Active | es | activo | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Active** | pt-PT | Ativo | 默认 |
+| Active | pt-PT | ativo | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Active** | pt-BR | Ativo | 默认 |
+| Active | pt-BR | ativo | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Agent session** | es | Sesión de Agent | 默认 |
+| Agent session | es | sesión de Agent | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| Agent session | es | sesiones de Agent | Agent 运行时会话的复数。 |
+| Agent session | es | sesiones Agent | Agent 作后置修饰语的复数运行时会话。 |
+| Agent session | es | sesión Pi Agent | 指定 Pi Agent 引擎的运行时会话。 |
+| **Agent session** | pt-PT | Sessão do Agent | 默认 |
+| Agent session | pt-PT | sessão do Agent | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| Agent session | pt-PT | sessões do Agent | Agent 运行时会话的复数。 |
+| Agent session | pt-PT | sessões de Agent | 不带定冠词的 Agent 运行时会话复数。 |
+| Agent session | pt-PT | sessão Pi Agent | 指定 Pi Agent 引擎的运行时会话。 |
+| **Agent session** | pt-BR | Sessão do Agent | 默认 |
+| Agent session | pt-BR | sessão do Agent | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| Agent session | pt-BR | sessões do Agent | Agent 运行时会话的复数。 |
+| Agent session | pt-BR | sessões de Agent | 不带定冠词的 Agent 运行时会话复数。 |
+| Agent session | pt-BR | sessão Pi Agent | 指定 Pi Agent 引擎的运行时会话。 |
+| **Author** | es | Autor | 默认 |
+| Author | es | autor | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Author** | pt-PT | Autor | 默认 |
+| Author | pt-PT | autor | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Author** | pt-BR | Autor | 默认 |
+| Author | pt-BR | autor | 句中使用小写首字母；标题仍可使用大写首字母。 |
 | **Automation** | zh-CN | 自动化 | 默认 |
 | Automation | zh-CN | 自动操作 | Computer Use 语境——「自动操作电脑 / 浏览器」，指代操控设备而非定时任务 |
 | **Automation** | zh-TW | 自動化 | 默认 |
 | Automation | zh-TW | 自動操作 | Computer Use 語境——「自動操作電腦 / 瀏覽器」，指代操控裝置而非定時任務 |
+| **Automation** | es | Automatización | 默认 |
+| Automation | es | automatización | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Automation** | pt-PT | Automatização | 默认 |
+| Automation | pt-PT | automatização | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Automation** | pt-BR | Automação | 默认 |
+| Automation | pt-BR | automação | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Balance** | es | Saldo | 默认 |
+| Balance | es | saldo | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Chat** | es | Conversación | 默认 |
+| Chat | es | conversación | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| Chat | es | chat | 指聊天过程、聊天模型或聊天界面时保留西语常用词 chat；不用于产品任务。 |
+| **Chat** | pt-PT | Conversa | 默认 |
+| Chat | pt-PT | conversa | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Chat** | pt-BR | Conversa | 默认 |
+| Chat | pt-BR | conversa | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Collaboration** | es | Colaboración | 默认 |
+| Collaboration | es | colaboración | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Collaboration** | pt-PT | Colaboração | 默认 |
+| Collaboration | pt-PT | colaboração | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Collaboration** | pt-BR | Colaboração | 默认 |
+| Collaboration | pt-BR | colaboração | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Collapse** | de | Einklappen | 默认 |
+| Collapse | de | einklappen | 动词位于句中或按钮的补语中。 |
 | **Credits** | zh-CN | 点数 | 默认 |
 | Credits | zh-CN | credits | 指第三方服务自身的 credits（如 Codex / ChatGPT 订阅余量），保留其原生叫法 |
 | Credits | zh-CN | 重置次数 | reset credits——指可用的配额重置次数，与计费点数无关 |
@@ -83,28 +133,136 @@
 | Credits | ja | credits | サードパーティ自身の credits（Codex / ChatGPT のサブスクリプション残量など）は原語のまま表記する |
 | **Credits** | ko | 크레딧 | 默认 |
 | Credits | ko | credits | 서드파티 자체의 credits(Codex / ChatGPT 구독 잔량 등)는 원래 이름 그대로 표기 |
+| **Credits** | es | Créditos | 默认 |
+| Credits | es | créditos | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Credits** | pt-PT | Créditos | 默认 |
+| Credits | pt-PT | créditos | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Credits** | pt-BR | Créditos | 默认 |
+| Credits | pt-BR | créditos | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Directory** | es | Directorio | 默认 |
+| Directory | es | directorio | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Directory** | pt-PT | Diretório | 默认 |
+| Directory | pt-PT | diretório | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Directory** | pt-BR | Diretório | 默认 |
+| Directory | pt-BR | diretório | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Effort** | es | Intensidad de razonamiento | 默认 |
+| Effort | es | intensidad de razonamiento | 句中模型推理投入档位的名称。 |
+| **Effort** | pt-PT | Esforço de raciocínio | 默认 |
+| Effort | pt-PT | esforço de raciocínio | 句中模型推理投入档位的名称。 |
+| **Effort** | pt-BR | Esforço de raciocínio | 默认 |
+| Effort | pt-BR | esforço de raciocínio | 句中模型推理投入档位的名称。 |
+| **Issue** | es | Incidencia | 默认 |
+| Issue | es | incidencia | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Issue** | pt-PT | Issue | 默认 |
+| Issue | pt-PT | issue | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| Issue | pt-PT | problema | 泛指问题或故障，不是 GitHub Issue 类型。 |
+| Issue | pt-PT | Problema | 泛指问题的句首或状态标签，不是 GitHub Issue 类型。 |
+| **Issue** | pt-BR | Issue | 默认 |
+| Issue | pt-BR | issue | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Message** | es | Mensaje | 默认 |
+| Message | es | mensaje | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Message** | pt-PT | Mensagem | 默认 |
+| Message | pt-PT | mensagem | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Message** | pt-BR | Mensagem | 默认 |
+| Message | pt-BR | mensagem | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Plugin** | es | Complemento | 默认 |
+| Plugin | es | complemento | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Project** | es | Proyecto | 默认 |
+| Project | es | proyecto | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Project** | pt-PT | Projeto | 默认 |
+| Project | pt-PT | projeto | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Project** | pt-BR | Projeto | 默认 |
+| Project | pt-BR | projeto | 句中使用小写首字母；标题仍可使用大写首字母。 |
 | **Provider** | zh-CN | 供应商 | 默认 |
 | Provider | zh-CN | 模型供应商 | 首次出现或需要消歧时用全称，如设置页标题 |
 | **Provider** | zh-TW | 供應商 | 默认 |
 | Provider | zh-TW | 模型供應商 | 首次出現或需要消歧時用全稱，如設定頁標題 |
+| **Provider** | es | Proveedor | 默认 |
+| Provider | es | proveedor | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Provider** | pt-PT | Fornecedor | 默认 |
+| Provider | pt-PT | fornecedor | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Provider** | pt-BR | Provedor | 默认 |
+| Provider | pt-BR | provedor | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Quota** | es | Cuota | 默认 |
+| Quota | es | cuota | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Quota** | pt-PT | Quota | 默认 |
+| Quota | pt-PT | quota | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Quota** | pt-BR | Cota | 默认 |
+| Quota | pt-BR | cota | 句中使用小写首字母；标题仍可使用大写首字母。 |
 | **Running** | zh-CN | 运行中 | 默认 |
 | Running | zh-CN | 正在运行 | 完整句子里作谓语时（"Agent 正在运行"），不是状态标签 |
 | **Running** | zh-TW | 執行中 | 默认 |
 | Running | zh-TW | 正在執行 | 完整句子裡作謂語時（"Agent 正在執行"），不是狀態標籤 |
+| **Running** | es | En ejecución | 默认 |
+| Running | es | en ejecución | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Running** | pt-PT | Em execução | 默认 |
+| Running | pt-PT | em execução | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Running** | pt-BR | Em execução | 默认 |
+| Running | pt-BR | em execução | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Running** | de | Wird ausgeführt | 默认 |
+| Running | de | läuft | 单数主语的运行状态谓语。 |
+| Running | de | Läuft | 运行状态标签或句首谓语。 |
+| Running | de | laufend | 句中形容正在运行的任务或会话，允许相应屈折变化。 |
+| Running | de | Laufend | 句首形容正在运行的任务或会话。 |
+| Running | de | laufen | 复数主语的运行状态谓语。 |
 | **Session** | zh-CN | 任务 | 默认 |
 | Session | zh-CN | 对话 | 指任务内人与 AI 交流的过程或其内容（对话区、对话正文、对话记录、继续对话） |
 | **Session** | zh-TW | 任務 | 默认 |
 | Session | zh-TW | 對話 | 指任務內人與 AI 交流的過程或其內容（對話區、對話正文、對話記錄、繼續對話） |
+| **Session** | es | Sesión | 默认 |
+| Session | es | sesión | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Session** | pt-PT | Sessão | 默认 |
+| Session | pt-PT | sessão | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Session** | pt-BR | Sessão | 默认 |
+| Session | pt-BR | sessão | 句中使用小写首字母；标题仍可使用大写首字母。 |
 | **Skill** | zh-CN | 技能 | 默认 |
 | Skill | zh-CN | Skill | 技术语境下指代具体的 skill 文件 / 目录结构时，可保留英文 |
 | **Skill** | zh-TW | 技能 | 默认 |
 | Skill | zh-TW | Skill | 技術語境下指代具體的 skill 檔案 / 目錄結構時，可保留英文 |
+| **Skill** | es | Habilidad | 默认 |
+| Skill | es | habilidad | 句中使用小写首字母；复数 habilidades 使用同一词干。 |
+| **Task** | es | Tarea | 默认 |
+| Task | es | tarea | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Task** | pt-PT | Tarefa | 默认 |
+| Task | pt-PT | tarefa | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Task** | pt-BR | Tarefa | 默认 |
+| Task | pt-BR | tarefa | 句中使用小写首字母；标题仍可使用大写首字母。 |
 | **Thread** | zh-CN | 任务 | 默认 |
 | Thread | zh-CN | thread | 指 Codex 的 thread 这一外部系统概念时（导入历史、thread 上下文），保留英文 |
 | Thread | zh-CN | 评论 | 指 GitHub PR 的 review thread 时，用「review 评论」 |
 | **Thread** | zh-TW | 任務 | 默认 |
 | Thread | zh-TW | thread | 指 Codex 的 thread 這一外部系統概念時（匯入歷史、thread 上下文），保留英文 |
 | Thread | zh-TW | 評論 | 指 GitHub PR 的 review thread 時，用「review 評論」 |
+| **Thread** | es | Hilo | 默认 |
+| Thread | es | hilo | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Thread** | pt-PT | Tópico | 默认 |
+| Thread | pt-PT | tópico | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Thread** | pt-BR | Tópico | 默认 |
+| Thread | pt-BR | tópico | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Turn** | es | Turno | 默认 |
+| Turn | es | turno | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Turn** | pt-PT | Turno | 默认 |
+| Turn | pt-PT | turno | 确需描述一次完整往返时使用；葡语复数 turnos、德语复数 Runden 仍属本词。 |
+| **Turn** | pt-BR | Turno | 默认 |
+| Turn | pt-BR | turno | 确需描述一次完整往返时使用；葡语复数 turnos、德语复数 Runden 仍属本词。 |
+| **Turn** | de | Runde | 默认 |
+| Turn | de | Runde | 确需描述一次完整往返时使用；葡语复数 turnos、德语复数 Runden 仍属本词。 |
+| **Usage** | es | Uso | 默认 |
+| Usage | es | uso | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Usage** | pt-PT | Utilização | 默认 |
+| Usage | pt-PT | utilização | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Usage** | pt-BR | Uso | 默认 |
+| Usage | pt-BR | uso | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Working directory** | es | Directorio de trabajo | 默认 |
+| Working directory | es | directorio de trabajo | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Working directory** | pt-PT | Diretório de trabalho | 默认 |
+| Working directory | pt-PT | diretório de trabalho | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Working directory** | pt-BR | Diretório de trabalho | 默认 |
+| Working directory | pt-BR | diretório de trabalho | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Worktree** | pt-PT | Worktree | 默认 |
+| Worktree | pt-PT | worktree | 句中使用小写首字母；标题仍可使用大写首字母。 |
+| **Worktree** | pt-BR | Worktree | 默认 |
+| Worktree | pt-BR | worktree | 句中使用小写首字母；标题仍可使用大写首字母。 |
 
 ### 裁决理由
 
@@ -140,7 +298,7 @@
 - **Running** — 状态标签用「运行中」（现状 16:9）。条件禁用是必需的——「进行中」是 In Progress 的正确译法、「执行中」在别处也可能对，无条件禁会大面积误伤。mobile/devices 的自动化面板上「运行中 / 执行中 / 重跑中」三种写法同屏出现。
 - **Session** — 面向用户叫「任务」——它是左侧列表里可单独打开/删除/分享的条目，有自己的独立空间、可以同时跑多个；「对话」表达不出这个并行性（2026-07-31 裁决，替代此前的「对话」）。任务内人与 AI 交流的过程与内容仍叫「对话」，见 alsoAllowed 与 chat 条目。「会话」继续禁用于产品概念。但英文的 session 在本仓实际承载**五个**不同概念，其中最容易译错、也最影响用户行为的是 Agent 运行时会话——已单独立为 agent-session 条目，中文叫「Agent 会话」，务必先读它再改这类文案；余下三类（登录/绑定校验、SSH 远程与传输、操作系统桌面）与 mobile 语音连接会话都与产品无关，存量译法不在本条约束内，见本条 exempt。代码与内部标识仍用 Session，本条只约束 UI 文案。ja / ko 用音译 `セッション` / `세션`，本次一并收敛：改名前这两种语言就在混用（音译 271 / 277 处 vs `会話`・`대화` 16 / 11 处），改完英文后不一致放大到 133 处，2026-07-31 逐条判断后统一到音译（详见 docs/product-rules/task-and-conversation-naming.md §5.1）。日韩不存在中文那种一词多义问题，所以 `タスク` / `작업`（task）无需像中文那样改写成「自动化」。交流过程仍用 `会話` / `대화`，chat history 仍用 `チャット履歴` / `채팅 기록`。概念分层与判定规则见 docs/product-rules/task-and-conversation-naming.md。
   - 豁免范围：`desktop:settings.providers.custom.fields.modelSupportsReasoningHelp`、`desktop:chat.backgroundActivity.stopBashTitle`、`desktop:chat.remoteError.REMOTE_COMPAT_MODE_UNSUPPORTED`、`desktop:chat.rewind.errors.remoteNotSupported`、`desktop:chat.systemCard.context.noLiveSession`、`desktop:chat.userMessage.forkErrors.codexStateUnavailable`、`desktop:chat.rewind.errors.noLiveQuery`、`desktop:chat.userMessage.forkErrors.unsupportedHistory`、`desktop:login.errors.INVALID_BIND_TICKET`、`desktop:login.errors.INVALID_LOGIN_TICKET`、`desktop:newChat.atMention.typeToSearchFiles`、`desktop:newChat.chatInput.agentSwitch.confirmation.description`、`desktop:newChat.collaboration.archiveWorkerConfirmDesc`、`desktop:newChat.collaboration.stopConfirmDesc`、`desktop:settings.about.debugLogDescription`、`desktop:settings.builtinTools.toast.disabled`、`desktop:settings.builtinTools.toast.enabled`、`desktop:settings.builtinTools.toggleHint`、`desktop:settings.builtinTools.description`、`desktop:settings.builtinTools.scopePicker.userDefault`、`desktop:settings.builtinTools.scopePicker.userDefaultDescription`、`desktop:settings.builtinTools.source.userTooltip`、`desktop:settings.computerUse.android.toggleHint`、`desktop:settings.computerUse.browser.toggleHint`、`desktop:settings.computerUse.codexRefreshDeferred`、`desktop:settings.computerUse.directControl.permissions.linuxHint`、`desktop:settings.computerUse.directControl.toggleHint`、`desktop:settings.lspMode.toast.disabled`、`desktop:settings.memory.agent.toast.takesEffectSuffix`、`desktop:settings.sessionImport.description`、`desktop:settings.sessionImport.summary.filteredHint`、`desktop:settings.mcp.dialog.desc`、`desktop:settings.mcp.deleteConfirm.message`、`desktop:settings.memory.description`、`desktop:settings.lspMode.toast.enabled`、`desktop:settings.personalization.placeholder`、`desktop:settings.subagentModels.hint`、`desktop:newChat.modelSelector.subscriptionDirectDisabled.chatgpt`、`desktop:newChat.modelSelector.subscriptionDirectDisabled.xai`、`desktop:newChat.modelSelector.subscriptionDirectDisabled.generic`、`desktop:ccAgent.draft.remoteProviderUnsupported`、`desktop:ipcError.REMOTE_PROVIDER_UNSUPPORTED`、`mobile/composer:voice.invalidSession`、`mobile/composer:voice.missingConnectionProvider`、`mobile/composer:voice.missingRefinerTargetProvider`、`mobile/composer:voice.sessionExpiredOrForbidden`、`mobile/composer:voice.sessionNotConnected`
-- **Skill** — 中文用「技能」（现状 32:26 领先），偶尔保留英文 Skill 也允许，故 zh-CN 不设 forbidden——硬性禁用会逼出别扭的中文。ja / ko 则禁用 技能 / 기술：那是与 スキル / 스킬 并存的同义漂移，且只出现在 skillhub 内部（3 / 3 处）。ko 的 기술 是多义词（技术 / 记述 / 技能），两处非 Skill 义已按 key 豁免。SkillHub 作为产品名单独登记在 skillhub 条目。(2026-07 补充:alsoAllowed 允许保留英文,那就必须是规范形态 Skill——caseStandardFor 会把这类条目一并纳入大小写检查,skillhub 里原有 10 处小写 skill 已统一。)
+- **Skill** — 中文用「技能」（现状 32:26 领先），偶尔保留英文 Skill 也允许，故 zh-CN 不设 forbidden——硬性禁用会逼出别扭的中文。ja / ko 则禁用 技能 / 기술：那是与 スキル / 스킬 并存的同义漂移，且只出现在 skillhub 内部（3 / 3 处）。ko 的 기술 是多义词（技术 / 记述 / 技能），两处非 Skill 义已按 key 豁免。SkillHub 作为产品名单独登记在 skillhub 条目。(2026-07 补充:alsoAllowed 允许保留英文,那就必须是规范形态 Skill——caseStandardFor 会把这类条目一并纳入大小写检查,skillhub 里原有 10 处小写 skill 已统一。) 葡萄牙葡语和巴西葡语沿用现有界面技术名 Skill（含复数 Skills），与文件、SkillHub 和引擎资源名称一致；不另造 Competência / Habilidade 作为资源名称。
   - 豁免范围：`desktop:bots.homeFolder.contents`、`desktop:localDbFatal.details`、`desktop:issueTracker.create.descriptionPlaceholder`
 - **SkillHub** — 产品名，五语一律保留英文原样（暂定保留，未来若做中文名再改）。注意与 skill 条目区分：侧边栏 tab 现在叫「技能」但实际指 SkillHub，创建面板的「技能」指 Skills——这是既有 bug，两者不是一个东西不该同名，清理存量时需一并处理。
 - **Subagent** — Agent 的派生概念，中文跟随 Agent 保留英文原词，不译「子代理」。「代理」在此条下按 whenEn=Subagent 登记：同一个中文词在 Agent / Subagent / Proxy 三处各有来源，只有按英文源区分，自动替换才知道该换成哪个词。ja / ko 沿用既有音译。

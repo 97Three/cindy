@@ -795,7 +795,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/de/common.json",
             "locator": "accountDeletion.status(de).pendingTitle",
-            "hash": "sha256:e1c1115fab28b18f00289d8de40f913af34f84f8ade43852b0b1380dc1ae3ddc"
+            "hash": "sha256:b46a508abffc0d874f37d029567367fff5e650cf30ada92e2912296880b6c961"
           }
         },
         "pendingCopy": {
@@ -803,7 +803,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/de/common.json",
             "locator": "accountDeletion.status(de).pendingCopy",
-            "hash": "sha256:e1c1115fab28b18f00289d8de40f913af34f84f8ade43852b0b1380dc1ae3ddc"
+            "hash": "sha256:b46a508abffc0d874f37d029567367fff5e650cf30ada92e2912296880b6c961"
           }
         },
         "processingTitle": {
@@ -811,7 +811,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/de/common.json",
             "locator": "accountDeletion.status(de).processingTitle",
-            "hash": "sha256:e1c1115fab28b18f00289d8de40f913af34f84f8ade43852b0b1380dc1ae3ddc"
+            "hash": "sha256:b46a508abffc0d874f37d029567367fff5e650cf30ada92e2912296880b6c961"
           }
         },
         "processingCopy": {
@@ -819,7 +819,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/de/common.json",
             "locator": "accountDeletion.status(de).processingCopy",
-            "hash": "sha256:e1c1115fab28b18f00289d8de40f913af34f84f8ade43852b0b1380dc1ae3ddc"
+            "hash": "sha256:b46a508abffc0d874f37d029567367fff5e650cf30ada92e2912296880b6c961"
           }
         },
         "completedTitle": {
@@ -827,7 +827,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/de/common.json",
             "locator": "accountDeletion.status(de).completedTitle",
-            "hash": "sha256:e1c1115fab28b18f00289d8de40f913af34f84f8ade43852b0b1380dc1ae3ddc"
+            "hash": "sha256:b46a508abffc0d874f37d029567367fff5e650cf30ada92e2912296880b6c961"
           }
         },
         "completedCopy": {
@@ -835,7 +835,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/de/common.json",
             "locator": "accountDeletion.status(de).completedCopy",
-            "hash": "sha256:e1c1115fab28b18f00289d8de40f913af34f84f8ade43852b0b1380dc1ae3ddc"
+            "hash": "sha256:b46a508abffc0d874f37d029567367fff5e650cf30ada92e2912296880b6c961"
           }
         },
         "dismissButton": {
@@ -843,7 +843,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/de/common.json",
             "locator": "accountDeletion.status(de).dismissButton",
-            "hash": "sha256:e1c1115fab28b18f00289d8de40f913af34f84f8ade43852b0b1380dc1ae3ddc"
+            "hash": "sha256:b46a508abffc0d874f37d029567367fff5e650cf30ada92e2912296880b6c961"
           }
         }
       },
@@ -853,7 +853,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-PT/common.json",
             "locator": "accountDeletion.status(pt-PT).pendingTitle",
-            "hash": "sha256:a3a0b15cc99a4bd5c4f7aaaca7be8b1d7110ae19401645622f10e025eae3a264"
+            "hash": "sha256:a2e1546bdd4f866d1210ecd338bf011b019965f41ba7dd7a6466ff10ac227018"
           }
         },
         "pendingCopy": {
@@ -861,7 +861,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-PT/common.json",
             "locator": "accountDeletion.status(pt-PT).pendingCopy",
-            "hash": "sha256:a3a0b15cc99a4bd5c4f7aaaca7be8b1d7110ae19401645622f10e025eae3a264"
+            "hash": "sha256:a2e1546bdd4f866d1210ecd338bf011b019965f41ba7dd7a6466ff10ac227018"
           }
         },
         "processingTitle": {
@@ -869,7 +869,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-PT/common.json",
             "locator": "accountDeletion.status(pt-PT).processingTitle",
-            "hash": "sha256:a3a0b15cc99a4bd5c4f7aaaca7be8b1d7110ae19401645622f10e025eae3a264"
+            "hash": "sha256:a2e1546bdd4f866d1210ecd338bf011b019965f41ba7dd7a6466ff10ac227018"
           }
         },
         "processingCopy": {
@@ -877,7 +877,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-PT/common.json",
             "locator": "accountDeletion.status(pt-PT).processingCopy",
-            "hash": "sha256:a3a0b15cc99a4bd5c4f7aaaca7be8b1d7110ae19401645622f10e025eae3a264"
+            "hash": "sha256:a2e1546bdd4f866d1210ecd338bf011b019965f41ba7dd7a6466ff10ac227018"
           }
         },
         "completedTitle": {
@@ -885,7 +885,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-PT/common.json",
             "locator": "accountDeletion.status(pt-PT).completedTitle",
-            "hash": "sha256:a3a0b15cc99a4bd5c4f7aaaca7be8b1d7110ae19401645622f10e025eae3a264"
+            "hash": "sha256:a2e1546bdd4f866d1210ecd338bf011b019965f41ba7dd7a6466ff10ac227018"
           }
         },
         "completedCopy": {
@@ -893,7 +893,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-PT/common.json",
             "locator": "accountDeletion.status(pt-PT).completedCopy",
-            "hash": "sha256:a3a0b15cc99a4bd5c4f7aaaca7be8b1d7110ae19401645622f10e025eae3a264"
+            "hash": "sha256:a2e1546bdd4f866d1210ecd338bf011b019965f41ba7dd7a6466ff10ac227018"
           }
         },
         "dismissButton": {
@@ -901,7 +901,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-PT/common.json",
             "locator": "accountDeletion.status(pt-PT).dismissButton",
-            "hash": "sha256:a3a0b15cc99a4bd5c4f7aaaca7be8b1d7110ae19401645622f10e025eae3a264"
+            "hash": "sha256:a2e1546bdd4f866d1210ecd338bf011b019965f41ba7dd7a6466ff10ac227018"
           }
         }
       },
@@ -911,7 +911,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-BR/common.json",
             "locator": "accountDeletion.status(pt-BR).pendingTitle",
-            "hash": "sha256:53a0be00856bc7fa5eed3d7007f5065c4246b7d277be87edb40d235a4879c4e8"
+            "hash": "sha256:b3b7c34b38751014c9a4b4b90dc55f87749ff9e248fd28e9b9b1eae44d5edc62"
           }
         },
         "pendingCopy": {
@@ -919,7 +919,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-BR/common.json",
             "locator": "accountDeletion.status(pt-BR).pendingCopy",
-            "hash": "sha256:53a0be00856bc7fa5eed3d7007f5065c4246b7d277be87edb40d235a4879c4e8"
+            "hash": "sha256:b3b7c34b38751014c9a4b4b90dc55f87749ff9e248fd28e9b9b1eae44d5edc62"
           }
         },
         "processingTitle": {
@@ -927,7 +927,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-BR/common.json",
             "locator": "accountDeletion.status(pt-BR).processingTitle",
-            "hash": "sha256:53a0be00856bc7fa5eed3d7007f5065c4246b7d277be87edb40d235a4879c4e8"
+            "hash": "sha256:b3b7c34b38751014c9a4b4b90dc55f87749ff9e248fd28e9b9b1eae44d5edc62"
           }
         },
         "processingCopy": {
@@ -935,7 +935,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-BR/common.json",
             "locator": "accountDeletion.status(pt-BR).processingCopy",
-            "hash": "sha256:53a0be00856bc7fa5eed3d7007f5065c4246b7d277be87edb40d235a4879c4e8"
+            "hash": "sha256:b3b7c34b38751014c9a4b4b90dc55f87749ff9e248fd28e9b9b1eae44d5edc62"
           }
         },
         "completedTitle": {
@@ -943,7 +943,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-BR/common.json",
             "locator": "accountDeletion.status(pt-BR).completedTitle",
-            "hash": "sha256:53a0be00856bc7fa5eed3d7007f5065c4246b7d277be87edb40d235a4879c4e8"
+            "hash": "sha256:b3b7c34b38751014c9a4b4b90dc55f87749ff9e248fd28e9b9b1eae44d5edc62"
           }
         },
         "completedCopy": {
@@ -951,7 +951,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-BR/common.json",
             "locator": "accountDeletion.status(pt-BR).completedCopy",
-            "hash": "sha256:53a0be00856bc7fa5eed3d7007f5065c4246b7d277be87edb40d235a4879c4e8"
+            "hash": "sha256:b3b7c34b38751014c9a4b4b90dc55f87749ff9e248fd28e9b9b1eae44d5edc62"
           }
         },
         "dismissButton": {
@@ -959,7 +959,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-BR/common.json",
             "locator": "accountDeletion.status(pt-BR).dismissButton",
-            "hash": "sha256:53a0be00856bc7fa5eed3d7007f5065c4246b7d277be87edb40d235a4879c4e8"
+            "hash": "sha256:b3b7c34b38751014c9a4b4b90dc55f87749ff9e248fd28e9b9b1eae44d5edc62"
           }
         }
       }

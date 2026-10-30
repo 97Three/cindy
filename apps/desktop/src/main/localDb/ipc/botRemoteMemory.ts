@@ -61,6 +61,13 @@ const removeBody = (name: string, title: string) => text(
   `${name}之後不會再參考「${title}」。`,
   `${name}は今後「${title}」を参照しません。`,
   `${name}은(는) 앞으로 “${title}”을(를) 참고하지 않습니다.`,
+  {
+    es: `${name} ya no consultará «${title}».`,
+    fr: `${name} ne se référera plus à « ${title} ».`,
+    de: `${name} wird „${title}“ nicht mehr berücksichtigen.`,
+    'pt-PT': `${name} deixará de consultar «${title}».`,
+    'pt-BR': `${name} não consultará mais “${title}”.`,
+  },
 );
 
 /** `parseRemoteResourceRef` rejects longer ids; long teammate ids use a digest segment (fits a 128-char id). */

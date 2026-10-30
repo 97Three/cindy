@@ -9759,7 +9759,7 @@
       "columns": {
         "process": "Prozess",
         "cpu": "CPU",
-        "memory": "Gedächtnis",
+        "memory": "Arbeitsspeicher",
         "pid": "PID"
       },
       "kinds": {
