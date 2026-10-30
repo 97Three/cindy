@@ -619,13 +619,16 @@ export class McpAppsHost {
             }
           }
           await assertCurrent();
-          // Once accepted, queued input belongs to this card/View, not its document.
+          // Preparation still belongs to this document. Once accepted, queued
+          // input belongs to the card/View and keeps only its current file grants.
+          let accepted = false;
           const assertMessageCurrent = async () => {
-            await assertView();
             for (const file of files) await view.files!.describeGranted(file.url!);
+            await (accepted ? assertView() : assertCurrent());
           };
           if (files.length) await this.deps.sendMessage(sessionId, record, content, assertMessageCurrent, files);
-          else await this.deps.sendMessage(sessionId, record, content, assertView);
+          else await this.deps.sendMessage(sessionId, record, content, assertMessageCurrent);
+          accepted = true;
           return {};
         };
         if (!remote && config.plugin && this.deps.downloadFile) bridge.ondownloadfile = async (params, extra) => {

@@ -827,3 +827,28 @@ it('does not supply the SDK to an SDK-free BOM page', async () => {
   expect(f.document.html).toBe(html);
   expect(f.document.sdk).toBeUndefined();
 });
+
+// Accepted queued input must survive replacement, but preparation has not accepted it yet.
+// Unit / Host -> real sender, hold session metadata before the enqueue fence.
+it('cancels a ui/message still preparing when its document is replaced', async () => {
+  const metadata = deferred<Record<string, never>>();
+  const getSessionMeta = vi.fn(() => metadata.promise);
+  const enqueue = vi.fn();
+  const owner = {};
+  let finished = false;
+  const sender = createAppMessageSender({ owner: () => owner, readClearBoundary: async () => null,
+    restoreQueue: async () => {}, clearBoundary: () => null, shouldQueue: () => true,
+    getSessionMeta, buildCreateOpts: async () => ({ agentKind: 'pi' as const }),
+    createClientId: () => 'preparing', buildQueueItem: async params => ({ ...params, text: params.message }) as unknown as AgentInputQueuedMessage,
+    enqueue, sendToAgentAccepted: vi.fn(),
+  });
+  const f = await fixture('renderer:1', false, '<p>Form</p>', {
+    sendMessage: async (...args) => { try { await sender(...args); } finally { finished = true; } },
+  });
+  await f.dispatch({ jsonrpc: '2.0', id: 91, method: 'ui/message', params: { role: 'user', content: [{ type: 'text', text: 'Not accepted yet' }] } });
+  await vi.waitFor(() => expect(getSessionMeta).toHaveBeenCalledOnce());
+  await f.dispatch({ jsonrpc: '2.0', id: 1, method: 'ui/initialize', params: { protocolVersion: '2026-01-26', appInfo: { name: 'New', version: '1' }, appCapabilities: {} } });
+  metadata.resolve({});
+  await vi.waitFor(() => expect(finished).toBe(true));
+  expect(enqueue).not.toHaveBeenCalled();
+});

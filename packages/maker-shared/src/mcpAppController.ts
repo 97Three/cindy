@@ -51,12 +51,18 @@ export class McpAppController {
     }
     // Resource loading has its own Host/remote budget. Give the App a complete
     // initialization window after the document reaches this controller.
-    this.startupTimer = setTimeout(
-      () => this.fail(new Error('MCP_APP_INITIALIZATION_TIMEOUT')),
-      45_000,
-    );
+    this.armInitializationTimeout();
     if (document.transport !== 'sandbox') void this.poll();
     return document;
+  }
+
+  private armInitializationTimeout(): void {
+    clearTimeout(this.startupTimer);
+    const generation = this.generation;
+    this.startupTimer = setTimeout(() => {
+      if (this.generation === generation && this.startupTimer !== undefined)
+        this.fail(new Error('MCP_APP_INITIALIZATION_TIMEOUT'));
+    }, 45_000);
   }
 
   sandboxReady(resourceUrl?: string): void {
@@ -104,6 +110,7 @@ export class McpAppController {
         this.generation++;
         this.initialized = false;
         this.outbound = [];
+        this.armInitializationTimeout();
       }
       this.initializeId = message.id;
     }
