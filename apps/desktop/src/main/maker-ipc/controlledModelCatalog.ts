@@ -46,6 +46,7 @@ export function createControlledModelCatalogReader(deps: ControlledModelCatalogD
     assertOwner();
     const deviceId = request.agentDeviceId;
     if (!snapshot.locations.some(location => location.agentDeviceId === deviceId)) {
+      if (snapshot.status === 'degraded') throwIpcError('MODEL_VISIBILITY_NOT_READY', 'Model source directory is temporarily unavailable');
       throwIpcError('PRECONDITION_FAILED', 'Model source is unavailable on the task computer');
     }
     const result = await deps.invoke(deviceId, request.channel as string, request.args, assertOwner);
@@ -54,6 +55,7 @@ export function createControlledModelCatalogReader(deps: ControlledModelCatalogD
     const current = await deps.locations();
     assertOwner();
     if (!current.locations.some(location => location.agentDeviceId === deviceId)) {
+      if (current.status === 'degraded') throwIpcError('MODEL_VISIBILITY_NOT_READY', 'Model source directory is temporarily unavailable');
       throwIpcError('PRECONDITION_FAILED', 'Model source is no longer available');
     }
     if (!result.ok) {

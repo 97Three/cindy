@@ -160,6 +160,11 @@ function emit(channel: string, payload: unknown): void {
   }
 }
 
+function notifyControlledModelCatalogChanged(): void {
+  emit(CONTROLLED_MODEL_CATALOG_CHANGED, {});
+  tapWindowBroadcast(CONTROLLED_MODEL_CATALOG_CHANGED, {});
+}
+
 function focusMainWindow(): void {
   const win = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
   if (!win) return;
@@ -415,11 +420,11 @@ export function startProviderShareRuntime(broadcast: Broadcast, options: { invok
   startProviderShareGuest({
     catalogChanged(deviceId) {
       emit(DEVICE_LINK_PUSH.REMOTE_PUSH, { deviceId, channel: 'maker:provider:changed', payload: {} });
-      emit(CONTROLLED_MODEL_CATALOG_CHANGED, {});
+      notifyControlledModelCatalogChanged();
     },
     changed(received) {
       emit(PROVIDER_SHARE_IPC.RECEIVED_CHANGED, received);
-      emit(CONTROLLED_MODEL_CATALOG_CHANGED, {});
+      notifyControlledModelCatalogChanged();
     },
     settled(state, preview) {
       emit(PROVIDER_SHARE_IPC.SETTLED, { state, preview });
@@ -447,7 +452,7 @@ export function stopProviderShareRuntime(): void {
   stopProviderShareGuest();
   emit(PROVIDER_SHARE_IPC.OWNED_CHANGED, null);
   emit(PROVIDER_SHARE_IPC.RECEIVED_CHANGED, [] satisfies ProviderShareReceived[]);
-  emit(CONTROLLED_MODEL_CATALOG_CHANGED, {});
+  notifyControlledModelCatalogChanged();
 }
 
 // ─── 命令 ───────────────────────────────────────────────────────

@@ -978,16 +978,23 @@ export function NewMakerDraftRoute() {
   const effectiveDeviceLinkDeviceName = draft.deviceLinkDeviceName;
   /**
    * 远程控制下新建任务(建到被控电脑上)时,Agent 同样可以在第三台电脑运行(与手机新建任务、
-   * 远程控制的已建任务同一套):被控电脑的供应商目录带「允许被远程调用」标记才提供(它认得
-   * create-session 的 agentDeviceId)。共享任务访客读到的是自己账号的设备,与这台电脑无关。
+   * 远程控制的已建任务同一套):新版按被控电脑的路由目录提供;旧版仍依赖供应商目录的
+   * 「允许被远程调用」标记。共享任务访客读到的是自己账号的设备,与这台电脑无关。
    */
   const { providers: deviceLinkHostProviders } = useDeviceProviders(effectiveDeviceLinkDeviceId);
+  // 新版主机的目录通道本身支持路由来源，不要求主机还配置了本地供应商。
+  const controlledModelRoute = useModelRouteDevices({
+    controlledDeviceId: effectiveDeviceLinkDeviceId,
+    leadAgentDeviceId: draft.agentDeviceId,
+    sshRemote: !!effectiveRemoteHostId,
+  });
   // 已经选好的另一台电脑一定是在这台被控电脑确认支持时选的(换被控电脑 store 即清空):被控电脑的
   // 目录暂时读不到(首次加载 / 重连)时继续生效,不让草稿在两份目录之间来回重种。
   const deviceLinkRemoteAgentSupported =
     !!effectiveDeviceLinkDeviceId &&
     !isSharedTaskPeer(effectiveDeviceLinkDeviceId) &&
-    (controlledComputerSupportsRemoteAgent(deviceLinkHostProviders) ||
+    (controlledModelRoute.catalogHostDeviceId != null ||
+      controlledComputerSupportsRemoteAgent(deviceLinkHostProviders) ||
       (draft.agentDeviceId != null && deviceLinkHostProviders.length === 0));
   /**
    * 「Agent 在另一台电脑运行」:任务、项目文件与命令留在任务所在电脑(本机,或上面那种被控电脑),
@@ -1006,11 +1013,6 @@ export function NewMakerDraftRoute() {
   // 供应商分享：别人分享给我的供应商(`share:<id>`)同样是落点，只并进模型选择器，不进设备切换器。
   const { devices: providerShareDevices } =
     useProviderShareAgentDevices([effectiveAgentDeviceId], effectiveDeviceLinkDeviceId);
-  const controlledModelRoute = useModelRouteDevices({
-    controlledDeviceId: effectiveDeviceLinkDeviceId,
-    leadAgentDeviceId: effectiveAgentDeviceId,
-    sshRemote: !!effectiveRemoteHostId,
-  });
   const remoteAgentDevices = useMemo(() => {
     if (effectiveDeviceLinkDeviceId) {
       if (deviceLinkRemoteAgentSupported && controlledModelRoute.catalogHostDeviceId) return controlledModelRoute.devices;
