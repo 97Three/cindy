@@ -2299,7 +2299,7 @@
         "title": "Close Cindy",
         "message": "What should happen when you close the main window?",
         "detail": "Tasks keep running when Cindy is minimized to the system tray; right-click the tray icon to quit. You can change this later in Settings.",
-        "linuxDetail": "Tasks keep running while the window is minimized. Restore Cindy from the taskbar or window overview, or change this choice later in Settings."
+        "linuxDetail": "Tasks keep running with the window out of the way. Open Cindy again to bring the window back, or change this choice later in Settings."
       },
       "trayMenu": {
         "show": "Open Cindy",
@@ -2493,7 +2493,7 @@
         "description": "Ubuntu uses system .deb packages. Arch Linux and Omarchy use the managed user installer with the same verified .deb payload, without a Debian package manager.",
         "item1": "Ubuntu: use sudo apt install ./cindy-<version>-<arch>.deb. Arch/Omarchy: follow the user-install guide in docs/linux.md.",
         "item2": "After choosing Update, system .deb installs request authorization; managed user installs switch versions without a system password. Other package-managed installs use their package manager.",
-        "item3": "Linux x64 supports the Beta channel; arm64 does not yet. Linux updates are applied only when you choose to restart, never automatically while idle."
+        "item3": "Linux x64 and arm64 support the Beta channel. Linux updates are applied only when you choose to restart, never automatically while idle."
       },
       "qnaTitle": "Ask directly",
       "qnaDescription": "Still need help? Ask how to do what you have in mind.",
@@ -7543,8 +7543,8 @@
         "updated": "Updated",
         "unchanged": "{{count}} other permissions unchanged",
         "noChange": "No permission changes.",
-        "pick": "Can ask you to pick a folder for it",
-        "pickDetail": "When it asks, Cindy shows the system folder picker; you decide what to share, and cancelling gives it nothing.",
+        "pick": "Can ask you to choose files or a folder",
+        "pickDetail": "Cindy opens a system picker when the plugin asks. You decide what to share; cancelling gives the plugin nothing.",
         "workspace": "Can ask to create a session entry for a project folder in the sidebar",
         "workspaceDetail": "When it asks, you either pick the folder yourself or see the full path on a confirmation card before deciding; while it is handling a call you started, subfolders inside the current session's working directory are used directly without an extra prompt. Folders that already have a session are reused, and what gets created is an empty session — nothing starts running on its own.",
         "sessionContext": "Can learn which project folder the current session is working in",
@@ -7558,7 +7558,11 @@
         "nodeChildSpawnDetail": "Only JS files declared inside its own package can be started (same local permissions as the main program); arbitrary commands cannot be executed. Sub-processes are closed together when the plugin is disabled or exits.",
         "skill": "Adds the skill \"{{name}}\" to your AI assistants",
         "skillDetail": "A skill is an instruction file the AI loads and follows as its own, with your full permissions, in Claude Code and Codex, across every project — it is not confined to this plugin's sandbox. It stays available while the plugin is enabled and is removed when the plugin is disabled or uninstalled; turning the plugin off for a single folder does not hide it. The full skill text cannot be previewed here — only install plugins you trust.",
-        "routineEvents": "Routine Events"
+        "routineEvents": "Routine Events",
+        "mcpUi": "Display interactive pages in the conversation",
+        "mcpUiDomains": "Page network domains: {{domains}}",
+        "mcpAppOnly": "Page only",
+        "uiPageAccess": "Pages: {{pages}}; domains: {{domains}}; tools available to pages: {{tools}}"
       },
       "connections": {
         "confirmTitle": "Add connection address",
@@ -8131,6 +8135,14 @@
         "viewPendingVersion": "View version under review",
         "submitFailed": "Submission failed",
         "viewDetails": "View details"
+      },
+      "fileTransfer": {
+        "reading": "Reading files",
+        "uploading": "Uploading",
+        "saving": "Saving file",
+        "importing": "Importing files",
+        "finished": "File operation finished",
+        "importFinished": "File import finished"
       }
     },
     "mcp": {
@@ -12452,6 +12464,13 @@
         "busy": "Repository is busy. Try again later",
         "changed": "The checked-out branch changed. Retry."
       }
+    },
+    "pluginUi": {
+      "title": "Plugin “{{name}}” added interactive pages. Review them to enable them.",
+      "enable": "Review and enable",
+      "later": "Later",
+      "ready": "Interactive pages are enabled for the next plugin tool call.",
+      "updateHost": "Update Cindy on the execution computer to approve interactive pages here."
     }
   },
   "onboarding": {
@@ -15622,6 +15641,7 @@
       "embedded-frame": "These fields are inside another site embedded in the page. Make sure the source is trusted."
     },
     "agentControlled": "The agent opened this screen. Make sure it's really where you want to sign in before filling it.",
+    "agentPicture": "This code is from a screenshot the agent took, so Cindy can't see the original screen or tell when you're done. Check that it leads to the site you mean to sign in to, and choose Hand Back to Agent after scanning.",
     "error": {
       "decision": "That didn't go through. Try again.",
       "stale": "The screen has changed. Use the latest version.",
@@ -17327,6 +17347,18 @@
     "compression": "For condensing lengthy content."
   },
   "routines": {
+    "deliveryLabel": "Final delivery",
+    "deliveryDirect": "Show directly in companion chat",
+    "deliveryProcess": "Ask companion to process and reply",
+    "deliveryIm": "Send through a messaging bot",
+    "deliveryNone": "Keep in the execution task only",
+    "deliveryHint": "Direct delivery uses no extra model call. Quiet checks still suppress idle results.",
+    "deliveryRecipient": "Recipient",
+    "deliveryUnavailable": "Destination unavailable",
+    "deliveryNoRecipients": "Connect a messaging bot and chat with it, then reopen these settings.",
+    "deliveryFailed": "Completed, delivery failed",
+    "deliveryFailedHint": "The result is saved. Check the delivery settings; do not rerun the work just to resend it.",
+    "deliveryDelivered": "Result delivered",
     "onEvent": "Event: {{source}} · {{event}}",
     "triggerDetails": "View triggers ({{count}}; any can start a run)",
     "noTriggers": "No triggers set",
@@ -18478,7 +18510,18 @@
     "cardTitle": "{{title}} · $t(mcpApps.appName)",
     "messageSource": "Sent by $t(mcpApps.appName) “{{name}}”",
     "serverId": "MCP Server ID: {{id}}",
-    "exitFullscreen": "Exit Fullscreen"
+    "exitFullscreen": "Exit Fullscreen",
+    "pluginTrust": {
+      "unverified": "Unverified",
+      "cindy-official": "Cindy official",
+      "reviewed": "Reviewed",
+      "verified-publisher": "Verified publisher"
+    },
+    "pluginRevoked": "The plugin was disabled or changed. This page is no longer available.",
+    "pluginCspRejected": "The page requested an undeclared domain and was blocked.",
+    "filesOnExecutionComputer": "View file contents on the execution computer",
+    "awaitingApproval": "Waiting for your approval",
+    "pendingApprovals": "{{count}} pending approvals"
   },
   "richAnswer": {
     "send": "Send Message",
@@ -18549,5 +18592,30 @@
     "groupHint": "When off, all tasks routed through this group use standard speed, including Ultrafast.",
     "pending": "Some computers have not confirmed the setting. Keep them connected and update group computers that do not support this setting.",
     "saveFailed": "The setting may be saved, but some running tasks have not confirmed standard speed. Check the connection and retry."
+  },
+  "performanceTrace": {
+    "title": "Performance Trace",
+    "start": "Start recording",
+    "stop": "Stop recording",
+    "description": "Record the slow action, then stop. Recording ends after 60 seconds. Local traces may contain paths and other sensitive information.",
+    "localScope": "This computer only. Other computers and phones are not recorded.",
+    "recording": "Recording · {{seconds}}s",
+    "saving": "Saving recording…",
+    "result": "Performance report",
+    "previous": "View previous report",
+    "previousResult": "Previous performance report",
+    "previousSummary": "Last recording: {{time}}, {{seconds}} seconds.",
+    "resultDescription": "Submit the full performance report, CPU profiles, Chromium trace, and your description to help diagnose slowdowns. Recognizable credentials, email addresses, and other sensitive data are redacted before upload. Files may still contain local paths and performance markers. Local originals are kept for 7 days.",
+    "summary": "Recorded {{seconds}} seconds.",
+    "partial": "Some data could not be captured or was limited. The available evidence has been kept.",
+    "note": "What were you doing? (optional)",
+    "submit": "Submit report",
+    "keepLocal": "Show local files",
+    "close": "Close",
+    "new": "Record again",
+    "uploaded": "Performance report files uploaded. Report ID: {{id}}. Include this ID when reporting the problem.",
+    "unavailable": "This build has no report upload destination. Open the local files to share them with support.",
+    "consent": "Accept the privacy policy in Settings before submitting. Your local files are preserved.",
+    "failed": "The operation did not finish. Retry or open the local files."
   }
 }

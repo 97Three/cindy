@@ -1136,6 +1136,143 @@ describe('findParkedEngineSession context rebuild boundary', () => {
 
     await expect(findParkedEngineSession('s1', 'codex')).resolves.toBeNull();
   });
+
+  it('does not resume a thread parked on another computer', async () => {
+    const sqlite = createDb();
+    sqlite.prepare('INSERT INTO sessions (id, cleared_at) VALUES (?, NULL)').run('s1');
+    sqlite
+      .prepare(
+        `
+      INSERT INTO messages (
+        id, client_id, session_id, role, content, tool_use_id, agent_meta,
+        agent_kind, created_at, rewind_at
+      ) VALUES ('sw', 'sw', 's1', 'agent_switch', ?, NULL, NULL, 'codex', 1000, NULL)
+    `,
+      )
+      .run(JSON.stringify({
+        fromAgentKind: 'codex',
+        fromSdkSessionId: 'parked-codex',
+        fromAgentDeviceId: 'device-a',
+      }));
+
+    await expect(findParkedEngineSession('s1', 'codex', 'device-b')).resolves.toBeNull();
+    await expect(findParkedEngineSession('s1', 'codex', 'device-a')).resolves.toMatchObject({
+      sdkSessionId: 'parked-codex',
+    });
+  });
+
+  it('does not trust a legacy boundary after the task moved devices', async () => {
+    const sqlite = createDb();
+    const insertBoundary = sqlite.prepare(
+      `
+      INSERT INTO messages (
+        id, client_id, session_id, role, content, tool_use_id, agent_meta,
+        agent_kind, created_at, rewind_at
+      ) VALUES (?, ?, ?, 'agent_switch', ?, NULL, NULL, 'codex', ?, NULL)
+    `,
+    );
+    sqlite.prepare('INSERT INTO sessions (id, cleared_at) VALUES (?, NULL)').run('legacy');
+    insertBoundary.run('legacy-codex', 'legacy-codex', 'legacy', JSON.stringify({
+      fromAgentKind: 'codex',
+      fromSdkSessionId: 'parked-codex',
+    }), 1000);
+    insertBoundary.run('legacy-move', 'legacy-move', 'legacy', JSON.stringify({
+      fromAgentKind: 'cc',
+      fromAgentDeviceId: 'device-a',
+      toAgentDeviceId: 'device-b',
+    }), 2000);
+
+    await expect(findParkedEngineSession('legacy', 'codex', 'device-b')).resolves.toBeNull();
+
+    // With no later relocation the legacy boundary keeps its historical resume.
+    sqlite.prepare('INSERT INTO sessions (id, cleared_at) VALUES (?, NULL)').run('legacy-local');
+    insertBoundary.run('legacy-local-codex', 'legacy-local-codex', 'legacy-local', JSON.stringify({
+      fromAgentKind: 'codex',
+      fromSdkSessionId: 'parked-local',
+    }), 1000);
+    await expect(findParkedEngineSession('legacy-local', 'codex', null)).resolves.toMatchObject({
+      sdkSessionId: 'parked-local',
+    });
+  });
+
+  it('invalidates a parked thread after a forced relocation with the same logical device', async () => {
+    const sqlite = createDb();
+    const insertBoundary = sqlite.prepare(
+      `
+      INSERT INTO messages (
+        id, client_id, session_id, role, content, tool_use_id, agent_meta,
+        agent_kind, created_at, rewind_at
+      ) VALUES (?, ?, ?, 'agent_switch', ?, NULL, NULL, 'codex', ?, NULL)
+    `,
+    );
+    sqlite.prepare('INSERT INTO sessions (id, cleared_at) VALUES (?, NULL)').run('share');
+    insertBoundary.run('share-codex', 'share-codex', 'share', JSON.stringify({
+      fromAgentKind: 'codex',
+      fromSdkSessionId: 'parked-share',
+      fromAgentDeviceId: 'share:alice',
+    }), 1000);
+    insertBoundary.run('share-move', 'share-move', 'share', JSON.stringify({
+      fromAgentKind: 'cc',
+      fromAgentDeviceId: 'share:alice',
+      toAgentDeviceId: 'share:alice',
+    }), 2000);
+
+    await expect(findParkedEngineSession('share', 'codex', 'share:alice')).resolves.toBeNull();
+  });
+
+  it('keeps a normal-device parked thread when the task returns to that device', async () => {
+    const sqlite = createDb();
+    const insertBoundary = sqlite.prepare(
+      `
+      INSERT INTO messages (
+        id, client_id, session_id, role, content, tool_use_id, agent_meta,
+        agent_kind, created_at, rewind_at
+      ) VALUES (?, ?, ?, 'agent_switch', ?, NULL, NULL, 'codex', ?, NULL)
+    `,
+    );
+    sqlite.prepare('INSERT INTO sessions (id, cleared_at) VALUES (?, NULL)').run('return');
+    insertBoundary.run('return-codex', 'return-codex', 'return', JSON.stringify({
+      fromAgentKind: 'codex',
+      fromSdkSessionId: 'parked-return',
+      fromAgentDeviceId: 'device-a',
+    }), 1000);
+    insertBoundary.run('return-move', 'return-move', 'return', JSON.stringify({
+      fromAgentKind: 'cc',
+      fromAgentDeviceId: 'device-a',
+      toAgentDeviceId: 'device-b',
+    }), 2000);
+
+    await expect(findParkedEngineSession('return', 'codex', 'device-a')).resolves.toMatchObject({
+      sdkSessionId: 'parked-return',
+    });
+    await expect(findParkedEngineSession('return', 'codex', 'device-b')).resolves.toBeNull();
+  });
+
+  it('keeps a same-device boundary when another engine switched without relocating', async () => {
+    const sqlite = createDb();
+    const insertBoundary = sqlite.prepare(
+      `
+      INSERT INTO messages (
+        id, client_id, session_id, role, content, tool_use_id, agent_meta,
+        agent_kind, created_at, rewind_at
+      ) VALUES (?, ?, ?, 'agent_switch', ?, NULL, NULL, 'codex', ?, NULL)
+    `,
+    );
+    sqlite.prepare('INSERT INTO sessions (id, cleared_at) VALUES (?, NULL)').run('same-device');
+    insertBoundary.run('same-device-codex', 'same-device-codex', 'same-device', JSON.stringify({
+      fromAgentKind: 'codex',
+      fromSdkSessionId: 'parked-same-device',
+      fromAgentDeviceId: 'device-a',
+    }), 1000);
+    insertBoundary.run('same-device-cc', 'same-device-cc', 'same-device', JSON.stringify({
+      fromAgentKind: 'cc',
+      fromAgentDeviceId: 'device-a',
+    }), 2000);
+
+    await expect(findParkedEngineSession('same-device', 'codex', 'device-a')).resolves.toMatchObject({
+      sdkSessionId: 'parked-same-device',
+    });
+  });
 });
 
 describe('getMessageDeletionTarget', () => {
