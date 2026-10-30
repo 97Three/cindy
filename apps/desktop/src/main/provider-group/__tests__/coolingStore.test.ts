@@ -26,7 +26,7 @@ vi.mock('../../appSessionState.js', () => ({
 }));
 
 const coolingStore = await import('../coolingStore.js');
-afterAll(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+afterAll(() => fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
 describe('冷却记录的成员边界', () => {
   it('保留配置允许的全部成员，仍拒绝超出存储边界的条目', () => {
