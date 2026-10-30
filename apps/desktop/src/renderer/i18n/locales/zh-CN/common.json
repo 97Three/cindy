@@ -3338,7 +3338,7 @@
         "formatModels": "可选。填写模型 ID 字符串，或含 id 的对象（name 可选）。省略或空数组时，确认后自动获取；非空清单不会再自动获取。",
         "formatMetadata": "模型对象的可选字段：group 为分组，contextWindow 为上下文长度，maxOutputTokens 为输出上限（后两项单位均为 token）。示例数值仅作演示，请按模型实际能力填写。",
         "formatEffort": "模型对象的可选字段：efforts 为支持的推理强度数组，defaultEffort 为其中一个默认值。不确定时可删除这两个字段。",
-        "formatLimits": "每个文件最多 8 个接口，每个接口最多 10,000 个模型，同时受 4 MiB 文件大小限制。",
+        "formatLimits": "每个供应商最多 8 个接口，每个接口最多 10,000 个模型，同时受 4 MiB 文件大小限制。",
         "exampleTitle": "JSON 示例（与下载内容一致）",
         "fileGuidePrepare": "准备配置文件",
         "fileGuideReview": "预览并确认",

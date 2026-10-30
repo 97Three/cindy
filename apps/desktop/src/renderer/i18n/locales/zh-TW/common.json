@@ -3338,7 +3338,7 @@
         "formatModels": "選填。填入模型 ID 字串，或含 id 的物件（name 選填）。省略或空陣列時，確認後自動取得；非空清單不會再自動取得。",
         "formatMetadata": "模型物件的選填欄位：group 為分組，contextWindow 為上下文長度，maxOutputTokens 為輸出上限（後兩項單位均為 token）。範例數值僅供示範，請依模型實際能力填寫。",
         "formatEffort": "模型物件的選填欄位：efforts 為支援的推理強度陣列，defaultEffort 為其中一個預設值。不確定時可刪除這兩個欄位。",
-        "formatLimits": "每個檔案最多 8 個介面，每個介面最多 10,000 個模型，同時受 4 MiB 檔案大小限制。",
+        "formatLimits": "每個供應商最多 8 個介面，每個介面最多 10,000 個模型，同時受 4 MiB 檔案大小限制。",
         "exampleTitle": "JSON 範例（與下載內容一致）",
         "fileGuidePrepare": "準備設定檔",
         "fileGuideReview": "預覽並確認",
