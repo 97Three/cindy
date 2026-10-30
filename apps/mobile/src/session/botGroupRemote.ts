@@ -177,7 +177,7 @@ function parseMember(value: unknown): BotGroupMemberView | null {
 
 function parseMentions(value: unknown): BotGroupMention {
   const record = recordOf(value);
-  return { all: record?.all === true, botIds: stringList(record?.botIds, 32, MAX_ID) };
+  return { all: record?.all === true, ...(record?.allBots === true ? { allBots: true } : {}), botIds: stringList(record?.botIds, 32, MAX_ID) };
 }
 
 /**
@@ -388,6 +388,8 @@ export function parseBotGroupChatData(value: unknown): BotGroupRemoteChatData | 
     name,
     serverBacked: record.serverBacked === true,
     singleSpeaker: record.singleSpeaker === true,
+    supportsMentionAudiences: record.supportsMentionAudiences === true,
+    allowMentionAllBots: record.allowMentionAllBots === true,
     supportsDivision: record.supportsDivision === true,
     archived: record.archived === true,
     dissolvedAt: text(record.dissolvedAt, 64),
@@ -449,7 +451,7 @@ const ERROR_CODES: readonly BotGroupErrorCode[] = [
   'LAST_OWNER',
   'MEMBER_LIMIT',
   'MEMBER_UNAVAILABLE',
-  'MENTION_UNAVAILABLE',
+  'MENTION_UNAVAILABLE', 'ALL_BOTS_MENTION_DISABLED',
   'PLAN_OPEN',
   'PLAN_CLOSED',
   'HOST_NOT_READY',
@@ -516,7 +518,7 @@ export function nextBotGroupSendAttempt(
   mentions?: BotGroupMention,
   quoteMessageId?: string,
 ): BotGroupSendAttempt {
-  const mentionSignature = mentions === undefined ? undefined : JSON.stringify([mentions.all, mentions.botIds]);
+  const mentionSignature = mentions === undefined ? undefined : JSON.stringify([mentions.all, mentions.allBots === true, mentions.botIds]);
   return previous && previous.text === text && previous.division === division
     && previous.quoteMessageId === quoteMessageId
     && previous.mentionSignature === mentionSignature
