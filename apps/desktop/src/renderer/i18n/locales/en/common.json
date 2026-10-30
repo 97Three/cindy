@@ -3200,6 +3200,7 @@
       "emptyTitle": "No sessions to import on this computer",
       "emptyDescription": "Cindy can import sessions from these tools. After you use one of them, come back and scan again.",
       "noMatch": "No matching sessions",
+      "allHidden": "All sessions here are hidden. Turn them on from “Hidden” in the top right.",
       "confirm": {
         "title_one": "Import 1 session?",
         "title_other": "Import {{count}} sessions?",

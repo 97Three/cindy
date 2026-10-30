@@ -318,15 +318,21 @@ async function* read(session: SourceSession, ctx: ReadContext): AsyncIterable<No
   }
 }
 
-/** 导入副本的新编号：同一来源任务重复导入（中断重试）得到同一个编号。 */
-export function claudeImportedSessionId(sourceSessionId: string): string {
-  return migrationNativeContext(`session-import:claude:${sourceSessionId}`, [sourceSessionId]).id(sourceSessionId);
+/**
+ * 导入副本的编号按账号 + 目标任务 + 原编号生成：同一次导入中断重试得到同一个编号；
+ * 另一个账号或删除后重新导入得到新编号，不会覆盖已经续做过的副本。
+ */
+function importContext(sourceSessionId: string, ctx: ReadContext) {
+  return migrationNativeContext(
+    `session-import:claude:${ctx.ownerId ?? ''}:${ctx.cindySessionId}:${sourceSessionId}`,
+    [sourceSessionId],
+  );
 }
 
-async function materialize(session: SourceSession): Promise<NativeMaterialization> {
+async function materialize(session: SourceSession, ctx: ReadContext): Promise<NativeMaterialization> {
   const { file } = JSON.parse(session.locator) as ClaudeLocator;
   const oldId = session.sourceSessionId;
-  const context = migrationNativeContext(`session-import:claude:${oldId}`, [oldId]);
+  const context = importContext(oldId, ctx);
   const newId = context.id(oldId);
   const cwd = session.cwd || os.homedir();
   const targetDir = path.join(resolveClaudeProjectsRoot(), sanitizeClaudeProjectKey(cwd));

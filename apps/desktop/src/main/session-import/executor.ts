@@ -17,7 +17,7 @@ import { BrowserWindow } from 'electron';
 
 import { activeOwnerScopeKey, getActiveDataOwnerPushStamp, ownerScopedUserDataPath } from '../appSessionState.js';
 import { recordPrRefsForImportedMessages } from '../git-context/prRefsStore.js';
-import { getDbClient } from '../localDb/client/current.js';
+import { getCurrentDbClientSnapshot, getDbClient } from '../localDb/client/current.js';
 import { createLogger } from '../logger.js';
 import { resolveDefaultScheduleRoute, resolveNewTaskDefaultModelRoute } from '../maker-host/model-route-guard-live.js';
 import { getNewMakerModelTuning, getRemoteNewMakerDefaults, getSelectedNewMakerRoute } from '../maker-host/newMakerDefaultsCache.js';
@@ -47,9 +47,23 @@ class ImportEmptyError extends Error {
   }
 }
 
+/** 导入途中切换了账号：停在原账号的回执里，等该账号下次打开时续上。 */
+class OwnerChangedError extends Error {
+  constructor() {
+    super('account changed during import');
+  }
+}
+
 interface Job {
   view: ImportJobView;
+  /** 发起账号（含登录代次）；写库、存回执、推送进度前都要与当前一致。 */
   owner: string;
+  /** 发起时的数据库实例代次；账号切换会换实例。 */
+  dbEpoch: number | null;
+  /** 发起账号的数据身份（原生副本编号按它生成）。 */
+  ownerId: string | undefined;
+  receiptDir: string;
+  pushStamp: ReturnType<typeof getActiveDataOwnerPushStamp>;
   keys: string[];
   controller: AbortController;
   lastEmit: number;
@@ -58,15 +72,42 @@ interface Job {
 
 const jobs = new Map<string, Job>();
 const recoveredOwners = new Set<string>();
+/** startImport 解析来源期间先占住的 key，避免两处同时发起时都通过「是否进行中」检查。 */
+const reservedKeys = new Set<string>();
 
 function receiptDir(): string {
   return ownerScopedUserDataPath('session-imports');
 }
 
+/** 绑定当前账号与数据库实例的新任务。 */
+function newJob(view: ImportJobView, keys: string[]): Job {
+  const db = getCurrentDbClientSnapshot();
+  return {
+    view,
+    owner: activeOwnerScopeKey(),
+    dbEpoch: db?.clientEpoch ?? null,
+    ownerId: db?.userId,
+    receiptDir: receiptDir(),
+    pushStamp: getActiveDataOwnerPushStamp(),
+    keys,
+    controller: new AbortController(),
+    lastEmit: 0,
+    emitTimer: null,
+  };
+}
+
+function ownerCurrent(job: Job): boolean {
+  return activeOwnerScopeKey() === job.owner && (getCurrentDbClientSnapshot()?.clientEpoch ?? null) === job.dbEpoch;
+}
+
+function assertOwner(job: Job): void {
+  if (!ownerCurrent(job)) throw new OwnerChangedError();
+}
+
 function persist(job: Job): void {
   try {
-    fs.mkdirSync(receiptDir(), { recursive: true });
-    atomicWriteFileSync(path.join(receiptDir(), `${job.view.requestId}.json`), JSON.stringify({ keys: job.keys, view: job.view }));
+    fs.mkdirSync(job.receiptDir, { recursive: true });
+    atomicWriteFileSync(path.join(job.receiptDir, `${job.view.requestId}.json`), JSON.stringify({ keys: job.keys, view: job.view }));
   } catch (err) {
     log.warn('session import receipt write failed', { error: err instanceof Error ? err.message : String(err) });
   }
@@ -77,7 +118,9 @@ function emit(job: Job, force = false): void {
   const send = () => {
     job.lastEmit = Date.now();
     job.emitTimer = null;
-    const stamp = getActiveDataOwnerPushStamp();
+    // 已经换了账号：原账号的进度不推给新账号的界面。
+    if (!ownerCurrent(job)) return;
+    const stamp = job.pushStamp;
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed()) continue;
       try {
@@ -179,6 +222,10 @@ async function importOne(job: Job, key: string, source: SourceSession): Promise<
   emit(job);
   const sessionId = await pickSessionId(source.source, source.sourceSessionId);
   const route = await resolveRoute(adapter.native);
+  if (!ownerCurrent(job)) {
+    Object.assign(item, { status: 'queued' });
+    return;
+  }
   const cwd = normalizeWorkingDirForStorage(source.cwd) ?? source.cwd;
   const now = Date.now();
   item.sessionId = sessionId;
@@ -220,9 +267,11 @@ async function importOne(job: Job, key: string, source: SourceSession): Promise<
       emit(job);
       materialized = await adapter.materialize(source, {
         cindySessionId: sessionId,
+        ownerId: job.ownerId,
         signal,
         route: { providerId: route.providerId, model: route.model },
       });
+      assertOwner(job);
     }
 
     item.step = 'messages';
@@ -231,6 +280,10 @@ async function importOne(job: Job, key: string, source: SourceSession): Promise<
       sessionId,
       agentKind: adapter.native ? route.agentKind : null,
       startAt: source.createdAt || source.updatedAt || now,
+      beforeWrite: () => {
+        assertOwner(job);
+        if (signal.aborted) throw new Error('cancelled');
+      },
       onWritten: (count) => {
         item.messagesWritten = count;
         emit(job);
@@ -240,6 +293,8 @@ async function importOne(job: Job, key: string, source: SourceSession): Promise<
       if (signal.aborted) throw new Error('cancelled');
       await sink.push(message);
     }
+    // 读取在取消时会提前结束而不报错：半截历史不能当成导入完成。
+    if (signal.aborted) throw new Error('cancelled');
     await sink.flush();
     item.messagesWritten = sink.written;
     // 一条都没读到：要么来源格式变了，要么原记录本来是空的。不留一个点开什么都没有的任务。
@@ -266,6 +321,7 @@ async function importOne(job: Job, key: string, source: SourceSession): Promise<
         log.warn('native copy failed verification, falling back to handoff', { key, detail: outcome.detail });
       }
     }
+    assertOwner(job);
     await writeImportCards({
       sessionId,
       agentKind: adapter.native ? route.agentKind : null,
@@ -284,6 +340,8 @@ async function importOne(job: Job, key: string, source: SourceSession): Promise<
       marker = await buildImportHandoffMarker({ sessionId, fromLabel: adapter.label, toHarness: route.agentKind });
     }
     const missingDir = !source.dialogue && !!source.cwd && !(await dirExists(source.cwd));
+    if (signal.aborted) throw new Error('cancelled');
+    assertOwner(job);
     await runImportTx({
       action: 'commit',
       sessionId,
@@ -302,10 +360,15 @@ async function importOne(job: Job, key: string, source: SourceSession): Promise<
       issue: missingDir ? 'missing-dir' : null,
     });
   } catch (err) {
+    if (err instanceof OwnerChangedError) {
+      // 不碰另一个账号的数据库：隐藏的半成品留在原账号，等它下次打开时从这里续上。
+      Object.assign(item, { status: 'queued', step: null, sessionId: null, messagesWritten: 0 });
+      return;
+    }
     const message = err instanceof Error ? err.message : String(err);
     const cancelled = signal.aborted;
     log.warn('session import item failed', { key, cancelled, error: message });
-    await runImportTx({ action: 'abort', sessionId }).catch(() => undefined);
+    await runImportTx({ action: 'abort', sessionId, requestId: job.view.requestId }).catch(() => undefined);
     Object.assign(item, {
       status: cancelled ? 'cancelled' : 'failed',
       step: null,
@@ -319,7 +382,8 @@ async function importOne(job: Job, key: string, source: SourceSession): Promise<
 }
 
 async function runJob(job: Job): Promise<void> {
-  const sources = await resolveSourceSessions(job.keys).catch(() => new Map<string, SourceSession>());
+  // 已登记的来源也要能读到：续做中断的导入时，这些条目在上次已经建了隐藏任务。
+  const sources = await resolveSourceSessions(job.keys, { includeImported: true }).catch(() => new Map<string, SourceSession>());
   const queue = job.keys.filter((k) => {
     const item = itemView(job, k);
     if (item.status !== 'queued' && item.status !== 'running') return false;
@@ -331,6 +395,7 @@ async function runJob(job: Job): Promise<void> {
   });
   const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
     for (let key = queue.shift(); key; key = queue.shift()) {
+      if (!ownerCurrent(job)) return;
       if (job.controller.signal.aborted) {
         Object.assign(itemView(job, key), { status: 'cancelled' });
         continue;
@@ -339,6 +404,13 @@ async function runJob(job: Job): Promise<void> {
     }
   });
   await Promise.all(workers);
+  if (!ownerCurrent(job)) {
+    // 留在原账号的回执里（仍为进行中），该账号下次打开导入时续上。
+    persist(job);
+    jobs.delete(job.view.requestId);
+    log.info('session import paused by account change', { requestId: job.view.requestId });
+    return;
+  }
   job.view.status = job.controller.signal.aborted ? 'cancelled' : 'done';
   job.view.finishedAt = Date.now();
   invalidateImportScan();
@@ -356,7 +428,7 @@ async function runJob(job: Job): Promise<void> {
 /** 开始导入。返回请求编号；进度通过 SESSION_IMPORT_PROGRESS_CHANNEL 推送。 */
 export async function startImport(keys: string[]): Promise<ImportJobView> {
   // 桌面、手机与 Agent 可能同时发起：已经在另一次导入里排队或进行中的条目不重复导入。
-  const inFlight = new Set<string>();
+  const inFlight = new Set<string>(reservedKeys);
   for (const other of jobs.values()) {
     if (other.view.status !== 'running') continue;
     for (const item of other.view.items) if (item.status === 'queued' || item.status === 'running') inFlight.add(item.key);
@@ -366,6 +438,16 @@ export async function startImport(keys: string[]): Promise<ImportJobView> {
     const running = [...jobs.values()].find((j) => j.view.status === 'running' && keys.some((k) => j.keys.includes(k)));
     if (running) return running.view;
   }
+  // 解析来源要等待：先占住这些 key，同时发起的另一次导入会跳过它们。
+  for (const k of unique) reservedKeys.add(k);
+  try {
+    return await createJob(unique);
+  } finally {
+    for (const k of unique) reservedKeys.delete(k);
+  }
+}
+
+async function createJob(unique: string[]): Promise<ImportJobView> {
   const sources = await resolveSourceSessions(unique);
   const view: ImportJobView = {
     requestId: randomUUID(),
@@ -378,17 +460,18 @@ export async function startImport(keys: string[]): Promise<ImportJobView> {
         key,
         source: (s?.source ?? key.split(':')[0]) as ImportItemView['source'],
         title: s?.title ?? key,
-        status: 'queued',
+        // 找不到（或已经在 Cindy 里）的直接记为没找到，不重复导入。
+        status: s ? 'queued' : 'failed',
         step: null,
         messagesWritten: 0,
         mode: null,
         harness: null,
-        issue: null,
+        issue: s ? null : 'not-found',
         sessionId: null,
       };
     }),
   };
-  const job: Job = { view, owner: activeOwnerScopeKey(), keys: unique, controller: new AbortController(), lastEmit: 0, emitTimer: null };
+  const job = newJob(view, unique);
   jobs.set(view.requestId, job);
   persist(job);
   void runJob(job).catch((err) => log.warn('session import job crashed', { error: err instanceof Error ? err.message : String(err) }));
@@ -447,13 +530,13 @@ export async function recoverInterruptedImports(): Promise<void> {
         await fsp.rm(path.join(receiptDir(), name), { force: true }).catch(() => undefined);
         continue;
       }
-      jobs.set(view.requestId, { view, owner, keys: parsed.keys, controller: new AbortController(), lastEmit: 0, emitTimer: null });
+      jobs.set(view.requestId, newJob(view, parsed.keys));
       continue;
     }
     for (const item of view.items) {
       if (item.status === 'running') Object.assign(item, { status: 'queued', step: null });
     }
-    const job: Job = { view, owner, keys: parsed.keys, controller: new AbortController(), lastEmit: 0, emitTimer: null };
+    const job = newJob(view, parsed.keys);
     jobs.set(view.requestId, job);
     log.info('resuming interrupted session import', { requestId: view.requestId });
     void runJob(job).catch(() => undefined);
@@ -481,11 +564,17 @@ export async function relocateImportedSession(sessionId: string, workingDir: str
   let sdkPatch: { sdkSessionId?: string } = {};
   if (record.source === 'pi') {
     const key = `pi:${record.sourceSessionId}`;
-    const source = (await resolveSourceSessions([key])).get(key);
+    const source = (await resolveSourceSessions([key], { includeImported: true })).get(key);
     const adapter = adapterFor('pi');
-    if (source && adapter?.materialize) {
-      sdkPatch = { sdkSessionId: (await adapter.materialize({ ...source, cwd: dir }, { cindySessionId: sessionId })).sdkSessionId };
+    if (!source || !adapter?.materialize) {
+      throw Object.assign(new Error('original Pi session is no longer available'), { code: 'NOT_FOUND' });
     }
+    sdkPatch = {
+      sdkSessionId: (await adapter.materialize({ ...source, cwd: dir }, {
+        cindySessionId: sessionId,
+        ownerId: getCurrentDbClientSnapshot()?.userId,
+      })).sdkSessionId,
+    };
   }
   await runImportTx({
     action: 'commit',

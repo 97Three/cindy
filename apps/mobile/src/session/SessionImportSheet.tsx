@@ -96,16 +96,21 @@ export function SessionImportSheet({ visible, onClose, onClosed, deviceId, devic
     return () => { alive.current = false; };
   }, [visible, load]);
 
-  // 导入进行中：每秒读一次进度。
+  // 导入进行中：每秒读一次进度；某次没读到（断线、空结果）也接着读，不停在旧进度上。
+  const [pollTick, setPollTick] = useState(0);
   useEffect(() => {
     if (!job || job.status !== 'running') return;
     const timer = setTimeout(() => {
       void get(`job:${job.requestId}`).then(data => {
-        if (alive.current && (data as JobData | undefined)?.kind === 'job') setJob(data as JobData);
-      }).catch(() => undefined);
+        if (!alive.current) return;
+        if ((data as JobData | undefined)?.kind === 'job') setJob(data as JobData);
+        else setPollTick(n => n + 1);
+      }).catch(() => {
+        if (alive.current) setPollTick(n => n + 1);
+      });
     }, 1000);
     return () => clearTimeout(timer);
-  }, [job, get]);
+  }, [job, get, pollTick]);
 
   const visibleItems = useMemo(() => {
     const kw = query.trim().toLocaleLowerCase();

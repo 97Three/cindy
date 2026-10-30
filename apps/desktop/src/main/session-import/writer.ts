@@ -159,6 +159,8 @@ export function createMessageSink(params: {
   idPrefix?: string;
   /** 来源没有逐条时间时，从这个时间起按顺序递增。 */
   startAt?: number;
+  /** 每次写库或存图片之前调用；抛错即中止（导入途中切换了账号）。 */
+  beforeWrite?: () => void;
 }): MessageSink {
   const prefix = params.clientIdPrefix ?? importClientIdPrefix(params.sessionId);
   const idPrefix = params.idPrefix ?? `imp-${params.sessionId}-`;
@@ -170,6 +172,7 @@ export function createMessageSink(params: {
   const prCandidates: Array<{ role: string; content: unknown; createdAt: number }> = [];
   const flush = async () => {
     if (batch.length === 0) return;
+    params.beforeWrite?.();
     const rows = batch;
     batch = [];
     batchBytes = 0;
@@ -183,6 +186,7 @@ export function createMessageSink(params: {
       const createdAt = message.createdAt > 0 ? Math.max(message.createdAt, floor) : floor;
       lastCreatedAt = createdAt;
       if (firstCreatedAt === 0) firstCreatedAt = createdAt;
+      params.beforeWrite?.();
       const row = await toRow({ ...message, createdAt }, params.sessionId, params.agentKind);
       if ((message.role === 'user' || message.role === 'assistant') && typeof message.content === 'string'
         && message.content.includes('/pull/')) {

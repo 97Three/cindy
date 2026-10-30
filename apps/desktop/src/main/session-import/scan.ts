@@ -30,7 +30,10 @@ interface ScanSnapshot {
   scope: string;
   expiresAt: number;
   result: ImportScanResult;
+  /** 本机全部来源记录，含已在 Cindy 里的（续做未完成的导入、旧版任务补历史、换文件夹都要读原记录）。 */
   sessions: Map<string, SourceSession>;
+  /** 已在 Cindy 里的来源 key：不进候选，用户发起的导入也不再重复导入它们。 */
+  imported: Set<string>;
 }
 
 let cached: ScanSnapshot | null = null;
@@ -103,11 +106,11 @@ async function runScan(scopeKey: string): Promise<ScanSnapshot> {
     hiddenCounts.internal += result.internalCount;
     for (const s of result.sessions) {
       const key = candidateKey(s.source, s.sourceSessionId);
+      sessions.set(key, s);
       if (existing.has(key)) {
         hiddenCounts.imported += 1;
         continue;
       }
-      sessions.set(key, s);
       const hidden = s.ranByCindy ? 'cindy' : hiddenCategoryFor(s.cwd, env);
       if (hidden) hiddenCounts[hidden] += 1;
       const group = groupFor(s.cwd, s.dialogue === true, env, resolveWorktree);
@@ -144,7 +147,7 @@ async function runScan(scopeKey: string): Promise<ScanSnapshot> {
     hidden: hiddenCounts,
     errors: sourceErrors.map((e) => e.id),
   });
-  return { scope: scopeKey, expiresAt: Date.now() + CACHE_TTL_MS, result, sessions };
+  return { scope: scopeKey, expiresAt: Date.now() + CACHE_TTL_MS, result, sessions, imported: existing };
 }
 
 function safeUserData(): string | null {
@@ -173,14 +176,22 @@ export async function scanImportSources(force = false): Promise<ImportScanResult
   return (await snapshot(force)).result;
 }
 
-/** 导入时按 key 取回来源记录；缓存过期则重新扫描一次。 */
-export async function resolveSourceSessions(keys: string[]): Promise<Map<string, SourceSession>> {
+/**
+ * 按 key 取回来源记录；缓存过期则重新扫描一次。用户发起的新导入（默认）不返回已在 Cindy 里的记录；
+ * 续做中断的导入、旧版任务补历史与换文件夹传 includeImported 读取已登记来源的原记录。
+ */
+export async function resolveSourceSessions(
+  keys: string[],
+  options: { includeImported?: boolean } = {},
+): Promise<Map<string, SourceSession>> {
+  const usable = (snap: ScanSnapshot, k: string) =>
+    snap.sessions.has(k) && (options.includeImported === true || !snap.imported.has(k));
   let snap = await snapshot(false);
-  if (keys.some((k) => !snap.sessions.has(k))) snap = await snapshot(true);
+  if (keys.some((k) => !usable(snap, k))) snap = await snapshot(true);
   const out = new Map<string, SourceSession>();
   for (const k of keys) {
     const s = snap.sessions.get(k);
-    if (s) out.set(k, s);
+    if (s && usable(snap, k)) out.set(k, s);
   }
   return out;
 }

@@ -216,8 +216,11 @@ describe('foreign source adapters', () => {
         { type: 'message', id: 'm1', timestamp: '2026-10-30T10:00:00Z', message: { role: 'user', content: 'add nightly export' } },
         { type: 'message', id: 'm2', timestamp: '2026-10-30T10:00:01Z', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }, { type: 'tool_use', id: 't1', name: 'Write', input: {} }] } },
         { type: 'message', id: 'm3', timestamp: '2026-10-30T10:00:02Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'written' }] } },
+        // Tool-injected context is dropped; a user's own tagged text is kept.
+        { type: 'message', id: 'm4', timestamp: '2026-10-30T10:00:03Z', message: { role: 'user', content: '<system-reminder>todo list empty</system-reminder>' } },
+        { type: 'message', id: 'm5', timestamp: '2026-10-30T10:00:04Z', message: { role: 'user', content: '<request>fix login</request>' } },
       ]);
-    }, ['user:add nightly export', 'assistant:ok', 'tool_use', 'tool_result:written']],
+    }, ['user:add nightly export', 'assistant:ok', 'tool_use', 'tool_result:written', 'user:<request>fix login</request>']],
     ['WorkBuddy', workbuddyAdapter, async () => {
       await put('.workbuddy/projects/-work-my-app/w1.jsonl', [
         { type: 'message', role: 'user', sessionId: 'w1', cwd: project(), timestamp: 1000, content: [{ type: 'input_text', text: '<system-reminder>x</system-reminder>' }], providerData: { skipRun: true } },

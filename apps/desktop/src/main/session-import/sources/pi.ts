@@ -185,14 +185,18 @@ async function* read(session: SourceSession, ctx: ReadContext): AsyncIterable<No
   for (const entry of branch.path) yield* parsePiEntry(entry, session.sourceSessionId);
 }
 
-function importedPiFile(sourceSessionId: string): { newId: string; target: string } {
-  const newId = migrationNativeContext(`session-import:pi:${sourceSessionId}`, [sourceSessionId]).id(sourceSessionId);
+/** 副本编号按账号 + 目标任务 + 原编号生成（见 Claude Code 的同名说明）。 */
+function importedPiFile(sourceSessionId: string, ctx: ReadContext): { newId: string; target: string } {
+  const newId = migrationNativeContext(
+    `session-import:pi:${ctx.ownerId ?? ''}:${ctx.cindySessionId}:${sourceSessionId}`,
+    [sourceSessionId],
+  ).id(sourceSessionId);
   return { newId, target: path.join(cindyPiAgentHome(), 'sessions', 'imported', `${newId}.jsonl`) };
 }
 
-async function materialize(session: SourceSession): Promise<NativeMaterialization> {
+async function materialize(session: SourceSession, ctx: ReadContext): Promise<NativeMaterialization> {
   const { file } = JSON.parse(session.locator) as PiLocator;
-  const { newId, target } = importedPiFile(session.sourceSessionId);
+  const { newId, target } = importedPiFile(session.sourceSessionId, ctx);
   await writeMigratedTranscript(createReadStream(file), target, { agent: 'pi', sessionId: newId, cwd: session.cwd ?? os.homedir() });
   return { sdkSessionId: target };
 }

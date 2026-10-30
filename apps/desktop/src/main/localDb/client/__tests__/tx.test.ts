@@ -665,6 +665,24 @@ describe('db worker tx handlers', () => {
     }, { useInlineWorker });
   });
 
+  // Two imports of the same source (desktop and phone) share one target task: a failed or
+  // cancelled request must not delete the hidden task the other request is still writing.
+  it.each([false, true])('sessionImport.execute abort only removes the hidden task of its own request (inline=%s)', async (useInlineWorker) => {
+    await withClient(async (client) => {
+      // The shared test schema predates import columns; add just what abort reads.
+      await client.exec('ALTER TABLE sessions ADD COLUMN hidden_at INTEGER');
+      await client.exec('CREATE TABLE session_imports (session_id TEXT PRIMARY KEY, request_id TEXT)');
+      await seedSession(client, 'imp-x');
+      // The phone's request took over the source after the desktop's began.
+      await client.exec("UPDATE sessions SET hidden_at = 1000 WHERE id = 'imp-x'");
+      await client.exec("INSERT INTO session_imports (session_id, request_id) VALUES ('imp-x', 'req-b')");
+      await expect(client.tx('sessionImport.execute', { action: 'abort', sessionId: 'imp-x', requestId: 'req-a' }))
+        .resolves.toEqual({ removed: 0 });
+      await expect(client.tx('sessionImport.execute', { action: 'abort', sessionId: 'imp-x', requestId: 'req-b' }))
+        .resolves.toEqual({ removed: 1 });
+    }, { useInlineWorker });
+  });
+
   it.each([false, true])('stages message publication without exposing live history or list changes (inline=%s)', async useInlineWorker => {
     await withClient(async client => {
       await seedSession(client, 's1');

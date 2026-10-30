@@ -53,6 +53,19 @@ export function makeTitle(text: string, fallback: string): string {
 }
 
 /**
+ * 各工具以「用户」身份自动注入的上下文标签（按真实记录整理）。只认这些：用户自己发的
+ * `<request>…</request>`、整段 HTML/XML 照常保留。
+ */
+const INJECTED_CONTEXT_TAGS = new Set([
+  // Codex
+  'environment_context', 'user_instructions', 'turn_aborted', 'subagent_notification', 'heartbeat',
+  'guardian_tool_descriptions', 'node_repl_review_evidence', 'recommended_plugins', 'external_codex_apps_open_page',
+  // Claude 风格（Factory、WorkBuddy 复用）与 Kimi
+  'system-reminder', 'system', 'local-command-caveat', 'local-command-stdout', 'local-command-stderr',
+  'command-name', 'command-message', 'command-args', 'task-notification',
+]);
+
+/**
  * 整条消息都是工具自动注入的上下文（`<environment_context>…</environment_context>`、
  * `# AGENTS.md instructions` 等），不是用户说的话。
  */
@@ -61,7 +74,7 @@ export function isInjectedContextText(text: string): boolean {
   if (!t) return false;
   if (/^# AGENTS\.md instructions\b/.test(t)) return true;
   const m = t.match(/^<([a-z][a-z0-9_-]*)(?:\s[^>]*)?>/i);
-  if (!m) return false;
+  if (!m || !INJECTED_CONTEXT_TAGS.has(m[1].toLowerCase())) return false;
   return t.endsWith(`</${m[1]}>`);
 }
 

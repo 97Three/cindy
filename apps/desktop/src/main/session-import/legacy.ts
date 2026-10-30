@@ -53,7 +53,7 @@ async function adoptOne(row: LegacyRow): Promise<void> {
   const { adopted } = await runImportTx({ action: 'adopt', sessionId: row.id, source, sourceSessionId, now: Date.now() }) as { adopted: boolean };
   if (!adopted) return;
   const key = `${source}:${sourceSessionId}`;
-  const sourceSession = (await resolveSourceSessions([key]).catch(() => new Map())).get(key);
+  const sourceSession = (await resolveSourceSessions([key], { includeImported: true }).catch(() => new Map())).get(key);
   const adapter = adapterFor(source);
   if (!sourceSession || !adapter) {
     log.info('legacy import adopted without source history', { sessionId: row.id, source });
@@ -63,7 +63,7 @@ async function adoptOne(row: LegacyRow): Promise<void> {
   let nativeSessionId: string | undefined;
   if (adapter.materialize && (source === 'codex' || !continued)) {
     try {
-      const m = await adapter.materialize(sourceSession, { cindySessionId: row.id });
+      const m = await adapter.materialize(sourceSession, { cindySessionId: row.id, ownerId: getCurrentDbClientUserId() ?? undefined });
       const ok = adapter.verify ? (await adapter.verify(m, sourceSession)).ok : true;
       if (ok) nativeSessionId = m.sdkSessionId;
     } catch (err) {

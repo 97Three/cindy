@@ -9,7 +9,8 @@ import type Database from 'better-sqlite3';
  *    同一来源任务重试得到同一个任务 id，已存在则只刷新来源记录；
  *  - messages：分批写消息，按 (session_id, client_id) 幂等；用户删除过（墓碑）或回退过的行不复活；
  *  - commit：写结论、可选补 sdk 编号 / 交接标记，显示任务（hidden_at 置空）；
- *  - abort：只删除仍然隐藏的任务行（消息、来源记录随外键级联删除），从不删除已显示的任务。
+ *  - abort：只删除仍然隐藏的任务行（消息、来源记录随外键级联删除），从不删除已显示的任务；
+ *    带 requestId 时只删属于该请求的。
  */
 export function runSessionImportTransaction(db: Database.Database, raw: unknown): unknown {
   const body = raw as Record<string, unknown>;
@@ -203,7 +204,14 @@ export function runSessionImportTransaction(db: Database.Database, raw: unknown)
 
   if (action === 'abort') {
     const sessionId = required(body.sessionId, 'sessionId');
-    const removed = db.prepare('DELETE FROM sessions WHERE id = ? AND hidden_at IS NOT NULL').run(sessionId).changes;
+    // 带 requestId 时只删这次请求建的隐藏任务：同一来源被另一次导入接手后，它的记录已改成那次的请求。
+    const requestId = text(body.requestId);
+    const removed = (requestId
+      ? db.prepare(`
+          DELETE FROM sessions WHERE id = @sessionId AND hidden_at IS NOT NULL
+            AND EXISTS (SELECT 1 FROM session_imports i WHERE i.session_id = sessions.id AND i.request_id = @requestId)
+        `).run({ sessionId, requestId })
+      : db.prepare('DELETE FROM sessions WHERE id = ? AND hidden_at IS NOT NULL').run(sessionId)).changes;
     return { removed };
   }
 

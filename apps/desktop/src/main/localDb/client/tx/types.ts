@@ -1620,7 +1620,7 @@ export type SessionImportTransactionArgs =
       marker?: { id: string; clientId: string; content: string; createdAt: number };
     }
   | { action: 'adopt'; sessionId: string; source: string; sourceSessionId: string; now: number }
-  | { action: 'abort'; sessionId: string };
+  | { action: 'abort'; sessionId: string; requestId?: string };
 
 export type SessionImportTransactionResult =
   | { created: boolean }

@@ -158,6 +158,17 @@ function CheckBox({ state, disabled = false }: { state: CheckState; disabled?: b
   );
 }
 
+/** 用户点过「完成」的那次导入结果；重新打开页面时不再显示它。 */
+const DISMISSED_JOB_KEY = 'cindy.sessionImport.dismissedJob';
+
+function dismissedJobId(): string | null {
+  try {
+    return window.localStorage.getItem(DISMISSED_JOB_KEY);
+  } catch {
+    return null;
+  }
+}
+
 export function SessionImportSection() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -206,11 +217,11 @@ export function SessionImportSection() {
     void runScan(false);
   }, [runScan]);
 
-  // 接上正在进行的导入，并跟随它的进度。
+  // 接上正在进行的导入，或还没点「完成」的上次结果（离开页面期间导入完成也能看到重试与选择文件夹）。
   useEffect(() => {
     let alive = true;
     void window.electronAPI.localDb.sessionImport.status().then((view) => {
-      if (alive && view?.status === 'running') {
+      if (alive && view && (view.status === 'running' || view.requestId !== dismissedJobId())) {
         jobIdRef.current = view.requestId;
         setJob(view);
       }
@@ -327,6 +338,11 @@ export function SessionImportSection() {
   }, [selectedBytes, selectedList, startImport]);
 
   const closeJob = useCallback(() => {
+    if (jobIdRef.current) {
+      try {
+        window.localStorage.setItem(DISMISSED_JOB_KEY, jobIdRef.current);
+      } catch { /* storage unavailable: the result simply shows again next time */ }
+    }
     jobIdRef.current = null;
     setJob(null);
     void runScan(true);
@@ -351,7 +367,8 @@ export function SessionImportSection() {
     );
   } else if (!scan) {
     body = scanFailed ? <ScanFailed onRetry={() => void runScan(true)} /> : <ScanningSkeleton />;
-  } else if (scan.candidates.filter((c) => !c.hidden).length === 0 && shownHidden.size === 0 && !projectKey) {
+  } else if (scan.candidates.length === 0 && !projectKey) {
+    // 只有真的没有记录时才显示空状态；记录都被默认隐藏时留在列表里，右上角可以打开隐藏项。
     body = <EmptyState onRescan={() => void runScan(true)} scanning={scanning} />;
   } else {
     const allState = checkStateOf(selectable, selected);
@@ -404,7 +421,9 @@ export function SessionImportSection() {
         <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
           {groups.length === 0 ? (
             <div className="flex min-h-[160px] items-center justify-center px-6 py-10 text-13 text-[var(--text-secondary)]">
-              {t('settings.sessionImport.noMatch')}
+              {listable.length === 0 && scan.candidates.length > 0
+                ? t('settings.sessionImport.allHidden')
+                : t('settings.sessionImport.noMatch')}
             </div>
           ) : (
             <>
