@@ -31,7 +31,6 @@ import {
   readProjectlessThreadIds,
   readRawThreadRow,
   readSessionIndex,
-  threadRejectionReason,
   type CodexThreadSummary,
   type SqlRow,
 } from '../../maker-host/codex-local-sessions.js';
@@ -60,6 +59,19 @@ import {
   toMs,
   walkFiles,
 } from './common.js';
+
+/**
+ * 内部会话：自动审查、子 Agent、Agent 自己创建的线程、exec。来自 VS Code 插件、语音对话的
+ * 线程（thread_source = vscode / realtime_voice / voice_chat）是用户自己的任务，照常列出。
+ */
+const INTERNAL_THREAD_SOURCES = new Set(['guardian_review', 'subagent', 'agent_created_thread', 'exec', 'codex_exec']);
+
+export function isInternalCodexThread(row: Record<string, unknown>): boolean {
+  const threadSource = str(row.thread_source).trim().toLowerCase();
+  if (INTERNAL_THREAD_SOURCES.has(threadSource)) return true;
+  const source = `${str(row.source)} ${str(row.originator)}`.toLowerCase();
+  return /"?(subagent|guardian|codex_exec)"?/.test(source) || /(^|[\s"])exec("|\s|$)/.test(source);
+}
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const ROLLOUT_NAME = new RegExp(`^rollout-\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-(${UUID})(?:_(${UUID}))?\\.jsonl(?:\\.zst)?$`, 'i');
@@ -141,9 +153,11 @@ async function summaryFromRollout(file: string, mtimeMs: number): Promise<{
       threadId = threadId || str(payload.id);
       cwd = cwd || str(payload.cwd);
       createdAt = createdAt || toMs(payload.timestamp) || toMs(obj.timestamp);
-      const source = JSON.stringify(payload.source ?? payload.originator ?? '');
-      if (/subagent|guardian|codex_exec|"exec"/.test(source)) internal = true;
-      if (str(payload.thread_source) && str(payload.thread_source) !== 'user') internal = true;
+      if (isInternalCodexThread({
+        thread_source: payload.thread_source,
+        source: JSON.stringify(payload.source ?? ''),
+        originator: str(payload.originator),
+      })) internal = true;
     } else if (obj.type === 'response_item' && payload.type === 'message' && payload.role === 'user' && !title) {
       const text = blocksText(payload.content).trim();
       if (text && !isInjectedContextText(text)) title = makeTitle(text, '');
@@ -210,7 +224,7 @@ async function list(): Promise<SourceListResult> {
       const id = str(row.id).toLowerCase();
       if (!id) continue;
       seen.add(id);
-      if (threadRejectionReason(row) !== null) {
+      if (isInternalCodexThread(row)) {
         if (!internalIds.has(id)) { internalIds.add(id); internalCount += 1; }
         continue;
       }

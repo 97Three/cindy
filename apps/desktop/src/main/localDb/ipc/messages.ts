@@ -2860,6 +2860,10 @@ export async function listMessagesForAgentHandoff(
       if (agentMeta && typeof agentMeta.contextRebuild === 'object' && agentMeta.contextRebuild) {
         return null;
       }
+      // 任务导入的时间线标记只用于显示。
+      if (agentMeta && typeof agentMeta.sessionImport === 'object' && agentMeta.sessionImport) {
+        return null;
+      }
       return {
         clientId: r.clientId,
         role: r.role,

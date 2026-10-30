@@ -107,6 +107,44 @@ export interface MessageSink {
   readonly written: number;
   /** 含 PR 链接的消息（导入完成后交给 PR 关联提取）。 */
   readonly prCandidates: Array<{ role: string; content: unknown; createdAt: number }>;
+  /** 已写入（含待写）的第一条与最后一条消息时间；还没有消息时为 0。 */
+  readonly firstCreatedAt: number;
+  readonly lastCreatedAt: number;
+}
+
+/** 时间线上的导入标记（开头一条来源说明，结尾一条分隔），只用于显示，不进入交接与模型上下文。 */
+export interface ImportCardMeta {
+  source: string;
+  sourceLabel: string;
+  importedAt: number;
+  originalCwd: string | null;
+  mode: 'native' | 'handoff';
+  harness: string;
+}
+
+export async function writeImportCards(params: {
+  sessionId: string;
+  agentKind: string | null;
+  firstCreatedAt: number;
+  lastCreatedAt: number;
+  meta: ImportCardMeta;
+}): Promise<void> {
+  const card = (phase: 'start' | 'end', createdAt: number): MessageRow => ({
+    key: `card-${phase}`,
+    role: 'assistant',
+    content: '""',
+    toolUseId: null,
+    agentMeta: JSON.stringify({ sessionImport: { phase, ...params.meta } }),
+    agentKind: params.agentKind,
+    createdAt,
+  });
+  await runImportTx({
+    action: 'messages',
+    sessionId: params.sessionId,
+    clientIdPrefix: importClientIdPrefix(params.sessionId),
+    idPrefix: `imp-${params.sessionId}-`,
+    rows: [card('start', params.firstCreatedAt - 1), card('end', params.lastCreatedAt + 1)],
+  });
 }
 
 /**
@@ -119,6 +157,8 @@ export function createMessageSink(params: {
   /** 旧版导入任务沿用旧的行键前缀（codex-import: / claude-import:），补齐时不重复。 */
   clientIdPrefix?: string;
   idPrefix?: string;
+  /** 来源没有逐条时间时，从这个时间起按顺序递增。 */
+  startAt?: number;
 }): MessageSink {
   const prefix = params.clientIdPrefix ?? importClientIdPrefix(params.sessionId);
   const idPrefix = params.idPrefix ?? `imp-${params.sessionId}-`;
@@ -126,6 +166,7 @@ export function createMessageSink(params: {
   let batchBytes = 0;
   let written = 0;
   let lastCreatedAt = 0;
+  let firstCreatedAt = 0;
   const prCandidates: Array<{ role: string; content: unknown; createdAt: number }> = [];
   const flush = async () => {
     if (batch.length === 0) return;
@@ -138,8 +179,10 @@ export function createMessageSink(params: {
   };
   return {
     async push(message) {
-      const createdAt = Math.max(message.createdAt, lastCreatedAt + 1);
+      const floor = lastCreatedAt > 0 ? lastCreatedAt + 1 : (params.startAt ?? 1);
+      const createdAt = message.createdAt > 0 ? Math.max(message.createdAt, floor) : floor;
       lastCreatedAt = createdAt;
+      if (firstCreatedAt === 0) firstCreatedAt = createdAt;
       const row = await toRow({ ...message, createdAt }, params.sessionId, params.agentKind);
       if ((message.role === 'user' || message.role === 'assistant') && typeof message.content === 'string'
         && message.content.includes('/pull/')) {
@@ -154,5 +197,11 @@ export function createMessageSink(params: {
       return written + batch.length;
     },
     prCandidates,
+    get firstCreatedAt() {
+      return firstCreatedAt;
+    },
+    get lastCreatedAt() {
+      return lastCreatedAt;
+    },
   };
 }

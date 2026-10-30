@@ -35,11 +35,17 @@ import type {
   NativeMaterialization,
   SourceSession,
 } from './types.js';
-import { createMessageSink, runImportTx } from './writer.js';
+import { createMessageSink, runImportTx, writeImportCards } from './writer.js';
 
 const log = createLogger('session-import');
 const CONCURRENCY = 2;
 const PROGRESS_THROTTLE_MS = 150;
+
+class ImportEmptyError extends Error {
+  constructor() {
+    super('source produced no messages');
+  }
+}
 
 interface Job {
   view: ImportJobView;
@@ -218,6 +224,7 @@ async function importOne(job: Job, key: string, source: SourceSession): Promise<
     const sink = createMessageSink({
       sessionId,
       agentKind: adapter.native ? route.agentKind : null,
+      startAt: source.createdAt || source.updatedAt || now,
       onWritten: (count) => {
         item.messagesWritten = count;
         emit(job);
@@ -229,6 +236,8 @@ async function importOne(job: Job, key: string, source: SourceSession): Promise<
     }
     await sink.flush();
     item.messagesWritten = sink.written;
+    // 一条都没读到：要么来源格式变了，要么原记录本来是空的。不留一个点开什么都没有的任务。
+    if (sink.written === 0) throw new ImportEmptyError();
     void recordPrRefsForImportedMessages(sessionId, sink.prCandidates).catch(() => undefined);
 
     item.step = 'verify';
@@ -251,6 +260,20 @@ async function importOne(job: Job, key: string, source: SourceSession): Promise<
         log.warn('native copy failed verification, falling back to handoff', { key, detail: outcome.detail });
       }
     }
+    await writeImportCards({
+      sessionId,
+      agentKind: adapter.native ? route.agentKind : null,
+      firstCreatedAt: sink.firstCreatedAt,
+      lastCreatedAt: sink.lastCreatedAt,
+      meta: {
+        source: source.source,
+        sourceLabel: adapter.label,
+        importedAt: now,
+        originalCwd: source.cwd,
+        mode,
+        harness: route.agentKind,
+      },
+    });
     if (mode === 'handoff') {
       marker = await buildImportHandoffMarker({ sessionId, fromLabel: adapter.label, toHarness: route.agentKind });
     }
@@ -281,7 +304,7 @@ async function importOne(job: Job, key: string, source: SourceSession): Promise<
       status: cancelled ? 'cancelled' : 'failed',
       step: null,
       sessionId: null,
-      issue: cancelled ? null : (/ENOSPC/.test(message) ? 'disk-full' : 'read-failed'),
+      issue: cancelled ? null : err instanceof ImportEmptyError ? 'empty' : (/ENOSPC/.test(message) ? 'disk-full' : 'read-failed'),
     });
   } finally {
     emit(job, true);

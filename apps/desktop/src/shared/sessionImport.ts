@@ -68,6 +68,8 @@ export type ImportItemIssue =
   | 'read-failed'
   | 'native-unloadable'
   | 'unsupported-version'
+  /** 读完一条消息都没有（格式变了或原记录本来就是空的）。 */
+  | 'empty'
   | 'not-found'
   | 'disk-full';
 

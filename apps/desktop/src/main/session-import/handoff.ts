@@ -34,6 +34,7 @@ async function readHandoffSource(sessionId: string): Promise<HandoffSourceMessag
     SELECT rowid, role, content, created_at AS createdAt, tool_use_id AS toolUseId, agent_meta AS agentMeta
     FROM messages
     WHERE session_id = ? AND rewind_at IS NULL AND role IN ('user','assistant','tool_use','tool_result')
+      AND NOT (agent_meta IS NOT NULL AND json_valid(agent_meta) AND json_type(agent_meta, '$.sessionImport') IS NOT NULL)
     ORDER BY created_at DESC, rowid DESC
     LIMIT ?
   `, [sessionId, RECENT_ROWS]);
