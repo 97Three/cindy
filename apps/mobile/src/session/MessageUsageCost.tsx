@@ -72,7 +72,7 @@ export function MessageUsageCost({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={label}
-        hitSlop={8}
+        style={styles.trigger}
         onPress={() => {
           setRows(undefined);
           setOpen(true);
@@ -104,6 +104,12 @@ export function MessageUsageCost({
 }
 const makeStyles = (colors: ThemeColors) =>
   StyleSheet.create({
+    trigger: {
+      minHeight: 44,
+      minWidth: 44,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     surface: {
       maxHeight: "75%",
       padding: spacing.lg,
