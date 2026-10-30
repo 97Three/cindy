@@ -333,6 +333,29 @@ describe('model advanced editor', () => {
     } finally { Object.defineProperty(window, 'electronAPI', { configurable: true, value: previous }); }
   });
 
+  // Older explicit choices stored only api/route; presets must still offer the way back to automatic.
+  it('lets a legacy api/route-only preset choice return to automatic', async () => {
+    const update = vi.fn(async (...args: unknown[]) => {
+      void args;
+      return { ok: true };
+    });
+    const previous = window.electronAPI;
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: { maker: { updateCustomProvider: update } } });
+    const source = { ...buildUserProvider({ id: 'kimi-user', name: 'Kimi', runtimes: {
+      codex: { catalogPresetId: 'moonshot-kimi-code', baseUrl: 'https://api.kimi.com/coding/v1', wireProtocol: 'openai-chat',
+        models: [{ id: 'k3.1-pro', name: 'K3.1', api: 'openai-completions',
+          route: { baseUrl: 'https://api.kimi.com/coding/v1', wireProtocol: 'openai-chat' } }] },
+    } }), connected: true } as ProviderView;
+    try {
+      render(drawer(source.models.codex![0], 'high', ['high'], source));
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Codex · settings.providers.custom.fields.wireProtocol' }), { key: 'ArrowDown' });
+      fireEvent.click(await screen.findByRole('menuitemradio', { name: 'settings.providers.models.advanced.protocol.automatic' }));
+      await waitFor(() => expect(update).toHaveBeenCalledOnce());
+      const config = update.mock.calls[0]![0] as Parameters<typeof buildUserProvider>[0];
+      expect(config.runtimes.codex!.models).toEqual([{ id: 'k3.1-pro', name: 'K3.1', interfaceId: 'auto' }]);
+    } finally { Object.defineProperty(window, 'electronAPI', { configurable: true, value: previous }); }
+  });
+
   it('saves Google selection with its matching wire and official endpoint', async () => {
     const update = vi.fn(async (...args: unknown[]) => {
       void args;

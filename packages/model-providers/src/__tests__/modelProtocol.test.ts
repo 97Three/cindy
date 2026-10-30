@@ -121,6 +121,15 @@ describe('per-model protocol comparison', () => {
     ).toBe('openai-responses');
   });
 
+  // Local conversion changes the engine side only; the API it reaches is still one the upstream serves.
+  it('lists a converted outbound API among upstream APIs', () => {
+    const claude = { ...model, route: { baseUrl: 'https://example.invalid/v1', wireProtocol: 'openai-chat' as const } };
+    const provider = { id: 'custom', source: 'user', agents: ['claude-code'], routing: {}, models: { 'claude-code': [claude] } } as unknown as Provider;
+    const result = modelProtocolComparison(provider, { 'claude-code': claude });
+    expect(result.forAgent('claude-code')).toMatchObject({ outbound: 'openai-completions', localConversion: true });
+    expect(result.upstreamApis).toEqual(['openai-completions']);
+  });
+
   it('projects protocol support with the same provider and real bridge model identity', () => {
     const { provider } = fixture('google-generative-ai');
     const other = {

@@ -78,13 +78,14 @@ export function modelProtocolComparison(
           : ('unknown' as const),
     };
   };
-  /** APIs this source offers for the model: bound interfaces plus what engines use unconverted.
-   * The manufacturer's own API is not evidence that a channel offers it. */
+  /** APIs this source offers for the model: bound interfaces plus every engine's declared outbound
+   * API (local conversion changes the engine side, not what the upstream serves). The
+   * manufacturer's own API is not evidence that a channel offers it. */
   const offered = new Set<string>([
     ...Object.values(models).flatMap(model => (model.availableInterfaces ?? []).map(item => item.api)),
     ...(Object.keys(models) as AgentKind[]).flatMap(agent => {
       const protocol = forAgent(agent);
-      return protocol?.outbound && !protocol.localConversion ? [protocol.outbound] : [];
+      return protocol?.outbound ? [protocol.outbound] : [];
     }),
   ]);
   const order = ['anthropic', 'openai-responses', 'openai-chat', 'google'];

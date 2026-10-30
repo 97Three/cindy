@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BUNDLED_CATALOG } from '../catalog.js';
 import { buildUserProvider } from '../user-provider.js';
 import { modelProtocolComparison } from '../modelProtocol.js';
+import { pickRecommendedAgent } from '../unifiedSelection.js';
 import { resolveModelMetadata } from '../modelMetadataLayers.js';
 import type { CustomProviderConfig, ProviderRuntimeModelConfig } from '../types.js';
 
@@ -27,6 +28,12 @@ const usesOfferedApi = (agent: (typeof agents)[number], api: string | undefined)
   agent === 'pi' || api === harnessApi[agent] || (agent === 'codex' && api === 'azure-openai-responses');
 
 describe('supplier import enables engines that use an offered API', () => {
+  // Chris 2026-10-30: DeepSeek follows the community/Pi default (Chat Completions), so the
+  // catalog lists no rule for it and the real bundled directory must still recommend Pi.
+  it('recommends Pi for the official DeepSeek connection from the bundled directory', () => {
+    const provider = buildUserProvider(connection('deepseek', 'deepseek-v4-pro'), options);
+    expect(pickRecommendedAgent(provider, 'deepseek-v4-pro', provider.agents)).toBe('pi');
+  });
   it('saved DeepSeek Flash aliases retain the Codex image restriction', () => {
     const config = connection('deepseek', 'deepseek-flash');
     for (const agent of agents) {

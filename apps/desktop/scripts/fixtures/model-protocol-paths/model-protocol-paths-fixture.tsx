@@ -49,7 +49,7 @@ const scenarios: Record<string, Scenario> = {
     selected: { 'claude-code': 'anthropic-messages', codex: 'openai-responses', pi: 'openai-completions' },
     interfaces: deepseekInterfaces.map(item => ({ ...item, defaultFor: [...item.defaultFor] })),
     enabled: { 'claude-code': true, codex: true, pi: true },
-    recommended: 'claude-code',
+    recommended: 'pi',
   },
   'cindy-deepseek': {
     provider: gateway,
@@ -57,7 +57,7 @@ const scenarios: Record<string, Scenario> = {
     interfaces: gatewayInterfaces,
     selected: { 'claude-code': 'anthropic-messages', codex: 'openai-responses', pi: 'openai-completions' },
     enabled: { 'claude-code': true, codex: true, pi: true },
-    recommended: 'claude-code',
+    recommended: 'pi',
   },
   'cindy-gemini': {
     provider: gateway,

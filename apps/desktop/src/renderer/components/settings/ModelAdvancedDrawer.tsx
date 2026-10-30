@@ -633,8 +633,10 @@ export function ModelAdvancedDrawer({
                                   id={protocolId}
                                   className="mt-0.5 text-11 leading-4 text-[var(--text-tertiary)]"
                                 >
-                                  {/* Presets follow the catalog; a saved explicit choice keeps its way back to automatic. */}
-                                  {canEditProtocol && supported && (!model?.catalogPresetId || model.userModelConfig?.interfaceId) ? (
+                                  {/* Presets follow the catalog; any saved explicit choice, including older api/route-only
+                                      ones, keeps its way back to automatic. */}
+                                  {canEditProtocol && supported && (!model?.catalogPresetId || model.userModelConfig?.interfaceId ||
+                                    model.userModelConfig?.api || model.userModelConfig?.piApi || model.userModelConfig?.route?.wireProtocol) ? (
                                     <DropdownMenu>
                                       <DropdownMenuTrigger asChild>
                                         <button type="button" disabled={protocolSaving}
