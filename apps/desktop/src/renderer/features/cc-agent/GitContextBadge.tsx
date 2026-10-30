@@ -338,21 +338,25 @@ function PrChip({
               <Icon size={12} strokeWidth={1.5} className="shrink-0" style={{ color }} />
               <span>#{prRef.prNumber}</span>
               {unresolved !== null && unresolved > 0 && (
-                <span className="inline-flex items-center gap-1 text-[var(--status-bar-accent)]">
-                  <MessageSquare size={12} aria-hidden="true" />
-                  {unresolved}
+                <span
+                  className="inline-flex items-center gap-0.5 text-10 font-medium leading-none text-[var(--status-bar-accent)]"
+                  aria-label={t('ccAgent.gitContext.pr.unresolved', { count: unresolved })}
+                >
+                  <MessageSquare size={9} strokeWidth={2} className="shrink-0" aria-hidden="true" />
+                  {unresolved > 99 ? '99+' : unresolved}
                 </span>
               )}
               <span
                 className={cn(
-                  'inline-flex items-center gap-1',
+                  'inline-flex items-center gap-0.5 text-10 font-medium leading-none',
                   checks && checks.failed > 0 && 'text-[var(--error-fg)]',
                 )}
               >
                 <CheckIcon
-                  size={12}
+                  size={9}
+                  strokeWidth={2}
                   aria-hidden="true"
-                  className={CheckIcon === Check ? 'text-[var(--status-success)]' : undefined}
+                  className={cn('shrink-0', CheckIcon === Check && 'text-[var(--status-success)]')}
                 />
                 {checkCount > 0 && checkCount}
               </span>

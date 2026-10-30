@@ -111,7 +111,7 @@ describe('GitContextBadge', () => {
   // on click, which is no longer a supported behavior. Minimum timing inputs:
   // first hover 299/300ms, an already-open sibling, leaving and re-entering.
   // Production header and fake timers verify focus, navigation and visible data.
-  function renderHeader() {
+  function renderHeader(unresolvedCount = 2) {
     vi.useFakeTimers();
     const openExternal = vi.fn();
     Object.defineProperty(window, 'electronAPI', {
@@ -145,7 +145,7 @@ describe('GitContextBadge', () => {
             title: ref.prNumber === 7 ? 'A real PR title' : '',
             htmlUrl: ref.url,
             branch: 'fix',
-            unresolvedCount: 2,
+            unresolvedCount,
             checks: { total: 7, failed: 2, passed: 4, pending: 1, skipped: 0 },
           },
         ]),
@@ -379,15 +379,19 @@ describe('GitContextBadge', () => {
   );
 
   // Unit regression: show only actionable review counts. Prior coverage hid
-  // unavailable counts but left zero visible; 2 -> 0 with/without checks covers
-  // the row and the otherwise empty data section through the production panel.
+  // unavailable counts but left zero visible; 100 -> 0 also checks the restored
+  // header cap while the panel and accessible label retain the exact count.
   it('评论仅在大于零时显示，零评论且检查不可用时只保留面板头部', () => {
-    const { context, rerender, triggers } = renderHeader();
+    const { context, rerender, triggers } = renderHeader(100);
+    expect(triggers[0].querySelector('[aria-label*="pr.unresolved"]')?.textContent).toBe('99+');
+    expect(
+      triggers[0].querySelector('[aria-label*="pr.unresolved"]')?.getAttribute('aria-label'),
+    ).toBe('ccAgent.gitContext.pr.unresolved {"count":100}');
     pointer(triggers[0], 'over');
     advance(300);
     expect(
       screen.getByText('ccAgent.gitContext.pr.unresolvedLabel').nextElementSibling?.textContent,
-    ).toBe('2');
+    ).toBe('100');
 
     const status = context.prStatuses.get('octo/repo#7')!;
     for (const checks of [status.ok ? status.checks : null, null]) {
