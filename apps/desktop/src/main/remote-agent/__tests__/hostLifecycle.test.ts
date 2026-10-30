@@ -192,6 +192,73 @@ describe('hosted shadow workspace cleanup', () => {
     }
   });
 
+  // #7991 review: close/revocation can already be finishing when dispose starts.
+  // Unit: real close dispatch must retain the workspace until native teardown,
+  // preserve the first mode/reason, and coalesce a reentrant revocation request.
+  it.each(['close', 'detach'] as const)('waits for an in-flight %s before deleting the workspace', async mode => {
+    const ready = whenStarted();
+    const closing = whenStarted();
+    const releaseClose = whenStarted();
+    const endEvents = whenStarted();
+    const eventsEnded = whenStarted();
+    let reentrant: Promise<void> | undefined;
+    const stop = vi.fn(async () => {
+      reentrant = host.abortControllers(() => true);
+      endEvents.resolve();
+      await eventsEnded.promise;
+      closing.resolve();
+      await releaseClose.promise;
+    });
+    const close = vi.fn(stop);
+    const detach = vi.fn(stop);
+    const host = createRemoteAgentHost({
+      isAgentAvailable: () => true,
+      startHosted: async input => ({
+        ...idleHandle(input), close, detach,
+        events: () => ({ async *[Symbol.asyncIterator]() {
+          ready.resolve();
+          try {
+            await endEvents.promise;
+            yield { type: 'done' as const, data: {}, source: 'claude-code' as const };
+          } finally { eventsEnded.resolve(); }
+        } }),
+      }),
+      isControllerAuthorized: () => true, captureOwner: () => 'owner', isOwnerCurrent: () => true, runsRoot,
+    });
+    let request: Promise<unknown> | undefined;
+    let duplicate: Promise<unknown> | undefined;
+    let disposal: Promise<void> | undefined;
+    try {
+      await host.handle('controller-1', { op: 'open', runId: RUN_1, agentKind: 'claude-code', payload: { json: openPayload('task-1') } });
+      await ready.promise;
+      const initial = await host.handle('controller-1', { op: 'poll', runs: [{ runId: RUN_1, cursor: 0 }], waitMs: 0 }) as { runs: Array<{ cursor: number }> };
+      const boundary = host.handle('controller-1', { op: 'poll', runs: [{ runId: RUN_1, cursor: initial.runs[0].cursor }], waitMs: 10_000 });
+      request = host.handle('controller-1', { op: 'close', runId: RUN_1, mode, reason: 'navigation' });
+      await closing.promise;
+      let duplicateFinished = false;
+      duplicate = host.handle('controller-1', { op: 'close', runId: RUN_1, mode: 'close', reason: 'app-quit' }).then(() => { duplicateFinished = true; });
+      let disposed = false;
+      disposal = host.dispose().then(() => { disposed = true; });
+      await settle();
+      expect(disposed).toBe(false);
+      expect(duplicateFinished).toBe(false);
+      expect(fs.existsSync(sessionRoot('controller-1', 'task-1'))).toBe(true);
+      releaseClose.resolve();
+      await Promise.all([request, duplicate, reentrant, disposal]);
+      expect(stop).toHaveBeenCalledTimes(1);
+      expect(mode === 'detach' ? detach : close).toHaveBeenCalledWith({ reason: 'navigation' });
+      expect(mode === 'detach' ? close : detach).not.toHaveBeenCalled();
+      const result = await boundary as { runs: Array<{ data?: string }> };
+      const rows = result.runs.flatMap(run => run.data ? Buffer.from(run.data, 'base64').toString().trim().split('\n').map(line => JSON.parse(line)) : []);
+      expect(rows.at(-1)).toEqual({ t: 'closed', reason: mode === 'detach' ? 'detached' : 'closed' });
+      expect(fs.existsSync(sessionRoot('controller-1', 'task-1'))).toBe(false);
+    } finally {
+      endEvents.resolve();
+      releaseClose.resolve();
+      await Promise.all([request, duplicate, reentrant, disposal, host.dispose()]);
+    }
+  });
+
   it('keeps the workspace of a replacement run and removes it when that run ends', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     const starts: Array<() => void> = [];

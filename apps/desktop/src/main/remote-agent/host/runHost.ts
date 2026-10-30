@@ -1732,6 +1732,9 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
       streamFailed = true;
       streamError = error;
     }
+    // Native close can end this stream. Its caller owns teardown; the event pump
+    // must not join that finish and become part of a close -> pump -> close wait.
+    if (run.closing) return;
     // RPC 的限额拒绝可能先到、没有原生终态；流结束或抛错都不能抢先作废切换入口。
     await waitForQuotaFailureDelivery(run).catch(error => {
       if (!streamFailed) streamError = error;
@@ -2293,7 +2296,8 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
   }
 
   /** 结束任务：关掉 Agent 与隧道，拒掉未完成的反向请求，写收尾事件。 */
-  async function finishRun(
+  const runFinishes = new WeakMap<Run, Promise<void>>();
+  function finishRun(
     run: Run,
     reason: string,
     teardown: RemoteAgentTeardownReason,
@@ -2301,8 +2305,24 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     skipClosedEvent = false,
     mode: 'close' | 'detach' = 'close',
   ): Promise<void> {
-    if (run.closing) { await imagePreparation.get(run); return; }
+    const pending = runFinishes.get(run);
+    if (pending) return pending;
     run.closing = true;
+    // Register before calling native close: it can synchronously trigger another
+    // finish entry. Every caller joins the first mode/reason and full teardown.
+    const finishing = Promise.resolve().then(() => finishRunOnce(run, reason, teardown, closeHandle, skipClosedEvent, mode));
+    runFinishes.set(run, finishing);
+    return finishing;
+  }
+
+  async function finishRunOnce(
+    run: Run,
+    reason: string,
+    teardown: RemoteAgentTeardownReason,
+    closeHandle: boolean,
+    skipClosedEvent: boolean,
+    mode: 'close' | 'detach',
+  ): Promise<void> {
     if (run.stateTimer) clearInterval(run.stateTimer);
     for (const pending of run.pending.values()) pending.reject(new Error('[REMOTE_AGENT_EXPIRED] task has ended'));
     run.pending.clear();
@@ -2343,12 +2363,7 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     deps.log?.info('remote agent run finished', { runId: run.id, reason, ...(run.idleReclaimed ? { idleReclaimed: true } : {}) });
   }
 
-  // abortAll and dispose can overlap. Dispose must wait for the first stop to
-  // publish its boundary before removing the run from a pending poll.
-  const hostStops = new WeakMap<Run, Promise<void>>();
   function finishForHostStop(run: Run, teardown: RemoteAgentTeardownReason): Promise<void> {
-    const pending = hostStops.get(run);
-    if (pending) return pending;
     // Do not relabel an intentional disconnect already closing in parallel.
     if (teardown === 'app-quit' && !run.closing && !busyForReclaim(run)) run.idleReclaimed = true;
     // Old controllers silently close idle runs and keep their existing error path
@@ -2356,9 +2371,7 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
     const reason = teardown === 'app-quit'
       ? run.idleReclaimed ? 'ended' : 'provider-restarting'
       : 'controller-disconnected';
-    const finishing = finishRun(run, reason, teardown);
-    hostStops.set(run, finishing);
-    return finishing;
+    return finishRun(run, reason, teardown);
   }
 
   function disposeRun(run: Run): Promise<void> {
