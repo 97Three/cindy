@@ -42,6 +42,9 @@ class InMemoryStorage implements ScheduleStorage {
     if (expected && (['lastFiredAt', 'nextFireAt', 'status', 'recurring', 'manual',
       'cronExpr', 'timezone', 'intervalMs'] as const).some((key) => ex[key] !== expected[key])) return null;
     const merged: Schedule = { ...ex, ...patch };
+    if (patch.lastFinishedAt !== undefined) {
+      merged.lastFinishedAt = Math.max(ex.lastFinishedAt ?? patch.lastFinishedAt, patch.lastFinishedAt);
+    }
     this.schedules.set(id, merged);
     return { ...merged };
   }
@@ -223,12 +226,17 @@ it.each(['automatic', 'manual', 'recovery'] as const)(
 // discussion_r4419242692: a claimed continuation must remain reclaimable if
 // loading fails, while a rejection after completion must not replay settled work.
 // Unit: public resume entry, one original row and a one-shot storage failure.
-it.each(['none', 'read-rejected', 'schedule-missing', 'finish-rejected'] as const)(
+it.each(['none', 'read-rejected', 'schedule-missing', 'pre-enqueue-rejected', 'finish-rejected'] as const)(
   'restores the same run and silence lookup after restart (%s)', async (failure) => {
   const storage = new InMemoryStorage();
   const clock = new FakeClock();
   let finish!: (result: FireResult) => void;
+  let rejectedBeforeAccept = false;
   const h = makeHarness({ storage, clock, runnerImpl: async (_schedule, ctx) => {
+    if (failure === 'pre-enqueue-rejected' && !rejectedBeforeAccept) {
+      rejectedBeforeAccept = true;
+      throw new Error('continuation enqueue unavailable');
+    }
     await ctx.onSessionBound?.(ctx.resumeSessionId!);
     ctx.onTurnActive?.(ctx.resumeSessionId!);
     return new Promise<FireResult>((resolve) => { finish = resolve; });
@@ -246,16 +254,17 @@ it.each(['none', 'read-rejected', 'schedule-missing', 'finish-rejected'] as cons
   await h.scheduler.tick();
   expect(storage.claimInterruptedRun).not.toHaveBeenCalled();
   expect(h.fireCalls).toHaveLength(0);
-  if (failure === 'read-rejected' || failure === 'schedule-missing') {
+  if (failure === 'read-rejected' || failure === 'schedule-missing' || failure === 'pre-enqueue-rejected') {
     const get = vi.spyOn(storage, 'get');
     if (failure === 'read-rejected') get.mockRejectedValueOnce(new Error('storage unavailable'));
-    else get.mockResolvedValueOnce(null);
+    else if (failure === 'schedule-missing') get.mockResolvedValueOnce(null);
     const failed = await h.scheduler.resumeInterruptedRun('original-task');
     await expect(failed!.completion).rejects.toThrow(
-      failure === 'read-rejected' ? 'storage unavailable' : 'Schedule not found',
+      failure === 'read-rejected' ? 'storage unavailable'
+        : failure === 'schedule-missing' ? 'Schedule not found' : 'continuation enqueue unavailable',
     );
     expect(storage.runs.get(oldRun.id)?.status).toBe('interrupted');
-    expect(h.fireCalls).toHaveLength(0);
+    expect(h.fireCalls).toHaveLength(failure === 'pre-enqueue-rejected' ? 1 : 0);
     expect(h.scheduler.resolveInflightRunForSession('original-task')).toBeUndefined();
   }
   const resumed = await h.scheduler.resumeInterruptedRun('original-task');
@@ -339,6 +348,7 @@ it.each([false, true].flatMap((recurring) => [false, true].flatMap((failed) =>
   let finishRecovery!: () => void;
   const h = makeHarness({ runnerImpl: async (_schedule, ctx) => {
     await ctx.onSessionBound?.(ctx.resumeSessionId ?? 'newer-task');
+    ctx.onTurnActive?.(ctx.resumeSessionId ?? 'newer-task');
     if (ctx.resumeSessionId) {
       await new Promise<void>((resolve) => { finishRecovery = resolve; });
       if (failed) throw new Error('continuation failed');
@@ -362,6 +372,9 @@ it.each([false, true].flatMap((recurring) => [false, true].flatMap((failed) =>
   let newerSchedule!: Schedule;
   const read = h.storage.get.bind(h.storage);
   const completeNewer = async () => {
+    // The old recovery captured finishedAt before its read yielded. A second
+    // process can finish later before the conditional write, not just fire later.
+    if (timing === 'after-read') h.clock.advance(10_000);
     finishNewer();
     await newer;
     newerSchedule = (await read(schedule.id))!;

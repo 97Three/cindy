@@ -372,6 +372,12 @@ describe('DrizzleScheduleStorage (in-memory)', () => {
       expect(await harness.storage.update(original.id, {}, original)).toBeNull();
       expect(await harness.storage.update(original.id, { lastFinishedAt: 300 }, newer!))
         .toMatchObject({ lastFiredAt: 200, nextFireAt: 400, status: 'active', lastFinishedAt: 300 });
+      // discussion_r4419409168: a late older completion (including CAS fallback)
+      // must not regress the latest completion, even through an ordinary update.
+      expect(await harness.storage.update(original.id, { lastFinishedAt: 250 }))
+        .toMatchObject({ lastFinishedAt: 300 });
+      expect(await harness.storage.update(original.id, { lastFinishedAt: 350 }))
+        .toMatchObject({ lastFinishedAt: 350 });
     } finally { harness.close(); }
   });
 
@@ -958,6 +964,8 @@ describe('DrizzleScheduleStorage (in-memory)', () => {
       expect(await storage.update('sch-proxy', { status: 'expired' }, stale)).toBeNull();
       expect(await storage.update('sch-proxy', { lastFinishedAt: due + 1 }, newer!))
         .toMatchObject({ status: 'active', lastFiredAt: due, nextFireAt: due + 1000 });
+      expect(await storage.update('sch-proxy', { lastFinishedAt: due }))
+        .toMatchObject({ lastFinishedAt: due + 1 });
     } finally {
       await client.dispose();
     }

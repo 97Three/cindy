@@ -1106,19 +1106,6 @@ export class Scheduler extends EventEmitter {
       // Restore its ownership even while the new Continue waits to dispatch.
       this.buildOnTurnActive(run.id)(sessionId);
       const completion = this.runNowInner(run.scheduleId, run.id, undefined, run, runner)
-        .catch(async (error) => {
-          // Before runner dispatch, a rejected setup still owns the claim.
-          // Keep the original turn reclaimable; terminal/stop paths own their
-          // own settlement and must never be made replayable by this handler.
-          const phase = this.inflightAttempts.get(run.id)?.phase;
-          if (phase === 'loading' || phase === 'persisting') {
-            await this.storage.updateRun(run.id, {
-              status: 'interrupted', finishedAt: this.clock.now(), errorMsg: 'app restarted',
-            });
-            this.emitEvent({ type: 'changed', scheduleId: run.scheduleId });
-          }
-          throw error;
-        })
         .finally(() => {
           this.finishInflightAttempt(run.id);
           this.manualContinuations.delete(sessionId);
@@ -1131,6 +1118,10 @@ export class Scheduler extends EventEmitter {
   }
 
   private async runNowInner(id: string, runId: string, options?: { deferToCaller?: boolean; internalRoutine?: true; canDispatch?: () => boolean }, recovery?: ScheduleRun, runner: ScheduleRunner = this.runner): Promise<{ runId: string; deferred?: boolean }> {
+    // The original turn's restored mapping is not acceptance of this Continue.
+    // One owner covers both engine setup and host/queue preparation failures.
+    let continuationAccepted = false;
+    try {
     const schedule = await this.storage.get(id);
     if (!schedule || (schedule.source === 'bot' && !options?.internalRoutine))
       throw new Error(`Schedule not found: ${id}`);
@@ -1208,7 +1199,10 @@ export class Scheduler extends EventEmitter {
         signal: controller.signal,
         onSessionBound: this.buildOnSessionBound(schedule.id, runId),
         onPreRunHookCompleted: this.buildOnPreRunHookCompleted(runId),
-        onTurnActive: this.buildOnTurnActive(runId),
+        onTurnActive: (sessionId) => {
+          continuationAccepted = true;
+          this.buildOnTurnActive(runId)(sessionId);
+        },
         createChildRun: this.buildCreateChildRun(schedule.id, firedAt),
         onQueueWaitStart: this.buildOnQueueWaitStart(runId),
         endQueueWait: this.buildEndQueueWait(runId),
@@ -1221,6 +1215,7 @@ export class Scheduler extends EventEmitter {
       deferRetryMs = result.deferRetryMs;
       skipped = result.skipped ?? false;
     } catch (err) {
+      if (recovery && !continuationAccepted && !this.abandonedRuns.has(runId)) throw err;
       runError = err instanceof Error ? err.message : String(err);
     } finally {
       knownSessionId = this.resolveTerminalSessionId(runId, runSessionId, schedule.targetSessionId);
@@ -1359,6 +1354,17 @@ export class Scheduler extends EventEmitter {
     // Revalidate history for either a new run or the recovered original row.
     this.emitEvent({ type: 'changed', scheduleId: schedule.id });
     return { runId };
+    } catch (error) {
+      // Stop/forced settlement already owns an abandoned or removed attempt.
+      // Accepted turns retain their success/failure even if finalization rejects.
+      if (recovery && !continuationAccepted && this.inflightAttempts.has(runId) && !this.abandonedRuns.has(runId)) {
+        await this.storage.updateRun(runId, {
+          status: 'interrupted', finishedAt: this.clock.now(), errorMsg: 'app restarted',
+        });
+        this.emitEvent({ type: 'changed', scheduleId: id });
+      }
+      throw error;
+    }
   }
 
   // ---------- CRUD ----------

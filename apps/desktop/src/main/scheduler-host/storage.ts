@@ -458,7 +458,14 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
 
   async update(id: string, patch: Partial<Schedule>, expected?: Schedule): Promise<Schedule | null> {
     const db = this.getDb();
-    const setObj = schedulePatchToRow(patch);
+    const setObj = {
+      ...schedulePatchToRow(patch),
+      // Completion time is a watermark, including ordinary writes after a
+      // recovery loses CAS. Compare in the write, never in a prior SELECT.
+      ...(patch.lastFinishedAt !== undefined ? {
+        lastFinishedAt: sql`MAX(COALESCE(${schedules.lastFinishedAt}, ${patch.lastFinishedAt}), ${patch.lastFinishedAt})`,
+      } : {}),
+    };
     const where = and(
       eq(schedules.id, id),
       expected ? and(
