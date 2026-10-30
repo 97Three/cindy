@@ -110,6 +110,8 @@ export function createDesktopTaskActionAuthorizer(deps: {
       isCurrent?: () => boolean;
     } | null;
     boundary: string;
+    /** The coordinator's in-memory /clear fence; it can be ahead of `sessions.cleared_at`. */
+    clearBoundaryMs?: number | null;
   };
   getSession(sessionId: string): TaskActionSession | undefined;
   confirm(sessionId: string, tool: string, args: unknown, context?: TaskActionConfirmation): Promise<boolean>;
@@ -305,15 +307,22 @@ export function createDesktopTaskActionAuthorizer(deps: {
           return team ?? null;
         };
         const orcaTeam = useRuntimePermissions ? null : await readOrcaTeam();
+        // An admitted message outlives the turn that sent it. Delivery stops only on
+        // real revocation: account switch, sender cleared or deleted, companion paused
+        // or archived, delegation run or team changed, group grant. The sender's live
+        // Session incarnation, input generation and permission/Plan generation gate
+        // executing this call (assertCurrent), never an already queued message.
+        // The captured database client is the owner identity. A held app-session boundary alone
+        // proves nothing: a same-owner Ghost projection repair holds it too. While it is pending
+        // a delivery check cannot be answered, which is a failed check (kept for retry), not a
+        // revocation; once the client is replaced the next check proves the owner changed.
+        const assertSameOwner = (revokedAs: string) => {
+          if (db !== tryGetDbClient()) throw new Error(revokedAs);
+          if (isAppSessionBoundaryPending()) throw new Error('HOST_NOT_READY');
+        };
         const assertDeliveryCurrent = async () => {
-          runtime?.assertCurrent();
           await group?.refresh();
-          if (
-            isAppSessionBoundaryPending() ||
-            db !== tryGetDbClient() ||
-            deps.input(sessionId).boundary !== input.boundary
-          )
-            throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
+          assertSameOwner('TASK_ACTION_AUTHORIZATION_EXPIRED');
           const [fresh] = await db.drizzle
             .select({
               status: sessions.status,
@@ -333,6 +342,12 @@ export function createDesktopTaskActionAuthorizer(deps: {
             (caller.botId && (fresh.botStatus !== 'active' || fresh.archivedAt !== null))
           )
             throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
+          // /clear moves the coordinator's fence before persisting cleared_at, and persisting may
+          // fail, so the sender's clear is also read from memory. A persisted boundary loaded late
+          // (restart) is no newer than what admission already saw in the database.
+          const clearedInMemory = deps.input(sessionId).clearBoundaryMs;
+          if (clearedInMemory != null && clearedInMemory > Math.max(input.clearBoundaryMs ?? 0, caller.clearedAt ?? 0))
+            throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
           if (delegation) {
             const current = await readDelegation(true);
             if (!current || current.runSequence !== delegation.runSequence)
@@ -343,10 +358,7 @@ export function createDesktopTaskActionAuthorizer(deps: {
               throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
           }
           group?.assertCurrent();
-          assertPermissionCurrent();
-          if (db !== tryGetDbClient() || isAppSessionBoundaryPending())
-            throw new Error('OWNER_SCOPE_CHANGED');
-          runtime?.assertCurrent();
+          assertSameOwner('OWNER_SCOPE_CHANGED');
         };
         const assertCurrentSync = () => {
           runtime?.assertInputCurrent();
