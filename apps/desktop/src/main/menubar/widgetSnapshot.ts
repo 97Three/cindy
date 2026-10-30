@@ -77,6 +77,7 @@ export function buildUsageWidgetSnapshot(
   // Same days as the view; the series is collected alongside it, so it only lines up when its length matches.
   const seriesDaily = series && series.daily.length === view.usage.days.length && count > 0
     ? series.daily.slice(-count) : undefined;
+  const seriesTokens = seriesDaily ? series!.tokens.slice(-count) : undefined;
   const strings: Record<string, string> = {};
   for (const key of UI_KEYS) {
     const value = view.strings[key];
@@ -100,7 +101,8 @@ export function buildUsageWidgetSnapshot(
       days: count > 0 ? view.usage.days.slice(-count) : [],
       daily: count > 0 && data ? data.daily.slice(-count).map((day, i) => {
         const models = seriesDaily?.[i];
-        return { money: day.money, paid: day.paid, tokens: day.tokens, ...(models ? { models } : {}) };
+        const modelTokens = seriesTokens?.[i];
+        return { money: day.money, paid: day.paid, tokens: day.tokens, ...(models && modelTokens ? { models, modelTokens } : {}) };
       }) : [],
       ...(seriesDaily ? { models: series!.models } : {}),
     },

@@ -570,28 +570,33 @@ export function usageScope(
 const SERIES_MODELS = 5;
 const SERIES_DAYS = 30;
 
-/** Per-model daily value: the top models by value over the last 30 days, the rest summed last. */
+/** Per-model daily value and tokens: the top models by tokens over the last 30 days, the rest summed last. */
 function modelSeries(payload: UsageHistoryPayload, indexOfDay: Map<string, number>, dayCount: number): MenubarModelSeries {
-  const byModel = new Map<string, { harness: MenubarHarness; daily: number[]; recent: number }>();
+  type Entry = { harness: MenubarHarness; money: number[]; tokens: number[]; recent: number };
+  const byModel = new Map<string, Entry>();
   for (const row of payload.modelDaily) {
     const index = indexOfDay.get(row.day);
     if (index === undefined) continue;
     const name = formatModelShort(row.model);
-    const entry = byModel.get(name) ?? { harness: harnessOf(row.agentKind), daily: new Array<number>(dayCount).fill(0), recent: 0 };
-    const money = finite(row.money?.amount);
-    entry.daily[index] += money;
-    if (dayCount - 1 - index < SERIES_DAYS) entry.recent += money;
+    const entry = byModel.get(name)
+      ?? { harness: harnessOf(row.agentKind), money: new Array<number>(dayCount).fill(0), tokens: new Array<number>(dayCount).fill(0), recent: 0 };
+    const tokens = finite(row.tokens);
+    entry.money[index] += finite(row.money?.amount);
+    entry.tokens[index] += tokens;
+    if (dayCount - 1 - index < SERIES_DAYS) entry.recent += tokens;
     byModel.set(name, entry);
   }
   const ranked = [...byModel.entries()].filter(([, entry]) => entry.recent > 0).sort((a, b) => b[1].recent - a[1].recent);
-  const top = ranked.slice(0, SERIES_MODELS);
-  const rest = ranked.slice(SERIES_MODELS).map(([, entry]) => entry.daily);
+  const top = ranked.slice(0, SERIES_MODELS).map(([, entry]) => entry);
+  const rest = ranked.slice(SERIES_MODELS).map(([, entry]) => entry);
+  const split = (pick: (entry: Entry) => number[]) => Array.from({ length: dayCount }, (_, day) => [
+    ...top.map((entry) => pick(entry)[day]),
+    rest.reduce((sum, entry) => sum + pick(entry)[day], 0),
+  ]);
   return {
-    models: top.map(([name, entry]) => ({ name, harness: entry.harness })),
-    daily: Array.from({ length: dayCount }, (_, day) => [
-      ...top.map(([, entry]) => entry.daily[day]),
-      rest.reduce((sum, daily) => sum + daily[day], 0),
-    ]),
+    models: ranked.slice(0, SERIES_MODELS).map(([name, entry]) => ({ name, harness: entry.harness })),
+    daily: split((entry) => entry.money),
+    tokens: split((entry) => entry.tokens),
   };
 }
 

@@ -289,7 +289,7 @@ struct MonthCard: View {
         Text(format.money(total)).font(WidgetNumFont.font(22)).foregroundStyle(WidgetPalette.ink)
       }
       .fixedSize()
-      StackedAreaChart(daily: daily, breakdown: UsageBreakdown(snapshot: snapshot, locale: format.locale))
+      StackedAreaChart(daily: daily, breakdown: UsageBreakdown(snapshot: snapshot, locale: format.locale, metric: .money))
         .frame(height: 28)
     }
     .padding(EdgeInsets(top: 9, leading: 12, bottom: 9, trailing: 12))

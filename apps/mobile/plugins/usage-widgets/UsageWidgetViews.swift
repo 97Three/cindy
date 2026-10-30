@@ -4,15 +4,19 @@ import WidgetKit
 /// How a day's value is split: by model when the computer sends a model series (busiest
 /// first, the rest last), otherwise by harness like the Mac chart (Codex, Claude Code, Pi).
 struct UsageBreakdown {
+  enum Metric { case money, tokens }
+
   /// Series keys in stacking order, bottom to top.
   let keys: [Int]
+  let metric: Metric
   private let models: [WidgetModel]?
   private let locale: Locale
 
-  init(snapshot: WidgetSnapshot?, locale: Locale) {
+  init(snapshot: WidgetSnapshot?, locale: Locale, metric: Metric) {
     self.locale = locale
+    self.metric = metric
     if let models = snapshot?.usage.models, !models.isEmpty,
-       snapshot?.usage.daily.allSatisfy({ $0.models?.count == models.count + 1 }) == true {
+       snapshot?.usage.daily.allSatisfy({ $0.models?.count == models.count + 1 && $0.modelTokens?.count == models.count + 1 }) == true {
       self.models = models
       keys = Array(0...models.count)
     } else {
@@ -22,8 +26,20 @@ struct UsageBreakdown {
   }
 
   func value(_ day: WidgetDay, _ key: Int) -> Double {
-    if models != nil { return day.models?[key] ?? 0 }
-    return day.money[key]
+    switch (models != nil, metric) {
+    case (true, .money): return day.models?[key] ?? 0
+    case (true, .tokens): return day.modelTokens?[key] ?? 0
+    case (false, .money): return day.money[key]
+    case (false, .tokens): return day.tokens[key]
+    }
+  }
+
+  func total(_ day: WidgetDay) -> Double {
+    metric == .money ? day.total : day.totalTokens
+  }
+
+  func amount(_ value: Double, format: WidgetFormat) -> String {
+    metric == .money ? format.money(value) : format.tokens(value)
   }
 
   func label(_ key: Int, format: WidgetFormat) -> String {
@@ -144,26 +160,27 @@ struct DailyBars: View {
       let size = geometry.size
       let n = max(daily.count, 1)
       let barWidth = max(1, (size.width - gap * CGFloat(n - 1)) / CGFloat(n))
-      let maxTotal = max(daily.map(\.total).max() ?? 0, average ?? 0, 0.0001) * 1.08
+      let maxTotal = max(daily.map { breakdown.total($0) }.max() ?? 0, average ?? 0, 0.0001) * 1.08
       let accented = renderingMode == .accented
       ZStack(alignment: .topLeading) {
         ForEach(daily.indices, id: \.self) { i in
           let day = daily[i]
           let x = CGFloat(i) * (barWidth + gap)
           let today = i == daily.count - 1
-          if day.total <= 0 {
+          let dayTotal = breakdown.total(day)
+          if dayTotal <= 0 {
             RoundedRectangle(cornerRadius: 1).fill(WidgetPalette.ink4)
               .frame(width: barWidth, height: 2)
               .offset(x: x, y: size.height - 2)
           } else {
-            let height = max(3, CGFloat(day.total / maxTotal) * size.height)
+            let height = max(3, CGFloat(dayTotal / maxTotal) * size.height)
             VStack(spacing: 0) {
               ForEach(breakdown.keys.reversed(), id: \.self) { key in
                 let value = breakdown.value(day, key)
                 if value > 0 {
                   Rectangle()
                     .fill(breakdown.color(key, accented: accented))
-                    .frame(height: CGFloat(value / day.total) * height)
+                    .frame(height: CGFloat(value / dayTotal) * height)
                 }
               }
             }
@@ -203,6 +220,23 @@ struct AverageLegend: View {
   }
 }
 
+/// Today's tokens as the headline: Barlow digits with a quiet "token" unit.
+struct TokenFigure: View {
+  let tokens: Double
+  let size: CGFloat
+  let format: WidgetFormat
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 3) {
+      Text(format.tokens(tokens)).font(WidgetNumFont.font(size))
+      Text(format.s("tokenUnit")).font(.system(size: (size * 0.34).rounded(), weight: .medium)).foregroundStyle(WidgetPalette.ink3)
+    }
+    .foregroundStyle(tokens > 0 ? WidgetPalette.ink : WidgetPalette.ink3)
+    .lineLimit(1)
+    .minimumScaleFactor(0.6)
+  }
+}
+
 struct BreakdownDot: View {
   let color: Color
   var body: some View { Circle().fill(color).frame(width: 6, height: 6) }
@@ -226,7 +260,7 @@ struct UsageWidgetView: View {
         EmptyStateView(title: WidgetText.text("emptyUsageTitle", locale: locale), body_: WidgetText.text("emptyUsageBody", locale: locale)).padding(16)
       } else {
         let format = WidgetFormat(snapshot: snapshot, now: now)
-        content(snapshot, format: format, breakdown: UsageBreakdown(snapshot: snapshot, locale: format.locale))
+        content(snapshot, format: format, breakdown: UsageBreakdown(snapshot: snapshot, locale: format.locale, metric: .tokens))
       }
     }
   }
@@ -236,9 +270,11 @@ struct UsageWidgetView: View {
     let daily = snapshot.usage.daily
     let days = snapshot.usage.days
     let today = daily[daily.count - 1]
-    let average = daily.reduce(0) { $0 + $1.total } / Double(daily.count)
+    let average = daily.reduce(0) { $0 + $1.totalTokens } / Double(daily.count)
     let todayLabel = format.s("today")
     let accented = renderingMode == .accented
+    let averageLabel = "\(format.s("dailyAverage")) \(format.tokens(average)) \(format.s("tokenUnit"))"
+    let todayValue = "\(WidgetText.text("valueBasis", locale: format.locale)) \(format.money(today.total))"
     switch family {
     case .systemSmall:
       VStack(alignment: .leading, spacing: 0) {
@@ -248,12 +284,9 @@ struct UsageWidgetView: View {
           Text(format.monthDay(days[days.count - 1]))
         }
         .font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3)
-        Text(format.money(today.total))
-          .font(WidgetNumFont.font(38))
-          .foregroundStyle(today.total > 0 ? WidgetPalette.ink : WidgetPalette.ink3)
-          .lineLimit(1).minimumScaleFactor(0.6)
+        TokenFigure(tokens: today.totalTokens, size: 38, format: format)
           .padding(.top, 4)
-        Text(today.total > 0 ? "\(format.tokens(today.totalTokens)) \(format.s("tokenUnit"))" : WidgetText.text("todayNone", locale: format.locale))
+        Text(today.totalTokens > 0 ? todayValue : WidgetText.text("todayNone", locale: format.locale))
           .font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3).lineLimit(1)
         Spacer(minLength: 0)
         let week = Array(daily.suffix(7)), weekDays = Array(days.suffix(7))
@@ -281,11 +314,11 @@ struct UsageWidgetView: View {
           Text(format.s(snapshot.usage.scope == "local" ? "scopeLocal" : "scopeAll"))
         }
         .font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3).lineLimit(1)
-        Text(format.money(today.total)).font(WidgetNumFont.font(46)).foregroundStyle(WidgetPalette.ink).padding(.top, 5)
-        Text("\(WidgetText.text("valueBasisLong", locale: format.locale)) · \(format.tokens(today.totalTokens)) \(format.s("tokenUnit"))")
+        TokenFigure(tokens: today.totalTokens, size: 46, format: format).padding(.top, 5)
+        Text("\(WidgetText.text("valueBasisLong", locale: format.locale)) \(format.money(today.total))")
           .font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3).padding(.top, 3)
         Spacer(minLength: 6)
-        AverageLegend(text: "\(format.s("dailyAverage")) \(format.money(average))").padding(.bottom, 5)
+        AverageLegend(text: averageLabel).padding(.bottom, 5)
         DailyBars(daily: daily, gap: 3, breakdown: breakdown, average: average).frame(height: 100)
         HStack {
           Text(format.monthDay(days[0]))
@@ -297,13 +330,14 @@ struct UsageWidgetView: View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
           Text(format.s(snapshot.usage.scope == "local" ? "monthScopeLocal" : "monthScopeAll").components(separatedBy: " · ").first ?? "")
             .font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3)
-          Text(format.money(total)).font(WidgetNumFont.font(18)).foregroundStyle(WidgetPalette.ink)
+          Text(format.tokens(tokens)).font(WidgetNumFont.font(18)).foregroundStyle(WidgetPalette.ink)
+          Text(format.s("tokenUnit")).font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3)
           Spacer(minLength: 4)
-          Text("\(format.s("paid")) \(format.money(paid)) · \(format.tokens(tokens)) \(format.s("tokenUnit"))")
+          Text("\(WidgetText.text("valueBasis", locale: format.locale)) \(format.money(total)) · \(format.s("paid")) \(format.money(paid))")
             .font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3).lineLimit(1)
         }
         BreakdownSplit(rows: breakdown.ranked(limit: 4) { key in daily.reduce(0) { $0 + breakdown.value($1, key) } },
-                       total: total, breakdown: breakdown, format: format)
+                       total: tokens, breakdown: breakdown, format: format)
           .padding(.top, 8)
       }
       .padding(EdgeInsets(top: 16, leading: 16, bottom: 14, trailing: 16))
@@ -311,13 +345,11 @@ struct UsageWidgetView: View {
       VStack(spacing: 0) {
         HStack(alignment: .top, spacing: 14) {
           VStack(alignment: .leading, spacing: 0) {
-            Text("\(todayLabel) · \(WidgetText.text("valueBasis", locale: format.locale))")
+            Text(todayLabel)
               .font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3).lineLimit(1)
-            Text(format.money(today.total)).font(WidgetNumFont.font(36))
-              .foregroundStyle(today.total > 0 ? WidgetPalette.ink : WidgetPalette.ink3)
-              .lineLimit(1).minimumScaleFactor(0.6).padding(.top, 4)
-            Text("\(format.tokens(today.totalTokens)) \(format.s("tokenUnit"))")
-              .font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3)
+            TokenFigure(tokens: today.totalTokens, size: 36, format: format).padding(.top, 4)
+            Text(todayValue)
+              .font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3).lineLimit(1)
             Spacer(minLength: 0)
             VStack(alignment: .leading, spacing: 4) {
               ForEach(breakdown.ranked(limit: 3) { breakdown.value(today, $0) }, id: \.key) { row in
@@ -326,7 +358,7 @@ struct UsageWidgetView: View {
                   Text(breakdown.rowLabel(row.key, format: format)).font(.system(size: 10.5)).foregroundStyle(WidgetPalette.ink2)
                     .lineLimit(1).truncationMode(.tail)
                   Spacer(minLength: 2)
-                  Text(format.money(row.value)).font(WidgetNumFont.font(14)).foregroundStyle(WidgetPalette.ink)
+                  Text(breakdown.amount(row.value, format: format)).font(WidgetNumFont.font(14)).foregroundStyle(WidgetPalette.ink)
                     .fixedSize()
                 }
               }
@@ -335,7 +367,7 @@ struct UsageWidgetView: View {
           .frame(width: 124)
           VStack(spacing: 0) {
             Spacer(minLength: 0)
-            AverageLegend(text: "\(format.s("dailyAverage")) \(format.money(average))").padding(.bottom, 5)
+            AverageLegend(text: averageLabel).padding(.bottom, 5)
             DailyBars(daily: Array(daily.suffix(14)), gap: 4, breakdown: breakdown, average: average).frame(height: 80)
             HStack {
               Text(format.monthDay(days[max(0, days.count - 14)]))
@@ -381,7 +413,7 @@ struct BreakdownSplit: View {
             Text(breakdown.rowLabel(row.key, format: format)).foregroundStyle(WidgetPalette.ink2).lineLimit(1).truncationMode(.tail)
             Text("\(Int((row.value / sum * 100).rounded()))%").foregroundStyle(WidgetPalette.ink3).fixedSize()
             Spacer(minLength: 2)
-            Text(format.money(row.value)).font(WidgetNumFont.font(14)).foregroundStyle(WidgetPalette.ink).fixedSize()
+            Text(breakdown.amount(row.value, format: format)).font(WidgetNumFont.font(14)).foregroundStyle(WidgetPalette.ink).fixedSize()
           }
           .font(.system(size: 10.5))
         }

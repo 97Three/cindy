@@ -62,6 +62,8 @@ export interface MobileUsageWidgetDay {
   tokens: [number, number, number];
   /** Value per `usage.models` entry, then everything else (one more than the model count). */
   models?: number[];
+  /** Tokens per `usage.models` entry, then everything else. */
+  modelTokens?: number[];
 }
 
 export interface MobileUsageWidgetSnapshot {
@@ -77,7 +79,7 @@ export interface MobileUsageWidgetSnapshot {
     /** ISO dates, oldest first, ending today (desktop local date); at most 30. */
     days: string[];
     daily: MobileUsageWidgetDay[];
-    /** The busiest models of the window, in color order; absent from older desktops. */
+    /** Models with the most tokens in the window, in color order; absent from older desktops. */
     models?: { name: string; harness: 'claude-code' | 'codex' | 'pi' }[];
   };
   /** Localized labels and templates from the desktop's menu bar strings. */

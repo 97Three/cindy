@@ -358,13 +358,13 @@ it('maps Kimi periods and removes expired or stale numbers from the menu bar', (
   expect(kimiSource(account, { status: 'unavailable', error: 'auth' }, NOW).windows).toEqual([]);
 });
 
-// iPhone usage widgets split each day by model: the busiest five of the last 30 days keep
+// iPhone usage widgets split each day by model: the five with the most tokens in the last 30 days keep
 // their own series and everything else is summed last.
-it('splits daily value by the five busiest models and sums the rest', () => {
+it('splits daily value and tokens by the five busiest models and sums the rest', () => {
   const money = (amount: number) => ({ amount, currency: 'USD', approximate: false, kind: 'actual-cost' }) as const;
   const days = dayKeysEndingAt('2026-10-11', 2);
   const row = (day: string, model: string, amount: number) =>
-    ({ day, agentKind: 'codex', model, tokens: 1, money: money(amount), apiMoney: money(0), subscriptionEstimateMoney: money(amount) });
+    ({ day, agentKind: 'codex', model, tokens: amount * 1000, money: money(amount), apiMoney: money(0), subscriptionEstimateMoney: money(amount) });
   const payload = { todayKey: '2026-10-11', modelDaily: [
     ...['m1', 'm2', 'm3', 'm4', 'm5', 'm6'].map((model, i) => row('2026-10-11', model, 60 - i * 10)),
     row('2026-10-10', 'm6', 4),
@@ -372,4 +372,5 @@ it('splits daily value by the five busiest models and sums the rest', () => {
   const series = usageScope(payload, days, []).modelSeries!;
   expect(series.models.map((m) => m.name)).toEqual(['m1', 'm2', 'm3', 'm4', 'm5']);
   expect(series.daily).toEqual([[0, 0, 0, 0, 0, 4], [60, 50, 40, 30, 20, 10]]);
+  expect(series.tokens[1]).toEqual([60_000, 50_000, 40_000, 30_000, 20_000, 10_000]);
 });

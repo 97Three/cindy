@@ -50,6 +50,8 @@ struct WidgetDay: Decodable {
   let tokens: [Double]
   /// Value per `WidgetUsage.models` entry, then everything else.
   var models: [Double]? = nil
+  /// Tokens per `WidgetUsage.models` entry, then everything else.
+  var modelTokens: [Double]? = nil
 
   var total: Double { money.reduce(0, +) }
   var totalTokens: Double { tokens.reduce(0, +) }

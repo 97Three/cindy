@@ -167,11 +167,13 @@ export interface MenubarUsageScopeInput {
   modelSeries?: MenubarModelSeries;
 }
 
-/** The busiest models of the last 30 days; each day lists their value and then everything else. */
+/** The models with the most tokens in the last 30 days; each day lists theirs, then everything else. */
 export interface MenubarModelSeries {
   models: { name: string; harness: MenubarHarness }[];
-  /** Aligned with `MenubarUsageInput.days`; `models.length + 1` values, the last one is the rest. */
+  /** Value per day, aligned with `MenubarUsageInput.days`; `models.length + 1` entries, the rest last. */
   daily: number[][];
+  /** Tokens per day, same shape as `daily`. */
+  tokens: number[][];
 }
 
 export interface MenubarUsageInput {
