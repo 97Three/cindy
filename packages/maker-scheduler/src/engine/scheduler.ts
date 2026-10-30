@@ -45,7 +45,8 @@ function stableJson(value: unknown): string {
 
 function assertScheduleMutationGuard(expected: ScheduleMutationGuard | undefined, current: Schedule): void {
   if (!expected) return;
-  const { effectiveWorkingDir: _effectiveWorkingDir, ...expectedSchedule } = expected;
+  const expectedSchedule = { ...expected };
+  delete expectedSchedule.effectiveWorkingDir;
   if (stableJson(expectedSchedule) !== stableJson(current)) {
     throw new Error('Schedule changed; refresh before executing the approved action');
   }
