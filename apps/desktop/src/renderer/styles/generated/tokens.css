@@ -94,13 +94,13 @@
     --font-weight-semibold: 600;
     --quota-bar-fill: var(--text-secondary);
     --quota-bar-warn: var(--warning-fg);
-    --quota-bar-crit: var(--error-flat);
+    --quota-bar-crit: var(--card-status-error);
     --quota-bar-track: var(--surface-chip);
   }
   .dark {
     --quota-bar-fill: var(--text-secondary);
     --quota-bar-warn: var(--warning-fg);
-    --quota-bar-crit: var(--error-flat);
+    --quota-bar-crit: var(--card-status-error);
     --quota-bar-track: var(--surface-chip);
   }
 }

@@ -570,7 +570,7 @@ describe('TodaySpendChip Claude subscription popover', () => {
     expect(trigger.textContent).toContain('Opus 周限 剩余 66%');
   });
 
-  it('告警时只把达到条件的剩余百分比染红，其余段与任务价值保持常色', () => {
+  it('只给达到条件的窗口的剩余百分比上色（剩 ≤30% 黄、≤10% 红），其余段与任务价值保持常色', () => {
     const estimatedValueMoney = usdMoney(7.82, 'value-estimate');
     mocks.sessionUsage = {
       actualMoney: null,
@@ -587,8 +587,9 @@ describe('TodaySpendChip Claude subscription popover', () => {
 
     const trigger = screen.getByTestId('task-usage-trigger');
     expect(trigger.className).not.toContain('error-fg');
-    const red = Array.from(trigger.querySelectorAll('[class*="error-fg"]'));
-    expect(red.map((el) => el.textContent)).toEqual(['12%']);
+    const yellow = Array.from(trigger.querySelectorAll('[class*="quota-bar-warn"]'));
+    expect(yellow.map((el) => el.textContent)).toEqual(['12%']);
+    expect(trigger.querySelector('[class*="quota-bar-crit"]')).toBeNull();
     expect(trigger.textContent).toContain('5h 剩余 12%');
     expect(trigger.textContent).toContain('周限 剩余 80%');
     expect(trigger.textContent).toContain('本任务价值 $7.82');
@@ -723,6 +724,23 @@ describe('TodaySpendChip Claude subscription popover', () => {
     const trigger = screen.getByTestId('task-usage-trigger');
     expect(trigger.textContent).toContain('5h 剩余 88%');
     expect(trigger.textContent).toContain('7天 剩余 66%');
+  });
+
+  // Regression: Codex windows never colored on the chip, however little was left.
+  it('Codex 窗口也按共用规则上色：剩 ≤10% 红、≤30% 黄', () => {
+    mocks.codexAuthInjection = 'oauth-bearer';
+    mocks.codexSnapshot = {
+      source: 'codex-app-server',
+      limitId: 'codex',
+      primary: { usedPercent: 95, windowMinutes: 300 },
+      secondary: { usedPercent: 75, windowMinutes: 10_080 },
+    };
+
+    render(<TodaySpendChip vendorKey="codex" providerId="openai" modelId="gpt-5.6-sol" sessionId="session-codex" />);
+
+    const trigger = screen.getByRole('button', { name: '打开 Codex 用量页面' });
+    expect(Array.from(trigger.querySelectorAll('[class*="quota-bar-crit"]')).map((el) => el.textContent)).toEqual(['5%']);
+    expect(Array.from(trigger.querySelectorAll('[class*="quota-bar-warn"]')).map((el) => el.textContent)).toEqual(['25%']);
   });
 
   it('悬停约 300ms 后显示额度卡片', () => {

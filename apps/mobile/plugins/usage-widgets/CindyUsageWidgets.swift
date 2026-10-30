@@ -78,7 +78,7 @@ extension WidgetState {
     let hour = 3_600_000.0
     func source(_ id: String, _ logo: String, _ name: String, _ value: Double, reset: Double, emphasized: Bool = false) -> WidgetSource {
       WidgetSource(id: id, kind: "subscription", name: name, logo: logo, monogram: String(name.prefix(1)).uppercased(),
-                   value: String(Int(value * 100)), unit: "%", label: nil, level: value <= 0.15 ? "warn" : "normal",
+                   value: String(Int(value * 100)), unit: "%", label: nil, level: value <= 0.1 ? "error" : value <= 0.3 ? "warn" : "normal",
                    fill: value, reserve: false, emphasized: emphasized, when: "", resetsAtMs: now + reset * hour)
     }
     var days: [String] = []

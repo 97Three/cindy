@@ -67,9 +67,12 @@ describe('buildMenubarView', () => {
     expect(view.sources.find((s) => s.id === 'alpha')?.emphasized).toBe(false);
   });
 
-  it('marks a nearly empty window as a warning', () => {
-    const view = buildMenubarView(input([codex('alpha', 93)]));
-    expect(view.sources[0]).toMatchObject({ value: '7', level: 'warn', fill: 0.07 });
+  // Shared rule (quota-level): 30% or less left is yellow, 10% or less is red.
+  it('turns yellow at 30% left and red at 10% left', () => {
+    const view = buildMenubarView(input([codex('plenty', 69), codex('low', 70), codex('empty', 90)]));
+    expect(view.sources.map((cell) => [cell.id, cell.value, cell.level])).toEqual([
+      ['plenty', '31', 'normal'], ['low', '30', 'warn'], ['empty', '10', 'error'],
+    ]);
   });
 
   it('hatches a used-up window that still has extra credits', () => {
@@ -237,7 +240,7 @@ describe('buildMenubarView', () => {
       windows: [{ kind: 'session', usedPercent: 92, resetsAtMs: NOW + 3 * HOUR + 5 * 60_000, windowMinutes: 300 }],
     });
     const view = buildMenubarView(input([low, codex('beta', 20)]));
-    expect(view.sources.find((cell) => cell.id === 'alpha')).toMatchObject({ when: 'Resets in 3h 5m', whenLevel: 'warn' });
+    expect(view.sources.find((cell) => cell.id === 'alpha')).toMatchObject({ when: 'Resets in 3h 5m', whenLevel: 'error' });
     expect(view.headlineSecondary).toBe('alpha resets in 3h 5m.');
     expect(view.headlineAlert).toBe(true);
   });
@@ -316,7 +319,7 @@ describe('buildUsageWidgetSnapshot', () => {
     const snapshot = buildUsageWidgetSnapshot(view, NOW, (key) => rawMainString(key, 'en'));
     expect(snapshot?.sources.map((s) => [s.id, s.logo, s.value, s.level, s.resetsAtMs])).toEqual([
       ['alpha', 'codex', '70', 'normal', NOW + 3 * DAY],
-      ['beta', 'codex', '5', 'warn', NOW + 3 * DAY],
+      ['beta', 'codex', '5', 'error', NOW + 3 * DAY],
     ]);
     expect(snapshot?.usage.days).toHaveLength(30);
     expect(snapshot?.usage.days.at(-1)).toBe(view.usage.days.at(-1));

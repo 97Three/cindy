@@ -1,7 +1,8 @@
 import SwiftUI
 import WidgetKit
 
-/// The Mac panel's glass tube, without motion: widgets are still snapshots.
+/// The Mac panel's glass tube, without motion: widgets are still snapshots. The liquid is teal
+/// while plenty is left and takes the quota color below 30% (yellow) and 10% (red).
 struct TubeView: View {
   let source: WidgetSource
   let width: CGFloat
@@ -30,7 +31,7 @@ struct TubeView: View {
       VStack(spacing: 0) {
         Spacer(minLength: 0)
         Rectangle()
-          .fill(tint ?? WidgetPalette.liquid)
+          .fill(accented ? WidgetPalette.liquid : (tint ?? WidgetPalette.plenty))
           .frame(height: liquid)
           .widgetAccentable()
       }
@@ -40,9 +41,9 @@ struct TubeView: View {
         .strokeBorder(source.emphasized ? WidgetPalette.ink2 : WidgetPalette.ink4, lineWidth: source.emphasized ? 1 : 0.5)
     }
     .background(alignment: .bottom) {
-      if source.level == "warn" && !accented {
+      if let tint, fraction > 0 {
         Ellipse()
-          .fill(RadialGradient(colors: [WidgetPalette.warn.opacity(0.5), .clear], center: .center, startRadius: 0, endRadius: 18))
+          .fill(RadialGradient(colors: [tint.opacity(0.5), .clear], center: .center, startRadius: 0, endRadius: 18))
           .frame(width: 34, height: 14)
           .blur(radius: 4)
           .offset(y: 7)

@@ -11,6 +11,11 @@
  */
 
 import {
+  QUOTA_CRIT_REMAINING_PERCENT,
+  QUOTA_WARN_REMAINING_PERCENT,
+  quotaLevelFromRemaining,
+} from '@cindy/maker-shared/quota-level';
+import {
   type MenubarColor,
   type MenubarDetail,
   type MenubarDetailAction,
@@ -205,7 +210,6 @@ export interface MenubarBuildInput {
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
-const WARN_REMAINING = 15;
 const SOON_MS = 12 * HOUR_MS;
 const RESTORE_GROUP_MS = 6 * HOUR_MS;
 const RESTORE_HORIZON_MS = 7 * DAY_MS;
@@ -292,10 +296,16 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+/** The shared quota rule (`@cindy/maker-shared/quota-level`) in the panel's level names. */
 function levelOf(remaining: number): MenubarLevel {
-  if (remaining <= 0) return 'error';
-  if (remaining <= WARN_REMAINING) return 'warn';
-  return 'normal';
+  const level = quotaLevelFromRemaining(remaining);
+  return level === 'crit' ? 'error' : level;
+}
+
+/** Share of a balance left, judged like a subscription window; empty is always red. */
+function balanceLevel(source: MenubarBalanceInput): MenubarLevel {
+  if (!(source.available > 0)) return 'error';
+  return source.fullAmount && source.fullAmount > 0 ? levelOf((source.available / source.fullAmount) * 100) : 'normal';
 }
 
 function levelColor(level: MenubarLevel): MenubarColor | null {
@@ -525,7 +535,7 @@ class Builder {
     for (const source of this.visibleSubscriptions()) {
       const { limit, remaining } = this.state(source);
       const atMs = limit?.window.resetsAtMs ?? null;
-      if (remaining === null || remaining > WARN_REMAINING || atMs === null) continue;
+      if (remaining === null || remaining > QUOTA_WARN_REMAINING_PERCENT || atMs === null) continue;
       if (atMs - this.input.nowMs > RESTORE_HORIZON_MS) continue;
       events.push({ atMs, source });
     }
@@ -639,7 +649,7 @@ class Builder {
         value: amount,
         valueUnit: null,
         valueLabel: null,
-        level: source.available > 0 ? 'normal' : 'error',
+        level: balanceLevel(source),
         fill,
         reserve: false,
         when: this.balanceWhen(source, days, roomy),
@@ -800,7 +810,7 @@ class Builder {
       rings: [{ fraction, color: 'ink' }],
       bigValue: this.balanceMoney(source.available, source.currency),
       bigUnit: null,
-      bigColor: source.available > 0 ? null : 'error',
+      bigColor: levelColor(balanceLevel(source)),
       bigCompact: true,
       bigCaption: this.t(quota ? 'detail.quotaCaption' : 'detail.balanceCaption'),
       legend: [],
@@ -1161,7 +1171,7 @@ class Builder {
       const remaining = this.remaining(source);
       if (remaining === null) continue;
       known += 1;
-      if (remaining > WARN_REMAINING) return false;
+      if (remaining > QUOTA_CRIT_REMAINING_PERCENT) return false;
     }
     return known > 0;
   }

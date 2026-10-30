@@ -35,7 +35,12 @@ enum WidgetPalette {
   static let glow = dynamic(rgb(0xEA6B17, 0.09), rgb(0xEA6B17, 0.12))
   static let glow2 = dynamic(UIColor(white: 1, alpha: 0.55), rgb(0xFFF4E4, 0.04))
 
+  /// Old-data notices ("updated 7 hours ago"); not a quota state.
   static let warn = Color(rgb(0xEA6B17))
+  /// Quota states, shared with the Mac panel and the apps (`@cindy/maker-shared/quota-level`):
+  /// plenty left is teal, 30% or less is yellow, 10% or less is red.
+  static let plenty = dynamic(rgb(0x14B8A6), rgb(0x2DD4BF))
+  static let quotaWarn = Color(rgb(0xF3A115))
   static let error = Color(rgb(0xD91F37))
   static let claude = Color(rgb(0xD97757))
   static let codex = Color(rgb(0x7A9DFF))
@@ -65,7 +70,7 @@ enum WidgetPalette {
     case "ink2": return ink2
     case "ink3": return ink3
     case "fill": return fill
-    case "warn": return warn
+    case "warn": return quotaWarn
     case "error": return error
     case "claude": return claude
     case "claude2": return claude2
@@ -78,7 +83,7 @@ enum WidgetPalette {
 
   static func level(_ level: String) -> Color? {
     switch level {
-    case "warn": return warn
+    case "warn": return quotaWarn
     case "error": return error
     default: return nil
     }
