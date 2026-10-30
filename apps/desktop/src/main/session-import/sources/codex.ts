@@ -34,6 +34,8 @@ import {
   type CodexThreadSummary,
   type SqlRow,
 } from '../../maker-host/codex-local-sessions.js';
+import { codexImportedThreadModelProviderId } from '../../maker-host/codex-credential-switch.js';
+import { getCodexProxyAuthInjectionState } from '../../maker-host/codex-proxy-host.js';
 import { stripCompleteIdeOpenedFileBlocks } from '../../maker-host/imported-user-content.js';
 import { writeMigratedTranscript } from '../../session-share/migrationTranscriptWriter.js';
 import { isZstdPath, parseJsonLine, readFirstLine, readLines } from '../lineReader.js';
@@ -425,16 +427,47 @@ export async function copyNativeFile(source: string, target: string): Promise<vo
   await writeMigratedTranscript(openPlain(source), target, null);
 }
 
-async function materialize(session: SourceSession): Promise<NativeMaterialization> {
+/**
+ * 把 Cindy 副本的 state 行改成 Cindy 恢复时的 provider 身份。已经是 Cindy 身份
+ * （cindy_*）的线程由 Cindy 自己切换模型时处理，不在这里改。
+ */
+function retagThreadProvider(dbPath: string | null, threadId: string, modelProvider: string): void {
+  if (!dbPath) return;
+  let db: Database.Database | null = null;
+  try {
+    db = createBetterSqliteDatabase(dbPath);
+    db.pragma('busy_timeout = 5000');
+    const columns = (db.prepare('PRAGMA table_info(threads)').all() as Array<{ name: string }>).map((c) => c.name);
+    if (!columns.includes('model_provider')) return;
+    db.prepare("UPDATE threads SET model_provider = ? WHERE id = ? AND model_provider NOT LIKE 'cindy\\_%' ESCAPE '\\'")
+      .run(modelProvider, threadId);
+  } finally {
+    db?.close();
+  }
+}
+
+async function materialize(session: SourceSession, ctx: ReadContext): Promise<NativeMaterialization> {
   const loc = JSON.parse(session.locator) as CodexLocator;
   const desktopHome = getDesktopCodexHome();
   const desktopDb = findLatestStateDb(desktopHome);
   const existing = desktopDb ? readRawThreadRow(desktopDb, loc.threadId) : null;
   const existingRollout = existing ? str(existing.rollout_path) : '';
+  // 外部 Codex 记录的是它自己的 provider（如 openai），Cindy 按路由的身份恢复，不一致会被拒绝。
+  const modelProvider = codexImportedThreadModelProviderId({
+    providerId: ctx.route?.providerId ?? null,
+    model: ctx.route?.model ?? loc.model ?? '',
+    codexAuthInjection: getCodexProxyAuthInjectionState(),
+  });
   // Cindy 里已经有这个线程（旧版导入后续做过）：保留 Cindy 自己的副本，不用外部原文覆盖。
   if (existingRollout && fs.existsSync(existingRollout) && fs.statSync(existingRollout).size > 0) {
+    retagThreadProvider(desktopDb, loc.threadId, modelProvider);
     return { sdkSessionId: loc.threadId, model: loc.model || undefined, tokensUsed: loc.tokensUsed };
   }
+  const header = parseJsonLine((await readFirstLine(loc.file)) ?? '');
+  const headerPayload = header && isRecord(header.payload) ? header.payload : null;
+  // 分页历史的字节位置归原生线程库管，只改 state 行，不重写文件。
+  const rewriteHeader = !!headerPayload && headerPayload.history_mode !== 'paginated' &&
+    str(headerPayload.model_provider) !== modelProvider && !str(headerPayload.model_provider).startsWith('cindy_');
   const stateRows = await dumpCodexThreadStateRows(loc.threadId, { sqliteHome: loc.home, rolloutPath: loc.file });
   const filename = path.basename(loc.file).replace(/\.zst$/, '');
   const result = await importSharedCodexThread({
@@ -445,13 +478,16 @@ async function materialize(session: SourceSession): Promise<NativeMaterializatio
       threadSpawnEdges: stateRows.threadSpawnEdges,
     },
     rolloutBuffer: null,
-    writeRollout: (target) => copyNativeFile(loc.file, target),
+    writeRollout: (target) => rewriteHeader
+      ? writeMigratedTranscript(openPlain(loc.file), target, { agent: 'codex-provider', modelProvider })
+      : copyNativeFile(loc.file, target),
     rolloutFilename: filename,
     newCwd: session.cwd ?? '',
     title: session.title,
     updatedAt: session.updatedAt,
   });
   if (!result.rolloutPath) throw new Error('Codex rollout could not be placed');
+  retagThreadProvider(findLatestStateDb(desktopHome), loc.threadId, modelProvider);
   // 分页历史的祖先一并放进 Cindy 的 codex-home（保持原相对路径，去掉 .zst）。
   for (const part of await ancestorChain(loc.home, loc.file)) {
     const rel = path.relative(loc.home, part.file).replace(/\.zst$/, '');

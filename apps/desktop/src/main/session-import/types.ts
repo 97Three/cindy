@@ -94,6 +94,8 @@ export interface ReadContext {
   signal?: AbortSignal;
   /** 已读取的原始字节数，用于真实进度。 */
   onBytes?: (bytes: number) => void;
+  /** 原生续做时任务的路由；Codex 按它写入 Cindy 恢复时会用的 provider 身份。 */
+  route?: { providerId: string | null; model: string };
 }
 
 export interface NativeMaterialization {

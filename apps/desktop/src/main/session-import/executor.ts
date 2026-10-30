@@ -19,8 +19,8 @@ import { activeOwnerScopeKey, getActiveDataOwnerPushStamp, ownerScopedUserDataPa
 import { recordPrRefsForImportedMessages } from '../git-context/prRefsStore.js';
 import { getDbClient } from '../localDb/client/current.js';
 import { createLogger } from '../logger.js';
-import { resolveNewTaskDefaultModelRoute } from '../maker-host/model-route-guard-live.js';
-import { getRemoteNewMakerDefaults, getSelectedNewMakerRoute } from '../maker-host/newMakerDefaultsCache.js';
+import { resolveDefaultScheduleRoute, resolveNewTaskDefaultModelRoute } from '../maker-host/model-route-guard-live.js';
+import { getNewMakerModelTuning, getRemoteNewMakerDefaults, getSelectedNewMakerRoute } from '../maker-host/newMakerDefaultsCache.js';
 import { atomicWriteFileSync, readAtomicFileSync } from '../utils/atomicWriteFile.js';
 import { SESSION_IMPORT_PROGRESS_CHANNEL } from '../../shared/sessionImport.js';
 import { normalizeWorkingDirForStorage } from '../../shared/workingDir.js';
@@ -120,31 +120,33 @@ async function pickSessionId(source: string, sourceSessionId: string): Promise<s
 }
 
 /** 目标引擎与模型：原生来源用同名引擎，其它来源用新任务默认引擎；模型按新建任务口径解析。 */
+/**
+ * 导入后的模型：与「新建任务」同一口径，并且只选当前账号真正连接着的来源。
+ * 用户选中的新任务默认正好是这个引擎时优先用它（仍要验证来源可用）；否则按新任务默认解析。
+ */
 async function resolveRoute(native: NativeHarness | undefined): Promise<{
   agentKind: NativeHarness; model: string; providerId: string | null; effort: string; permissionMode: string;
 }> {
-  const selected = getSelectedNewMakerRoute(activeOwnerScopeKey());
+  const owner = activeOwnerScopeKey();
+  const selected = getSelectedNewMakerRoute(owner);
   const selectedKind: NativeHarness | null = selected
     ? selected.harness === 'claude' ? 'cc' : selected.harness === 'codex' ? 'codex' : selected.harness === 'pi' ? 'pi' : null
     : null;
   const agentKind: NativeHarness = native ?? selectedKind ?? 'cc';
   const agent = agentKind === 'cc' ? 'claude-code' : agentKind;
   const draft = getRemoteNewMakerDefaults(agent);
+  let route: { model: string; providerId: string | null } | null = null;
   if (selected && selectedKind === agentKind && selected.model) {
-    return {
-      agentKind,
-      model: selected.model,
-      providerId: selected.providerId ?? null,
-      effort: selected.effort ?? draft.effort ?? 'high',
-      permissionMode: draft.permissionMode ?? 'auto',
-    };
+    route = await resolveDefaultScheduleRoute(agent, selected.providerId ?? null, selected.model).catch(() => null);
   }
-  const route = await resolveNewTaskDefaultModelRoute(agent).catch(() => null);
+  if (!route) route = await resolveNewTaskDefaultModelRoute(agent).catch(() => null);
+  const model = route?.model ?? draft.model ?? '';
+  const tuning = route?.providerId ? getNewMakerModelTuning(owner, agent, route.providerId, model) : {};
   return {
     agentKind,
-    model: draft.model ?? route?.model ?? '',
-    providerId: draft.model ? (draft.providerId ?? null) : (route?.providerId ?? null),
-    effort: draft.effort ?? 'high',
+    model,
+    providerId: route ? route.providerId : (draft.providerId ?? null),
+    effort: tuning.effort ?? (selected && selectedKind === agentKind ? selected.effort : undefined) ?? draft.effort ?? 'high',
     permissionMode: draft.permissionMode ?? 'auto',
   };
 }
@@ -216,7 +218,11 @@ async function importOne(job: Job, key: string, source: SourceSession): Promise<
     if (adapter.native && adapter.materialize) {
       item.step = 'copy';
       emit(job);
-      materialized = await adapter.materialize(source, { cindySessionId: sessionId, signal });
+      materialized = await adapter.materialize(source, {
+        cindySessionId: sessionId,
+        signal,
+        route: { providerId: route.providerId, model: route.model },
+      });
     }
 
     item.step = 'messages';
