@@ -9,8 +9,6 @@ export type DbTxName =
   | 'pluginUsage.execute'
   | 'sessionImport.execute'
   | 'taskTags.execute'
-  | 'codex.importMessages'
-  | 'claude.importMessages'
   | 'rewind.commit'
   | 'session.treeRehydrate'
   | 'fork.session'
@@ -94,39 +92,6 @@ export type DbTxName =
   | 'wechatUnbindCleanup'
   | 'skillUsage.applyMutation'
   | 'session.importShare';
-
-export interface CodexImportMessagesArgs {
-  sessionId: string;
-  importClientIdPrefix: string;
-  sdkSessionId: string;
-  model: string;
-  rows: Array<{
-    lineNo: number;
-    role: 'user' | 'assistant';
-    text: string;
-    content: unknown;
-    createdAt: number;
-    /** Rollout timestamp without the line-number ordering offset. */
-    sourceCreatedAt?: number;
-    phase?: 'commentary' | 'final_answer';
-    agentMessageId?: string;
-  }>;
-}
-
-export interface ClaudeImportMessagesArgs {
-  sessionId: string;
-  importClientIdPrefix: string;
-  sdkSessionId: string;
-  rows: Array<{
-    lineNo: number;
-    partIndex: number;
-    role: string;
-    content: unknown;
-    toolUseId: string | null;
-    agentMeta: Record<string, unknown> | null;
-    createdAt: number;
-  }>;
-}
 
 export interface RewindCommitArgs {
   sessionId: string;
@@ -1407,8 +1372,6 @@ export interface MediaSpendArgs {
 export type DbTxArgsByName = {
   'usage.recordMediaSpend': MediaSpendArgs;
   'authorization.readProjection': { sessionId: string; leadId: string };
-  'codex.importMessages': CodexImportMessagesArgs;
-  'claude.importMessages': ClaudeImportMessagesArgs;
   'rewind.commit': RewindCommitArgs;
   'session.treeRehydrate': SessionTreeRehydrateArgs;
   'fork.session': ForkSessionArgs;
@@ -1506,8 +1469,6 @@ export type DbTxResultByName = {
     approximate: number;
   } | null;
   'authorization.readProjection': import('../../autoReviewProjection.js').StoredAutoReviewProjection;
-  'codex.importMessages': { changed: number; hiddenClientIds?: string[]; updatedLocalIds?: string[] };
-  'claude.importMessages': { changed: number };
   'rewind.commit': undefined;
   'session.treeRehydrate': { messageCount: number; hiddenClientIds: string[] };
   'fork.session': { messageCount: number };

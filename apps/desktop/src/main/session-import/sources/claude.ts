@@ -233,13 +233,14 @@ async function headSummary(file: string): Promise<{ title: string; cwd: string; 
     if (lineCwd) cwd = lineCwd;
     const type = str(obj.type);
     if (type !== 'user' && type !== 'assistant') continue;
-    saw = true;
+    // 只有本地命令回显（/model、/exit 等）的记录不算对话，不列出。
+    if (!saw && parseClaudeLine(obj, lines, '').length > 0) saw = true;
     if (type === 'user' && !title && isRecord(obj.message)) {
       const text = claudeUserText(obj.message.content).trim();
       if (text && isInternalReviewText(text)) return { title: '', cwd, internal: true, ok: true };
       if (text) title = makeTitle(text, '');
     }
-    if (title && cwd) break;
+    if (title && cwd && saw) break;
   }
   return { title, cwd, internal: false, ok: saw };
 }

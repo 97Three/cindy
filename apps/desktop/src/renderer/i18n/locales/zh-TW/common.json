@@ -3143,7 +3143,7 @@
         "hint": "勾選的會顯示在列表裡",
         "cindy": "Cindy 自己執行過的任務",
         "temp": "暫存資料夾裡的任務",
-        "internal": "Agent 內部會話（自動審查、子 Agent）",
+        "internal": "工具內部任務（自動審查、子 Agent）",
         "imported": "已經匯入過的任務",
         "sourceError": "{{name}} 的記錄讀不出來"
       },

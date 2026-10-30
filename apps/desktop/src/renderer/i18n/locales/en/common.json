@@ -3174,7 +3174,7 @@
         "hint": "Checked items appear in the list",
         "cindy": "Sessions Cindy ran itself",
         "temp": "Sessions in temporary folders",
-        "internal": "Internal agent sessions (reviews, subagents)",
+        "internal": "Internal sessions (reviews, subagents)",
         "imported": "Already imported",
         "sourceError": "Couldn’t read {{name}} history"
       },

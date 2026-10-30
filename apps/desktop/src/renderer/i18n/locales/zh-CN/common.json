@@ -3143,7 +3143,7 @@
         "hint": "勾选的会显示在列表里",
         "cindy": "Cindy 自己运行过的任务",
         "temp": "临时文件夹里的任务",
-        "internal": "Agent 内部会话（自动审查、子 Agent）",
+        "internal": "工具内部任务（自动审查、子 Agent）",
         "imported": "已经导入过的任务",
         "sourceError": "{{name}} 的记录读不出来"
       },

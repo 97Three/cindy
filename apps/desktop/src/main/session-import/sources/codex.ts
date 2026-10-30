@@ -136,13 +136,15 @@ function readThreadRows(dbPath: string): SqlRow[] {
 
 /** 没有状态库行的 rollout：从 session_meta 与前若干行补出摘要。 */
 async function summaryFromRollout(file: string, mtimeMs: number): Promise<{
-  threadId: string; cwd: string; createdAt: number; title: string; internal: boolean;
+  threadId: string; cwd: string; createdAt: number; title: string; internal: boolean; conversation: boolean;
 } | null> {
   let threadId = '';
   let cwd = '';
   let createdAt = 0;
   let title = '';
   let internal = false;
+  // 只有语音/实时事件、没有任何对话内容的记录不列出；分页历史的对话在祖先里。
+  let conversation = false;
   let n = 0;
   for await (const line of readLines(file, { maxBytes: 512 * 1024 })) {
     n += 1;
@@ -153,19 +155,23 @@ async function summaryFromRollout(file: string, mtimeMs: number): Promise<{
       threadId = threadId || str(payload.id);
       cwd = cwd || str(payload.cwd);
       createdAt = createdAt || toMs(payload.timestamp) || toMs(obj.timestamp);
+      if (payload.history_mode === 'paginated' && isRecord(payload.history_base)) conversation = true;
       if (isInternalCodexThread({
         thread_source: payload.thread_source,
         source: JSON.stringify(payload.source ?? ''),
         originator: str(payload.originator),
       })) internal = true;
-    } else if (obj.type === 'response_item' && payload.type === 'message' && payload.role === 'user' && !title) {
-      const text = blocksText(payload.content).trim();
-      if (text && !isInjectedContextText(text)) title = makeTitle(text, '');
+    } else if (obj.type === 'response_item') {
+      if (parseCodexRolloutLine(obj, String(n), threadId).length > 0) conversation = true;
+      if (payload.type === 'message' && payload.role === 'user' && !title) {
+        const text = blocksText(payload.content).trim();
+        if (text && !isInjectedContextText(text)) title = makeTitle(text, '');
+      }
     }
-    if ((threadId && title) || n > 400) break;
+    if ((threadId && title && conversation) || n > 400) break;
   }
   if (!threadId) return null;
-  return { threadId: threadId.toLowerCase(), cwd, createdAt: createdAt || mtimeMs, title, internal };
+  return { threadId: threadId.toLowerCase(), cwd, createdAt: createdAt || mtimeMs, title, internal, conversation };
 }
 
 async function list(): Promise<SourceListResult> {
@@ -235,6 +241,11 @@ async function list(): Promise<SourceListResult> {
         unreadableCount += 1;
         continue;
       }
+      // 状态库里没有任何提问的线程（例如只开过语音）：确认记录里也没有对话再跳过。
+      if (!str(row.first_user_message).trim() && !str(row.title).trim()) {
+        const summary = await summaryFromRollout(file.file, Date.now()).catch(() => null);
+        if (summary && !summary.conversation) continue;
+      }
       add(thread, file);
     }
     // 没有状态库行的 rollout（旧版 Codex、或状态库丢失）。
@@ -248,6 +259,7 @@ async function list(): Promise<SourceListResult> {
         if (!internalIds.has(id)) { internalIds.add(id); internalCount += 1; }
         continue;
       }
+      if (!summary.conversation) continue;
       const indexEntry = index.get(id);
       add({
         threadId: summary.threadId,
