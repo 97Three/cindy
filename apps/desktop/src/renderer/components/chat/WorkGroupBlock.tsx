@@ -374,11 +374,12 @@ function TeammateProcessBlock({ blockId, childItems, isStreaming = false, journa
   const loaderKey = flattened.loaders.map(loader => `${loader.owner}:${loader.key}`).join('|');
   useLayoutEffect(() => {
     const loaders = loadersRef.current;
-    loaders.forEach(loader => {
-      if (loader.setVisible) loader.setVisible(expanded, false);
-      else if (expanded && !loader.expanded) loader.toggle();
+    const releases = loaders.map(loader => {
+      if (loader.setVisible) return loader.setVisible(expanded, false);
+      if (expanded && !loader.expanded) loader.toggle();
+      return undefined;
     });
-    return () => loaders.forEach(loader => loader.setVisible?.(false, false));
+    return () => releases.forEach(release => release?.());
   }, [loaderKey, expanded]);
   const segments = useMemo(() => segmentTeammateWork(flattened.leaves, child => child.kind === 'tools' || child.kind === 'thinking'), [flattened.leaves]);
   const inspect = () => { memory.setExpanded(true); manual.setExpanded(true); };
@@ -474,11 +475,11 @@ function ActivityWorkGroupBlock({
   // Register before paint. Switching back to a running task remounts this group;
   // a passive effect can lag 50–300ms behind the stream's mount, showing a
   // preview-less header until the cached tail reappears and the pinned list jumps.
-  useLayoutEffect(() => {
-    const current = deferredRef.current;
-    current?.setVisible?.(expanded, !compact && isStreaming && !lineMode);
-    return () => current?.setVisible?.(false, false);
-  }, [deferred?.owner, deferred?.key, expanded, isStreaming, compact, lineMode]);
+  // The read tail regroups this item, so its own isStreaming must not drive the read.
+  useLayoutEffect(
+    () => deferredRef.current?.setVisible?.(expanded, !compact),
+    [deferred?.owner, deferred?.key, deferred?.livePreview, expanded, compact],
+  );
   const [elapsedMs, setElapsedMs] = useState(0);
 
   useEffect(() => {

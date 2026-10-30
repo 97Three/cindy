@@ -4789,11 +4789,12 @@ function TeammateProcessContents({ item, actions }: { item: MobileWorkGroupItem;
   const loaderKey = flattened.loaders.map(loader => `${loader.owner}:${loader.key}`).join('|');
   useLayoutEffect(() => {
     const loaders = loadersRef.current;
-    loaders.forEach(loader => {
-      if (loader.setVisible) loader.setVisible(true, false);
-      else if (!loader.expanded) loader.toggle();
+    const releases = loaders.map(loader => {
+      if (loader.setVisible) return loader.setVisible(true, false);
+      if (!loader.expanded) loader.toggle();
+      return undefined;
     });
-    return () => loaders.forEach(loader => loader.setVisible?.(false, false));
+    return () => releases.forEach(release => release?.());
   }, [loaderKey]);
   const childActions = useMemo(() => ({ ...actions, companionAvatar: undefined, intermediateProcess: true }), [actions]);
   const segments = useMemo(() => segmentTeammateWork(flattened.leaves, child => child.type === 'thinking' || child.type === 'tool_group'), [flattened.leaves]);
@@ -4847,11 +4848,11 @@ function WorkGroupCard({
   const lineMode = lines !== undefined;
   const deferredRef = useRef(item.deferred);
   deferredRef.current = item.deferred;
-  useLayoutEffect(() => {
-    const current = deferredRef.current;
-    current?.setVisible?.(expanded, isStreaming && !lineMode);
-    return () => current?.setVisible?.(false, false);
-  }, [item.deferred?.owner, item.deferred?.key, expanded, isStreaming, lineMode]);
+  // The read tail regroups this item, so its own isStreaming must not drive the read.
+  useLayoutEffect(
+    () => deferredRef.current?.setVisible?.(expanded, true),
+    [item.deferred?.owner, item.deferred?.key, item.deferred?.livePreview, expanded],
+  );
   const layout = useMemo(() => buildMessageHierarchyLayout({
     screenWidth: actions.screenWidth,
     summaryCount: header.summaryCount,
@@ -5142,10 +5143,7 @@ function SubagentCard({
   const styles = useThemedStyles(makeStyles);
   const [expanded, toggleExpanded] = useFoldableExpandedState(item.key, false);
   const deferred = item.deferred;
-  useEffect(() => {
-    deferred?.setVisible?.(expanded, false);
-    return () => deferred?.setVisible?.(false, false);
-  }, [deferred?.owner, deferred?.key, expanded]);
+  useEffect(() => deferred?.setVisible?.(expanded, false), [deferred?.owner, deferred?.key, expanded]);
   const title = item.header.subagentType
     ? t('message.renderer.subagentTyped', { type: item.header.subagentType })
     : t('message.renderer.subagent');
