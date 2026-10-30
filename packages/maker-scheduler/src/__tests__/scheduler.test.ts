@@ -36,9 +36,11 @@ class InMemoryStorage implements ScheduleStorage {
     this.schedules.set(schedule.id, { ...schedule });
     return { ...schedule };
   }
-  async update(id: string, patch: Partial<Schedule>): Promise<Schedule | null> {
+  async update(id: string, patch: Partial<Schedule>, expected?: Schedule): Promise<Schedule | null> {
     const ex = this.schedules.get(id);
     if (!ex) return null;
+    if (expected && (['lastFiredAt', 'nextFireAt', 'status', 'recurring', 'manual',
+      'cronExpr', 'timezone', 'intervalMs'] as const).some((key) => ex[key] !== expected[key])) return null;
     const merged: Schedule = { ...ex, ...patch };
     this.schedules.set(id, merged);
     return { ...merged };
@@ -308,9 +310,9 @@ it.each([
 // Review discussion_r4418701657: unlike the isolated restart cases above,
 // a newer automatic fire finishes while recovery awaits its runner/host lock.
 // Public tick + resume entries must preserve that newer fire's schedule fields.
-it.each([
-  [false, false], [false, true], [true, false], [true, true],
-] as const)('keeps newer completion scheduling during recovery (recurring=%s, failed=%s)', async (recurring, failed) => {
+it.each([false, true].flatMap((recurring) => [false, true].flatMap((failed) =>
+  ['before-read', 'after-read'].map((timing) => ({ recurring, failed, timing })),
+)))('keeps newer completion scheduling during recovery ($recurring, $failed, $timing)', async ({ recurring, failed, timing }) => {
   let finishNewer!: () => void;
   let finishRecovery!: () => void;
   const h = makeHarness({ runnerImpl: async (_schedule, ctx) => {
@@ -335,13 +337,23 @@ it.each([
   await vi.waitFor(() => expect(finishNewer).toBeTypeOf('function'));
   const recovered = await h.scheduler.resumeInterruptedRun('original-task');
   await vi.waitFor(() => expect(finishRecovery).toBeTypeOf('function'));
-  finishNewer();
-  await newer;
-  const newerSchedule = (await h.storage.get(schedule.id))!;
-  expect(newerSchedule.lastFiredAt).toBeGreaterThan(oldRun.firedAt);
+  let newerSchedule!: Schedule;
+  const read = h.storage.get.bind(h.storage);
+  const completeNewer = async () => {
+    finishNewer();
+    await newer;
+    newerSchedule = (await read(schedule.id))!;
+  };
+  if (timing === 'before-read') await completeNewer();
+  else vi.spyOn(h.storage, 'get').mockImplementationOnce(async (id) => {
+    const stale = await read(id);
+    await completeNewer();
+    return stale;
+  });
   h.clock.advance(30_000);
   finishRecovery();
   await recovered!.completion;
+  expect(newerSchedule.lastFiredAt).toBeGreaterThan(oldRun.firedAt);
   expect(await h.storage.get(schedule.id)).toMatchObject({
     lastFiredAt: newerSchedule.lastFiredAt,
     nextFireAt: newerSchedule.nextFireAt,

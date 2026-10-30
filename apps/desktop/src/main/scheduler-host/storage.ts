@@ -456,18 +456,30 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     return inserted;
   }
 
-  async update(id: string, patch: Partial<Schedule>): Promise<Schedule | null> {
+  async update(id: string, patch: Partial<Schedule>, expected?: Schedule): Promise<Schedule | null> {
     const db = this.getDb();
     const setObj = schedulePatchToRow(patch);
+    const where = and(
+      eq(schedules.id, id),
+      expected ? and(
+        sql`${schedules.lastFiredAt} IS ${expected.lastFiredAt ?? null}`,
+        sql`${schedules.nextFireAt} IS ${expected.nextFireAt ?? null}`,
+        eq(schedules.status, expected.status),
+        eq(schedules.recurring, expected.recurring),
+        eq(schedules.manual, expected.manual ?? false),
+        eq(schedules.cronExpr, expected.cronExpr),
+        eq(schedules.timezone, expected.timezone),
+        sql`${schedules.intervalMs} IS ${expected.intervalMs ?? null}`,
+      ) : undefined,
+    );
     if (Object.keys(setObj).length === 0) {
-      // patch 为空：不发 UPDATE，但仍然返回当前 row（或 null）以保持语义一致
-      return this.get(id);
+      const [current] = await db.select().from(schedules).where(where).limit(1);
+      return current ? scheduleToCamel(current) : null;
     }
-    await db.update(schedules).set(setObj).where(eq(schedules.id, id));
-    // drizzle update 不会 throw "not found"——主动 SELECT 验证
-    const updated = await this.get(id);
-    if (updated) this.bumpSidebarIndexCache();
-    return updated;
+    const [updated] = await db.update(schedules).set(setObj).where(where).returning();
+    if (!updated) return null;
+    this.bumpSidebarIndexCache();
+    return scheduleToCamel(updated);
   }
 
   async delete(id: string): Promise<void> {

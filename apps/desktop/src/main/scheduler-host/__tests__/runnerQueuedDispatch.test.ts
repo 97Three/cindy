@@ -523,12 +523,12 @@ describe('MakerScheduleRunner queued dispatch (busy bound session)', () => {
   // Review P1 / unit: the real IPC Continue input starts with planMode=false.
   // Connect that handler and coordinator to the real runner so the accepted
   // permission gate, rather than a mocked enqueue, decides vendor dispatch.
-  it('continues a saved plan-mode task through the input handler and real runner', async () => {
+  it.each([false, true])('continues a saved plan-mode task through the input handler and real runner (busy=%s)', async (busy) => {
     const h = createSessionHarness(async () => ({ accepted: true }));
     const planState = { enabled: true, generation: 0 };
     Object.defineProperty(h.session, 'stablePlanModeState', { value: planState });
     mocks.getSessionFsSnapshot.mockResolvedValue({ permissionMode: 'ask', planModeEnabled: true });
-    const queue = createQueueHarness({ busy: false });
+    const queue = createQueueHarness({ busy });
     const { runner } = createRunnerHarness(h.session, queue.deps);
     const ctx = { ...createFireContext(), resumeSessionId: SESSION_ID };
     const vendorPlans: boolean[] = [];

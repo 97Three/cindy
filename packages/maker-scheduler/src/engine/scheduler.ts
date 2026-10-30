@@ -1030,49 +1030,29 @@ export class Scheduler extends EventEmitter {
     // Decide recovery ownership from this same fresh row, after runner/lock
     // waits. runNow records its fire before dispatch; automatic fire records
     // it on completion. A recorded or newer fire retains its schedule slot.
-    if (source === 'run-now' || (source === 'recovery' &&
-      (current.manual || (current.lastFiredAt !== undefined && current.lastFiredAt >= firedAt)))) {
-      const updated = await this.storage.update(schedule.id, { lastFinishedAt: finishedAt });
-      if (updated && updated.status === 'active') {
-        this.activeSchedules.set(updated.id, updated);
-      }
-      return;
-    }
-    if (current.recurring) {
-      // intervalMs 模式：finishedAt + N（时间已经走到 finishedAt，不需要再 max(now,...)）。
-      // cron 模式：保持原行为，从 finishedAt 找下一个壁钟槽位。
-      const next =
-        current.intervalMs !== undefined
+    const ownsSchedule = source === 'automatic' || (source === 'recovery' &&
+      !current.manual && (current.lastFiredAt === undefined || current.lastFiredAt < firedAt));
+    const patch: Partial<Schedule> = { lastFinishedAt: finishedAt };
+    if (ownsSchedule) {
+      patch.lastFiredAt = firedAt;
+      if (current.recurring) {
+        patch.nextFireAt = current.intervalMs !== undefined
           ? finishedAt + current.intervalMs
           : nextCronOrMonthlyFire(current.cronExpr, finishedAt, current.timezone);
-      const updated = await this.storage.update(schedule.id, {
-        lastFiredAt: firedAt,
-        lastFinishedAt: finishedAt,
-        nextFireAt: next,
-      });
-      if (updated && updated.status === 'active') {
-        this.activeSchedules.set(updated.id, updated);
+      } else if (current.status !== 'paused') {
+        patch.status = 'expired';
+        patch.nextFireAt = undefined;
       }
-    } else {
-      // 豁免调用方 run 自暂停场景：run 完成后重读行可能已是 'paused'（调用方在
-      // run 内调 schedule_pause 并豁免自身 → pause() 写 'paused' → run 自然结束）。
-      // 不覆盖 'paused'，只补 timing 字段；行已删（delete 豁免场景）storage.update
-      // 是 no-op，直接写 'expired' 也安全。
-      if (current.status === 'paused') {
-        await this.storage.update(schedule.id, {
-          lastFiredAt: firedAt,
-          lastFinishedAt: finishedAt,
-        });
-      } else {
-        await this.storage.update(schedule.id, {
-          lastFiredAt: firedAt,
-          lastFinishedAt: finishedAt,
-          status: 'expired',
-          nextFireAt: undefined,
-        });
-      }
-      this.activeSchedules.delete(schedule.id);
     }
+    // Recovery may race another process after the read. Match the scheduling
+    // snapshot inside UPDATE; losing ownership only updates completion time.
+    const expected = source === 'recovery' && ownsSchedule ? current : undefined;
+    let updated = await this.storage.update(schedule.id, patch, expected);
+    if (!updated && expected) {
+      updated = await this.storage.update(schedule.id, { lastFinishedAt: finishedAt });
+    }
+    if (updated?.status === 'active') this.activeSchedules.set(updated.id, updated);
+    else this.activeSchedules.delete(schedule.id);
   }
 
   // Force-fire a schedule now.

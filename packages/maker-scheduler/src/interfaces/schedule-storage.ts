@@ -5,7 +5,10 @@ export interface ScheduleStorage {
   listActive(): Promise<Schedule[]>;
   get(id: string): Promise<Schedule | null>;
   insert(schedule: Schedule): Promise<Schedule>;
-  update(id: string, patch: Partial<Schedule>): Promise<Schedule | null>;
+  /** With expected, atomically match the snapshot's timing and scheduling
+   * fields (lastFiredAt, nextFireAt, status, recurring, manual, cronExpr,
+   * timezone, intervalMs); return null on mismatch without applying the patch. */
+  update(id: string, patch: Partial<Schedule>, expected?: Schedule): Promise<Schedule | null>;
   delete(id: string): Promise<void>;
 
   /**
