@@ -2269,7 +2269,7 @@
         "title": "关闭 Cindy",
         "message": "关闭主窗口时要执行什么操作？",
         "detail": "收起到系统托盘后，任务会继续运行；右键托盘图标可以退出。你可以稍后在设置中修改。",
-        "linuxDetail": "最小化窗口后，任务会继续运行；你可以从任务栏或窗口概览恢复 Cindy，也可以稍后在设置中修改。"
+        "linuxDetail": "收起窗口后，任务会继续运行；再次打开 Cindy 即可恢复窗口，也可以稍后在设置中修改。"
       },
       "trayMenu": {
         "show": "打开 Cindy",
@@ -7511,8 +7511,8 @@
         "updated": "更新",
         "unchanged": "其余 {{count}} 项权限不变",
         "noChange": "权限无变化。",
-        "pick": "可请求你选择一个文件夹交给它",
-        "pickDetail": "它发起请求时，Cindy 会弹出系统的选择文件夹窗口；选哪个、给不给，都由你亲手决定，取消则它什么都拿不到。",
+        "pick": "可请求你选择文件或文件夹交给它",
+        "pickDetail": "它发起请求时，Cindy 会弹出系统选择窗口；选哪个、给不给，都由你亲手决定，取消则它什么都拿不到。",
         "workspace": "可请求为项目文件夹在侧边栏创建任务入口",
         "workspaceDetail": "它发起请求时，由你亲手选择文件夹，或在确认卡上看到完整路径后再决定；它正在处理你发起的调用时，当前任务工作目录内的子文件夹可直接使用，不再单独确认。文件夹已有任务时直接复用，不重复创建。创建的只是空任务，不会自动开始运行。",
         "sessionContext": "可获知当前任务正在使用的项目文件夹位置",
@@ -7526,7 +7526,11 @@
         "nodeChildSpawnDetail": "只能启动它自己包里申报过的 JS 文件(与主程序同样的本机权限)，不能执行任意命令；插件停用或退出时子进程一并关闭。",
         "skill": "为 AI 助手添加技能「{{name}}」",
         "skillDetail": "技能是一份指令文件，AI 会把它当作自己的指令加载执行，拥有你的全部权限，对 Claude Code 与 Codex、所有项目都生效——不受本插件沙箱约束。插件启用期间持续可用，停用或卸载即移除；仅对某个文件夹关闭本插件不会隐藏它。此处无法预览技能全文——请只安装你信任的插件。",
-        "routineEvents": "例行任务事件"
+        "routineEvents": "例行任务事件",
+        "mcpUi": "可在对话中显示交互页面",
+        "mcpUiDomains": "页面可连接域名：{{domains}}",
+        "mcpAppOnly": "仅页面可用",
+        "uiPageAccess": "页面：{{pages}}；域名：{{domains}}；页面可调用的工具：{{tools}}"
       },
       "connections": {
         "confirmTitle": "添加连接地址",
@@ -8099,6 +8103,14 @@
         "viewPendingVersion": "查看正在审核的版本",
         "submitFailed": "提交失败",
         "viewDetails": "查看详情"
+      },
+      "fileTransfer": {
+        "reading": "正在读取文件",
+        "uploading": "正在上传",
+        "saving": "正在保存文件",
+        "importing": "正在导入文件",
+        "finished": "文件处理结束",
+        "importFinished": "文件导入结束"
       }
     },
     "mcp": {
@@ -12472,6 +12484,13 @@
         "busy": "仓库正忙，请稍后重试",
         "changed": "检出的分支已变化，请重试"
       }
+    },
+    "pluginUi": {
+      "title": "插件「{{name}}」新增了交互页面，需要你确认后才能使用",
+      "enable": "查看并启用",
+      "later": "以后再说",
+      "ready": "交互页面已启用。下次调用插件工具时即可显示。",
+      "updateHost": "请先更新执行电脑上的 Cindy，才能在这里确认交互页面。"
     }
   },
   "onboarding": {
@@ -17299,6 +17318,18 @@
     "compression": "用于精简冗长内容。"
   },
   "routines": {
+    "deliveryLabel": "最终送达",
+    "deliveryDirect": "直接显示在伙伴对话里",
+    "deliveryProcess": "交给伙伴处理后回复",
+    "deliveryIm": "发送到消息机器人",
+    "deliveryNone": "只保留在执行任务里",
+    "deliveryHint": "默认直接显示结果，不额外调用模型。开启静默检查后，无事时不送达。",
+    "deliveryRecipient": "接收位置",
+    "deliveryUnavailable": "当前接收位置不可用",
+    "deliveryNoRecipients": "请先连接消息机器人，并与它聊过一次，再重新打开此设置。",
+    "deliveryFailed": "已完成，送达失败",
+    "deliveryFailedHint": "执行结果已保留。请检查送达设置；不要为了补发而重新执行任务。",
+    "deliveryDelivered": "结果已送达",
     "onEvent": "事件：{{source}} · {{event}}",
     "triggerDetails": "查看触发条件（{{count}} 项，满足任一项即运行）",
     "noTriggers": "尚未设置触发条件",
@@ -18446,7 +18477,18 @@
     "cardTitle": "{{title}} · $t(mcpApps.appName)",
     "messageSource": "由 $t(mcpApps.appName)「{{name}}」发送",
     "serverId": "MCP 服务器 ID：{{id}}",
-    "exitFullscreen": "退出全屏"
+    "exitFullscreen": "退出全屏",
+    "pluginTrust": {
+      "unverified": "未验证",
+      "cindy-official": "Cindy 官方",
+      "reviewed": "已审核",
+      "verified-publisher": "发布者已验证"
+    },
+    "pluginRevoked": "插件已停用或发生变化，此页面已失效",
+    "pluginCspRejected": "页面申请了未声明的域名，已拒绝加载",
+    "filesOnExecutionComputer": "文件内容请在执行电脑查看",
+    "awaitingApproval": "等待你确认",
+    "pendingApprovals": "{{count}} 个待确认"
   },
   "richAnswer": {
     "send": "发送消息",

@@ -1157,6 +1157,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     runNow: (botId: string, id: string) => ipcRenderer.invoke('routines:run-now', botId, id),
     history: (botId: string, id: string) => ipcRenderer.invoke('routines:history', botId, id),
     sources: () => ipcRenderer.invoke('routines:sources'),
+    deliveryTargets: (botId: string) => ipcRenderer.invoke('routines:delivery-targets', botId),
     nightlyLearning: {
       get: (botId: string): Promise<import('../shared/botNightlyLearning').NightlyLearningView> =>
         ipcRenderer.invoke('routines:nightly-learning:get', botId),
@@ -1452,6 +1453,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('ghosts:acknowledge-retirement', id),
     setEnabled: (id: string, enabled: boolean, expectedInstalledApproval?: string): Promise<{ ok: true }> =>
       ipcRenderer.invoke('ghosts:set-enabled', id, enabled, expectedInstalledApproval),
+    uiPrompts: (): Promise<Array<{id: string; name: string; version: string}>> => ipcRenderer.invoke('ghosts:ui-prompts'),
+    deferUiPrompt: (id: string, version: string): Promise<void> => ipcRenderer.invoke('ghosts:defer-ui-prompt', id, version),
+    requestUiApproval: (id: string): Promise<{ granted: boolean }> => ipcRenderer.invoke('ghosts:request-ui-approval', id),
     requestTaskApproval: (id: string): Promise<{ granted: boolean }> =>
       ipcRenderer.invoke('ghosts:request-task-approval', id),
     /** 详情页「后台任务」:本插件转入后台的任务(仅本机窗口,不进 device-link)。 */
