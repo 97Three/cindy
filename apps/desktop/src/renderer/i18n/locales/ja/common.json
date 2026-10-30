@@ -3840,7 +3840,7 @@
           "contextLimitOverWindow": "プロバイダーが宣言した上限を超えています。リクエストが失敗する可能性があります。",
           "restoreDefault": "既定に戻す",
           "engines": "エンジン対応",
-          "enginesHint": "互換モードはリクエストを変換します。初期状態ではオフですが、必要に応じて有効にできます。",
+          "enginesHint": "互換モードでは Cindy がローカルでリクエストを変換します。初期状態ではオフですが、必要に応じて有効にできます。",
           "engineUnsupported": "非対応",
           "engineNotConfigured": "未設定",
           "engineNoFast": "Fast なし",
@@ -3879,10 +3879,10 @@
           "protocol": {
             "reference": "ネイティブAPI",
             "compatibility": "互換モード",
-            "compatibilityHint": "互換モードでは動作が不安定になったり、一部の機能が正常に動作しない場合があります。経験のあるユーザー向けです。",
-            "matching": "ネイティブ対応",
+            "compatibilityHint": "Cindy がローカルでリクエストを変換します。動作が不安定になったり、一部の機能が正常に動作しない場合があります。経験のあるユーザー向けです。",
             "unknown": "プロトコル未確認",
-            "automatic": "自動選択"
+            "automatic": "自動選択",
+            "upstream": "上流 API"
           },
           "lifecycle": {
             "alpha": "試用版",
