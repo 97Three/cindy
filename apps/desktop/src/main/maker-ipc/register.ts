@@ -1,3 +1,4 @@
+import { createTaskCompletionDeliveryHost, type TaskCompletionDeliveryHost } from './taskCompletionDeliveryHost.js';
 import { setRoutineResultDispatch } from '../routines/deliveryDispatch.js';
 import { McpSetupBridge } from './mcpSetupBridge.js';
 import type { McpSetupProposal, McpSetupRequest } from '../../shared/mcpSetup.js';
@@ -3079,6 +3080,21 @@ interface EnableOrcaOptions {
 
 let orcaCollabServiceHolder: OrcaCollabService | null = null;
 let botDelegationServiceHolder: BotDelegationService | null = null;
+let taskCompletionDeliveryHolder: TaskCompletionDeliveryHost | null = null;
+let taskCompletionDeliveryScope: string | null = null;
+function taskCompletionDeliveryForOwner(): TaskCompletionDeliveryHost | null {
+  if (isAppSessionBoundaryPending()) return null;
+  const scope = activeOwnerScopeKey();
+  if (!taskCompletionDeliveryHolder || taskCompletionDeliveryScope !== scope) {
+    taskCompletionDeliveryHolder?.dispose();
+    taskCompletionDeliveryScope = scope;
+    taskCompletionDeliveryHolder = createTaskCompletionDeliveryHost(input => botGroupChatServiceHolder
+      ? botGroupChatServiceHolder.postCompanionTaskMessage(input)
+      : Promise.resolve({ ok: false, errorCode: 'GROUP_CHANNEL_UNAVAILABLE', retryable: true }));
+    void taskCompletionDeliveryHolder.restore().catch(() => log.warn('Task delivery restore deferred'));
+  }
+  return taskCompletionDeliveryHolder;
+}
 let botDirectMessageServiceHolder: BotDirectMessageService | null = null;
 let botGroupChatServiceHolder: BotGroupChatService | null = null;
 /**
@@ -3822,8 +3838,13 @@ configureBotAutonomyHost({
     const session = getMakerIfReady()?.getSession(id);
     return session ? { instanceId: session.instanceId, generation: session.getTurnGeneration() } : null;
   },
-  isCompletionHandledByTeammate: (sessionId, botId, execution) => botDelegationServiceHolder
-    ?.isCompletionHandledByTeammate(sessionId, { pendingForBotId: botId, execution }) ?? Promise.resolve(null),
+  hasTaskDeliveryOrigin: id => taskCompletionDeliveryForOwner()?.hasOrigin(id) ?? Promise.resolve(false),
+  restoreTaskDeliveries: () => { taskCompletionDeliveryForOwner(); },
+  noteTaskDelivery: (id, execution, final) => getMakerIfReady()?.getSession(id)?.isTurnRunning() === true
+    && (taskCompletionDeliveryForOwner()?.report(id, execution, final) ?? false),
+  isCompletionHandledByTeammate: async (sessionId, botId, execution) =>
+    await taskCompletionDeliveryForOwner()?.handles(sessionId) || (await botDelegationServiceHolder
+    ?.isCompletionHandledByTeammate(sessionId, { pendingForBotId: botId, execution }) ?? null),
   getPendingInteractions: (sessionId) => getPendingInteractionsForSession(sessionId).map((entry) => entry.request),
 });
 
@@ -6306,6 +6327,7 @@ const sessionEventDependencies: SessionEventDependencies = {
   get wireNoteMemory() { return wireNoteMemory; },
   get attemptBotCompactRuntimeRefresh() { return attemptBotCompactRuntimeRefresh; },
   get botDelegationServiceHolder() { return botDelegationServiceHolder; },
+  get taskCompletionDeliveryHolder() { return taskCompletionDeliveryForOwner(); },
   get botGroupChatServiceHolder() { return botGroupChatServiceHolder; },
   get isFencedStaleSessionTerminal() {
     return isFencedStaleSessionTerminal;
@@ -6971,6 +6993,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     });
   });
   setSessionRuntimeCleanup((sessionId) => {
+    void taskCompletionDeliveryForOwner()?.pruneDeleted(sessionId).catch(() => log.warn('Task delivery cleanup deferred'));
     // 任务在另一台电脑上还没启动完：让那台停下，不再迟到地启动、跑完这一轮。
     cancelPendingRemoteStart(sessionId);
     workingDirectoryRecovery.discard(sessionId);
@@ -12554,6 +12577,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             'current MCP call has none (typical: Codex global ctx)',
         };
       }
+      const taskDeliveryHost = taskCompletionDeliveryForOwner();
+      const taskDeliveryOrigin = await taskDeliveryHost?.capture(dispatcherSessionId);
       let createdPreviewSessionId: string | null = null;
       let createdPreviewClientId: string | null = null;
       let createdPreviewStarted = false;
@@ -12751,6 +12776,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             });
           }
         }
+        if (taskDeliveryOrigin) await taskDeliveryHost!.saveOrigin(session.id, taskDeliveryOrigin);
         const clientId = createId();
         createdPreviewSessionId = session.id;
         createdPreviewClientId = clientId;
@@ -13770,6 +13796,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   });
   // Phones reach groups through the Remote Resource protocol (bot-group-chat.md §8).
   registerBotGroupRemoteResourceProvider(() => botGroupChatServiceHolder);
+  taskCompletionDeliveryForOwner();
   botDelegationServiceHolder?.dispose();
   // Archive / restore changes the open tasks a teammate's roster row links as followed.
   setSessionStatusPatchedListener(scheduleBotRemoteResourceChangedForFollowedSession);
@@ -13920,8 +13947,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     postGroupTaskMessage: async (input) => botGroupChatServiceHolder
       ? botGroupChatServiceHolder.postCompanionTaskMessage(input)
       : { ok: false as const, errorCode: 'GROUP_CHANNEL_UNAVAILABLE', retryable: true },
-    groupHasTaskChannel: async (groupId) => botGroupChatServiceHolder
-      ? botGroupChatServiceHolder.hasCompanionTaskChannel(groupId) : true,
   });
   registerBotLifecycleHandlers({
     maker,
