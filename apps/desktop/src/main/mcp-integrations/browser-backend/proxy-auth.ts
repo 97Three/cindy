@@ -455,6 +455,7 @@ export class BrowserProxyAuthCoordinator {
   private readonly authAttempts = new Map<string, number>();
   private readonly sessions = new Set<string>();
   private readonly targetSetups = new Map<string, Promise<void>>();
+  private readonly workerClosures = new Map<string, Promise<void>>();
   private readonly sessionTargets = new Map<string, string>();
   private readonly eventTasks = new Set<Promise<void>>();
   private closing = false;
@@ -551,7 +552,7 @@ export class BrowserProxyAuthCoordinator {
           // gated is closed alone; startup only fails if that also fails.
           if (!isWorkerTargetType(target.type)) throw error;
           this.logger.warn('browser proxy authentication could not prepare a new browser target');
-          await this.command('Target.closeTarget', { targetId: target.targetId });
+          await this.closeWorkerTarget(target.targetId);
         }
       }
     }
@@ -585,8 +586,25 @@ export class BrowserProxyAuthCoordinator {
     this.sessions.clear();
     this.authAttempts.clear();
     this.targetSetups.clear();
+    this.workerClosures.clear();
     this.sessionTargets.clear();
     this.eventTasks.clear();
+  }
+
+  /**
+   * Closes a worker that could not be gated, at most once per target. The live
+   * attach event and the startup discovery loop can both observe the same
+   * failing setup; a second Target.closeTarget would hit "No target with given
+   * id" and wrongly escalate to whole-browser teardown. Both callers share the
+   * one close, so its outcome is the same for each.
+   */
+  private closeWorkerTarget(targetId: string): Promise<void> {
+    let closing = this.workerClosures.get(targetId);
+    if (!closing) {
+      closing = this.command('Target.closeTarget', { targetId }).then(() => undefined);
+      this.workerClosures.set(targetId, closing);
+    }
+    return closing;
   }
 
   private async attach(targetId: string): Promise<void> {
@@ -710,7 +728,7 @@ export class BrowserProxyAuthCoordinator {
           // containment fails (or for pages/frames) is the browser torn down.
           if (isWorkerTargetType(targetInfo?.type) && targetInfo?.targetId) {
             try {
-              await this.command('Target.closeTarget', { targetId: targetInfo.targetId });
+              await this.closeWorkerTarget(targetInfo.targetId);
               return;
             } catch {
               // fall through to whole-browser fail-closed

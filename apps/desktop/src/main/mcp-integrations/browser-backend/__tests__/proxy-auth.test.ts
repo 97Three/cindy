@@ -41,6 +41,8 @@ async function createFakeCdp(options: {
   failFetchEnable?: boolean;
   failFetchEnableForSession?: string;
   failCloseTarget?: boolean;
+  rejectRepeatCloseTarget?: boolean;
+  emitWorkerAutoAttach?: boolean;
   failBrowserClose?: boolean;
   closeOnBrowserClose?: boolean;
   emitAutoAttach?: boolean;
@@ -49,6 +51,7 @@ async function createFakeCdp(options: {
   startupTargets?: Array<{ targetId: string; type: string }>;
 } = {}) {
   const commands: CdpCommand[] = [];
+  const closedTargets = new Set<string>();
   let browserSocket: WebSocket | undefined;
   let getTargetsCalls = 0;
   const wsServer = new WebSocketServer({ noServer: true });
@@ -58,7 +61,16 @@ async function createFakeCdp(options: {
     socket.on('message', (raw) => {
       const command = JSON.parse(raw.toString()) as CdpCommand;
       commands.push(command);
-      if (command.method === 'Target.setAutoAttach' && options.emitAutoAttach) {
+      if (command.method === 'Target.setAutoAttach' && options.emitWorkerAutoAttach && !command.sessionId) {
+        socket.send(JSON.stringify({
+          method: 'Target.attachedToTarget',
+          params: {
+            sessionId: 'session-for-worker-1',
+            targetInfo: { targetId: 'worker-1', type: 'worker' },
+          },
+        }));
+        socket.send(JSON.stringify({ id: command.id, result: {} }));
+      } else if (command.method === 'Target.setAutoAttach' && options.emitAutoAttach) {
         socket.send(JSON.stringify({
           method: 'Target.attachedToTarget',
           params: {
@@ -101,6 +113,12 @@ async function createFakeCdp(options: {
         || command.sessionId === options.failFetchEnableForSession
       )) {
         socket.send(JSON.stringify({ id: command.id, error: { message: 'dummy secret must not escape' } }));
+      } else if (command.method === 'Target.closeTarget' && options.rejectRepeatCloseTarget) {
+        const id = (command.params as { targetId?: string } | undefined)?.targetId ?? '';
+        socket.send(JSON.stringify(closedTargets.has(id)
+          ? { id: command.id, error: { message: 'No target with given id' } }
+          : { id: command.id, result: {} }));
+        closedTargets.add(id);
       } else if (command.method === 'Target.closeTarget' && options.failCloseTarget) {
         socket.send(JSON.stringify({ id: command.id, error: { message: 'close target failed' } }));
       } else if (command.method === 'Browser.close') {
@@ -590,6 +608,29 @@ describe('BrowserProxyAuthCoordinator', () => {
       method: 'Target.closeTarget',
       params: { targetId: 'worker-1' },
     }));
+    expect(cdp.commands).not.toContainEqual(expect.objectContaining({ method: 'Browser.close' }));
+    await coordinator.dispose();
+  });
+
+  it('closes a worker once when startup discovery and auto-attach both see it fail', async () => {
+    const cdp = await createFakeCdp({
+      startupTargets: [
+        { targetId: 'page-1', type: 'page' },
+        { targetId: 'worker-1', type: 'worker' },
+      ],
+      failFetchEnableForSession: 'session-for-worker-1',
+      emitWorkerAutoAttach: true,
+      rejectRepeatCloseTarget: true,
+    });
+    const coordinator = new BrowserProxyAuthCoordinator({
+      mode: 'proxied',
+      server: 'http://proxy.test:8080',
+      username: 'user',
+      password: 'password',
+    }, { warn: vi.fn() });
+
+    await expect(coordinator.start(cdp.cdpUrl)).resolves.toBeUndefined();
+    expect(cdp.commands.filter(({ method }) => method === 'Target.closeTarget')).toHaveLength(1);
     expect(cdp.commands).not.toContainEqual(expect.objectContaining({ method: 'Browser.close' }));
     await coordinator.dispose();
   });
