@@ -16,6 +16,7 @@ import {
 } from '@/contexts/dataOwnerGeneration';
 import { isDeviceLinkRemotePushCurrent } from '@/lib/remoteDataOwnerPushFence';
 import { usePluginDeviceDirectory } from '@/features/plugin/PluginDevicePicker';
+import { extractIpcError } from '@/utils/ipcError';
 import {
   hasPluginManagement,
   invokePluginManagement,
@@ -190,8 +191,20 @@ function OwnerPrompt({ deviceId }: { deviceId: string }) {
         },
         installedGhostStoragePart(item),
       );
-    } catch {
-      if (current()) setUnknown(true);
+    } catch (error) {
+      if (!current() || operationRef.current !== id) return;
+      const code = extractIpcError(error)?.code;
+      if (['INVALID_PARAMS', 'NOT_FOUND', 'PRECONDITION_FAILED', 'UNSUPPORTED_CAPABILITY', 'PERMISSION_DENIED'].includes(code ?? '')) {
+        // The Host rejected begin before creating an operation. Only an explicit
+        // user action may retry against the refreshed install/approval snapshot.
+        operationRef.current = undefined;
+        setOperation(undefined);
+        setUnknown(false);
+        toast.error(t(`settings.ghosts.remote.${code === 'NOT_FOUND' ? 'changed' : 'actionFailed'}`));
+        await refresh();
+        return;
+      }
+      setUnknown(true);
     }
     // Even uncertain begin is only reconciled, never resubmitted.
     if (current()) setOperation(id);

@@ -279,6 +279,34 @@ describe('file selection', () => {
     expect(await slot.handleRequest('pick-ghost', { mode: 'file', into: 'media' })).toMatchObject({ ok: false, errorCode: 'PERMISSION_DENIED' });
     expect(importFiles).not.toHaveBeenCalled();
   });
+
+  // #4423417275, unit: real pick entry must report committed Library refs even
+  // when a later deposit cannot be issued. Existing coverage only issued tickets
+  // successfully; minimum input is an imported file above the ticket size limit.
+  it('retains every imported file when ticket issuance fails midway through the batch', async () => {
+    const ghost = pickGhost({ node: false }); ghost.manifest.library = true;
+    const imported = [
+      { name: 'first.txt', size: 1, mimeType: 'text/plain', ref: 'library://first' },
+      { name: 'large.txt', size: 51 * 1024 * 1024, mimeType: 'text/plain', ref: 'library://large' },
+      { name: 'last.txt', size: 1, mimeType: 'text/plain', ref: 'library://last' },
+    ];
+    const receipt = { token: 'first-ticket', file_count: 1, total_bytes: 1, rel_paths: ['first.txt'] };
+    const depositDir = vi.fn<PickSlotDeps['depositDir']>()
+      .mockReturnValueOnce({ ok: true, receipt })
+      .mockReturnValue({ ok: false, message: '文件超过 50 MiB 上限' });
+    const { slot } = makeSlot({
+      getGhost: () => ghost,
+      showFileDialog: async () => imported.map(file => `/selected/${file.name}`),
+      importFiles: async () => ({ ok: true, name: imported[0]!.name, files: imported.map(file => ({ ...file })) }),
+      depositDir,
+    });
+    const result = await slot.handleRequest('pick-ghost', { mode: 'file', into: 'library', deposit: true, multiple: true });
+    expect(result).toMatchObject({ ok: false, errorCode: 'INTERNAL', files: [
+      { ...imported[0], deposit: receipt }, imported[1], imported[2],
+    ] });
+    expect(depositDir).toHaveBeenCalledTimes(2);
+    expect(result.files?.every(file => file.path === undefined)).toBe(true);
+  });
 });
 
 // Regression: native pick had no call hold or cancellation binding. Tier: unit.

@@ -204,7 +204,7 @@ export class GhostPickSlot {
             for (let i = 0; i < result.files.length; i++) {
               if (wantDeposit) {
                 const deposited = this.deps.depositDir(ghostId, files[i]!);
-                if (!deposited.ok) return fail('INTERNAL', '文件过户票据签发失败');
+                if (!deposited.ok) return { ...fail('INTERNAL', '文件过户票据签发失败'), files: result.files };
                 result.files[i]!.deposit = deposited.receipt;
               }
               if (hasNode) result.files[i]!.path = files[i];

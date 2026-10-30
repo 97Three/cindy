@@ -953,6 +953,53 @@ describe('remote task interactive-page consent prompt', () => {
     expect(invoke.mock.calls.filter(c => c[2]?.[0]?.actionId === 'management:answer')).toHaveLength(1);
     expect(confirm).toHaveBeenCalledOnce();
   });
+  // #4423428047, unit: real prompt + RPC adapter; previous coverage only rejected
+  // an already-created operation. A stale begin must refresh and allow an explicit
+  // retry; a lost begin receipt must keep querying without replaying approval.
+  it.each(['NOT_FOUND', 'receipt lost'])('recovers a %s begin without replaying it', async failure => {
+    setup(true);
+    const normal = invoke.getMockImplementation()!;
+    const revision = '00000000-0000-4000-8000-000000000002';
+    let begins = 0;
+    invoke.mockImplementation(async (device, channel, args) => {
+      const request = args?.[0];
+      if (request?.actionId === 'management:begin' && ++begins === 1)
+        throw new Error(failure === 'NOT_FOUND' ? '[NOT_FOUND] Plugin changed' : failure);
+      if (request?.actionId === 'management:operation' && failure === 'NOT_FOUND' && begins === 1)
+        throw new Error('[NOT_FOUND] Operation was not created');
+      if (request?.actionId === 'management:operation' && failure === 'receipt lost')
+        return { effects: [], result: { operationId: request.input.operationId, phase: 'running' } };
+      const result = await normal(device, channel, args);
+      if (request?.actionId === 'management:snapshot' && begins > 0)
+        result.result.ghosts = result.result.ghosts.map((ghost: ReturnType<typeof snapshot>['ghosts'][number]) => ({ ...ghost, approval: { ...ghost.approval, revision } }));
+      return result;
+    });
+    render(<RemotePluginUiEnablePrompt deviceId="computer-a" />);
+    const button = await screen.findByRole('button', { name: 'newChat.pluginUi.enable' });
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(button); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2400); });
+    const operations = invoke.mock.calls.filter(call => call[2]?.[0]?.actionId === 'management:operation');
+    expect(begins).toBe(1);
+    expect(confirm).not.toHaveBeenCalled();
+    if (failure === 'NOT_FOUND') {
+      expect(notices.error).toHaveBeenCalledWith('settings.ghosts.remote.changed');
+      expect((button as HTMLButtonElement).disabled).toBe(false);
+      expect(screen.queryByText('settings.ghosts.remote.unknown')).toBeNull();
+      expect(operations).toHaveLength(0);
+      await act(async () => { fireEvent.click(button); });
+      const requests = invoke.mock.calls.filter(call => call[2]?.[0]?.actionId === 'management:begin');
+      expect(requests).toHaveLength(2);
+      expect(requests[1][2][0].input.expectedInstalledApproval).toBe(ghostInstallApprovalToken({ state: 'approved', revision }));
+      expect(requests[1][2][0].input.operationId).not.toBe(requests[0][2][0].input.operationId);
+      expect(confirm).toHaveBeenCalledOnce();
+    } else {
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+      expect(operations.length).toBeGreaterThan(1);
+      expect(new Set(operations.map(call => call[2][0].input.operationId)).size).toBe(1);
+      expect(notices.error).not.toHaveBeenCalled();
+    }
+  });
   // M04, unit: a confirmation for an updated install fails; the prompt must not
   // silently disappear. Existing tests only covered success and lost receipts.
   it('shows the existing changed-plugin notice for a stale page approval', async () => {
