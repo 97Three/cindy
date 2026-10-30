@@ -13,6 +13,13 @@ import type { ClaudeSubscriptionUsageSnapshot } from '../../shared/claudeSubscri
 import type { XaiSubscriptionUsageSnapshot } from '../../shared/xaiSubscriptionUsage';
 import type { RateLimitSnapshot } from '@/hooks/useAccountUsage';
 
+// #8010: quota reads also consult the controller identity. These component
+// fixtures have no auth host; keep its app bootstrap outside the mocked i18n.
+vi.mock('@/contexts/AuthContext', () => ({
+  useOptionalAuthUser: () => null,
+  useOptionalAuthDeviceId: () => null,
+}));
+
 const reads = vi.hoisted(() => ({
   pendingLabel: '',
   realRemoteClaude: false,
