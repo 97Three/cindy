@@ -4081,15 +4081,18 @@ describe('remoteSessionStore', () => {
   it('keeps terminal prediction eligibility through acknowledgement and clears it for the next run', () => {
     pushMakerStatus('s1', { isRunning: true });
     remoteSessionStore.applyRemotePush('dev-1', 'maker:event', {
-      sessionId: 's1', event: { type: 'error', data: { message: 'Failed', isTerminal: true } },
+      sessionId: 's1', persistId: 'failed-row', event: { type: 'error', data: { message: 'Failed', isTerminal: true } },
     });
     expect(remoteSessionStore.getSessionRunStatus('s1').hasTerminalError).toBe(true);
+    expect(remoteSessionStore.getSessionRunStatus('s1').terminalError).toEqual({ clientId: 'failed-row', message: 'Failed' });
     remoteSessionStore.applySessionActivity('dev-1', { sessionId: 's1', phase: 'completed', attention: false });
     expect(remoteSessionStore.getSessionRunStatus('s1').hasTerminalError).toBe(true);
     pushMakerStatus('s1', { isRunning: false });
     expect(remoteSessionStore.getSessionRunStatus('s1').hasTerminalError).toBe(true);
+    expect(remoteSessionStore.getSessionRunStatus('s1').terminalError?.clientId).toBe('failed-row');
     pushMakerStatus('s1', { isRunning: true });
     expect(remoteSessionStore.getSessionRunStatus('s1').hasTerminalError).toBe(false);
+    expect(remoteSessionStore.getSessionRunStatus('s1').terminalError).toBeNull();
   });
 
   it('recovers a terminal error from activity even without its maker event', () => {
