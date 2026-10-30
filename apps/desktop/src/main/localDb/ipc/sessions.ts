@@ -1,4 +1,5 @@
 import { captureSessionCreationCancellation } from '../sessionRuntimeCleanup.js';
+import { pagePermissionSessionChanged } from '../../mcp-apps/pagePermissions.js';
 import { removeSessionModelInterface } from '../../maker-host/session-model-interface.js';
 import { isEndedWriteSuppressed } from '../sessionActiveTurn.js';
 import { ensureOpenedProjectGit, openSession } from '../sessionOpening.js';
@@ -485,6 +486,7 @@ export function broadcastSessionPatched(
   ownerScope?: OwnerScope,
 ): void {
   if (ownerScope !== undefined && !isOwnerScopeCurrent(ownerScope)) return;
+  pagePermissionSessionChanged(sessionId, patch);
   const hasCapturedScope = ownerScope !== undefined && ownerScope !== null;
   const ownerStamp = hasCapturedScope ? ownerScope.ownerStamp : getSafeOwnerPushStamp();
   try {

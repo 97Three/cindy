@@ -18,10 +18,10 @@ function parsePayload(result: unknown): Record<string, unknown> {
 }
 
 describe("cindy_helper MCP server", () => {
-  // Discovery used to describe auth as Grok-only and omit the handoff schema.
-  // Unit: a fresh client must discover the required window/purpose arguments
-  // before its first call, without using an invalid call to obtain the schema.
-  it('discovers input handoff and its required arguments before starting it', async () => {
+  // The agent never found input handoff behind list_tools(auth) (2026-10-30).
+  // Unit: a fresh client sees it in tools/list, with the window/title arguments,
+  // before its first call; the old name stays callable for saved calls but unlisted.
+  it('offers input handoff in the tool list itself and keeps the old name callable', async () => {
     const start = vi.fn(async () => ({ ok: true as const, requestId: 'handoff-1' }));
     const server = createXdtHelperMcpServer({ inputHandoff: { start } }, {
       agentKind: 'codex', workingDir: '/repo', sessionId: 'current-task',
@@ -33,19 +33,20 @@ describe("cindy_helper MCP server", () => {
     const [ct, st] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(st), client.connect(ct)]);
     try {
-      const overview = parsePayload(await client.callTool({ name: 'list_tools', arguments: {} }));
-      expect(overview.categories).toEqual(expect.arrayContaining([
-        expect.objectContaining({ name: 'auth', description: expect.stringContaining('二维码') }),
-      ]));
-      const catalog = parsePayload(await client.callTool({ name: 'list_tools', arguments: { category: 'auth' } }));
-      const handoff = (catalog.tools as Array<{ name: string; inputSchema: Record<string, unknown> }>)[0]!;
-      expect(handoff.name).toBe('request_input_handoff');
-      expect(handoff.inputSchema).toMatchObject({
-        required: ['purpose', 'target'],
-        properties: { purpose: { type: 'string' }, target: { type: 'object', properties: { app: { type: 'string' } } } },
+      const owner = (await client.listTools()).tools.find((tool) => tool.name === 'ask_owner')!;
+      expect(owner.description).toContain('password');
+      expect(owner.inputSchema).toMatchObject({
+        required: ['kind'],
+        properties: {
+          kind: { enum: ['fill', 'scan'] },
+          title: { type: 'string' },
+          target: { type: 'object', properties: { app: { type: 'string' } } },
+        },
       });
+      const overview = parsePayload(await client.callTool({ name: 'list_tools', arguments: {} }));
+      expect(overview.categories).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'auth' })]));
       expect(parsePayload(await client.callTool({ name: 'call_tool', arguments: {
-        name: handoff.name, args: { purpose: 'Sign in to continue', target: { app: 'Google Chrome' } },
+        name: 'request_input_handoff', args: { purpose: 'Sign in to continue', target: { app: 'Google Chrome' } },
       } }))).toMatchObject({ ok: true, request_id: 'handoff-1', status: 'pending' });
       expect(start).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'current-task' }), {
         purpose: 'Sign in to continue', target: { app: 'Google Chrome' },
@@ -212,15 +213,21 @@ describe("cindy_helper MCP server", () => {
     await Promise.all([server.connect(st), client.connect(ct)]);
     try {
       const overview = parsePayload(await client.callTool({ name: 'list_tools', arguments: {} }));
+      // Starting is listed through ask_owner (connect); status and cancel stay here.
       expect(overview.categories).toEqual([
         { name: 'cindy', tool_count: 2, description: expect.stringContaining('self-management') },
-        { name: 'auth', tool_count: 3, description: expect.any(String) },
+        { name: 'auth', tool_count: 2, description: expect.any(String) },
       ]);
-      const result = parsePayload(await client.callTool({
-        name: 'call_tool', arguments: { name: 'start_grok_device_login', args: {} },
-      }));
-      expect(result).toMatchObject({ status: 'pending', userCode: 'ABCD-1234' });
-      expect(JSON.stringify(result)).not.toContain('access_token');
+      const owner = (await client.listTools()).tools.find((tool) => tool.name === 'ask_owner')!;
+      expect((owner.inputSchema.properties as Record<string, { enum?: string[] }>).kind.enum).toEqual(['connect']);
+      for (const request of [
+        { name: 'ask_owner', arguments: { kind: 'connect', service: 'grok' } },
+        { name: 'call_tool', arguments: { name: 'start_grok_device_login', args: {} } },
+      ]) {
+        const result = parsePayload(await client.callTool(request));
+        expect(result).toMatchObject({ status: 'pending', userCode: 'ABCD-1234' });
+        expect(JSON.stringify(result)).not.toContain('access_token');
+      }
       expect(start).toHaveBeenCalledWith(expect.objectContaining({
         sessionId: 'remote-session', sessionInstanceId: 'instance-1', remoteHostId: 'remote-host',
       }));
@@ -229,7 +236,7 @@ describe("cindy_helper MCP server", () => {
         name: 'call_tool', arguments: { name: 'start_grok_device_login', args: {} },
       }));
       expect(stale).toMatchObject({ ok: false, errorCode: 'NO_SESSION_CONTEXT' });
-      expect(start).toHaveBeenCalledTimes(1);
+      expect(start).toHaveBeenCalledTimes(2);
     } finally {
       await client.close();
       await server.close();
