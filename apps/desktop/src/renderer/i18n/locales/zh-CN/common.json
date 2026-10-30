@@ -14411,8 +14411,8 @@
         "ghMissing": "未检测到 GitHub CLI（gh），看不到 PR 状态",
         "notFound": "PR 不存在，或当前账号无权限查看",
         "statusUnknown": "状态获取失败",
+        "statusNotFetched": "暂未获取到状态",
         "openAria": "在浏览器打开 PR #{{number}}",
-        "clickToOpen": "点击在浏览器打开 PR",
         "guidance": {
           "login": {
             "hint": "点击连接 GitHub",
@@ -14500,7 +14500,40 @@
             "otherMethods": "其他连接方式"
           }
         },
-        "unresolved": "{{count}} 条未解决的 review 评论"
+        "unresolved": "{{count}} 条未解决的 review 评论",
+        "summaryAria": "查看 PR #{{number}} 汇总",
+        "unresolvedLabel": "未解决的 review 评论",
+        "checks": "检查",
+        "checksTotal": "共 {{count}} 项",
+        "failed": "失败",
+        "passed": "通过",
+        "pending": "进行中",
+        "skippedLabel": "跳过或中立",
+        "manage": {
+          "title": "管理 PR 链接",
+          "hint": "顶栏最多显示 3 个，固定的 PR 优先显示",
+          "empty": "粘贴 GitHub PR 链接即可添加",
+          "removed": "已移除 {{count}} 个",
+          "addLabel": "添加 PR 链接",
+          "add": "添加 PR",
+          "loading": "正在读取…",
+          "restore": "恢复 PR",
+          "pin": "固定到顶栏",
+          "unpin": "取消固定",
+          "pinLimit": "最多固定 3 个 PR",
+          "reorderHint": "按 Alt+↑/↓ 在已固定或未固定组内调整顺序。",
+          "dragHandle": "拖动排序 {{repo}} #{{number}}",
+          "remove": "移除 PR",
+          "errors": {
+            "duplicate": "此 PR 已关联；已移除的链接可在列表中恢复",
+            "notFound": "找不到此 PR，或没有访问权限",
+            "invalidUrl": "请输入有效的 GitHub PR 链接",
+            "reorderFailed": "顺序没有保存，请重试",
+            "verifyFailed": "无法验证 PR，请检查 GitHub 登录与访问权限",
+            "unsupported": "这台电脑的版本暂不支持管理 PR 链接",
+            "failed": "无法更新 PR 链接"
+          }
+        }
       }
     },
     "schedule": {
