@@ -14328,8 +14328,8 @@
         "ghMissing": "GitHub CLI(gh)를 찾을 수 없어 PR 상태를 볼 수 없습니다",
         "notFound": "PR이 없거나 현재 계정으로는 볼 수 없습니다",
         "statusUnknown": "상태를 가져오지 못했습니다",
+        "statusNotFetched": "아직 상태 정보가 없습니다",
         "openAria": "브라우저에서 PR #{{number}} 열기",
-        "clickToOpen": "클릭하여 브라우저에서 PR 열기",
         "guidance": {
           "login": {
             "hint": "클릭하여 GitHub 연결",
@@ -14417,7 +14417,40 @@
             "otherMethods": "다른 연결 방법"
           }
         },
-        "unresolved": "미해결 리뷰 코멘트: {{count}}건"
+        "unresolved": "미해결 리뷰 코멘트: {{count}}건",
+        "summaryAria": "PR #{{number}} 요약 보기",
+        "unresolvedLabel": "미해결 리뷰 코멘트",
+        "checks": "검사",
+        "checksTotal": "총 {{count}}개",
+        "failed": "실패",
+        "passed": "통과",
+        "pending": "진행 중",
+        "skippedLabel": "건너뜀 또는 중립",
+        "manage": {
+          "title": "PR 링크 관리",
+          "hint": "상단에 최대 3개 표시하며 고정한 PR이 먼저 표시됩니다",
+          "empty": "GitHub PR 링크를 붙여넣어 추가하세요",
+          "removed": "제거됨: {{count}}개",
+          "addLabel": "PR 링크 추가",
+          "add": "PR 추가",
+          "loading": "불러오는 중…",
+          "restore": "PR 복원",
+          "pin": "상단에 고정",
+          "unpin": "고정 해제",
+          "pinLimit": "PR은 최대 3개까지 고정할 수 있습니다",
+          "reorderHint": "Alt+↑/↓ 키로 고정 또는 고정되지 않은 그룹 안에서 순서를 변경합니다.",
+          "dragHandle": "{{repo}} #{{number}} 끌어서 순서 변경",
+          "remove": "PR 제거",
+          "errors": {
+            "duplicate": "이미 연결된 PR입니다. 제거한 링크는 목록에서 복원할 수 있습니다",
+            "notFound": "PR을 찾을 수 없거나 접근 권한이 없습니다",
+            "invalidUrl": "유효한 GitHub PR 링크를 입력하세요",
+            "reorderFailed": "순서가 저장되지 않았습니다. 다시 시도하세요.",
+            "verifyFailed": "PR을 확인할 수 없습니다. GitHub 로그인과 접근 권한을 확인하세요",
+            "unsupported": "이 컴퓨터의 버전은 PR 링크 관리를 지원하지 않습니다",
+            "failed": "PR 링크를 업데이트할 수 없습니다"
+          }
+        }
       }
     },
     "schedule": {

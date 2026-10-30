@@ -56,7 +56,13 @@ function sameRefList(
 ): a is SessionPrRef[] {
   if (!a || a.length !== b.length) return false;
   for (let i = 0; i < a.length; i += 1) {
-    if (a[i].id !== b[i].id || a[i].lastSeenAt !== b[i].lastSeenAt) return false;
+    if (
+      a[i].id !== b[i].id ||
+      a[i].lastSeenAt !== b[i].lastSeenAt ||
+      a[i].pinned !== b[i].pinned ||
+      a[i].priority !== b[i].priority
+    )
+      return false;
   }
   return true;
 }
