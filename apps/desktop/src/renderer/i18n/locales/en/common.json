@@ -113,7 +113,11 @@
   "taskActionConfirmation": {
     "title": "Confirm session action",
     "once": "Review the target, action and full content below. Allow applies to this action once.",
-    "delegation": "Review this independent session’s objective and settings. Allow starts it and permits messages and stopping within this delegation until it ends. Answering questions, resuming a pause or changing models still requires a separate confirmation."
+    "remove": "This deletes automation. Review the target; approval applies only once.",
+    "permission": "This answers a permission request in another task on your behalf. Review the action; approval applies only once.",
+    "resume": "This resumes paused execution. Review the target; approval applies only once.",
+    "command": "This saves or runs a command on your computer outside the agent’s tool approval. Review the command and working folder; approval applies only once.",
+    "authority": "This creates or changes automation instructions that future runs will treat as standing authorization. Review the complete instructions; approval applies to this save."
   },
   "logSupport": {
     "title": "Logs and Feedback",
@@ -1675,6 +1679,7 @@
     }
   },
   "settings": {
+    "newChatDefaults": { "title": "Default permission for new tasks" },
     "imConnection": {
       "reconnect": "Reconnect",
       "savedNote": "Your saved binding is retained. You can retry the connection.",
@@ -3624,7 +3629,7 @@
           "modelsAutoNote": "Available models are discovered after sign-in"
         },
         "advanced": {
-          "label": "Advanced (models / headers)"
+          "label": "Advanced connection settings"
         },
         "runtimeFill": {
           "action": "Fill other runtimes",
@@ -3782,16 +3787,16 @@
           "defaultEffort": "Default reasoning effort",
           "defaultEffortHint": "The initial effort for new tasks. You can still adjust it within a task.",
           "contextLimit": "Context limit",
-          "contextLimitHint": "Applies to all available engines for this model. Edit in whole K (1 K = 1,000 tokens); untouched values retain their precision. Saved changes apply to subsequent runs without interrupting a response. Actual capacity remains subject to the model service’s limits.",
+          "contextLimitHint": "Enter tokens directly, or use K or M (for example, 1000000 or 1M). Applies to all available engines for this model on subsequent runs. Actual capacity is still limited by the model service.",
           "contextLimitLocalMillionHint": "Native 256K (262,144 tokens), with optional expansion to 1M (1,000,000). If the service is running, restart it under Manage Service to apply changes; if stopped, they apply on next use. Longer inputs need more memory and take longer to process.",
-          "contextLimitAria": "Context limit (thousands of tokens)",
+          "contextLimitAria": "Context limit (tokens, K or M)",
           "compaction": {
             "title": "Automatic Compaction",
             "hint": "Compact context at the selected usage percentage. Lower values compact earlier; engine limits still apply.",
             "default": "{{pct}}% (Default)",
             "timing": "Applies to all available engines for this model and source on subsequent runs, without interrupting a response."
           },
-          "contextLimitRoute": "Current {{tokens}} tokens · 1 K = 1,000 tokens",
+          "contextLimitRoute": "Current {{tokens}} tokens",
           "contextLimitOverWindow": "Above the provider’s declared window; requests may fail.",
           "restoreDefault": "Restore default",
           "engines": "Engine support",
@@ -3818,7 +3823,7 @@
           "close": "Close",
           "maxOutput": "Maximum output",
           "catalogCapabilities": "Capabilities declared in the catalog",
-          "contextInvalid": "Enter a whole number from {{min}} to 100,000 K.",
+          "contextInvalid": "Enter {{min}}–{{max}} tokens; K and M are also accepted.",
           "contextWriteFailed": "Not saved. Please retry.",
           "contextMixed": "Existing harness settings differ. Editing or resetting applies to all harnesses.",
           "inputModalities": "Input types",
@@ -5602,10 +5607,7 @@
     "remoteControl": {
       "relay": {
         "summary": {
-          "official": "Cindy relay",
-          "owner": "This computer is the relay",
-          "member": "Joined {{name}}",
-          "server": "Server relay \"{{name}}\""
+          "official": "Cindy relay"
         },
         "description": "Remote control between your devices goes through the Cindy relay by default. You can instead deploy a relay to your own server, run one on this computer, or join a relay on another computer of yours. Sign-in, models and other services are not affected.",
         "current": "In use",
@@ -5613,12 +5615,10 @@
         "unavailable": "To use your own relay, sign in to Cindy and make sure the system keychain is available.",
         "limits": "While you use your own relay, phone push notifications, provider sharing and shared tasks are unavailable.",
         "actions": {
-          "host": "Run on this computer",
           "join": "Join another relay",
           "useOfficial": "Switch back to Cindy relay",
           "editHost": "Change settings",
-          "deploy": "Deploy to my server",
-          "useDeployment": "Use this relay"
+          "deploy": "Deploy to my server"
         },
         "host": {
           "title": "Run a relay on this computer",
@@ -5699,13 +5699,16 @@
           "START_FAILED": "The relay couldn't start. Try another port.",
           "EXTERNAL_URL_REQUIRED": "Enter the address other devices use, or set Who can connect to Any network.",
           "SSH_FAILED": "Can't connect to the server. Check its SSH settings under Remote.",
+          "SHELL_UNAVAILABLE": "This SSH account can't run commands (for example, a Git service's git account), so it can't be used for deployment. Choose a server you can log in to with a shell.",
           "NEEDS_ROOT": "This needs the root account, or an account that can use sudo without a password. Cindy never asks for your server password.",
           "UNSUPPORTED_SYSTEM": "Only 64-bit Linux with systemd (x64 / arm64) is supported, and curl or wget must be installed.",
-          "PORT_BUSY": "Another service is using port 80 or 443 and can't be configured automatically. Existing Nginx is handled automatically; check other services using these ports.",
+          "PORT_BUSY": "Port 80 or 443 on the server is in use by {{detail}}. Cindy won't stop other programs. Choose another server, or stop it and check again.",
+          "PORT_BUSY_CONTAINER": "Port 80 or 443 on the server is used by the Docker container {{detail}}. Cindy can only configure Nginx installed directly on the system, not inside a container. Choose another server.",
           "NGINX_FAILED": "Nginx configuration couldn't be completed, so deployment stopped. See the details for the reason.",
           "DOWNLOAD_FAILED": "The server couldn't download the runtime from the official source or the mirror. Check that the server can reach the internet.",
-          "RELAY_MISMATCH": "This server already has a relay that wasn't deployed from this computer. You can remove it and redeploy.",
+          "RELAY_MISMATCH": "The relay on this server wasn't deployed from this computer, so Cindy leaves it alone.",
           "CERTIFICATE_FAILED": "Couldn't get an HTTPS certificate. Usually port 80 isn't allowed in the cloud security group, or the domain doesn't point to this server yet. Fix that, then retry.",
+          "CA_UNREACHABLE": "The server couldn't reach the certificate authority Let's Encrypt, even after retrying for a few minutes. Check that the server can reach the internet, then try again later.",
           "NOT_REACHABLE": "The relay is running on the server, but this computer can't reach it. Allow port 443 in the cloud security group.",
           "BUNDLE_MISSING": "This version of Cindy doesn't include the relay. Update Cindy.",
           "DEPLOY_FAILED": "Deployment didn't complete.",
@@ -5718,10 +5721,10 @@
         },
         "deploy": {
           "title": "Deploy to my server",
-          "hint": "Install the relay on your own Linux server so your phone and devices on other networks can connect. Cindy installs it over the SSH connection set up under Remote, gets an HTTPS certificate and renews it automatically.",
-          "requirements": "Requires 64-bit Linux with systemd, root or passwordless sudo, and TCP 80 and 443 allowed in your cloud security group or firewall. Cindy automatically checks and configures existing Nginx.",
+          "hint": "Install the relay on your own Linux server so your phone and devices on other networks can connect. Cindy installs it over the SSH connection set up under Remote and gets and renews an HTTPS certificate automatically. Allow TCP 80 and 443 in your cloud security group.",
           "noHosts": "No servers yet. Add an SSH host under Remote, then come back to deploy.",
           "server": "Server",
+          "serverPlaceholder": "Choose a server",
           "address": "Address",
           "addressPlaceholder": "Public IP or domain, e.g. 203.0.113.10",
           "addressHint": "The address other devices use to reach the relay. A public IP gets a 6-day IP certificate that renews automatically; a domain must already point to this server.",
@@ -5729,22 +5732,60 @@
           "defaultName": "My relay",
           "submit": "Deploy",
           "cancel": "Cancel",
-          "detail": "Details: {{detail}}",
           "retry": "Retry",
-          "replace": "Remove the old relay and redeploy",
+          "submitReplace": "Remove and Deploy",
+          "edit": "Edit Settings",
+          "abandon": "Discard Deployment",
+          "abandonTitle": "Discard this deployment?",
+          "abandonDescription": "What was already installed on the server is cleaned up, and the deployment record on this computer is deleted.",
+          "replaceTitle": "Remove the relay on this server?",
+          "replaceDescription": "The relay on this server wasn't deployed from this computer. Deploying deletes it and its device records, and devices that joined it need to join again.",
+          "incompleteHint": "The last deployment didn't finish. Retry, or edit the settings and deploy again.",
+          "showDetails": "Show Details",
+          "check": {
+            "checking": "Checking the server…",
+            "checkingHint": "Connecting to the server to check its system, ports and existing services.",
+            "idle": "After you choose a server, Cindy checks whether it can be deployed to.",
+            "ready": "Ready to deploy",
+            "blocked": "Can't deploy automatically",
+            "recheck": "Check Again",
+            "direct": "Ports 80 and 443 are free, so the relay uses them directly.",
+            "nginx": "The relay connects through the server's existing Nginx and keeps your current sites.",
+            "mine": "This server already runs a relay deployed from this computer. It is updated in place, and joined devices are not affected.",
+            "other": "This server runs a relay that wasn't deployed from this computer. Deploying removes it, and devices that joined it need to join again."
+          },
           "running": {
             "deploy": "Deploying to your server…",
             "upgrade": "Upgrading the relay on your server…",
             "uninstall": "Removing the relay from your server…"
           },
           "done": {
-            "deploy": "Deployed. This computer now uses the relay on your server. Use Add device to bring in your phone and other computers.",
+            "deploy": "Deployed. Switch to it under Connection Route, then you can add devices.",
             "upgrade": "The relay on your server is now version {{version}}.",
-            "uninstall": "The relay was removed from your server."
+            "uninstall": "Relay removed from your server"
+          },
+          "failed": {
+            "deploy": "Deployment did not complete",
+            "upgrade": "Upgrade did not complete",
+            "uninstall": "Removal did not complete"
+          },
+          "elapsed": "Elapsed {{time}}",
+          "logs": "Deployment log",
+          "progress": {
+            "runtime-cached": "The runtime is ready. No download needed.",
+            "runtime-download": "Downloading the runtime. Speed depends on the server's network…",
+            "runtime-fallback": "The current download source is unavailable. Trying the backup…",
+            "runtime-checksum": "Download complete. Verifying the file…",
+            "runtime-extract": "File verified. Extracting and installing the runtime…",
+            "nginx-prepare": "Nginx detected. Setting up relay access…",
+            "certificate-wait": "Waiting for the certificate. This may take a few minutes…",
+            "certificate-retry": "Can't reach the certificate authority right now. Retrying automatically…",
+            "verify-retry": "The relay is not reachable yet. Checking again…",
+            "nginx-rollback": "Deployment did not complete. Restoring the previous Nginx configuration…"
           },
           "steps": {
             "connect": "Connect to the server",
-            "check": "Check the system and ports",
+            "check": "Check the server",
             "runtime": "Install the runtime",
             "upload": "Upload the relay",
             "configure": "Configure and start the service",
@@ -5755,16 +5796,73 @@
           }
         },
         "server": {
-          "title": "My server relay",
-          "version": "Relay version {{version}}",
-          "incomplete": "The last deployment didn't finish. Retry or uninstall.",
+          "inUse": "In use",
           "upgrade": "Upgrade to {{version}}",
-          "uninstall": "Uninstall from server",
-          "uninstallTitle": "Uninstall the relay from your server?",
-          "uninstallDescription": "The relay and its device records are deleted from the server, and devices using it disconnect. If you deploy again, every device needs to join again.",
+          "remove": "Remove",
+          "removeTitle": "Remove the server relay?",
+          "removeDescription": "The relay and its device records are deleted from the server, and devices using it disconnect. If you deploy again, every device needs to join again.",
           "forget": "Remove from this computer only",
           "forgetTitle": "Remove from this computer only?",
           "forgetDescription": "The relay keeps running on the server, but this computer stops managing it and can't add devices to it anymore. Do this only if you no longer use that server."
+        },
+        "route": {
+          "title": "Connection Route",
+          "hint": "Remote control between your devices goes through this route",
+          "kindServer": "My server",
+          "kindJoined": "Joined",
+          "hostTitle": "This computer as relay",
+          "hostHint": "Other devices must be able to reach this computer directly. They disconnect when it sleeps or Cindy quits",
+          "officialHint": "No setup needed. Every feature works",
+          "defaultTag": "Default",
+          "useNamed": "Switch to {{name}}",
+          "deployingStep": "{{step}}…",
+          "viewProgress": "View Progress",
+          "resume": "Resume Deployment",
+          "rename": "Rename",
+          "renameHint": "Only changes the name shown on this computer. The server and joined devices keep the original name.",
+          "renameSave": "Save",
+          "renameCancel": "Cancel",
+          "statusChecking": "Checking…",
+          "statusOnline": "Online",
+          "statusOffline": "Unreachable",
+          "switchTitle": "Switch to {{name}}?",
+          "switchFromHost": "The relay on this computer stops, and devices that joined it disconnect.",
+          "switchFromMember": "This computer leaves {{name}}. To join again later, its owner needs to create a new join link.",
+          "switchConfirm": "Switch",
+          "switchFromOfficial": "Remote control between your devices will go through {{name}}. Phone push notifications, provider sharing, and shared tasks aren't available while you use your own relay."
+        },
+        "dialog": {
+          "steps": {
+            "label": "Deployment steps",
+            "form": "Choose Server",
+            "deploy": "Deploy",
+            "done": "Done"
+          },
+          "running": "Deploying to {{server}}…",
+          "backgroundHint": "Closing this window doesn't stop the deployment",
+          "background": "Continue in Background",
+          "doneTitle": "{{name}} is ready",
+          "doneHint": "This computer is still on its current route. Choose Use This Route to switch, then add your phone and other computers.",
+          "doneLater": "You can also switch later under Connection Route",
+          "use": "Use This Route",
+          "finish": "Done"
+        },
+        "manage": {
+          "check": "Check Connection",
+          "offline": "This computer can't reach this relay right now. This happens when the server is off or its network or security group changed. Fix it, then check the connection again.",
+          "devices": "Joined devices",
+          "deviceCount_one": "{{count}} device",
+          "deviceCount_other": "{{count}} devices",
+          "onlineCount_one": "{{count}} online",
+          "onlineCount_other": "{{count}} online",
+          "certificate": "HTTPS certificate",
+          "certificateDays_one": "Expires in {{count}} day",
+          "certificateDays_other": "Expires in {{count}} days",
+          "certificateRenew": "Renews automatically",
+          "certificateSite": "Uses the site's certificate",
+          "version": "Relay version",
+          "latest": "Up to date",
+          "remove": "Remove This Relay"
         }
       },
       "title": "Remote Connection",
@@ -5786,7 +5884,6 @@
         "restoreFailed": "Failed to restore access"
       },
       "sections": {
-        "relay": "Relay service",
         "myDevices": "My devices",
         "ssh": "SSH remote hosts",
         "hook": "Cindy IM bots"
@@ -9802,6 +9899,13 @@
     }
   },
   "bots": {
+    "avatarStatus": {
+      "awaiting": "Needs your confirmation",
+      "error": "Needs attention",
+      "running": "Working",
+      "done": "Completed",
+      "unread": "Unread"
+    },
     "workbench": {
       "ownedMark": "Belongs to {{names}}",
       "createdMark": "Created by {{names}}",
@@ -10516,8 +10620,10 @@
         "reactorsUnavailable_one": "Name unavailable for {{count}} more member",
         "reactorsUnavailable_other": "Names unavailable for {{count}} more members",
         "invite": "Invite to group",
+        "groupCreated": "Group Chat Created",
+        "inviteFriends": "Invite friends to join and work with your teammate.",
+        "generatingLink": "Generating invitation link…",
         "join": "Join group",
-        "inviteDescription": "People who accept the invitation join the group and can read its chat history.",
         "revokeLink": "Revoke this link",
         "revokeDescription": "This link will stop accepting new members. Other invitation links and existing members are unaffected.",
         "revokedLink": "This invitation link has been revoked.",
