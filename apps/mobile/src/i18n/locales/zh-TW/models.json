@@ -25,6 +25,12 @@
     "fastTag": "快速"
   },
   "options": {
+    "speed": {
+      "label": "速度",
+      "standard": "標準",
+      "fast": "快速",
+      "ultrafast": "超快"
+    },
     "fastMode": "快速模式",
     "fastModeAccessibility": "快速模式 {{model}}",
     "reasoningEffort": "推理強度",
@@ -58,6 +64,14 @@
     "cancel": "取消",
     "confirm": "繼續選擇"
   },
+  "agentRelocation": {
+    "titleOther": "改到「{{device}}」上執行 Agent？",
+    "titleHost": "改回「{{host}}」上執行 Agent？",
+    "titleHostUnnamed": "改回任務所在的電腦執行 Agent？",
+    "message": "原來那台電腦上的對話記錄帶不過來，會整理成交接摘要接上，思考內容等不能保證完美繼承。下一則訊息送出時生效。",
+    "confirm": "換電腦執行",
+    "cancel": "保持不變"
+  },
   "unified": {
       "favoriteConfiguration": "收藏此設定",
       "savedConfiguration": "已收藏 · 點擊取消",
@@ -83,6 +97,11 @@
     "all": "全部模型",
     "recommended": "推薦",
     "source": "來源",
+    "remoteProvider": "{{provider}} · {{device}}",
+    "remoteProviderGroup": "{{provider}} · {{device}} · {{group}}",
+    "providerGroup": "{{provider}} · {{group}}",
+    "groupBadge_one": "供應商組 · {{count}} 台電腦",
+    "groupBadge_other": "供應商組 · {{count}} 台電腦",
     "harness": "Harness",
     "restoreRecommended": "恢復推薦",
     "saveFailed": "無法儲存，請重試。",

@@ -16,7 +16,9 @@
  */
 
 import { projectScheduleSidebarIndex } from '../scheduler/lib/projectScheduleSidebarIndex';
+import { parseScheduleBindings } from '../scheduler/lib/scheduleBindingIndex';
 import type { ScheduleSidebarIndexSnapshot } from '../scheduler/lib/scheduleSidebarIndexRuns';
+import { isTeammateTaskSession } from '../../../shared/sessionSource';
 import type { Session } from '@/lib/ccAgent.types';
 import { createLogger } from '@/lib/logger';
 import { extractIpcError } from '@/utils/ipcError';
@@ -111,6 +113,41 @@ function parseRemoteSessionList(value: unknown, expectedStatus: RemoteSessionSta
   // local-db:sessions:list 是跨版本的列表投影；旧端允许缺少新版 Session 的附加字段。
   // 上面的 guard 锁住列表渲染与分组所需的最低形状，store 继续沿用既有 Session 镜像类型。
   return value as unknown as Session[];
+}
+
+/** Old hosts omit teammate lanes from sessions:list; their owner-authorized history API already exposes exact links. */
+async function readRemoteTeammateTasks(
+  deviceId: string, status: RemoteSessionStatus, limit: number, current: () => boolean,
+): Promise<Session[]> {
+  const links = new Map<string, NonNullable<Session['companion']>>();
+  const cursors = new Set<string>();
+  let cursor: string | undefined;
+  try {
+    do {
+      if (!current()) return [];
+      const response = await window.electronAPI.deviceLink.invoke(deviceId, 'local-db:history:query', [{
+        tool: 'list_sessions', args: { source: 'bot', time_field: 'activity', limit: 200, ...(cursor ? { cursor } : {}) },
+      }]) as { ok?: boolean; sessions?: Array<{ id?: unknown; status?: unknown; source?: unknown; companion?: Session['companion'] }>; hasMore?: boolean; nextCursor?: string };
+      if (!current() || response?.ok !== true || !Array.isArray(response.sessions)) return [];
+      for (const row of response.sessions) {
+        if (typeof row.id === 'string' && row.status === status && isTeammateTaskSession(row)
+          && typeof row.companion?.id === 'string') links.set(row.id, row.companion);
+      }
+      if (!response.hasMore || links.size >= limit) break;
+      if (!response.nextCursor || cursors.has(response.nextCursor)) return [];
+      cursor = response.nextCursor;
+      cursors.add(cursor);
+    } while (current());
+    if (!current() || links.size === 0) return [];
+    const rows = await readSessionBatch([...links.keys()].slice(0, limit), deviceId);
+    if (!current()) return [];
+    return rows.flatMap(({ sessionId, value }) => value && value.source === 'bot' && value.status === status
+      ? [{ ...value, companion: links.get(sessionId)! }] : []);
+  } catch (error) {
+    if (String(error).includes(ACCESS_REVOKED_MARKER)) throw error;
+    // Unsupported/offline history must not replace ordinary tasks or cached companion rows.
+    return [];
+  }
 }
 
 /** 退避:250ms 起指数增长,封顶 3000ms。 */
@@ -364,11 +401,19 @@ async function runRefreshRemoteDeviceSessions(
               ...(opts.coalescingMode === 'weak' ? {} : { fresh: true }),
             },
           ],
+          { background: status === 'archived' || opts.coalescingMode === 'weak' },
         );
         // 乱序保护:本次拉取已不是最新一次 → 丢弃,别覆盖更新的结果。
         if (!remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status))
           return 'superseded';
-        const sessions = parseRemoteSessionList(value, status);
+        const ordinary = parseRemoteSessionList(value, status);
+        // Optional old-host history may span many pages. Publish the successful
+        // ordinary read now; reconcile removals only after discovery completes.
+        remoteProjectsStore.mergeDeviceSessions(deviceId, deviceName, ordinary, status);
+        const teammateTasks = await readRemoteTeammateTasks(deviceId, status, listLimit,
+          () => remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status));
+        if (!remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status)) return 'superseded';
+        const sessions = [...new Map([...teammateTasks, ...ordinary].map(session => [session.id, session])).values()];
         // Companions are fetched by resource:get + sessions:get, not by the
         // ordinary task list. Keep their live state and reconcile them by id,
         // even when the ordinary list is empty or is a full replacement.
@@ -406,6 +451,7 @@ async function runRefreshRemoteDeviceSessions(
       if (!remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status)) return 'superseded';
       if (opts.scope === 'schedule' || opts.scope === 'both') {
         if (unresponsiveDevicesStore.has(deviceId)) return 'gave-up';
+        let scheduleIndexError: unknown;
         try {
           const raw = await window.electronAPI.deviceLink.invoke(
             deviceId,
@@ -428,10 +474,27 @@ async function runRefreshRemoteDeviceSessions(
         } catch (error) {
           // Older peers may not expose this existing channel. Keep the last mirror;
           // failure of optional schedule metadata must not hide a valid session list.
-          if (opts.scope === 'schedule' || String(error).includes(ACCESS_REVOKED_MARKER))
-            throw error;
+          if (String(error).includes(ACCESS_REVOKED_MARKER)) throw error;
+          scheduleIndexError = error;
           log.debug('remote schedule index unavailable');
         }
+        // 与现有首拉、重连及 schedule push 共用刷新与代次保护，每设备一份列表。
+        // 不能从 run 索引猜绑定：尚未首次运行、绑定多个调度、解除绑定都需要当前列表。
+        try {
+          if (!remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status)) return 'superseded';
+          if (unresponsiveDevicesStore.has(deviceId)) return 'gave-up';
+          const raw = await window.electronAPI.deviceLink.invoke(
+            deviceId, 'maker:schedule:list', [null, { sessionBindings: true }],
+          );
+          if (!remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status)) return 'superseded';
+          remoteProjectsStore.setDeviceScheduleBindings(deviceId, parseScheduleBindings(raw));
+        } catch (error) {
+          if (String(error).includes(ACCESS_REVOKED_MARKER)) throw error;
+          // 辅助信息读取失败保留上次镜像；后续既有 push/重连重查，不影响任务列表。
+          log.debug('remote schedule bindings unavailable');
+        }
+        // 老端的 run 索引不可用也不阻止读取绑定；索引自身仍沿用原有失败处理。
+        if (scheduleIndexError && opts.scope === 'schedule') throw scheduleIndexError;
       }
       return remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status)
         ? 'ok'

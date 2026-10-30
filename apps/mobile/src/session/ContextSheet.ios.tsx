@@ -1,14 +1,15 @@
 import { useNativeGlassButtonStyle } from "@/platform/chrome/nativeGlassButtonStyle.ios";
 import { iconSize, useTheme } from '@/theme';
+import { NativeErrorNotice } from '@/components/NativeErrorNotice.ios';
 import { ComposerNativeSection as Section } from './ComposerNativeSection';
+import { useNativeTextDraft } from './nativeTextDraft';
 import {
   createContext,
   useContext,
   useEffect,
   useRef,
-  type ReactNode,
 } from "react";
-import { Button, HStack, Image, Picker, RNHostView, ProgressView, Spacer, Text, TextField, VStack, useNativeState } from '@expo/ui/swift-ui';
+import { Button, HStack, Image, Picker, RNHostView, ProgressView, Spacer, Text, TextField, VStack } from '@expo/ui/swift-ui';
 import {
   accessibilityAddTraits,
   accessibilityHint,
@@ -26,17 +27,21 @@ import {
   pickerStyle,
   shapes,
   tag,
+  tint,
 } from "@expo/ui/swift-ui/modifiers";
 import { useTranslation } from "react-i18next";
 import { View } from "react-native";
 import type {
   ContextSheetChoiceRowProps,
+  ContextSheetGroupProps,
+  ContextSheetSelectRowProps,
   ContextSheetProps,
   ContextSheetRowProps,
   ContextSheetFooterButtonProps,
   ContextSheetTextFieldProps,
 } from "./ContextSheet";
 import { ComposerSheet } from "./ComposerSheet";
+import { ComposerSectionSettingsHeader } from './composerSectionHeader';
 const DismissAction = createContext<(action: () => void) => void>((action) =>
   action(),
 );
@@ -57,37 +62,47 @@ export function ContextSheet(props: ContextSheetProps) {
         props.onClose();
       }}
     >
-      <ComposerSheet
-        {...props}
-        title={props.onBack ? props.title : ''}
-        aboveContent={props.media}
-        aboveContentTitle={t("session.common.groupAdd")}
-        nativeContent
-        onClosed={() => {
-          const action = pending.current;
-          pending.current = null;
-          action?.();
-        }}
-        footer={props.footer}
-      >
-        {props.children}
-        {props.error ? (
-          <Section>
-            <Text modifiers={[foregroundStyle(colors.errorText)]}>{props.error}</Text>
-          </Section>
-        ) : null}
-      </ComposerSheet>
+      <ComposerSectionSettingsHeader.Provider value>
+        <ComposerSheet
+          {...props}
+          title={props.onBack ? props.title : ''}
+          aboveContent={props.media}
+          aboveContentTitle={t("session.common.groupAdd")}
+          nativeContent
+          onClosed={() => {
+            const action = pending.current;
+            pending.current = null;
+            action?.();
+          }}
+          footer={props.footer}
+        >
+          {props.children}
+          {props.error ? (
+            <Section>
+              <NativeErrorNotice message={props.error} />
+            </Section>
+          ) : null}
+        </ComposerSheet>
+      </ComposerSectionSettingsHeader.Provider>
     </DismissAction.Provider>
   );
 }
 export function ContextSheetGroup({
   label,
   children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
-  return <Section title={label || undefined}>{children}</Section>;
+  footer,
+  footerTone,
+  footerTestID,
+}: ContextSheetGroupProps) {
+  // 说明写在卡片下方(原生 Section footer)。
+  return (
+    <Section
+      title={label || undefined}
+      footer={footer ? <ContextSheetNote text={footer} tone={footerTone} testID={footerTestID} /> : undefined}
+    >
+      {children}
+    </Section>
+  );
 }
 export function ContextSheetRow(props: ContextSheetRowProps) {
   const dismiss = useContext(DismissAction);
@@ -103,11 +118,13 @@ export function ContextSheetRow(props: ContextSheetRowProps) {
         ...extraModifiers,
       ]}
     >
-      <RNHostView matchContents>
-        <View style={{ width: 28, height: 28, justifyContent: "center" }}>
-          {props.icon}
-        </View>
-      </RNHostView>
+      {props.icon ? (
+        <RNHostView matchContents>
+          <View style={{ width: 28, height: 28, justifyContent: "center" }}>
+            {props.icon}
+          </View>
+        </RNHostView>
+      ) : null}
       {props.detail ? (
         <VStack alignment="leading" spacing={2}>
           <Text modifiers={[...labelModifiers, lineLimit(1)]}>{props.label}</Text>
@@ -117,14 +134,23 @@ export function ContextSheetRow(props: ContextSheetRowProps) {
         <Text modifiers={labelModifiers}>{props.label}</Text>
       )}
       <Spacer />
+      {props.value && !props.busy ? (
+        <Text modifiers={[foregroundStyle(colors.textSecondary), lineLimit(1)]}>{props.value}</Text>
+      ) : null}
       {props.busy ? (
         <ProgressView />
       ) : props.trailing && props.trailing !== "chevron" ? (
         <RNHostView matchContents>
-          <View>{props.trailing}</View>
+          {/* matchContents reads this RN View's bounds, not the nested icon's size. */}
+          <View style={props.trailingSize != null ? {
+            width: props.trailingSize,
+            height: props.trailingSize,
+            alignItems: 'center',
+            justifyContent: 'center',
+          } : undefined}>{props.trailing}</View>
         </RNHostView>
       ) : props.trailing === "chevron" ? (
-        <Image size={iconSize.lg} systemName="chevron.right" />
+        <Image size={iconSize.lg} systemName="chevron.right" color={colors.textTertiary} />
       ) : null}
     </HStack>
   );
@@ -157,6 +183,7 @@ export function ContextSheetRow(props: ContextSheetRowProps) {
   );
 }
 export function ContextSheetFooterButton(props: ContextSheetFooterButtonProps) {
+  const { colors } = useTheme();
   const glassStyle = useNativeGlassButtonStyle({ prominent: true });
   return (
     <Button
@@ -165,10 +192,12 @@ export function ContextSheetFooterButton(props: ContextSheetFooterButtonProps) {
       modifiers={[
         ...glassStyle,
         disable(!!props.disabled || !!props.busy),
-        frame({ maxWidth: Infinity, minHeight: 44 }),
       ]}
     >
-      {props.busy ? <ProgressView /> : <Text>{props.label}</Text>}
+      {/* 撑满宽度的 frame 放在标签里:放在 Button 上只会放大点击区,胶囊仍按文字收缩。 */}
+      {props.busy
+        ? <ProgressView modifiers={[tint(colors.ctaText), frame({ maxWidth: Infinity, minHeight: 44 })]} />
+        : <Text modifiers={[foregroundStyle(colors.ctaText), frame({ maxWidth: Infinity, minHeight: 44 })]}>{props.label}</Text>}
     </Button>
   );
 }
@@ -184,6 +213,11 @@ export function ContextSheetNote({ text, tone = 'secondary', testID }: {
       {text}
     </Text>
   );
+}
+
+/** 由现有 Section 提供独立操作失败的卡片容器。 */
+export function ContextSheetError({ text, testID }: { text: string; testID?: string }) {
+  return <NativeErrorNotice message={text} testID={testID} />;
 }
 
 export function ContextSheetChoiceRow<T extends string>(props: ContextSheetChoiceRowProps<T>) {
@@ -205,13 +239,34 @@ export function ContextSheetChoiceRow<T extends string>(props: ContextSheetChoic
   );
 }
 
+export function ContextSheetSelectRow(props: ContextSheetSelectRowProps) {
+  return (
+    <Picker
+      label={props.label}
+      selection={props.value}
+      onSelectionChange={(next: string | number) => {
+        if (!props.disabled && props.options.some((option) => option.id === String(next) && !option.disabled)) {
+          props.onChange(String(next));
+        }
+      }}
+      modifiers={[pickerStyle('menu'), disable(!!props.disabled)]}
+      testID={props.testID}
+    >
+      {props.options.map((option) => (
+        <Text key={option.id} modifiers={[tag(option.id), disable(!!option.disabled)]}>
+          {option.detail ? `${option.label} · ${option.detail}` : option.label}
+        </Text>
+      ))}
+    </Picker>
+  );
+}
+
 export function ContextSheetTextField(props: ContextSheetTextFieldProps) {
-  const text = useNativeState(props.value);
-  useEffect(() => { if (text.get() !== props.value) text.set(props.value); }, [props.value, text]);
+  const draft = useNativeTextDraft(props.value, props.onChange);
   return (
     <TextField
-      text={text}
-      onTextChange={props.onChange}
+      text={draft.text}
+      onTextChange={draft.onTextChange}
       axis={props.multiline ? 'vertical' : 'horizontal'}
       placeholder={props.placeholder}
       maxLength={props.maxLength}

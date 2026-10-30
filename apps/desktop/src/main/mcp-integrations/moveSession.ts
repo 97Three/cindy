@@ -4,6 +4,7 @@ import { sessions, orcaTeams, orcaWorkers, botSessionLinks } from '../localDb/sc
 import { updateSessionInDb } from '../localDb/ipc/sessions.js';
 import { bindingStore } from '../im/binding.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
+import { assertTaskActionCurrent } from '../maker-ipc/taskActionAuthorization.js';
 import {
   validateExistingLocalProjectDirectory,
   validateLocalProjectDirectory,
@@ -22,7 +23,14 @@ export function createMoveSession(
         message: 'Cannot move the calling task while it is running.',
       };
     }
-    return moveSessionProject(isSessionRunning, callerSessionId, sessionId, workingDir);
+    return moveSessionProject(
+      isSessionRunning,
+      callerSessionId,
+      sessionId,
+      workingDir,
+      undefined,
+      assertTaskActionCurrent,
+    );
   };
 }
 
@@ -45,6 +53,7 @@ async function moveSessionProject(
   sessionId: string,
   workingDir: string | null,
   assertAuthority: () => void = () => {},
+  beforeMutation?: () => Promise<void>,
 ) {
   const directory = workingDir === null ? null : validateLocalProjectDirectory(workingDir);
   if (directory && !directory.ok) return directory;
@@ -66,6 +75,8 @@ async function moveSessionProject(
       if (!target) throwIpcError('NOT_FOUND', 'Task does not exist in this account.');
       if (target.remoteHostId)
         throwIpcError('UNSUPPORTED_CAPABILITY', 'Remote tasks cannot be moved.');
+      // A task whose agent runs on another computer may move: that computer keys the agent's
+      // workspace (and its conversation record) by task id, not by this computer's project path.
       if (target.status !== 'active')
         throwIpcError('PRECONDITION_FAILED', 'Only active tasks can be moved.');
       // Review immutability is also enforced by updateSessionInDb for all callers.
@@ -106,6 +117,8 @@ async function moveSessionProject(
       }
       if (bindingStore.findByTarget(sessionId))
         throwIpcError('PRECONDITION_FAILED', 'IM-controlled tasks cannot be moved.');
+      await beforeMutation?.();
+      assertCurrent();
     };
     const patch =
       targetDir === null

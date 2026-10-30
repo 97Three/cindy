@@ -1,3 +1,6 @@
+import { ModelSpeedIcon } from "./ModelSpeedIcon";
+import { ModelQuotaBar } from "./ModelQuotaBar";
+import { ErrorNotice } from "@/components/ErrorNotice";
 /**
  * 统一模型选择器的 Android / 兼容呈现(iOS 见 UnifiedModelPickerView.ios.tsx)。
  *
@@ -52,6 +55,7 @@ import {
   type ThemeColors,
 } from "@/theme";
 import { MobileModelIconMark, MobileProviderMark } from "./MobileProviderMark";
+import { groupSourceFilters } from "./remoteSourceFilters";
 import { SheetModal } from "./SheetModal";
 import { SheetSurface } from "./SheetSurface";
 import {
@@ -174,30 +178,6 @@ function Row({
   );
 }
 
-function QuotaBar({
-  remaining,
-  label,
-  testID,
-}: {
-  remaining: number;
-  label: string;
-  testID?: string;
-}) {
-  const styles = useThemedStyles(makeStyles);
-  const now = Math.max(0, Math.min(100, remaining));
-  return (
-    <View
-      accessibilityLabel={label}
-      accessibilityRole="progressbar"
-      accessibilityValue={{ min: 0, max: 100, now }}
-      style={styles.quotaTrack}
-      testID={testID}
-    >
-      <View style={[styles.quotaFill, { width: `${now}%` }]} />
-    </View>
-  );
-}
-
 export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
   const styles = useThemedStyles(makeStyles);
   const { colors } = useTheme();
@@ -274,7 +254,10 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
     ) : filter.id === "favorites" ? (
       icon(Star, selected || p.filter === "favorites")
     ) : filter.providerMark ? (
-      <MobileProviderMark {...filter.providerMark} />
+      <MobileProviderMark
+        {...filter.providerMark}
+        remote={filter.remote != null}
+      />
     ) : (
       icon(LayoutGrid)
     );
@@ -345,37 +328,51 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
     </View>
   );
 
+  const sourceRow = (item: (typeof p.filters)[number]) => (
+    <Row
+      key={item.id}
+      leading={
+        <View style={styles.sourceLeading}>
+          {filterMark(
+            item,
+            item.id === "favorites" && p.filter === "favorites",
+          )}
+          {item.quota ? (
+            <ModelQuotaBar
+              label={item.quota.label}
+              remaining={item.quota.remaining}
+              testID={`${p.testID}.source.${item.id}.quota`}
+            />
+          ) : null}
+        </View>
+      }
+      onPress={() => {
+        p.onFilter(item.id);
+        setPage(null);
+      }}
+      selected={p.filter === item.id}
+      subtitle={item.quota?.label}
+      testID={`${p.testID}.source.${item.id}`}
+      title={item.remote?.providerLabel ?? item.label}
+    />
+  );
+  // 其他电脑的供应商:每台电脑单独一块,块标题是电脑名。
+  const sourceGroups = groupSourceFilters(p.filters);
   const sourcesPage = (
-    <Group testID={`${p.testID}.sources`}>
-      {p.filters.map((item) => (
-        <Row
-          key={item.id}
-          leading={
-            <View style={styles.sourceLeading}>
-              {filterMark(
-                item,
-                item.id === "favorites" && p.filter === "favorites",
-              )}
-              {item.quota ? (
-                <QuotaBar
-                  label={item.quota.label}
-                  remaining={item.quota.remaining}
-                  testID={`${p.testID}.source.${item.id}.quota`}
-                />
-              ) : null}
-            </View>
-          }
-          onPress={() => {
-            p.onFilter(item.id);
-            setPage(null);
-          }}
-          selected={p.filter === item.id}
-          subtitle={item.quota?.label}
-          testID={`${p.testID}.source.${item.id}`}
-          title={item.label}
-        />
+    <>
+      <Group testID={`${p.testID}.sources`}>
+        {sourceGroups.local.map(sourceRow)}
+      </Group>
+      {sourceGroups.devices.map((device) => (
+        <Group
+          key={device.deviceId}
+          testID={`${p.testID}.sources.device.${device.deviceId}`}
+          title={device.name}
+        >
+          {device.filters.map(sourceRow)}
+        </Group>
       ))}
-    </Group>
+    </>
   );
 
   const harnessPage =
@@ -518,7 +515,32 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
             value={mobileAgentLabel(config.agent)}
           />
           {effortRow}
-          {options.fastCapable ? (
+          {options.fastCapable &&
+          options.row.entry.capabilities[config.agent]
+            ?.supportsUltrafastMode ? (
+            <>
+              {(["standard", "fast", "ultrafast"] as const).map((speed) => {
+                const value =
+                  speed === "ultrafast" ? "ultrafast" : speed === "fast";
+                return (
+                  <Row
+                    key={speed}
+                    disabled={p.busy}
+                    title={t(`models.options.speed.${speed}`)}
+                    onPress={() => options.onChange({ ...config, fast: value })}
+                    trailing={
+                      config.fast === value ? (
+                        <Check
+                          size={iconSize.action}
+                          color={colors.textPrimary}
+                        />
+                      ) : null
+                    }
+                  />
+                );
+              })}
+            </>
+          ) : options.fastCapable ? (
             <View style={styles.row}>
               <View style={styles.leading}>{icon(Zap, true)}</View>
               <Text numberOfLines={1} style={[styles.rowTitle, styles.rowMain]}>
@@ -530,7 +552,7 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
                 onValueChange={(fast) => options.onChange({ ...config, fast })}
                 seedColor={colors.cta}
                 testID={`${p.testID}.fast`}
-                value={config.fast}
+                value={!!config.fast}
               />
             </View>
           ) : null}
@@ -627,6 +649,7 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
         <Pressable
           accessibilityLabel={[
             row.entry.displayName,
+            row.remoteDevice?.name,
             agentLabel,
             row.subtitle,
             row.config.fast ? t("models.options.fastMode") : null,
@@ -650,6 +673,7 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
               icon={row.entry.icon}
               {...row.providerMark}
               color={colors.textSecondary}
+              remote={row.remoteDevice != null}
             />
           </View>
           <View style={styles.rowMain}>
@@ -673,11 +697,10 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
                 </Text>
               ) : null}
               {row.config.fast ? (
-                <Zap
+                <ModelSpeedIcon
+                  mode={row.config.fast}
                   color={colors.textSecondary}
-                  fill={colors.textSecondary}
                   size={iconSize.sm}
-                  strokeWidth={iconStroke.regular}
                 />
               ) : null}
             </View>
@@ -793,9 +816,7 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
                     windowSize={3}
                     removeClippedSubviews={false}
                     ListHeaderComponent={
-                      p.error ? (
-                        <Text style={styles.error}>{p.error}</Text>
-                      ) : null
+                      p.error ? <ErrorNotice message={p.error} /> : null
                     }
                     ListEmptyComponent={
                       <Text style={styles.empty} testID={`${p.testID}.empty`}>
@@ -828,9 +849,7 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
               : undefined
           }
         >
-          {!showSecondary && p.error ? (
-            <Text style={styles.error}>{p.error}</Text>
-          ) : null}
+          {!showSecondary && p.error ? <ErrorNotice message={p.error} /> : null}
           {listPage}
         </SheetSurface>
       </View>
@@ -853,7 +872,7 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
             testID={p.testID}
             title={title}
           >
-            {p.error ? <Text style={styles.error}>{p.error}</Text> : null}
+            {p.error ? <ErrorNotice message={p.error} /> : null}
             {page === "sources"
               ? sourcesPage
               : page === "harness" && options
@@ -988,17 +1007,6 @@ function makeStyles(colors: ThemeColors) {
     sourceLeading: {
       alignItems: "center",
       gap: spacing.xs,
-    },
-    quotaTrack: {
-      backgroundColor: colors.surfaceChip,
-      borderRadius: radius.pill,
-      height: 3,
-      overflow: "hidden",
-      width: 24,
-    },
-    quotaFill: {
-      backgroundColor: colors.textSecondary,
-      height: "100%",
     },
     modelRow: {
       alignItems: "center",

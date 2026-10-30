@@ -1,8 +1,10 @@
+import { NativeErrorNotice } from "@/components/NativeErrorNotice.ios";
+import { ModelSpeedIcon } from "./ModelSpeedIcon";
+import { ModelQuotaBar } from "./ModelQuotaBar";
 import {
   Button,
   HStack,
   Picker,
-  ProgressView,
   RNHostView,
   VStack,
   Text,
@@ -18,7 +20,6 @@ import {
   foregroundStyle,
   frame,
   pickerStyle,
-  progressViewStyle,
   tint,
   tag,
   padding,
@@ -45,6 +46,7 @@ import { ComposerSheet } from "./ComposerSheet";
 import { ComposerNativeSection as Section } from "./ComposerNativeSection";
 import { ComposerNativeRow } from "./ComposerNativeRow";
 import { MobileModelIconMark, MobileProviderMark } from "./MobileProviderMark";
+import { groupSourceFilters } from "./remoteSourceFilters";
 import { mobileAgentLabel } from "./sessionAgentSwitch";
 import type { UnifiedMobilePickerViewProps } from "./UnifiedModelPickerSheet";
 
@@ -63,6 +65,21 @@ function NativeMark({ children }: { children: ReactNode }) {
         {children}
       </View>
     </RNHostView>
+  );
+}
+
+/** 来源格的供应商 mark;另一台电脑上的供应商带远程标记(右上角一道波纹加一个点)。 */
+function ProviderSourceMark({
+  filter,
+}: {
+  filter: UnifiedMobilePickerViewProps["filters"][number] | undefined;
+}) {
+  return (
+    <MobileProviderMark
+      {...filter?.providerMark}
+      name={filter?.providerMark?.name ?? ""}
+      remote={filter?.remote != null}
+    />
   );
 }
 
@@ -134,13 +151,8 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
             mark(LayoutGrid)
           ) : (
             <NativeMark>
-              <MobileProviderMark
-                {...p.filters.find((item) => item.id === p.filter)
-                  ?.providerMark}
-                name={
-                  p.filters.find((item) => item.id === p.filter)?.providerMark
-                    ?.name ?? ""
-                }
+              <ProviderSourceMark
+                filter={p.filters.find((item) => item.id === p.filter)}
               />
             </NativeMark>
           )}
@@ -155,7 +167,7 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
     <>
       {p.error ? (
         <Section>
-          <Text modifiers={[foregroundStyle(colors.errorText)]}>{p.error}</Text>
+          <NativeErrorNotice message={p.error} />
         </Section>
       ) : null}
       {p.groups.map((group) => (
@@ -204,7 +216,14 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
                       {row.effortLabel}
                     </Text>
                   ) : null}
-                  {row.config.fast ? mark(Zap, true) : null}
+                  {row.config.fast ? (
+                    <NativeMark>
+                      <ModelSpeedIcon
+                        mode={row.config.fast}
+                        color={colors.textSecondary}
+                      />
+                    </NativeMark>
+                  ) : null}
                 </HStack>
               }
               subtitleContent={
@@ -242,6 +261,7 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
                       icon={row.entry.icon}
                       {...row.providerMark}
                       color={colors.textSecondary}
+                      remote={row.remoteDevice != null}
                     />
                   </View>
                 </RNHostView>
@@ -270,6 +290,45 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
       ) : null}
     </>
   );
+  const sourceRow = (item: (typeof p.filters)[number]) => (
+    <ComposerNativeRow
+      key={item.id}
+      title={item.remote?.providerLabel ?? item.label}
+      subtitle={item.quota?.label}
+      testID={`${p.testID}.source.${item.id}`}
+      selected={p.filter === item.id}
+      selectionIcon={mark(Check)}
+      leading={
+        item.providerMark ? (
+          <VStack spacing={2}>
+            <NativeMark>
+              <ProviderSourceMark filter={item} />
+            </NativeMark>
+            {item.quota ? (
+              <RNHostView matchContents>
+                <ModelQuotaBar
+                  remaining={item.quota.remaining}
+                  label={item.quota.label}
+                  testID={`${p.testID}.source.${item.id}.quota`}
+                />
+              </RNHostView>
+            ) : null}
+          </VStack>
+        ) : (
+          mark(
+            item.id === "favorites" ? Star : LayoutGrid,
+            item.id === "favorites" && p.filter === "favorites",
+          )
+        )
+      }
+      onPress={() => {
+        p.onFilter(item.id);
+        setPage(null);
+      }}
+    />
+  );
+  // 来源页分块:被控电脑自己的格一块,其他电脑每台一块。
+  const sourceGroups = groupSourceFilters(p.filters);
   return (
     <ComposerSheet
       nativeContent
@@ -294,52 +353,19 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
     >
       {p.error ? (
         <Section>
-          <Text modifiers={[foregroundStyle(colors.errorText)]}>{p.error}</Text>
+          <NativeErrorNotice message={p.error} />
         </Section>
       ) : null}
       {page === "sources" ? (
-        <Section>
-          {p.filters.map((item) => (
-            <ComposerNativeRow
-              key={item.id}
-              title={item.label}
-              subtitle={item.quota?.label}
-              testID={`${p.testID}.source.${item.id}`}
-              selected={p.filter === item.id}
-              selectionIcon={mark(Check)}
-              leading={
-                item.providerMark ? (
-                  <VStack spacing={2}>
-                    <NativeMark>
-                      <MobileProviderMark {...item.providerMark} />
-                    </NativeMark>
-                    {item.quota ? (
-                      <ProgressView
-                        value={item.quota.remaining / 100}
-                        modifiers={[
-                          progressViewStyle("linear"),
-                          frame({ width: 24 }),
-                          tint(colors.textSecondary),
-                          accessibilityLabel(item.quota.label),
-                        ]}
-                        testID={`${p.testID}.source.${item.id}.quota`}
-                      />
-                    ) : null}
-                  </VStack>
-                ) : (
-                  mark(
-                    item.id === "favorites" ? Star : LayoutGrid,
-                    item.id === "favorites" && p.filter === "favorites",
-                  )
-                )
-              }
-              onPress={() => {
-                p.onFilter(item.id);
-                setPage(null);
-              }}
-            />
+        <>
+          <Section>{sourceGroups.local.map(sourceRow)}</Section>
+          {/* 其他电脑的供应商:每台电脑单独一块,块标题是电脑名。 */}
+          {sourceGroups.devices.map((device) => (
+            <Section key={device.deviceId} title={device.name}>
+              {device.filters.map(sourceRow)}
+            </Section>
           ))}
-        </Section>
+        </>
       ) : page === "harness" && options && config ? (
         <Section>
           {options.agents.map((agent) => (
@@ -441,12 +467,40 @@ export function UnifiedModelPickerView(p: UnifiedMobilePickerViewProps) {
                 )}
               </Picker>
             ) : null}
-            {options.fastCapable ? (
+            {options.fastCapable &&
+            options.row.entry.capabilities[config.agent]
+              ?.supportsUltrafastMode ? (
+              <Picker
+                label={t("models.options.speed.label")}
+                selection={
+                  config.fast === "ultrafast"
+                    ? "ultrafast"
+                    : config.fast
+                      ? "fast"
+                      : "standard"
+                }
+                onSelectionChange={(value: string) =>
+                  options.onChange({
+                    ...config,
+                    fast:
+                      value === "ultrafast" ? "ultrafast" : value === "fast",
+                  })
+                }
+                modifiers={[pickerStyle("menu"), disabled(p.busy)]}
+                testID={`${p.testID}.speed`}
+              >
+                {(["standard", "fast", "ultrafast"] as const).map((value) => (
+                  <Text key={value} modifiers={[tag(value)]}>
+                    {t(`models.options.speed.${value}`)}
+                  </Text>
+                ))}
+              </Picker>
+            ) : options.fastCapable ? (
               <HStack>
                 {mark(Zap, true)}
                 <Toggle
                   label={t("models.options.fastMode")}
-                  isOn={config.fast}
+                  isOn={!!config.fast}
                   onIsOnChange={(fast) => options.onChange({ ...config, fast })}
                   modifiers={[disabled(p.busy), tint(colors.inputCaret)]}
                   testID={`${p.testID}.fast`}

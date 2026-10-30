@@ -1298,7 +1298,7 @@ apps/mobile/src/
 - media lightbox。已完成首版:HTTP/data image 可全屏预览,`xdt-*://` 打开详情后自动取件,失败显示可重试占位和原始 URL。
 - tool payload full-screen。已完成首版:tool_result、媒体 URL、文件路径/文本预览、diff 全量内容统一走 `MessagePayloadModal`。
 - diff viewer。已完成移动端结构化版:全屏分段展示完整 Edit / Write / MultiEdit payload,每段保留旧内容 / 新内容两栏横向对照;后续再补桌面同级 line-level context folding 和更细的语法增强。
-- 附件上传:已完成真实发送链路——手机端输入被控电脑上的文件路径,通过被控端 `fs:stat-path` 校验为文件后,构造桌面兼容队列项并随消息发送。手机本机文件已接 `expo-document-picker` + presign-put / OSS PUT / `cindy-oss-attach://` 链路;图片附件现在会写入 `persistedContent.images[]` / `chatMessage.images`,非图片文件写入 `persistedContent.files[]` / `chatMessage.files`,顶层 `files[]` 仍保留全部附件供被控端 `materializeQueuedOssAttachments` 一次性物化和去重。photo/library/share sheet 作为更好的原生入口仍留后续。
+- 附件上传:已完成真实发送链路——手机端输入被控电脑上的文件路径,通过被控端 `fs:stat-path` 校验为文件后,构造桌面兼容队列项并随消息发送。手机本机文件已接 `expo-document-picker` + presign-put / OSS PUT / `cindy-oss-attach://` 链路;图片附件现在会写入 `persistedContent.images[]` / `chatMessage.images`,非图片文件写入 `persistedContent.files[]` / `chatMessage.files`,顶层 `files[]` 仍保留全部附件供被控端 `materializeQueuedOssAttachmentsDeferred` 一次性物化和去重。photo/library/share sheet 作为更好的原生入口仍留后续。
 
 验收:
 
@@ -1564,9 +1564,23 @@ V2 完成标准:
 ## HTML 文件预览
 
 消息里的 `xdt-file` 链接与文件浏览共用 `/files/preview/[sessionId]`。HTML 渲染态通过
-`mobileHtmlPreview.ts` 按网页实际请求读取资源，再由 `modules/cindy-html-preview`
+`mobileHtmlPreview.ts` 先取回 HTML 主文件，其余资源按网页实际请求读取，再由 `modules/cindy-html-preview`
 在手机的 `127.0.0.1` 随机端口提供只读 HTTP，交给应用内 WebView。源码查看保持原有文本
-读取和大小限制，不影响完整网页的渲染。
+读取和大小限制，只在切到源码时启动，不与渲染态重复传输同一份 HTML。
+
+- 主文件完整取回并加固后才打开 WebView，避免远程传输占用浏览器的首文档请求等待。
+  等待沿用文件通道已有的进展超时与临时故障重试，不用浏览器的文档超时判断远程下载失败。
+  下载及首次渲染期间显示加载提示；每个资源的接收字节通过本机回调显示文件名、百分比与
+  采样速度，未知总量不显示百分比，上传准备阶段不编造进度。切换传输路径时重新计数，
+  关闭、后台或切文件后忽略旧进度；只取消该预览，不重置共享连接或其他设备。
+  这些调整只涉及 JS，兼容两套既有原生接口，不改变 runtime fingerprint。
+
+- 手机与桌面的远程 HTML 预览都先读磁盘缓存；命中时不等待联网、远端 stat 或目录检查。
+  手机复用账号文件缓存及磁盘压力回收，内联、直连与 OSS 取回的原始文件均可缓存；
+  身份包含账号/区域、设备、SSH 来源和目录。桌面复用 `remote-file-cache`，本机文件仍直接读取。
+  当前页面使用独立副本并重新添加 CSP，后台更新只写缓存，失败保留可读页面，下一次打开使用新副本。
+  旧手机原生接口先发布已有缓存及目录清单；目录清单或部分资源被回收时仍可打开缓存主文件，
+  未缓存资源需后台目录快照刷新后再打开；新接口可按请求补取缺失资源。切换账号关闭当前预览。
 
 - 新原生接口 `startOnDemand` / `resolveRequest` 通过事件请求单个资源；打开时不枚举目录，
   不检查目录文件数和总大小。资源复用既有内联、WebRTC 直连/TURN、OSS 回退及 SSH 读取链路。

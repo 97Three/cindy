@@ -1,7 +1,10 @@
+import { effectiveGatewayModelCost } from '../../shared/modelPriceQuote.js';
+import type { ModelDisplayPricing } from '@cindy/model-providers';
 import {
   projectProviderMediaModels,
   isCustomRoutedProvider,
   isOrganizationManagedProvider,
+  stripCodexGatewayWirePrefix,
 } from '@cindy/model-providers';
 import {
   applyExistingModelLocalPatch,
@@ -41,6 +44,7 @@ import {
  */
 
 import { isDeepStrictEqual } from 'node:util';
+import { compatibilityProtocol } from '@cindy/model-compat/protocol';
 
 import {
   BUNDLED_CATALOG,
@@ -53,6 +57,7 @@ import {
   defaultEffortForCapabilities,
   findModelRegistryRoute,
   resolveModelNativeApi,
+  resolveRecommendedAgent,
   projectXaiApiImageModels,
   isOpenAiSubscriptionProvider,
   providerCatalogId,
@@ -183,6 +188,8 @@ export interface XdGatewayAgentOverride {
  * 能力字段已由服务端一次归一化,客户端不再二次转换(见 model-access/index.ts)。
  */
 export interface XdGatewayModelInfo {
+  displayPricing?: ModelDisplayPricing;
+  currency?: 'USD' | 'CNY';
   id: string;
   availability?: 'available' | 'requires_payment';
   /** Gateway 原生 mode(issue #882,权威分类字段;缺省时下游按 id 正则兜底)。 */
@@ -522,45 +529,10 @@ function deriveXdCodexAnthropicBridgeModelIds(models: XdGatewayModelInfo[]): Set
 /** 当前 XD 模型是否由客户端投影给 Codex、并应走 Anthropic Messages bridge。 */
 export function isXdCodexAnthropicBridgeModel(modelId: string): boolean {
   // Codex 会把 1M 上下文选择编码成 wire model 后缀；目录身份仍是原始 model id。
-  // wire model 还可能带 `codex/` 前缀（视觉桥按模型前缀选面时传给路由判定的形态）；
+  // wire model 还可能带 `openai-codex/` / `codex/` 前缀（视觉桥按模型前缀选面时传给路由判定的形态）；
   // 剥到目录身份再查，否则投影特例不命中、误走 Responses 面。
-  const normalized = modelId.replace(/\[1m\]$/, '').replace(/^codex\//, '');
+  const normalized = stripCodexGatewayWirePrefix(modelId.replace(/\[1m\]$/, ''));
   return xdCodexAnthropicBridgeModelIds.has(normalized);
-}
-
-function nonNegativeFiniteOrUndefined(value: number | undefined): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
-}
-
-function effectiveGatewayModelCost(model: XdGatewayModelInfo): CatalogModel['cost'] | undefined {
-  const input = model.inputCostPerToken;
-  const output = model.outputCostPerToken;
-  if (
-    typeof input !== 'number' ||
-    !Number.isFinite(input) ||
-    input < 0 ||
-    typeof output !== 'number' ||
-    !Number.isFinite(output) ||
-    output < 0
-  ) {
-    return undefined;
-  }
-  const discount =
-    typeof model.costDiscount === 'number' &&
-    Number.isFinite(model.costDiscount) &&
-    model.costDiscount > 0 &&
-    model.costDiscount <= 1
-      ? model.costDiscount
-      : 0;
-  const multiplier = 1 - discount;
-  const cacheRead = nonNegativeFiniteOrUndefined(model.cacheReadInputTokenCost);
-  const cacheWrite = nonNegativeFiniteOrUndefined(model.cacheCreationInputTokenCost);
-  return {
-    input: input * 1_000_000 * multiplier,
-    output: output * 1_000_000 * multiplier,
-    ...(cacheRead !== undefined ? { cacheRead: cacheRead * 1_000_000 * multiplier } : {}),
-    ...(cacheWrite !== undefined ? { cacheWrite: cacheWrite * 1_000_000 * multiplier } : {}),
-  };
 }
 
 /** base + custom + discovered augment 的合并缓存;null = 待重算(惰性)。 */
@@ -1093,17 +1065,30 @@ function declaredPiModels(providerId: string, discovered: readonly CatalogModel[
     // A sibling Harness discovers membership, not Pi-specific thinking tiers.
     // Keep portable tiers as a fallback for unknown models; known models inherit
     // the Registry, and Codex-only labels cannot become Pi capabilities.
-    const { efforts: _efforts, defaultEffort: _defaultEffort, ...metadata } =
-      model.discoveredMetadata ?? catalogModelMetadata(model);
+    const metadata = { ...(model.discoveredMetadata ?? catalogModelMetadata(model)) };
+    delete metadata.efforts;
+    delete metadata.defaultEffort;
+    // Stored Codex runtime settings are not Pi user overrides. Reapplying them
+    // after projection would replace Pi's resolved tiers and defaults.
+    const discoveredModel = { ...model };
+    delete discoveredModel.userModelConfig;
     const efforts = model.efforts.filter(effort => PI_REASONING_EFFORTS.some(level => level === effort));
     byId.set(id, {
-      ...model, id, piApi, efforts,
+      ...discoveredModel, id, piApi, efforts,
       defaultEffort: efforts.length === 0 ? null
         : (clampEffortToSupported(model.defaultEffort, efforts) as Effort | null),
       discoveredMetadata: metadata,
     });
   }
   return [...byId.values()];
+}
+
+function gatewayDisplayPricing(model: XdGatewayModelInfo): Pick<CatalogModel, 'displayPricing' | 'currency' | 'costDiscount'> {
+  return model.displayPricing && model.currency ? {
+    displayPricing: model.displayPricing,
+    currency: model.currency,
+    ...(model.costDiscount !== undefined ? { costDiscount: model.costDiscount } : {}),
+  } : {};
 }
 
 function projectXdGatewayMediaModels(
@@ -1115,6 +1100,7 @@ function projectXdGatewayMediaModels(
     .filter((model) => model.mode === 'image_generation')
     .map((model) => ({
       ...pickModelMetadata(model),
+      ...gatewayDisplayPricing(model),
       id: model.id,
       name: model.name ?? model.id,
       discoveredMetadata: pickModelMetadata(model),
@@ -1125,6 +1111,7 @@ function projectXdGatewayMediaModels(
     .filter((model) => model.mode === 'video_generation')
     .map((model) => ({
       ...pickModelMetadata(model),
+      ...gatewayDisplayPricing(model),
       id: model.id,
       name: model.name ?? model.id,
       discoveredMetadata: pickModelMetadata(model),
@@ -1138,6 +1125,7 @@ function projectXdGatewayMediaModels(
     .filter((model) => model.mode === 'embedding' && model.availability === 'available')
     .map((model) => ({
       ...pickModelMetadata(model),
+      ...gatewayDisplayPricing(model),
       id: model.id,
       name: model.name ?? model.id,
       discoveredMetadata: pickModelMetadata(model),
@@ -1150,6 +1138,7 @@ function projectXdGatewayMediaModels(
     )
     .map((model) => ({
       ...pickModelMetadata(model),
+      ...gatewayDisplayPricing(model),
       id: model.id,
       name: model.name ?? model.id,
       mode: model.mode,
@@ -1379,8 +1368,9 @@ function computeMerged(): Catalog {
             projected.models['claude-code'] ?? [],
           ),
           pi: alignOpenAiPiWithAccount(
-            declaredPiModels('openai', p.id === 'openai'
-              ? discoveredCodex : discoveredByProvider.get(p.id)?.codex ?? []),
+            // Restored native accounts keep their discovered members in models.codex.
+            // Use the same account snapshot as the root, before Codex-only overlays.
+            declaredPiModels('openai', accountCodex),
             accountCodex,
             (base ?? BUNDLED_CATALOG).modelRegistry,
           ),
@@ -1516,11 +1506,12 @@ function computeMerged(): Catalog {
         // Resolve without an agent: each harness adapts the same model-level intent.
         const registryEntry = findModelRegistryRoute(b.modelRegistry, 'xd', gm.id)?.entry;
         // Registry describes the model; Gateway controls which tiers this route opens.
-        // Gateway's GPT discount routes use codex/<model> (or the bare GPT ID).
+        // Gateway's GPT discount routes use openai-codex/<model>, codex/<model>, or the bare GPT ID.
         // Resolve their exact OpenAI model identity for display only. Do not inherit
         // subscription perAgent tiers, route availability, prices or request IDs.
-        const standardId = /^(?:codex\/)?gpt-[^/]+$/.test(gm.id)
-          ? `openai/${gm.id.replace(/^codex\//, '')}`
+        const bareGatewayGptId = stripCodexGatewayWirePrefix(gm.id);
+        const standardId = /^gpt-[^/]+$/.test(bareGatewayGptId)
+          ? `openai/${bareGatewayGptId}`
           : gm.id;
         const standardEntry =
           b.modelRegistry?.models.find((entry) => entry.id === standardId) ?? registryEntry;
@@ -1542,8 +1533,9 @@ function computeMerged(): Catalog {
           efforts.length === 0
             ? null
             : ((clampEffortToSupported(intent, efforts) ?? null) as Effort | null);
-        // Canonical Registry API determines native versus compatibility defaults. Explicit
-        // per-harness policy remains an override; user visibility preferences are applied later.
+        // Cindy AI serves Messages and Responses for every model, so only a declared wire that
+        // needs Cindy's local conversion starts off. Explicit per-harness policy remains an
+        // override; user visibility preferences are applied later.
         const nativeApi = nativeApiForRoute('xd', gm.id);
         const piApi = agent === 'pi' ? resolveXdPiGatewayModelApi(gm) : undefined;
         const harnessApi =
@@ -1554,12 +1546,14 @@ function computeMerged(): Catalog {
               : piApi;
         const outboundApi = agent === 'pi' ? piApi : (ov.wireProtocol ?? harnessApi);
         const compatible = Boolean(
-          nativeApi && (harnessApi !== nativeApi || outboundApi !== nativeApi),
+          outboundApi && harnessApi &&
+            compatibilityProtocol(outboundApi) !== compatibilityProtocol(harnessApi),
         );
         const defaultEnabled = ov.defaultEnabled ?? (compatible ? false : gm.defaultEnabled);
         const cost = effectiveGatewayModelCost(gm);
         const contextWindow = ov.contextWindow ?? gm.contextWindow;
         const merged: CatalogModel = {
+          ...gatewayDisplayPricing(gm),
           id: gm.id,
           discoveredMetadata: { ...pickModelMetadata(gm), ...pickModelMetadata(ov) },
           ...(nativeApi !== undefined ? { nativeApi } : {}),
@@ -1886,28 +1880,59 @@ function computeMerged(): Catalog {
         const metadataProviderId = providerCatalogId(provider);
         const rootId = metadataProviderId === 'openai'
           ? model.id.replace(/^chatgpt\//, '') : model.id;
-        const identity = findModelRegistryRoute(
+        const matched = findModelRegistryRoute(
           b.modelRegistry, metadataProviderId, rootId,
           agent === 'pi' ? undefined : agent as RootAgentKind,
-        )?.entry.modelRef ?? findBaseModel(b.modelRegistry, rootId)?.id;
+        );
+        const identity = matched?.entry.modelRef ?? findBaseModel(b.modelRegistry, rootId)?.id;
         // Known public identities take precedence, including other vendors using
         // GPT-like aliases. Only unresolved GPT/Codex/o-series IDs fall back to
         // family names before the next catalog release; protocol alone never
         // identifies a vendor, and arbitrary private namespaces remain excluded.
         const openAiModel = identity !== undefined
           ? identity.startsWith('openai/')
-          : /^(?:(?:codex|openai|chatgpt)\/)?(?:gpt-|codex-|o\d+(?:[.-]|$))/.test(model.id);
+          : /^(?:(?:openai-codex|codex|openai|chatgpt)\/)?(?:gpt-|codex-|o\d+(?:[.-]|$))/.test(model.id);
         if (!openAiModel || model.userModelConfig?.contextWindow !== undefined ||
             (identity && localOverrides.baseModels?.[identity]?.contextWindow !== undefined) ||
             hasLocalContextWindowOverride(localOverrides, provider.id, rootId,
               agent as AgentKind, metadataProviderId) ||
             (rootId !== model.id && hasLocalContextWindowOverride(localOverrides,
               provider.id, model.id, agent as AgentKind, metadataProviderId))) return model;
-        return { ...model, contextWindow: 272_000,
+        // Subscription working budgets are server-maintained per-agent defaults,
+        // separate from public model capacity. Other OpenAI connections retain
+        // the daily fallback. Pi follows the subscription Codex budget; route
+        // defaults and baseModels may contain capacity rather than a working budget.
+        const declaredWindow = isOpenAiSubscriptionProvider(provider)
+          ? matched?.entry.perAgent?.[agent === 'pi' ? 'codex' : agent as RootAgentKind]?.contextWindow
+          : undefined;
+        const contextWindow = Math.min(model.contextWindow, declaredWindow ?? 272_000);
+        if (contextWindow === model.contextWindow) return model;
+        return { ...model, contextWindow,
           contextWindowMax: model.contextWindowMax ?? model.contextWindow };
       }),
     ])),
   }));
+  // Ultrafast is a native Codex account capability; bridge aliases cannot inherit it.
+  providers = providers.map(provider => ({ ...provider, models: Object.fromEntries(
+    Object.entries(provider.models).map(([agent, models]) => [agent,
+      agent === 'codex' ? models : models?.map(model => model.supportsUltrafastMode
+        ? { ...model, supportsUltrafastMode: false } : model),
+    ]),
+  ) }));
+  // One recommendation per source and model from the accepted Registry, applied after every
+  // overlay so all views agree. It is advice only: membership and visibility are unchanged.
+  providers = providers.map(provider => {
+    const catalogId = providerCatalogId(provider);
+    return { ...provider, models: Object.fromEntries(Object.entries(provider.models).map(([agent, models]) => [
+      agent, models?.map(model => {
+        // Preset connections are keyed by their catalog preset, built-ins by their catalog identity.
+        const recommended = resolveRecommendedAgent(modelRegistry, model.catalogPresetId ?? catalogId, model.id);
+        if (recommended === model.recommendedAgent) return model;
+        if (!recommended) { const { recommendedAgent: _stale, ...rest } = model; return rest; }
+        return { ...model, recommendedAgent: recommended };
+      }),
+    ])) };
+  });
   return { ...b, modelRegistry, providers };
 }
 

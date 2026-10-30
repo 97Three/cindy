@@ -24,10 +24,26 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { useDeviceLinkSettings, type DeviceLinkSettings } from '@/hooks/useDeviceLinkSettings';
 import { MyDevicesPanel } from './MyDevicesPanel';
+import { RelayServicePanel, useSelfHostedRelayState } from './RelayServicePanel';
 import { RemoteDesktopSetting } from './RemoteDesktopSetting';
 import { RemoteSection } from './RemoteSection';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSettingsSearchNavigation } from './SettingsSearchNavigation';
+
+const DEVICES_SECTION_PARAMS = ['devices', 'remoteControl.devices'];
+
+function isDevicesSection(search: string): boolean {
+  return DEVICES_SECTION_PARAMS.includes(new URLSearchParams(search).get('section') ?? '');
+}
+
+/**
+ * 深链 `?section=devices&device=<id>`:展开「我的设备」并把该设备行滚入视野、短暂高亮
+ * (消息气泡上的设备标签由此进入)。只在 devices 段深链下生效;收起列表时随 section 一起清掉。
+ */
+function focusDeviceParam(search: string): string | null {
+  if (!isDevicesSection(search)) return null;
+  return new URLSearchParams(search).get('device')?.trim() || null;
+}
 
 /** SSH 状态 → 摘要状态点的优先级:有已连接给绿,其次进行中给橙,再次失败给红,否则灰。 */
 const SSH_PROGRESS_STATUSES: ReadonlySet<RemoteHostSnapshot['status']> = new Set([
@@ -149,9 +165,8 @@ export function RemoteControlSection() {
 
   // 深链 ?section=devices 必须在首帧就是展开态:放到 effect 里会先画一帧收起,
   // 再把下方内容顶开一格。
-  const [devicesOpen, setDevicesOpen] = useState(
-    () => ['devices', 'remoteControl.devices'].includes(new URLSearchParams(location.search).get('section') ?? ''),
-  );
+  const [devicesOpen, setDevicesOpen] = useState(() => isDevicesSection(location.search));
+  const relay = useSelfHostedRelayState(deviceLinkAvailable);
   const [sshOpen, setSshOpen] = useState(
     () => new URLSearchParams(location.search).get('section') === 'remoteControl.ssh',
   );
@@ -161,10 +176,13 @@ export function RemoteControlSection() {
   const [hosts, setHosts] = useState<RemoteHostSnapshot[] | null>(null);
 
   useEffect(() => {
-    if (['devices', 'remoteControl.devices'].includes(new URLSearchParams(location.search).get('section') ?? '')) {
-      setDevicesOpen(true);
-    }
+    if (isDevicesSection(location.search)) setDevicesOpen(true);
   }, [location.search]);
+
+  // 同一深链再次进入(location.key 变)也要重新聚焦;列表展开后才交给面板,
+  // 否则隐藏的行滚不进视野。
+  const focusDeviceId = devicesOpen ? focusDeviceParam(location.search) : null;
+  const focusRequestKey = focusDeviceId ? `${focusDeviceId}:${location.key}` : null;
 
   useLayoutEffect(() => {
     if (entry?.targetId === 'settings-search-target-remote-ssh') setSshOpen(true);
@@ -188,8 +206,10 @@ export function RemoteControlSection() {
     collapseRequestedRef.current = false;
 
     const next = new URLSearchParams(location.search);
-    if (!['devices', 'remoteControl.devices'].includes(next.get('section') ?? '')) return;
+    if (!DEVICES_SECTION_PARAMS.includes(next.get('section') ?? '')) return;
     next.delete('section');
+    // device 聚焦参数只依附于 devices 段深链,一并摘掉。
+    next.delete('device');
     const search = next.toString();
     navigate(
       {
@@ -258,11 +278,34 @@ export function RemoteControlSection() {
               open={devicesOpen}
               onToggle={toggleDevices}
               pinned={
-                <MyDevicesPanel s={s} variant="self" selfSettings={<RemoteDesktopSetting />} />
+                <MyDevicesPanel
+                  s={s}
+                  variant="self"
+                  selfSettings={<RemoteDesktopSetting />}
+                  focusDeviceId={focusDeviceId}
+                  focusRequestKey={focusRequestKey}
+                />
               }
             >
-              <MyDevicesPanel s={s} variant="others" />
+              <MyDevicesPanel
+                s={s}
+                variant="others"
+                focusDeviceId={focusDeviceId}
+                focusRequestKey={focusRequestKey}
+              />
             </CollapsibleSubSection>
+            {/* 设备之间经哪条线路连接:紧跟在「我的设备」下面直接展示,当前线路一眼可见,不再单独占一个入口。 */}
+            <section id="settings-search-target-remote-relay" className="flex flex-col gap-3">
+              <div className="flex flex-col gap-0.5">
+                <h3 className="text-14 font-medium text-[var(--text-primary)]">
+                  {t('settings.remoteControl.relay.route.title')}
+                </h3>
+                <p className="text-12 leading-[1.5] text-[var(--text-tertiary)]">
+                  {t('settings.remoteControl.relay.route.hint')}
+                </p>
+              </div>
+              <RelayServicePanel controller={relay} />
+            </section>
             <div className="h-px w-full bg-[var(--border-default)]" />
           </>
         ) : null}

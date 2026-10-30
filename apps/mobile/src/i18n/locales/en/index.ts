@@ -1,3 +1,4 @@
+import mcpApps from './mcpApps.json';
 import plugins from './plugins.json';
 import taskTags from './taskTags.json';
 /**
@@ -19,6 +20,8 @@ import home from './home.json';
 import interaction from './interaction.json';
 import message from './message.json';
 import models from './models.json';
+import providerShare from './providerShare.json';
+import relay from './relay.json';
 import session from './session.json';
 import sharedTask from './sharedTask.json';
 import settings from './settings.json';
@@ -27,6 +30,7 @@ import startup from './startup.json';
 import update from './update.json';
 
 export default {
+  mcpApps,
   plugins,
   taskTags,
   remoteDesktop,
@@ -41,6 +45,8 @@ export default {
   interaction,
   message,
   models,
+  providerShare,
+  relay,
   session,
   sharedTask,
   settings,

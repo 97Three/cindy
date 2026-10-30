@@ -11,6 +11,24 @@ import {
 } from "../remoteDesktop";
 import { REMOTE_INVOKE_ALLOWLIST, PUSH_FORWARD_ALLOWLIST } from "../allowlist";
 describe("remote desktop wire boundary", () => {
+  it.each([
+    { op: "start", displayId: "1" },
+    { op: "heartbeat", lease: "a" },
+  ])(
+    "accepts an optional boolean lock policy on $op without changing legacy requests",
+    (request) => {
+      expect(parseRemoteDesktopRequest(request)).toEqual(request);
+      for (const lockOnExit of [true, false])
+        expect(parseRemoteDesktopRequest({ ...request, lockOnExit })).toEqual({
+          ...request,
+          lockOnExit,
+        });
+      for (const lockOnExit of ["true", 1, null, {}])
+        expect(() =>
+          parseRemoteDesktopRequest({ ...request, lockOnExit }),
+        ).toThrow("INVALID_REQUEST");
+    },
+  );
   it("preserves legacy stop and accepts only a boolean explicit lock request", () => {
     expect(parseRemoteDesktopRequest({ op: "stop", lease: "a" })).toEqual({ op: "stop", lease: "a" });
     expect(parseRemoteDesktopRequest({ op: "stop", lease: "a", lockScreen: true })).toEqual({ op: "stop", lease: "a", lockScreen: true });
@@ -33,6 +51,15 @@ describe("remote desktop wire boundary", () => {
       expect(() =>
         parseRemoteDesktopRequest({ op: "start", displayId: "1", resume }),
       ).toThrow("INVALID_REQUEST");
+  });
+  it("carries a 代输入 request id on start, never a window of the viewer's choosing", () => {
+    expect(parseRemoteDesktopRequest({ op: "start", displayId: "1", handoff: "req_1-a" })).toEqual({
+      op: "start",
+      displayId: "1",
+      handoff: "req_1-a",
+    });
+    for (const handoff of ["", "a b", "x".repeat(129), 42, null, { window: 7 }])
+      expect(() => parseRemoteDesktopRequest({ op: "start", displayId: "1", handoff })).toThrow("INVALID_REQUEST");
   });
   it("limits permission actions to status and the dedicated guide", () => {
     expect(
@@ -92,7 +119,7 @@ describe("remote desktop wire boundary", () => {
         expect(
           offer(remoteDesktopVideoSettingsWire({ fps: 60, quality, audio: true })),
         ).toMatchObject({
-          settings: { fps: quality === "saver" ? 30 : 60, quality, audio: true },
+          settings: { fps: 60, quality, audio: true },
         });
       expect(
         offer({ fps: 30, quality: "hd", bitrate: 20_000_000, audio: false }),
@@ -128,10 +155,10 @@ describe("remote desktop wire boundary", () => {
       expect(
         offer({ fps: 30, quality: "ultra", bitrate: 20_000_000, audio: false }),
       ).toMatchObject({ settings: { quality: "hd" } });
-      // Older hosts ignore `quality`, so Saver's 30 fps cap travels in `fps`.
+      // Saver only lowers the bitrate; the viewer's frame rate is sent as chosen.
       expect(
         remoteDesktopVideoSettingsWire({ fps: 60, quality: "saver", audio: false }),
-      ).toEqual({ fps: 30, quality: "saver", audio: false, bitrate: 2_000_000 });
+      ).toEqual({ fps: 60, quality: "saver", audio: false, bitrate: 2_000_000 });
       expect(
         remoteDesktopVideoSettingsWire({ fps: 60, quality: "auto", audio: false }).fps,
       ).toBe(60);
@@ -245,3 +272,31 @@ describe("remote desktop channel requests", () => {
     expect(parseRemoteDesktopChannelReply({ type: "cursor" })).toBe(null);
   });
 });
+
+describe("remote desktop viewerHidden", () => {
+  it("parses a lease-scoped boolean and stays off the media channel", () => {
+    for (const hidden of [true, false]) {
+      const request = { op: "viewerHidden", lease: "l", hidden };
+      expect(parseRemoteDesktopRequest({ ...request, extra: 1 })).toEqual(request);
+      expect(isRemoteDesktopChannelRequest(request as never)).toBe(false);
+    }
+    for (const hidden of [undefined, "yes", 1])
+      expect(() => parseRemoteDesktopRequest({ op: "viewerHidden", lease: "l", hidden })).toThrow(
+        "INVALID_REQUEST",
+      );
+    expect(() => parseRemoteDesktopRequest({ op: "viewerHidden", hidden: true })).toThrow(
+      "INVALID_LEASE",
+    );
+  });
+});
+
+// Unit: wire compatibility keeps legacy senders unchanged and rejects invalid safety durations.
+it.each([{ op: "start", displayId: "1" }, { op: "heartbeat", lease: "a" }])(
+  "validates the optional idle duration on $op", (request) => {
+    expect(parseRemoteDesktopRequest(request)).toEqual(request);
+    for (const idleTimeoutMinutes of [0, 1, 5, 10, 15, 30])
+      expect(parseRemoteDesktopRequest({ ...request, idleTimeoutMinutes })).toEqual({ ...request, idleTimeoutMinutes });
+    for (const idleTimeoutMinutes of [-1, 0.5, 2, 60, Infinity, NaN, "5", null, true])
+      expect(() => parseRemoteDesktopRequest({ ...request, idleTimeoutMinutes })).toThrow("INVALID_REQUEST");
+  },
+);

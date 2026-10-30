@@ -3,7 +3,6 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -12,28 +11,44 @@ import {
 
 import {
   DEFAULT_APPEARANCE_SETTINGS,
-  clampAppearanceWallpaperOverlay,
+  clampAppearanceWallpaperVisibility,
+  clampAppearanceWallpaperBlur,
   normalizeAppearanceSettings,
   type AppearanceSettings,
   type WallpaperId,
   type WallpaperMotion,
   normalizeCustomWallpaperUrl,
+  isCustomWallpaperVideo,
+  getWallpaperVisibility,
 } from '@/../shared/appearanceSettings';
 
 import { getBuiltinWallpaperBackground } from '@/lib/wallpaper';
 import { useIsDarkMode } from '@/components/markdown/useIsDarkMode';
 import { WallpaperVideo } from '@/components/layout/WallpaperVideo';
+import { useWallpaperAsset } from './useWallpaperAsset';
+import { useWallpaperBackground } from './useWallpaperBackground';
+import { useReducedMotion } from './useReducedMotion';
 
 export interface WallpaperSettings {
   wallpaperId: WallpaperId;
   wallpaperOverlay: number;
+  wallpaperVisibility?: number | null;
+  wallpaperBlur?: number | null;
   wallpaperMotion: WallpaperMotion;
   customWallpaperUrl?: string;
 }
 
 interface WallpaperSettingsContextValue extends WallpaperSettings {
+  playbackFailed: boolean;
+  downloadPending: boolean;
+  downloadFailed: boolean;
+  downloadProgress: number;
+  retryDownload: () => void;
+  visibility: number;
   setWallpaper: (id: WallpaperId) => void;
-  setOverlay: (value: number) => void;
+  setVisibility: (value: number) => void;
+  setBlur: (value: number) => void;
+  previewBlur: (value: number | null) => void;
   setMotion: (value: WallpaperMotion) => void;
   resetWallpaper: () => void;
 }
@@ -57,6 +72,8 @@ function pickWallpaperSettings(settings: AppearanceSettings): WallpaperSettings 
   return {
     wallpaperId: settings.wallpaperId,
     wallpaperOverlay: settings.wallpaperOverlay,
+    wallpaperVisibility: settings.wallpaperVisibility,
+    wallpaperBlur: settings.wallpaperBlur,
     wallpaperMotion: settings.wallpaperMotion,
     customWallpaperUrl: settings.customWallpaperUrl,
   };
@@ -64,32 +81,53 @@ function pickWallpaperSettings(settings: AppearanceSettings): WallpaperSettings 
 
 export function WallpaperSettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<WallpaperSettings>(getInitialWallpaperSettings);
+  const [blurPreview, setBlurPreview] = useState<number | null>(null);
+  const [failedUrl, setFailedUrl] = useState('');
+  const onPlaybackFailure = useCallback(
+    () => setFailedUrl(settings.customWallpaperUrl ?? ''),
+    [settings.customWallpaperUrl],
+  );
+  const onPlaybackReady = useCallback(() => setFailedUrl(''), []);
   const isDark = useIsDarkMode();
-  // Document-level surface also covers settings, split panes, portals and detached
-  // app windows, without changing the layout tree or stacking order of its panes.
-  useLayoutEffect(() => {
-    const root = document.documentElement;
-    const customUrl = normalizeCustomWallpaperUrl(settings.customWallpaperUrl);
-    const background =
-      settings.wallpaperId === 'custom'
-        ? customUrl
-          ? `url("${customUrl}")`
-          : undefined
+  const visibility = getWallpaperVisibility(settings, isDark);
+  const reducedMotion = useReducedMotion();
+  const imageAsset = useWallpaperAsset(settings.wallpaperId, 'image', visibility > 0);
+  const videoAsset = useWallpaperAsset(
+    settings.wallpaperId,
+    'video',
+    visibility > 0 && settings.wallpaperMotion === 'dynamic' && !reducedMotion,
+  );
+  const downloadPending = imageAsset.loading || videoAsset.loading;
+  const downloadFailed = imageAsset.failed || videoAsset.failed;
+  const downloadBytes = imageAsset.total + videoAsset.total;
+  const downloadProgress =
+    downloadBytes > 0 ? (imageAsset.loaded + videoAsset.loaded) / downloadBytes : 0;
+  const retryDownload = useCallback(() => {
+    imageAsset.retry();
+    videoAsset.retry();
+  }, [imageAsset.retry, videoAsset.retry]);
+  const customUrl = normalizeCustomWallpaperUrl(settings.customWallpaperUrl);
+  const background =
+    settings.wallpaperId === 'custom'
+      ? customUrl
+        ? isCustomWallpaperVideo(customUrl)
+          ? 'none'
+          : `url("${customUrl}")`
+        : undefined
+      : imageAsset.url
+        ? `url("${imageAsset.url}")`
         : getBuiltinWallpaperBackground(settings.wallpaperId);
-    const active = Boolean(background);
-    if (active) {
-      root.dataset.wallpaperActive = 'true';
-      root.style.setProperty('--app-wallpaper-image', background!);
-      // One cover-fitted canvas; theme-derived veil keeps messages readable.
-      const veil = (isDark ? 65 : 55) + settings.wallpaperOverlay * 40;
-      root.style.setProperty('--app-wallpaper-veil', `${veil}%`);
-    }
-    return () => {
-      delete root.dataset.wallpaperActive;
-      for (const name of ['--app-wallpaper-image', '--app-wallpaper-veil'])
-        root.style.removeProperty(name);
-    };
-  }, [settings, isDark]);
+  useWallpaperBackground({
+    background,
+    pending: imageAsset.loading || imageAsset.failed,
+    visibility,
+    blur: blurPreview ?? settings.wallpaperBlur ?? 0,
+    reducedMotion,
+    decodeUrl:
+      settings.wallpaperId === 'custom' && !isCustomWallpaperVideo(customUrl)
+        ? customUrl || undefined
+        : undefined,
+  });
   const settingsRef = useRef(settings);
   const confirmedRef = useRef(settings);
   const pendingRef = useRef<Array<{ id: number; patch: Partial<WallpaperSettings> }>>([]);
@@ -167,32 +205,90 @@ export function WallpaperSettingsProvider({ children }: { children: ReactNode })
   }, []);
 
   const setWallpaper = useCallback((wallpaperId: WallpaperId) => patch({ wallpaperId }), [patch]);
-  const setOverlay = useCallback(
-    (value: number) => patch({ wallpaperOverlay: clampAppearanceWallpaperOverlay(value) }),
+  const setVisibility = useCallback(
+    (value: number) => patch({ wallpaperVisibility: clampAppearanceWallpaperVisibility(value) }),
     [patch],
   );
   const setMotion = useCallback(
     (value: WallpaperMotion) => patch({ wallpaperMotion: value }),
     [patch],
   );
-  const resetWallpaper = useCallback(
-    () =>
-      patch({
-        wallpaperId: DEFAULT_APPEARANCE_SETTINGS.wallpaperId,
-        wallpaperOverlay: DEFAULT_APPEARANCE_SETTINGS.wallpaperOverlay,
-        wallpaperMotion: DEFAULT_APPEARANCE_SETTINGS.wallpaperMotion,
-      }),
+  const setBlur = useCallback(
+    (value: number) => {
+      setBlurPreview(null);
+      patch({ wallpaperBlur: clampAppearanceWallpaperBlur(value) });
+    },
     [patch],
   );
+  const previewBlur = useCallback((value: number | null) => {
+    const blur = value === null ? null : clampAppearanceWallpaperBlur(value);
+    // Radix keyboard input commits before its change callback. Do not recreate
+    // a preview for the value already queued for saving (or the unchanged value).
+    setBlurPreview(
+      settingsRef.current.wallpaperId === 'none' ||
+        blur === (settingsRef.current.wallpaperBlur ?? 0)
+        ? null
+        : blur,
+    );
+  }, []);
+  const resetWallpaper = useCallback(() => {
+    setBlurPreview(null);
+    patch({
+      wallpaperId: DEFAULT_APPEARANCE_SETTINGS.wallpaperId,
+      wallpaperOverlay: DEFAULT_APPEARANCE_SETTINGS.wallpaperOverlay,
+      wallpaperVisibility: null,
+      wallpaperBlur: null,
+      wallpaperMotion: DEFAULT_APPEARANCE_SETTINGS.wallpaperMotion,
+    });
+  }, [patch]);
 
   const value = useMemo<WallpaperSettingsContextValue>(
-    () => ({ ...settings, setWallpaper, setOverlay, setMotion, resetWallpaper }),
-    [resetWallpaper, setMotion, setOverlay, setWallpaper, settings],
+    () => ({
+      ...settings,
+      wallpaperBlur: blurPreview ?? settings.wallpaperBlur,
+      visibility,
+      playbackFailed: !!failedUrl && failedUrl === settings.customWallpaperUrl,
+      downloadPending,
+      downloadFailed,
+      downloadProgress,
+      retryDownload,
+      setWallpaper,
+      setVisibility,
+      setBlur,
+      previewBlur,
+      setMotion,
+      resetWallpaper,
+    }),
+    [
+      resetWallpaper,
+      setMotion,
+      setVisibility,
+      setBlur,
+      previewBlur,
+      blurPreview,
+      setWallpaper,
+      settings,
+      failedUrl,
+      visibility,
+      downloadPending,
+      downloadFailed,
+      downloadProgress,
+      retryDownload,
+    ],
   );
 
   return (
     <WallpaperSettingsContext.Provider value={value}>
-      <WallpaperVideo wallpaperId={settings.wallpaperId} motion={settings.wallpaperMotion} />
+      {visibility > 0 && (
+        <WallpaperVideo
+          wallpaperId={settings.wallpaperId}
+          motion={settings.wallpaperMotion}
+          customWallpaperUrl={settings.customWallpaperUrl}
+          officialVideoUrl={videoAsset.url}
+          onFailure={onPlaybackFailure}
+          onReady={onPlaybackReady}
+        />
+      )}
       {children}
     </WallpaperSettingsContext.Provider>
   );

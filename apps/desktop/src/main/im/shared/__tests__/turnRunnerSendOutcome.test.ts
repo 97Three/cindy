@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => ({
     reactToMessage: vi.fn(),
     removeMessageReaction: vi.fn(),
     sendText: vi.fn(),
+    sendFile: vi.fn(),
     sendMarkdownText: vi.fn(),
     startStreamingText: vi.fn(),
     patchMarkdownCard: vi.fn(),
@@ -66,6 +67,12 @@ const mocks = vi.hoisted(() => ({
   clearPendingTurnChangeSets: vi.fn(),
   noteSilentStopUserSend: vi.fn(),
   noteSilentStopSessionReset: vi.fn(),
+  // 与生产同语义的最小替身: 统一停止按 id 取**当前** runtime 并中止(唯一的一次 abort)。
+  stopSessionTurnExplicitly: vi.fn(async (sessionId: string): Promise<void> => {
+    await (mocks.getMaker() as { getSession(id: string): { abort(): Promise<void> } | undefined })
+      .getSession(sessionId)
+      ?.abort();
+  }),
   onSilentStopSettled: vi.fn(() => vi.fn()),
   installDesktopInteractionListener: vi.fn(),
   takePendingInteractionsForSession: vi.fn(),
@@ -82,6 +89,7 @@ const mocks = vi.hoisted(() => ({
   generateAndPersistFbotTitle: vi.fn(),
   desktopSessionRows: vi.fn(),
   materializeLocalMarkdownImages: vi.fn(),
+  peekGoalInactiveNote: vi.fn(async (): Promise<string | null> => null),
 }));
 
 vi.mock('../../../logger', () => ({
@@ -119,6 +127,10 @@ vi.mock('../../../localDb/schema', () => ({
   sessions: {},
 }));
 
+vi.mock('../../../goal-host/inactiveNote', () => ({
+  peekGoalInactiveNote: mocks.peekGoalInactiveNote,
+}));
+
 vi.mock('../../../imageCacheStore', () => ({
   resolveSafe: mocks.resolveXdtImageUrl,
 }));
@@ -152,6 +164,7 @@ vi.mock('../../../maker-ipc/register', () => ({
   takePendingInteractionsForSession: mocks.takePendingInteractionsForSession,
   noteSilentStopUserSend: mocks.noteSilentStopUserSend,
   noteSilentStopSessionReset: mocks.noteSilentStopSessionReset,
+  stopSessionTurnExplicitly: mocks.stopSessionTurnExplicitly,
   onSilentStopSettled: mocks.onSilentStopSettled,
 }));
 
@@ -180,7 +193,9 @@ vi.mock('../fbotTitle', () => ({
   generateAndPersistFbotTitle: mocks.generateAndPersistFbotTitle,
 }));
 
-import { createTurnRunner, type ImTurnRunner } from '../turnRunner';
+import { getActiveInteractionRoute } from '../../../maker-ipc/interactionRouter';
+import { readChannelToolScope, type ChannelToolScope } from '../channelToolScope';
+import { createTurnRunner, type ImRunAgentTurnArgs, type ImTurnRunner } from '../turnRunner';
 import {
   readGroupHistoryAccess,
   resetGroupHistoryAccessForTests,
@@ -433,11 +448,15 @@ interface TurnOverrides {
   userMessageId?: string;
   text?: string;
   agentText?: string;
+  channelNoteSource?: ImRunAgentTurnArgs['channelNoteSource'];
   onRouteResolved?: (sessionId: string) => void | Promise<void>;
   protectedContent?: boolean;
   groupHistoryAccess?: GroupHistoryAccessScope;
+  channelToolScope?: ChannelToolScope;
   prePersistedUserMessage?: { sessionId: string; clientId: string };
   onEarlyReject?: (reason: string, text: string) => Promise<boolean> | boolean;
+  attachments?: ImRunAgentTurnArgs['attachments'];
+  replyContext?: ImRunAgentTurnArgs['replyContext'];
 }
 
 async function runDefaultTurn(onTurnComplete = vi.fn(), overrides: TurnOverrides = {}) {
@@ -453,12 +472,15 @@ async function startDefaultTurn(onTurnComplete = vi.fn(), overrides: TurnOverrid
     userMessageId: overrides.userMessageId ?? 'msg-user',
     text: overrides.text ?? 'PROMPT_SECRET full user message TOKEN_VALUE file body',
     ...(overrides.agentText ? { agentText: overrides.agentText } : {}),
+    ...(overrides.channelNoteSource ? { channelNoteSource: overrides.channelNoteSource } : {}),
     contextSnapshot: overrides.contextSnapshot,
-    attachments: [],
+    attachments: overrides.attachments ?? [],
+    ...(overrides.replyContext ? { replyContext: overrides.replyContext } : {}),
     onTurnComplete,
     ...(overrides.onRouteResolved ? { onRouteResolved: overrides.onRouteResolved } : {}),
     ...(overrides.protectedContent === true ? { protectedContent: true } : {}),
     ...(overrides.groupHistoryAccess ? { groupHistoryAccess: overrides.groupHistoryAccess } : {}),
+    ...(overrides.channelToolScope ? { channelToolScope: overrides.channelToolScope } : {}),
     ...(overrides.prePersistedUserMessage
       ? { prePersistedUserMessage: overrides.prePersistedUserMessage }
       : {}),
@@ -585,6 +607,37 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
     runner = null;
   });
 
+  it('keeps child events out of personal IM streaming, attachments and completion', async () => {
+    const handle = { messageId: 'stream-parent', append: vi.fn(), replace: vi.fn(), finalize: vi.fn(), close: vi.fn() };
+    mocks.feishuIm.startStreamingText.mockResolvedValue(handle);
+    const h = setupSession(async () => ({ accepted: true }));
+    const complete = vi.fn();
+    await runDefaultTurn(complete);
+    h.emit({ type: 'text', data: { text: '主代理前半', isFinal: false } });
+    await flushMicrotasks();
+    handle.replace.mockClear();
+    const events: AgentEvent[] = [
+      { type: 'text', data: { text: '内部增量', isFinal: false } },
+      { type: 'text', data: { text: '内部报告', isFinal: true } },
+      { type: 'tool_use', data: { toolName: 'Bash', toolUseId: 'child-tool', input: { command: 'private' } } },
+      { type: 'tool_result_full', data: { fullText: '{"xdt_image_url":"xdt-image://private"}' } },
+      { type: 'error', data: { message: 'child failed', isTerminal: true } },
+      { type: 'done', data: {} },
+    ];
+    for (const event of events) h.emit({ ...event, agentMeta: { parentUuid: 'toolu_child' } });
+    await flushMicrotasks();
+    expect(handle.replace).not.toHaveBeenCalled();
+    expect(handle.finalize).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+    expect(mocks.resolveXdtImageUrl).not.toHaveBeenCalled();
+    h.emit({ type: 'text', data: { text: '和最终结论', isFinal: false } });
+    await flushMicrotasks();
+    expect(handle.replace).toHaveBeenLastCalledWith('主代理前半和最终结论');
+    h.emit({ type: 'done', data: {} });
+    await waitForAssertion(() => expect(handle.finalize).toHaveBeenCalledWith('主代理前半和最终结论'));
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps IM persistence, ack, card, and completion exactly-once when Maker recovery is transparent', async () => {
     const streamingHandle = {
       messageId: 'stream-recovered',
@@ -623,15 +676,30 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
   it('anchors direct IM capture to the durable accepted user message', async () => {
     mocks.persistUserMessage.mockResolvedValue({ clientId: 'im-anchor-client' });
     const h = setupSession(async () => ({ accepted: true }));
+    const scope: ChannelToolScope = {
+      channel: 'discord', botId: 'bot', laneUserId: 'lane', chatId: 'chat',
+      chatKind: 'group', requesterIsOwner: true, companion: true,
+      inputClientId: 'stale-input',
+    };
+    mocks.persistUserMessage.mockImplementationOnce(async () => {
+      // Before persistence, a reused scope must not attribute this turn to the old input.
+      expect(readChannelToolScope({ sessionId: h.session.id, sessionInstanceId: h.session.instanceId })?.inputClientId).toBeUndefined();
+      return { clientId: 'im-anchor-client' };
+    });
 
-    await runDefaultTurn();
+    await runDefaultTurn(vi.fn(), { channelToolScope: scope });
 
     expect(mocks.beginTurnChangeSetAtDispatch).toHaveBeenCalledWith(h.session, 'im-anchor-client');
+    expect(readChannelToolScope({ sessionId: h.session.id, sessionInstanceId: h.session.instanceId })?.inputClientId).toBe('im-anchor-client');
+    expect(readChannelToolScope({ sessionId: h.session.id, sessionInstanceId: 'stale-instance' })).toBeNull();
     expect(mocks.persistUserMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         source: expect.objectContaining({ im: 'feishu', contextSnapshot: {} }),
       }),
     );
+    h.emit({ type: 'done', data: {} });
+    await flushMicrotasks();
+    expect(readChannelToolScope({ sessionId: h.session.id, sessionInstanceId: h.session.instanceId })).toBeNull();
   });
 
   it('uses the adapter service identity for both early persistence and accepted enrichment', async () => {
@@ -798,6 +866,99 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
     });
   });
 
+  describe('Auto-review references', () => {
+    const quotedScreenshot = {
+      attachments: [{ kind: 'image' as const, absPath: '/media/quoted.png', originalName: 'quoted.png', mimeType: 'image/png' }],
+      replyContext: { author: '群友', text: '[图片]', attachmentCount: 1 },
+    };
+    const expected = {
+      attachments: { images: 1, files: 0 },
+      quotedMessages: [{ author: '群友', text: '[图片]', attachmentCount: 1 }],
+    };
+
+    it('stamps the replied-to message and attachments beside the raw channel text', async () => {
+      const h = setupSession(async () => ({ accepted: true }));
+      await runDefaultTurn(vi.fn(), {
+        text: '这啥情况',
+        agentText: '<reply_context>\n[群友] [图片]\n</reply_context>\n这啥情况',
+        ...quotedScreenshot,
+      });
+      expect(h.send.mock.calls[0]?.[1]?.[MAIN_OWNED_SEND_CONTEXT]).toEqual({
+        origin: { kind: 'im', channel: 'feishu', taskId: 'msg-user' },
+        rawChannelText: '这啥情况',
+        autoReviewReferences: expected,
+      });
+    });
+
+    it('keeps the same references when a SESSION_RUNNING race requeues the message', async () => {
+      vi.useFakeTimers();
+      try {
+        const err = Object.assign(new Error('SESSION_RUNNING'), { code: 'SESSION_RUNNING' });
+        const h = setupSession(async () => ({ accepted: true }));
+        h.send.mockRejectedValueOnce(err);
+        await runDefaultTurn(vi.fn(), { text: '这啥情况', ...quotedScreenshot });
+        await flushMicrotasks();
+        await vi.advanceTimersByTimeAsync(600);
+        expect(h.send).toHaveBeenCalledTimes(2);
+        expect(h.send.mock.calls[1]?.[1]?.[MAIN_OWNED_SEND_CONTEXT]).toMatchObject({
+          rawChannelText: '这啥情况',
+          autoReviewReferences: expected,
+        });
+        h.emit({ type: 'done', data: {} });
+        await vi.runOnlyPendingTimersAsync();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  it('puts the channel note in the model message only; persisted text and raw channel text stay original', async () => {
+    fakeAdapter.messageSourceIm = () => 'lark';
+    try {
+      mocks.persistUserMessage.mockResolvedValue({ clientId: 'im-anchor-client' });
+      const h = setupSession(async () => ({ accepted: true }));
+
+      await runDefaultTurn(vi.fn(), {
+        text: 'hello',
+        agentText: '<group_chat_context>…</group_chat_context>hello',
+        channelNoteSource: { chatKind: 'group', chatId: 'oc_x', chatName: '产品群', senderId: 'ou_y' },
+      });
+
+      expect(h.send.mock.calls[0]?.[0]).toMatchObject({
+        content:
+          '[渠道说明] 系统追加，不是用户消息。本条来自 Lark 群「产品群」(chat_id: oc_x)，发言人 (user_id: ou_y)。\n\n' +
+          '<group_chat_context>…</group_chat_context>hello',
+      });
+      expect(h.send.mock.calls[0]?.[1]?.[MAIN_OWNED_SEND_CONTEXT]).toMatchObject({
+        rawChannelText: 'hello',
+      });
+      const persisted = JSON.stringify(mocks.persistUserMessage.mock.calls);
+      expect(persisted).not.toContain('渠道说明');
+      expect(persisted).not.toContain('chat_id');
+    } finally {
+      delete fakeAdapter.messageSourceIm;
+    }
+  });
+
+  it('prepends the goal inactive note to the agent wire message only', async () => {
+    mocks.peekGoalInactiveNote.mockResolvedValueOnce('GOAL-NOTE');
+    const h = setupSession(async () => ({ accepted: true }));
+
+    await runDefaultTurn(vi.fn(), { text: 'hello', agentText: 'hello' });
+
+    expect(mocks.peekGoalInactiveNote).toHaveBeenCalledTimes(1);
+    expect(h.send.mock.calls[0]?.[0]).toMatchObject({ content: 'GOAL-NOTE\n\nhello' });
+  });
+
+  it('sends unchanged when reading the goal inactive note fails', async () => {
+    mocks.peekGoalInactiveNote.mockRejectedValueOnce(new Error('db unavailable'));
+    const h = setupSession(async () => ({ accepted: true }));
+
+    await runDefaultTurn(vi.fn(), { text: 'hello', agentText: 'hello' });
+
+    expect(h.send.mock.calls[0]?.[0]).toMatchObject({ content: 'hello' });
+  });
+
   it('marks only an accepted attached IM turn headless and releases it on done', async () => {
     const sendGate = deferred<SessionSendResult>();
     const h = setupAttachedSession(async () => sendGate.promise);
@@ -902,6 +1063,31 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
 
       h.emit({ type: 'done', data: {} });
       await waitForAssertion(() => expect(h.releaseTurnLease).toHaveBeenCalledOnce());
+    } finally {
+      await localRunner.disposeAllSessions();
+    }
+  });
+
+  it.each([
+    [true, 'owner'],
+    [undefined, 'unknown'],
+  ] as const)('stamps the channel owner check onto the interaction route (requesterIsOwner=%s)', async (requesterIsOwner, authority) => {
+    const h = setupSession(async () => ({ accepted: true }));
+    const localRunner = createTurnRunner(fakeAdapter, fakeRepo, fakeCards);
+    try {
+      await localRunner.runAgentTurn({
+        botContextId: 'cli_test_bot',
+        userId: 'ou_user',
+        userMessageId: `msg-owner-${String(requesterIsOwner)}`,
+        text: '更新 Cindy',
+        attachments: [],
+        ...(requesterIsOwner ? { requesterIsOwner } : {}),
+      });
+      expect(getActiveInteractionRoute(h.session as never)).toMatchObject({
+        origin: { kind: 'im' },
+        requesterAuthority: authority,
+      });
+      h.emit({ type: 'done', data: {} });
     } finally {
       await localRunner.disposeAllSessions();
     }
@@ -2370,7 +2556,7 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
       runner = createTurnRunner(
         {
           ...fakeAdapter,
-          processingEmoji: '👨‍💻',
+          processingEmoji: '👩🏻‍💻',
           queuedEmoji: '👀',
           terminalReactionEmoji: (kind) => (kind === 'error' ? '👎' : null),
         },
@@ -2394,14 +2580,14 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
       h.emit({ type: 'done', data: {} });
       await waitForAssertion(() => {
         expect(h.send).toHaveBeenCalledTimes(1);
-        expect(mocks.feishuIm.reactToMessage).toHaveBeenLastCalledWith('msg-user', '👨‍💻');
+        expect(mocks.feishuIm.reactToMessage).toHaveBeenLastCalledWith('msg-user', '👩🏻‍💻');
       });
       expect(mocks.feishuIm.removeMessageReaction).toHaveBeenCalledWith('msg-user', '👀');
 
       mocks.feishuIm.removeMessageReaction.mockClear();
       h.emit({ type: 'done', data: {} });
       await waitForAssertion(() => {
-        expect(mocks.feishuIm.removeMessageReaction).toHaveBeenCalledWith('msg-user', '👨‍💻');
+        expect(mocks.feishuIm.removeMessageReaction).toHaveBeenCalledWith('msg-user', '👩🏻‍💻');
       });
       expect(mocks.feishuIm.reactToMessage).not.toHaveBeenCalledWith('msg-user', '👍');
     });
@@ -2473,9 +2659,9 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
       await waitForAssertion(() => expect(h.send).toHaveBeenCalledTimes(1));
       h.emit({ type: 'done', data: {} });
       await waitForAssertion(() => expect(completed).toHaveBeenCalledTimes(1));
-      ack.resolve('👨‍💻');
+      ack.resolve('👩🏻‍💻');
       await waitForAssertion(() => {
-        expect(mocks.feishuIm.removeMessageReaction).toHaveBeenCalledWith('msg-user', '👨‍💻');
+        expect(mocks.feishuIm.removeMessageReaction).toHaveBeenCalledWith('msg-user', '👩🏻‍💻');
       });
       expect(mocks.feishuIm.reactToMessage).not.toHaveBeenCalledWith('msg-user', '👍');
       expect(mocks.feishuIm.reactToMessage).not.toHaveBeenCalledWith('msg-user', '👀');
@@ -2814,6 +3000,145 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
     if (first.kind === 'accepted') await first.terminal;
   });
 
+  it.each(['rich-card', 'chunked-text'] as const)('quota recovery respects %s output capabilities', async (kind) => {
+    const previousOutput = fakeAdapter.output;
+    const commitFinal = vi.fn(async (_payload: { text: string }) => undefined);
+    if (kind === 'chunked-text') {
+      fakeAdapter.output = {
+        kind,
+        im: mocks.feishuIm as unknown as ChannelIM,
+        beginReply: vi.fn(async () => undefined),
+        commitFinal,
+      };
+    }
+    try {
+      const h = setupSession(async () => ({ accepted: true }));
+      await runDefaultTurn();
+      h.emit({ type: 'error', data: { message: 'insufficient_quota', isTerminal: true } });
+      await waitForAssertion(() => {
+        const text = kind === 'chunked-text'
+          ? commitFinal.mock.calls[0]?.[0].text
+          : mocks.feishuIm.sendText.mock.calls[0]?.[1];
+        expect(text).toContain('账号余额或配额不足');
+        if (kind === 'chunked-text') {
+          expect(text).toContain('在 Cindy 里打开这个任务');
+          expect(text).not.toContain('/model');
+          expect(text).not.toContain('新对话配置');
+        } else {
+          expect(text).toContain('/model');
+          expect(text).not.toContain('新对话配置');
+        }
+      });
+    } finally {
+      fakeAdapter.output = previousOutput;
+    }
+  });
+
+  // #6884: exercise the real runner's outbound boundary. Existing cases only used
+  // plain text; one component fence used to reach the transport as protocol JSON.
+  // Unit tier: in-memory session/transport, no external sends or database writes.
+  describe('rich answers at the IM boundary', () => {
+    const rich = '```cindy-ui\n' + JSON.stringify({
+      version: 1, seq: 1, op: 'create', id: 'answer', kind: 'heading', props: { text: 'Readable answer' },
+    }) + '\n```';
+
+    it.each(['rich-card', 'chunked-text', 'start-failed', 'terminal-error'] as const)(
+      'projects component output for %s while leaving the session event intact', async (kind) => {
+        const previousOutput = fakeAdapter.output;
+        const commitFinal = vi.fn<(payload: { text: string }) => Promise<void>>(async () => undefined);
+        const replace = vi.fn();
+        const finalize = vi.fn();
+        mocks.feishuIm.startStreamingText.mockResolvedValue({
+          messageId: 'rich', append: vi.fn(), replace, finalize, close: vi.fn(),
+        });
+        if (kind === 'start-failed') mocks.feishuIm.startStreamingText.mockRejectedValue(new Error('offline'));
+        if (kind === 'chunked-text') fakeAdapter.output = {
+          kind: 'chunked-text', im: mocks.feishuIm as unknown as ChannelIM, commitFinal,
+        };
+        try {
+          const h = setupSession(async () => ({ accepted: true }));
+          const observed = vi.fn();
+          h.session.onEvent(observed);
+          await runDefaultTurn();
+          const source = `Before\n\n${rich}\n\nAfter`;
+          const event: AgentEvent = { type: 'text', data: { text: source, isFinal: true } };
+          h.emit(event);
+          await flushMicrotasks();
+          h.emit(kind === 'terminal-error'
+            ? { type: 'error', data: { message: 'process exited', isTerminal: true } }
+            : { type: 'done', data: {} });
+          await waitForAssertion(() => {
+            const text = kind === 'chunked-text' ? commitFinal.mock.calls[0]?.[0].text
+              : kind === 'start-failed' ? mocks.feishuIm.sendText.mock.calls.at(-1)?.[1]
+                : finalize.mock.calls[0]?.[0];
+            expect(text).toContain('### Readable answer');
+            expect(text).toContain('Before');
+            expect(text).toContain('After');
+            expect(text).not.toContain('cindy-ui');
+            expect(text).not.toContain('"op"');
+            if (kind === 'terminal-error') expect(text).toContain('process exited');
+          });
+          expect(observed).toHaveBeenCalledWith(event);
+          expect(event.data).toEqual({ text: source, isFinal: true });
+          expect(mocks.persistAssistantMessage).not.toHaveBeenCalled();
+        } finally {
+          fakeAdapter.output = previousOutput;
+        }
+      },
+    );
+
+    it('waits on an incomplete component instead of streaming raw JSON, then shows readable content', async () => {
+      const replace = vi.fn();
+      const finalize = vi.fn();
+      mocks.feishuIm.startStreamingText.mockResolvedValue({
+        messageId: 'rich', append: vi.fn(), replace, finalize, close: vi.fn(),
+      });
+      const h = setupSession(async () => ({ accepted: true }));
+      await runDefaultTurn();
+      h.emit({ type: 'text', data: { text: '```cindy-ui\n{"version":1,"seq":1', isFinal: false } });
+      await waitForAssertion(() => expect(replace).toHaveBeenCalledWith(''));
+      h.emit({ type: 'text', data: { text: rich, isFinal: true } });
+      await waitForAssertion(() => expect(replace).toHaveBeenLastCalledWith('### Readable answer'));
+      h.emit({ type: 'done', data: {} });
+      await waitForAssertion(() => expect(finalize).toHaveBeenCalledWith('### Readable answer'));
+      expect(JSON.stringify(replace.mock.calls)).not.toContain('cindy-ui');
+    });
+
+    it('keeps a machine-local image path out of live card updates', async () => {
+      const replace = vi.fn();
+      mocks.feishuIm.startStreamingText.mockResolvedValue({
+        messageId: 'rich', append: vi.fn(), replace, finalize: vi.fn(), close: vi.fn(),
+      });
+      const h = setupSession(async () => ({ accepted: true }));
+      await runDefaultTurn();
+      h.emit({ type: 'text', data: { text: 'Look ![preview](/Users/alice/private/preview.png)', isFinal: false } });
+      await waitForAssertion(() => expect(replace).toHaveBeenCalledWith('Look preview'));
+      expect(JSON.stringify(replace.mock.calls)).not.toContain('/Users/alice');
+    });
+
+    it.each([
+      ['```cindy-ui\n{"version":', 'Some content could not be displayed.', false],
+      ['```cindy-ui\ninvalid\n```', 'Some content could not be displayed.', false],
+      ['```cindy-ui\n{"version":', /Some content could not be displayed\.[\s\S]*process exited/, true],
+      ['Before\n\n```cindy-ui\ninvalid\n```\n\nAfter', /Before\s+After/, false],
+      ['# Markdown\n\n```json\n{"op":"create"}\n```', '# Markdown\n\n```json\n{"op":"create"}\n```', false],
+    ] as const)('keeps final output readable without changing ordinary code blocks (%s)', async (source, expected, failed) => {
+      setMainLocale('en');
+      const finalize = vi.fn();
+      mocks.feishuIm.startStreamingText.mockResolvedValue({
+        messageId: 'rich', append: vi.fn(), replace: vi.fn(), finalize, close: vi.fn(),
+      });
+      const h = setupSession(async () => ({ accepted: true }));
+      await runDefaultTurn();
+      h.emit({ type: 'text', data: { text: source, isFinal: true } });
+      h.emit(failed ? { type: 'error', data: { message: 'process exited', isTerminal: true } }
+        : { type: 'done', data: {} });
+      await waitForAssertion(() => expect(finalize).toHaveBeenCalledWith(
+        typeof expected === 'string' ? expected : expect.stringMatching(expected),
+      ));
+    });
+  });
+
   it('commits one terminal payload for a chunked-text output driver', async () => {
     const previousOutput = fakeAdapter.output;
     const beginReply = vi.fn(async () => undefined);
@@ -2855,7 +3180,9 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
     }
   });
 
-  it('materializes local Markdown images before committing chunked-text output', async () => {
+  // #7125 review: image components must reach the existing attachment pipeline,
+  // including error finalization; otherwise WeChat removes the projected image.
+  it.each(['markdown', 'component', 'component-error'] as const)('materializes %s images before committing chunked-text output', async (kind) => {
     const previousOutput = fakeAdapter.output;
     const commitFinal = vi.fn(async () => undefined);
     fakeAdapter.output = {
@@ -2872,15 +3199,22 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
       const { turnPromise } = await startDefaultTurn();
       await turnPromise;
 
+      const markdown = '![测试图片](F:\\XDMaker\\generated.png)';
+      const source = kind === 'markdown' ? markdown : '```cindy-ui\n' + JSON.stringify({
+        version: 1, seq: 1, op: 'create', id: 'image', kind: 'image',
+        props: { src: 'F:\\XDMaker\\generated.png', alt: '测试图片' },
+      }) + '\n```';
       h.emit({
         type: 'text',
-        data: { text: '![测试图片](F:\\XDMaker\\generated.png)', isFinal: true },
+        data: { text: source, isFinal: true },
       });
-      h.emit({ type: 'done', data: {} });
+      h.emit(kind === 'component-error'
+        ? { type: 'error', data: { message: 'process exited', isTerminal: true } }
+        : { type: 'done', data: {} });
       await flushMicrotasks();
 
       expect(mocks.materializeLocalMarkdownImages).toHaveBeenCalledWith({
-        text: '![测试图片](F:\\XDMaker\\generated.png)',
+        text: kind === 'markdown' ? markdown : '![测试图片](<F:\\XDMaker\\generated.png>)',
         workingDir: 'F:\\XDMaker',
         sessionId: 'feishu-session',
         maxImages: 4,
@@ -2888,8 +3222,9 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
       });
       expect(commitFinal).toHaveBeenCalledWith({
         userId: 'ou_user',
-        text: '测试图片',
-        terminal: 'done',
+        text: kind === 'component-error' ? expect.stringMatching(/测试图片[\s\S]*process exited/) : '测试图片',
+        terminal: kind === 'component-error' ? 'error' : 'done',
+        ...(kind === 'component-error' ? { errorCode: 'agent_turn_error' } : {}),
         threadTs: undefined,
         mediaAbsPaths: ['C:\\cindy-media\\generated.png'],
         allowedFileRoots: ['F:\\XDMaker'],
@@ -2936,6 +3271,49 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
     expect(unsub).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['telegram', false], ['telegram', true], ['feishu', false],
+    ['feishu', true], ['discord', false], ['discord', true],
+  ] as const)('%s 空成功结果不补发占位（过程消息：%s）', async (channel, withProgress) => {
+    const handle = {
+      messageId: 'telegram-progress',
+      append: vi.fn(), replace: vi.fn(), finalize: vi.fn(), close: vi.fn(),
+    };
+    mocks.feishuIm.startStreamingText.mockResolvedValue(handle);
+    runner = createTurnRunner({ ...fakeAdapter, channel }, fakeRepo, fakeCards);
+    const h = setupSession(async () => ({ accepted: true }));
+    await runDefaultTurn();
+    if (withProgress) {
+      h.emit({ type: 'text', data: { text: ' \n ', isFinal: true } });
+      await flushMicrotasks();
+    }
+    mocks.feishuIm.sendText.mockClear();
+    h.emit({ type: 'done', data: {} });
+    await waitForAssertion(() => {
+      expect(mocks.logger.info.mock.calls.some((c) => String(c[0]).includes('turn done'))).toBe(true);
+    });
+    expect(mocks.feishuIm.sendText).not.toHaveBeenCalled();
+    expect(mocks.feishuIm.consumePendingOpenerCard).not.toHaveBeenCalled();
+    if (withProgress) expect(handle.finalize).toHaveBeenCalledWith('');
+    else expect(handle.finalize).not.toHaveBeenCalled();
+  });
+
+  it.each(['wechat', 'wecom', 'dingtalk'] as const)('%s 空结果仍提交终态，不经过普通发消息兜底', async (channel) => {
+    const commitFinal = vi.fn(async () => undefined);
+    runner = createTurnRunner({
+      ...fakeAdapter, channel,
+      output: { kind: 'chunked-text', im: mocks.feishuIm as unknown as ChannelIM, commitFinal },
+    }, fakeRepo, fakeCards);
+    const h = setupSession(async () => ({ accepted: true }));
+    await runDefaultTurn();
+    mocks.feishuIm.sendText.mockClear();
+    h.emit({ type: 'done', data: {} });
+    await waitForAssertion(() => expect(commitFinal).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'ou_user', text: '', terminal: 'done',
+    })));
+    expect(mocks.feishuIm.sendText).not.toHaveBeenCalled();
+  });
+
   it('clears the retry notice when the retried turn succeeds with no output', async () => {
     // 不变量锁定(review #844 codex P1 提出的担心, 实测不成立但值得锁住):
     // 重投成功而那一轮零输出时, 没有任何进展 handler 会清掉"正在自动重试" —— 卡片
@@ -2971,8 +3349,8 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
     });
     const finalView = String(handle.finalize.mock.calls[0][0]);
     expect(finalView).not.toContain('正在自动重试');
-    // 过程区清空后应回落到空回复兜底, 而不是把状态行当正文。
-    expect(finalView).toContain('空回复');
+    // 空正文交给传输层撤回进度卡，不把状态行当正文。
+    expect(finalView).toBe('');
   });
 
   it('waits for the pending retry card before finalizing a terminal overload error', async () => {
@@ -3103,6 +3481,42 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
     expect(String(handle.finalize.mock.calls[0][0])).toContain('process exited with code 1');
   });
 
+  it('shows live tok/s while running but drops it from the frozen failure card', async () => {
+    const handle = {
+      messageId: 'stream-fatal-rate',
+      append: vi.fn(),
+      replace: vi.fn(),
+      finalize: vi.fn(),
+      close: vi.fn(),
+    };
+    mocks.feishuIm.startStreamingText.mockResolvedValue(handle);
+    const h = setupSession(async () => ({ accepted: true }));
+    const { onTurnComplete } = await runDefaultTurn();
+
+    h.emit({
+      type: 'status',
+      data: {
+        status: 'Running',
+        isRunning: true,
+        tokenSpeed: { rate: 116.4, average: 110, tokens: 500, elapsedMs: 4_000, streaming: true },
+      },
+    });
+    h.emit({ type: 'tool_use', data: { toolName: 'Read', toolUseId: 'r1', input: { file_path: '/x/a.ts' } } });
+    await waitForAssertion(() => {
+      expect(String(handle.replace.mock.calls.at(-1)?.[0])).toContain('· 116 tok/s');
+    });
+
+    h.emit({ type: 'error', data: { message: 'process exited with code 1', isTerminal: true } });
+    await waitForAssertion(() => {
+      expect(onTurnComplete).toHaveBeenCalledTimes(1);
+      expect(handle.finalize).toHaveBeenCalledTimes(1);
+    });
+    // 失败收口保留过程区(用户能看到死在哪步), 但不能留一个已经不存在的速度。
+    const finalView = String(handle.finalize.mock.calls[0][0]);
+    expect(finalView).toContain('读取 a.ts');
+    expect(finalView).not.toContain('tok/s');
+  });
+
   it('keeps streaming resumed-turn output into the same turn after a silentStop resume', async () => {
     const handle = {
       messageId: 'stream-resume',
@@ -3158,7 +3572,10 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
       userId: 'ou_user',
     });
     expect(result.stopped).toBe(true);
-    expect(mocks.noteSilentStopSessionReset).toHaveBeenCalledWith('feishu-session');
+    // 与桌面 Stop 同一套清理: 统一停止入口负责撤续跑守卫与唯一的一次 abort,
+    // turnRunner 自己不再直接 abort(重复中止会向 vendor 发两次 interrupt)。
+    expect(mocks.noteSilentStopSessionReset).not.toHaveBeenCalled();
+    expect(mocks.stopSessionTurnExplicitly).toHaveBeenCalledWith('feishu-session');
     expect(h.abort).toHaveBeenCalledTimes(1);
 
     const settleCb = (mocks.onSilentStopSettled.mock.calls[0] as unknown[])[1] as (
@@ -4055,6 +4472,24 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
   });
 
 describe('初始流式输出面创建失败的收口降级(#2164)', () => {
+  // Unit: real turn events; missing stream must not drop generated media.
+  it.each(['', 'image ready'])('keeps generated media when stream creation fails (body=%s)', async (body) => {
+    mocks.feishuIm.startStreamingText.mockRejectedValue(new Error('card create denied'));
+    mocks.resolveXdtImageUrl.mockReturnValue({ absPath: '/media/generated.png' });
+    const h = setupSession(async () => ({ accepted: true }));
+    await runDefaultTurn();
+    mocks.feishuIm.sendText.mockClear();
+    h.emit({ type: 'tool_result_full', data: { fullText: '{"xdt_image_url":"xdt-image://generated.png"}' } });
+    if (body) h.emit({ type: 'text', data: { text: body, isFinal: true } });
+    h.emit({ type: 'done', data: {} });
+    await flushMicrotasks();
+    await waitForAssertion(() => expect(mocks.feishuIm.sendFile).toHaveBeenCalledExactlyOnceWith(
+      'ou_user', '/media/generated.png', undefined, { threadTs: undefined },
+    ));
+    if (body) expect(mocks.feishuIm.sendText).toHaveBeenCalledWith('ou_user', body, { threadTs: undefined });
+    else expect(mocks.feishuIm.sendText).not.toHaveBeenCalled();
+  });
+
   it('startStreamingText 拒绝 + 短文本:正文经 sendText 一次性送达,turn 正常完成', async () => {
     mocks.feishuIm.startStreamingText.mockRejectedValue(new Error('card create denied'));
     const h = setupSession(async () => ({ accepted: true }));
@@ -4145,7 +4580,7 @@ describe('初始流式输出面创建失败的收口降级(#2164)', () => {
     );
   });
 
-  it('空正文 + 建卡失败:保留「本轮无文本输出」提示', async () => {
+  it('空正文 + 建卡失败: 不补发占位提示', async () => {
     mocks.feishuIm.startStreamingText.mockRejectedValue(new Error('card create denied'));
     const h = setupSession(async () => ({ accepted: true }));
     const onTurnComplete = vi.fn();
@@ -4160,15 +4595,11 @@ describe('初始流式输出面创建失败的收口降级(#2164)', () => {
     h.emit({ type: 'done', data: {}, source: 'claude-code' });
     await waitForAssertion(() => {
       expect(onTurnComplete).toHaveBeenCalledTimes(1);
-      expect(mocks.feishuIm.sendText).toHaveBeenCalledWith(
-        'ou_user',
-        expect.stringContaining('本轮无文本输出'),
-        expect.anything(),
-      );
+      expect(mocks.feishuIm.sendText).not.toHaveBeenCalled();
     });
   });
 
-  it('无文本输出兜底发送认领暂存 opener', async () => {
+  it('无文本输出清理本轮 opener，不另发兜底', async () => {
     mocks.feishuIm.startStreamingText.mockRejectedValue(new Error('card create denied'));
     mocks.feishuIm.getPendingOpenerTrigger.mockReturnValue('msg-user');
     mocks.feishuIm.consumePendingOpenerCard.mockResolvedValue(false);
@@ -4184,11 +4615,8 @@ describe('初始流式输出面创建失败的收口降级(#2164)', () => {
     await flushMicrotasks();
     h.emit({ type: 'done', data: {}, source: 'claude-code' });
     await waitForAssertion(() => {
-      expect(mocks.feishuIm.sendText).toHaveBeenCalledWith(
-        'ou_user',
-        expect.stringContaining('本轮无文本输出'),
-        expect.objectContaining({ fallbackOpenerId: 'om_deferred' }),
-      );
+      expect(mocks.feishuIm.consumePendingOpenerCard).toHaveBeenCalledWith('ou_user', '');
+      expect(mocks.feishuIm.sendText).not.toHaveBeenCalled();
     });
   });
 
@@ -4231,11 +4659,7 @@ describe('初始流式输出面创建失败的收口降级(#2164)', () => {
     await waitForAssertion(() => {
       expect(onTurnB).toHaveBeenCalledTimes(1);
       expect(mocks.feishuIm.consumePendingOpenerCard).toHaveBeenCalledTimes(1);
-      expect(mocks.feishuIm.sendText).toHaveBeenCalledWith(
-        'ou_user',
-        expect.stringContaining('本轮无文本输出'),
-        expect.anything(),
-      );
+      expect(mocks.feishuIm.sendText).not.toHaveBeenCalled();
     });
   });
 });

@@ -12,9 +12,56 @@ import {
   type PrRemoteState,
 } from '../git-context/prStatusService';
 import type { GhCliTokenReadResult } from '../git-context/ghCliTokenSource';
+import { fetchPrSummary, summarizeChecks } from '../git-context/prSummary';
+import type { GithubClient } from '@cindy/github-client';
 
 const Q = { owner: 'makecindy', repo: 'cindy', prNumber: 85 };
 const TOKEN_OK = async (): Promise<GhCliTokenReadResult> => ({ ok: true, token: 'ghp_x' });
+
+// Production summary + cache entry points. New counts must cover both GitHub APIs,
+// truncated and unavailable results, absent from the prior four-state tests.
+// Minimal inputs are one failed commit status and an incomplete thread page (unit).
+describe('PR summary', () => {
+  it('counts current rollup check runs and commit statuses once, without passing skipped checks', () => {
+    expect(summarizeChecks({ totalCount: 5,
+      checkRunCountsByState: [{ state: 'SUCCESS', count: 2 }, { state: 'SKIPPED', count: 1 }, { state: 'IN_PROGRESS', count: 1 }],
+      statusContextCountsByState: [{ state: 'FAILURE', count: 1 }],
+    })).toEqual({ total: 5, passed: 2, skipped: 1, pending: 1, failed: 1 });
+    expect(summarizeChecks({ totalCount: 1, checkRunCountsByState: null, statusContextCountsByState: [] })).toBeNull();
+    expect(summarizeChecks({ totalCount: 1, checkRunCountsByState: [{ state: 'FUTURE_STATE', count: 1 }], statusContextCountsByState: [] })).toBeNull();
+  });
+
+  it('keeps one GraphQL request and reports truncated reviews as unknown', async () => {
+    const pr = { headRefOid: 'head', commits: { nodes: [{ commit: { oid: 'head', statusCheckRollup: null } }] },
+      reviewThreads: { nodes: [{ isResolved: false }], pageInfo: { hasNextPage: true } } };
+    const graphql = vi.fn().mockResolvedValue({ repository: { pullRequest: pr } });
+    expect(await fetchPrSummary({ graphql } as unknown as GithubClient, Q)).toEqual({ headOid: 'head', unresolved: null, checks: { total: 0, passed: 0, failed: 0, pending: 0, skipped: 0 } });
+    expect(graphql).toHaveBeenCalledTimes(1);
+    pr.reviewThreads.pageInfo.hasNextPage = false;
+    expect(await fetchPrSummary({ graphql } as unknown as GithubClient, Q)).toMatchObject({ unresolved: 1 });
+    expect(graphql).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not turn missing PR data or a changed head into zero/all passing', async () => {
+    const graphql = vi.fn().mockResolvedValue({ repository: { pullRequest: null } });
+    expect(await fetchPrSummary({ graphql } as unknown as GithubClient, Q)).toEqual({ headOid: null, unresolved: null, checks: null });
+    graphql.mockResolvedValue({ repository: { pullRequest: { headRefOid: 'new', commits: { nodes: [{ commit: { oid: 'old', statusCheckRollup: null } }] }, reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } } } } });
+    expect(await fetchPrSummary({ graphql } as unknown as GithubClient, Q)).toMatchObject({ unresolved: 0, checks: null });
+  });
+
+  it('returns refreshed counts on the first expired UI request while sharing in-flight work', async () => {
+    let now = 0;
+    const fetchPr = vi.fn().mockResolvedValue(remote({ checks: { total: 1, passed: 0, failed: 0, pending: 1, skipped: 0 } }));
+    const svc = new PrStatusService({ readToken: TOKEN_OK, fetchPr, staleTtlMs: 0, now: () => now });
+    await svc.getStatuses([Q]);
+    now = 90_000;
+    fetchPr.mockResolvedValue(remote({ checks: { total: 1, passed: 1, failed: 0, pending: 0, skipped: 0 } }));
+    const [first, second] = await Promise.all([svc.getStatuses([Q]), svc.getStatuses([Q])]);
+    expect(first[0]).toMatchObject({ checks: { passed: 1, pending: 0 } });
+    expect(second).toEqual(first);
+    expect(fetchPr).toHaveBeenCalledTimes(2);
+  });
+});
 
 function remote(partial: Partial<PrRemoteState>): PrRemoteState {
   return {
@@ -115,6 +162,33 @@ describe('PrStatusService', () => {
     now = 200;
     await svc.getStatuses([Q]);
     expect(fetchPr).toHaveBeenCalledTimes(2);
+  });
+
+  // 过期但未超 stale 窗:立即用旧值回答,后台复核一次;下一次查询拿到新值。
+  // 修复前每 60s 过期都让一次 ~1.2s 的 GitHub 往返挡在侧栏 / 手机的状态查询前面。
+  it('过期后先回旧值再后台复核,超过 stale 窗才同步等待', async () => {
+    let now = 0;
+    let resolveFetch!: (v: PrRemoteState) => void;
+    const fetchPr = vi.fn(async () => remote({}));
+    const svc = new PrStatusService({
+      readToken: TOKEN_OK, fetchPr, cacheTtlMs: 100, staleTtlMs: 1_000, now: () => now,
+    });
+    expect((await svc.getStatuses([Q]))[0]).toMatchObject({ ok: true, status: 'open' });
+    now = 200;
+    fetchPr.mockImplementation(() => new Promise<PrRemoteState>((res) => (resolveFetch = res)));
+    // Stale answer returns without waiting for the slow revalidation.
+    expect((await svc.getStatuses([Q]))[0]).toMatchObject({ ok: true, status: 'open' });
+    await vi.waitFor(() => expect(fetchPr).toHaveBeenCalledTimes(2));
+    // A second stale read joins the same in-flight revalidation.
+    expect((await svc.getStatuses([Q]))[0]).toMatchObject({ status: 'open' });
+    expect(fetchPr).toHaveBeenCalledTimes(2);
+    resolveFetch(remote({ merged: true, state: 'closed' }));
+    await vi.waitFor(async () => expect((await svc.getStatuses([Q]))[0]).toMatchObject({ status: 'merged' }));
+    // Beyond the stale window the read waits for GitHub again.
+    now = 5_000;
+    fetchPr.mockImplementation(async () => remote({ state: 'closed' }));
+    expect((await svc.getStatuses([Q]))[0]).toMatchObject({ status: 'closed' });
+    expect(fetchPr).toHaveBeenCalledTimes(3);
   });
 
   it('并发同一 PR 只发一次请求(in-flight 去重)', async () => {

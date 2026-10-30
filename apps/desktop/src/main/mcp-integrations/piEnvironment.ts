@@ -63,6 +63,7 @@ import { pluginIdForKnownProviderName } from '../maker-host/plugins/builtin-plug
 import { createPluginRegistry } from '../maker-host/plugins/index.js';
 import { isAllowedRemoteMcpUrl, isDesktopLoopbackMcpUrl } from './piMcpTransport.js';
 import { RUNTIME_MCP_NAMES_KEY } from '../maker-host/agentCapabilityCatalog.js';
+import { hasImChannelVendorOptions } from '../../shared/botImConnection.js';
 
 interface StartedPiBridge {
   bridge: CodexHttpBridge | null;
@@ -211,6 +212,12 @@ export async function getPiExtraSpawnConfig(
         server.name === CINDY_MAKE_MCP_SERVER_NAME
         && !isCindyMakeVendorOptions(sessionCtx?.vendorOptions)
       ) return false;
+      // Telegram Bot API 直通只给带 Telegram 渠道标记的会话(专线 chat / 伙伴绑了 Telegram);
+      // 共享 bridge 上它常注册, 可见性在这里按会话收。
+      if (
+        server.name === 'cindy_telegram_bot'
+        && !hasImChannelVendorOptions(sessionCtx?.vendorOptions, 'telegram')
+      ) return false;
       if (!isBotMcpServerAllowed(sessionCtx?.botMcpPolicy, server.name)) return false;
       if (!collabEnabled && REMOTE_COLLAB_SERVER_NAMES.has(server.name)) return false;
       // Custom HTTP MCPs are `s.remote` and skip the SSH URL rewriter. Desktop
@@ -303,7 +310,7 @@ export async function getPiExtraSpawnConfig(
     vendorOptions[CODEX_ALLOWED_BUILTIN_PLUGIN_IDS_KEY] = allowedPluginIds;
   }
   const liziCtx: LiziMcpSessionContext = {
-    agentKind: 'pi',
+    agentKind: sessionCtx?.agentKind ?? 'pi',
     sessionId,
     ...(sessionCtx?.sessionInstanceId ? { sessionInstanceId: sessionCtx.sessionInstanceId } : {}),
     workingDir: sessionCtx?.workingDir ?? '',
@@ -644,7 +651,7 @@ async function doStart(
     if (!toClaudeSdkConfig) continue;
 
     const createServer = (): McpServer => {
-      const cfg = toClaudeSdkConfig(ctx) as { type?: string; instance?: unknown } | null;
+      const cfg = toClaudeSdkConfig.call(provider, ctx) as { type?: string; instance?: unknown } | null;
       if (cfg?.type !== 'sdk' || !cfg.instance) {
         throw new Error(`provider ${provider.name} did not return an SDK McpServer instance`);
       }

@@ -5,7 +5,65 @@ export type AutoReviewUserIntent =
       readonly currentUserMessage: string;
       /** Omitted history may contain standing restrictions; never silently treat it as unrestricted. */
       readonly historyOmitted?: true;
+      /**
+       * Host-stamped content the current message explicitly points at. Belongs to
+       * `currentUserMessage` only: appending a newer message drops it.
+       */
+      readonly currentUserReferences?: AutoReviewUserReferences;
     };
+
+/**
+ * What the current channel message points at, captured by the Host from channel
+ * adapter / Hook source facts (never from wire-reported fields): its attachments
+ * and the message(s) it replies to or quotes. Quoted text is third-party data —
+ * it can show what "this" refers to, but it is not user-authored and never grants.
+ */
+export interface AutoReviewUserReferences {
+  /** Everything delivered with this message, including attachments a channel merged in from the quote. */
+  readonly attachments?: { readonly images: number; readonly files: number };
+  readonly quotedMessages?: readonly AutoReviewQuotedMessage[];
+}
+
+export interface AutoReviewQuotedMessage {
+  readonly author: string;
+  readonly text: string;
+  readonly isBot?: true;
+  /** How many of `attachments` came from this quoted message; absent when the channel cannot tell. */
+  readonly attachmentCount?: number;
+}
+
+/**
+ * The single projection for review references. Channels map their Host-owned
+ * reply/attachment facts into this shape; anything malformed is dropped and all
+ * text is bounded independently of the user-intent budget. Returns undefined
+ * when nothing is referenced, so unreferenced messages keep their exact intent.
+ */
+export function projectAutoReviewUserReferences(
+  value: unknown,
+): AutoReviewUserReferences | undefined {
+  return sharedProjection().projectReferences(value);
+}
+
+/**
+ * Separate references from user-authored intent before showing either to a
+ * reviewer: references must never be presented as text the user wrote.
+ */
+export function splitAutoReviewUserReferences(intent: AutoReviewUserIntent): {
+  intent: AutoReviewUserIntent;
+  references?: AutoReviewUserReferences;
+} {
+  return sharedProjection().splitReferences(intent);
+}
+
+/** Read only a host-owned receipt, never model text or a wire-supplied approval. */
+export function verifiedOwnerRequestText(receipt: unknown): string | undefined {
+  return sharedProjection().verifiedOwnerRequestText(receipt);
+}
+
+let sharedProjectionInstance: ReturnType<typeof createAutoReviewIntentProjection> | undefined;
+function sharedProjection(): ReturnType<typeof createAutoReviewIntentProjection> {
+  return (sharedProjectionInstance ??= createAutoReviewIntentProjection());
+}
 
 export interface AutoReviewHistoryMessage {
   clientId: string;
@@ -21,6 +79,18 @@ export function createAutoReviewIntentProjection() {
   const OMITTED_USER_INTENT =
     "User message omitted because it exceeds the review budget; it cannot establish authorization.";
 
+  // Kept inside the factory because database workers evaluate its source.
+  function verifiedOwnerRequestText(receipt: unknown): string | undefined {
+    if (!receipt || typeof receipt !== "object" || !("kind" in receipt) ||
+      !["agent-request", "delegated-continuation"].includes(String(receipt.kind)) || !("request" in receipt)) return undefined;
+    const source = receipt.request;
+    if (!source || typeof source !== "object" || !("ownerVerified" in source) || source.ownerVerified !== true ||
+      !("sessionId" in source) || typeof source.sessionId !== "string" || !source.sessionId ||
+      !("clientId" in source) || typeof source.clientId !== "string" || !source.clientId ||
+      !("userText" in source) || typeof source.userText !== "string" || !source.userText.trim()) return undefined;
+    return source.userText;
+  }
+
   function compactCurrentUserIntent(
     text: string,
     maxChars = MAX_USER_INTENT_CHARS,
@@ -30,7 +100,116 @@ export function createAutoReviewIntentProjection() {
     return OMITTED_USER_INTENT;
   }
 
+  // Kept inside the factory: the database worker evaluates this function's source.
+  const MAX_REFERENCED_QUOTES = 3;
+  const MAX_REFERENCED_AUTHOR_CHARS = 80;
+  const MAX_REFERENCED_QUOTE_CHARS = 600;
+  const MAX_REFERENCED_QUOTES_TOTAL_CHARS = 1_200;
+  const MAX_REFERENCED_COUNT = 99;
+  const REFERENCE_TRUNCATED = "…[truncated]";
+
+  function boundedReferenceText(value: string, maxChars: number): string {
+    const text = value.trim();
+    return text.length <= maxChars
+      ? text
+      : `${text.slice(0, Math.max(0, maxChars - REFERENCE_TRUNCATED.length))}${REFERENCE_TRUNCATED}`;
+  }
+
+  function referenceCount(value: unknown): number {
+    return typeof value === "number" && Number.isFinite(value) && value > 0
+      ? Math.min(Math.floor(value), MAX_REFERENCED_COUNT)
+      : 0;
+  }
+
+  function projectAutoReviewUserReferences(
+    value: unknown,
+  ): AutoReviewUserReferences | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const input = value as Record<string, unknown>;
+    const rawAttachments =
+      input.attachments && typeof input.attachments === "object" && !Array.isArray(input.attachments)
+        ? (input.attachments as Record<string, unknown>)
+        : {};
+    const images = referenceCount(rawAttachments.images);
+    const files = referenceCount(rawAttachments.files);
+    const quotedMessages: AutoReviewQuotedMessage[] = [];
+    let remaining = MAX_REFERENCED_QUOTES_TOTAL_CHARS;
+    // The newest quotes are the ones nearest the user's words.
+    const rawQuotes = Array.isArray(input.quotedMessages)
+      ? input.quotedMessages.slice(-MAX_REFERENCED_QUOTES)
+      : [];
+    for (const raw of rawQuotes) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const quote = raw as Record<string, unknown>;
+      if (typeof quote.text !== "string" || !quote.text.trim() || remaining <= REFERENCE_TRUNCATED.length) continue;
+      const text = boundedReferenceText(quote.text, Math.min(MAX_REFERENCED_QUOTE_CHARS, remaining));
+      remaining -= text.length;
+      const attachmentCount = referenceCount(quote.attachmentCount);
+      quotedMessages.push({
+        author: boundedReferenceText(
+          typeof quote.author === "string" ? quote.author : "",
+          MAX_REFERENCED_AUTHOR_CHARS,
+        ),
+        text,
+        ...(quote.isBot === true ? { isBot: true as const } : {}),
+        ...(attachmentCount > 0 ? { attachmentCount } : {}),
+      });
+    }
+    if (images === 0 && files === 0 && quotedMessages.length === 0) return undefined;
+    return {
+      ...(images > 0 || files > 0 ? { attachments: { images, files } } : {}),
+      ...(quotedMessages.length > 0 ? { quotedMessages } : {}),
+    };
+  }
+
+  function splitAutoReviewUserReferences(intent: AutoReviewUserIntent): {
+    intent: AutoReviewUserIntent;
+    references?: AutoReviewUserReferences;
+  } {
+    if (typeof intent === "string") return { intent };
+    const { currentUserReferences, ...authored } = intent;
+    const references = projectAutoReviewUserReferences(currentUserReferences);
+    if (!references) return { intent: authored };
+    // Attaching references may have promoted a plain string intent to object form.
+    return {
+      intent:
+        authored.earlierUserMessages.length === 0 && !authored.historyOmitted
+          ? authored.currentUserMessage
+          : authored,
+      references,
+    };
+  }
+
+  /** References have their own budget; they never displace authored history or restrictions. */
+  function withAutoReviewUserReferences(
+    intent: AutoReviewUserIntent,
+    references: unknown,
+  ): AutoReviewUserIntent {
+    const projected = projectAutoReviewUserReferences(references);
+    if (!projected) return intent;
+    return typeof intent === "string"
+      ? { earlierUserMessages: [], currentUserMessage: intent, currentUserReferences: projected }
+      : { ...intent, currentUserReferences: projected };
+  }
+
   function normalizeAutoReviewUserIntent(
+    intent: AutoReviewUserIntent,
+  ): AutoReviewUserIntent {
+    if (typeof intent === "string") return compactCurrentUserIntent(intent);
+    const { currentUserReferences, ...authored } = intent;
+    if (currentUserReferences === undefined) return normalizeAuthoredUserIntent(authored);
+    // A wrapper that only carries references must not count against the authored budget.
+    const base =
+      authored.earlierUserMessages.length === 0 && !authored.historyOmitted
+        ? authored.currentUserMessage
+        : authored;
+    return withAutoReviewUserReferences(
+      normalizeAuthoredUserIntent(base),
+      currentUserReferences,
+    );
+  }
+
+  function normalizeAuthoredUserIntent(
     intent: AutoReviewUserIntent,
   ): AutoReviewUserIntent {
     if (typeof intent === "string") return compactCurrentUserIntent(intent);
@@ -93,7 +272,7 @@ export function createAutoReviewIntentProjection() {
       : null;
   }
 
-  function readAutoReviewUserText(content: unknown): string | null {
+  function readAutoReviewUserText(content: unknown, wireText?: string): string | null {
     if (typeof content === "string") {
       try {
         content = JSON.parse(content);
@@ -114,10 +293,10 @@ export function createAutoReviewIntentProjection() {
         "sessionReferences",
         "agentReferences",
         "references",
-        "pastedTextRanges",
       ].some((key) => Array.isArray(value[key]) && value[key].length > 0)
     )
       return null;
+    if (wireText !== undefined && value.text !== wireText) return null;
     return value.text;
   }
 
@@ -142,7 +321,8 @@ export function createAutoReviewIntentProjection() {
     const receipt = meta?.autoReviewUserText;
     return !!(meta?.autoResume || meta?.contextRebuild ||
       (receipt && typeof receipt === "object" && "kind" in receipt &&
-        (receipt.kind === "scheduled-continuation" || receipt.kind === "delegated-continuation")));
+        (receipt.kind === "scheduled-continuation" ||
+          (receipt.kind === "delegated-continuation" && verifiedOwnerRequestText(receipt) === undefined))));
   }
 
   function restoreAutoReviewUserIntent(
@@ -182,11 +362,14 @@ export function createAutoReviewIntentProjection() {
       if (message.role !== "user") continue;
       // An already-persisted retry is the same input, not a second authorization.
       if (current && message.clientId === current.clientId) {
-        if (message.agentMeta?.autoReviewUserText !== latest) return "";
+        const receipt = message.agentMeta?.autoReviewUserText;
+        if ((typeof receipt === "string" ? receipt : verifiedOwnerRequestText(receipt)) !== latest) return "";
         replayed = true;
       }
       const meta = message.agentMeta;
-      const text = meta?.autoReviewUserText;
+      const receipt = meta?.autoReviewUserText;
+      const text = typeof receipt === "string" ? receipt
+        : !meta?.sourcePlugin && !meta?.sharedTaskAuthor ? verifiedOwnerRequestText(receipt) : undefined;
       if (typeof text === "string" && text.startsWith("[UI_ACTION_TRIGGER]"))
         omitted = true;
       // delivery/wire alone are not authorship proof: plugin rewrites have the same shape.
@@ -232,6 +415,7 @@ export function createAutoReviewIntentProjection() {
       // Empty authored receipts reset earlier resource consent and need ordering too.
       const authored =
         typeof receipt === "string" ||
+        verifiedOwnerRequestText(receipt) !== undefined ||
         (receipt &&
           typeof receipt === "object" &&
           "text" in receipt &&
@@ -259,16 +443,18 @@ export function createAutoReviewIntentProjection() {
           omitted = true;
         }
       } else if (m.role === "user") {
+        const relayed = !m.agentMeta?.sourcePlugin && !m.agentMeta?.sharedTaskAuthor
+          ? verifiedOwnerRequestText(receipt) : undefined;
         // Legacy UI triggers and literal user text share this string receipt.
         // Keep restrictions, but do not let ambiguous provenance establish Auto consent.
         if (typeof receipt === "string" && receipt.startsWith("[UI_ACTION_TRIGGER]"))
           omitted = true;
         if (
-          typeof receipt === "string" &&
+          (typeof receipt === "string" || relayed !== undefined) &&
           ["turn", "steer"].includes(String(m.agentMeta?.delivery))
         ) {
           if (readAutoReviewUserText(m.content) === null) intent = "";
-          intent = appendAutoReviewUserIntent(intent, receipt);
+          intent = appendAutoReviewUserIntent(intent, typeof receipt === "string" ? receipt : relayed!);
         } else {
           omitted = true;
         }
@@ -294,8 +480,12 @@ export function createAutoReviewIntentProjection() {
   return {
     compact: compactCurrentUserIntent,
     normalize: normalizeAutoReviewUserIntent,
+    withReferences: withAutoReviewUserReferences,
+    projectReferences: projectAutoReviewUserReferences,
+    splitReferences: splitAutoReviewUserReferences,
     append: appendAutoReviewUserIntent,
     readText: readAutoReviewUserText,
+    verifiedOwnerRequestText,
     restore: restoreAutoReviewUserIntent,
     ambiguousAnswers,
     isSynthetic,

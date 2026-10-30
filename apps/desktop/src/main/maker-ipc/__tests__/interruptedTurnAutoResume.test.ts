@@ -10,7 +10,20 @@ import {
   isInterruptedTurnError,
   isSubstantiveProgressEvent,
   shouldPreserveWaitingContinuationOnlyAutoResume,
+  shouldPreserveRuntimeFallbackAutoResume,
 } from '../interruptedTurnAutoResume.js';
+
+describe('runtime fallback rebuild ownership', () => {
+  it.each(['runtime-refresh', 'requested', 'unexpected', 'agent-switch', 'deleted'])('preserves the exact live retry only for its own rebuild: %s', closeReason => {
+    const input = { closeReason, leasedAttemptToken: 1, guardIsCurrentAttempt: true,
+      bookIsCurrentAttempt: true, coordinatorAttemptToken: 1, isAutoResumePending: true, hasLiveSchedule: true };
+    expect(shouldPreserveRuntimeFallbackAutoResume(input)).toBe(['runtime-refresh', 'requested', 'agent-switch'].includes(closeReason));
+    for (const stale of [{ leasedAttemptToken: undefined }, { guardIsCurrentAttempt: false },
+      { bookIsCurrentAttempt: false }, { coordinatorAttemptToken: 2 }, { isAutoResumePending: false }, { hasLiveSchedule: false }]) {
+      expect(shouldPreserveRuntimeFallbackAutoResume({ ...input, ...stale })).toBe(false);
+    }
+  });
+});
 
 // 判定单测的核心是**白名单收紧**:自动重试一个确定性失败(认证过期、协议错)会反复
 // 烧额度并反复报错,所以只有识别得了的"上游把 turn 打断了"才允许自愈。
@@ -36,6 +49,13 @@ describe('isInterruptedTurnError', () => {
       expect(isInterruptedTurnError({ message: availabilityError, sdkError, errorStatus })).toBe(false);
     },
   );
+
+  it('leaves account usage limits to the reset-time wait instead of a quick reconnect', () => {
+    expect(isInterruptedTurnError({ message: availabilityError, errorStatus: 503, usageLimit: true })).toBe(false);
+    expect(
+      isInterruptedTurnError({ message: availabilityError, codexErrorInfo: 'usageLimitExceeded' }),
+    ).toBe(false);
+  });
 
   it.each([502, 503, 504, 529])('still recovers HTTP %s without a rejection category', (errorStatus) => {
     expect(isInterruptedTurnError({ message: 'opaque', sdkError: 'server_error', errorStatus })).toBe(true);

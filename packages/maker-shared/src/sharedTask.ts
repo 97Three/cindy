@@ -11,6 +11,26 @@ export interface SharedTaskAuthor {
   displayName: string;
 }
 
+/** Member id of the shared-task author (paired with the name in source labels); attribution only. */
+export function sharedTaskAuthorMemberId(meta: unknown): string | undefined {
+  if (!meta || typeof meta !== 'object' || !('sharedTaskAuthor' in meta)) return undefined;
+  const author = meta.sharedTaskAuthor;
+  if (!author || typeof author !== 'object' || !('memberId' in author)) return undefined;
+  return typeof author.memberId === 'string' && author.memberId.trim()
+    ? author.memberId.trim().slice(0, 128)
+    : undefined;
+}
+
+/** Account id of the shared-task author; display attribution only (e.g. "is this my message"), never authority. */
+export function sharedTaskAuthorAccountId(meta: unknown): string | undefined {
+  if (!meta || typeof meta !== 'object' || !('sharedTaskAuthor' in meta)) return undefined;
+  const author = meta.sharedTaskAuthor;
+  if (!author || typeof author !== 'object' || !('accountId' in author)) return undefined;
+  return typeof author.accountId === 'string' && author.accountId.trim()
+    ? author.accountId.trim().slice(0, 128)
+    : undefined;
+}
+
 /** Tolerant projection for old history; this is attribution, never authority. */
 export function sharedTaskAuthorName(meta: unknown): string | undefined {
   if (!meta || typeof meta !== 'object' || !('sharedTaskAuthor' in meta)) return undefined;

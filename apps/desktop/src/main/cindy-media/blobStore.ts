@@ -530,6 +530,39 @@ export async function readClientWallpaperFile(url: string): Promise<{ buffer: Bu
   return { buffer: await fs.readFile(absPath), mimeType };
 }
 
+/** Open a verified wallpaper video once; the response stream owns this handle. */
+export async function openClientWallpaperVideo(url: string) {
+  const parsed = parseClientWallpaperUrl(url);
+  if (parsed?.ext !== '.mp4') throw new Error('cindy-media: invalid client wallpaper video url');
+  const { absPath, mimeType } = resolveHashRef(parsed.hash, parsed.ext, 'client-wallpaper');
+  return openVerifiedBlobFile(absPath, mimeType, 'client-wallpaper');
+}
+
+/** Media protocol consumers share the same containment and open-handle checks. */
+export async function openBlobFile(url: string) {
+  const { absPath, mimeType } = resolveSafe(url);
+  return openVerifiedBlobFile(absPath, mimeType, 'blobs');
+}
+
+async function openVerifiedBlobFile(absPath: string, mimeType: string, scope: BlobScope) {
+  await assertBlobPathContained(absPath, scope);
+  const before = await fs.lstat(absPath);
+  if (!before.isFile()) throw new Error('cindy-media: media is not a regular file');
+  const file = await fs.open(absPath, noFollowReadFlags() | (fsConstants.O_NONBLOCK ?? 0));
+  try {
+    const stat = await file.stat();
+    await assertBlobPathContained(absPath, scope);
+    const after = await fs.lstat(absPath);
+    if (!stat.isFile() || !sameFileIdentity(before, stat) || !sameFileIdentity(after, stat)) {
+      throw new Error('cindy-media: media changed while opening');
+    }
+    return { file, totalSize: stat.size, mimeType };
+  } catch (error) {
+    await file.close();
+    throw error;
+  }
+}
+
 // ── 回收器 / 对账底层能力(第 5 步)──────────────────────────────────────
 // 本模块仍然只管字节:下面的枚举与删除不看账本,"该不该删"由 recycler.ts
 // 按账本判定后才调用这里。

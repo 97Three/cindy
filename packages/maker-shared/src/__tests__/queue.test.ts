@@ -18,6 +18,19 @@ function queued(clientId: string): { clientId: string } {
 }
 
 describe('shared queue presentation model', () => {
+  // unit: plugin context without an image still uses a persisted envelope. The
+  // old files-only decoder exposed that envelope and its raw capture diagnostics.
+  it('projects collapsed plugin context in pending rows with or without images', () => {
+    const body = 'Look here';
+    const text = body + '\n\nWindow details';
+    const pastedTextRanges = [{ start: body.length, end: text.length, display: 'Attached context' }];
+    for (const files of [undefined, [{ name: 'window.png' }]]) {
+      const item = { text, persistedContent: JSON.stringify({ text, pastedTextRanges }), files,
+        sourcePlugin: { pluginId: 'example' }, chatMessage: { pastedTextRanges } };
+      expect(queueItemVisibleText(item)).toBe(body + 'Attached context');
+      expect(item.text).toContain('Window details');
+    }
+  });
   it('preserves and pauses queue only when Stop sees queued rows', () => {
     expect(stopOptionsForProjection({ pendingQueue: [] })).toBeUndefined();
     expect(stopOptionsForProjection({ pendingQueue: [queued('q-1')] })).toEqual({
@@ -242,11 +255,11 @@ describe('shared queue presentation model', () => {
       },
       queueLength: 2,
     });
-    // 对齐桌面:协同消息不能编辑或插话,但可以调整顺序和删除。
+    // 对齐桌面:协同消息不能编辑,但可以插话、调整顺序和删除。
     expect(orca.title).toBe('协同队列 2');
     expect(orca.hint).toBeNull();
-    expect(orca.actions.steer.disabledReason).toBe('协同消息不支持编辑或插话发送。');
-    expect(orca.actions.edit.disabledReason).toBe('协同消息不支持编辑或插话发送。');
+    expect(orca.actions.steer).toMatchObject({ disabled: false, disabledReason: null });
+    expect(orca.actions.edit.disabledReason).toBe('协同消息不支持编辑。');
     expect(orca.actions.remove.disabled).toBe(false);
     expect(orca.actions.moveUp.disabled).toBe(false);
     expect(orca.actions.moveDown).toMatchObject({ disabled: true, disabledReason: '已经是队列最后一条。' });
@@ -310,6 +323,13 @@ describe('shared queue presentation model', () => {
       expect(row.actions.remove.disabled).toBe(false);
       expect(row.actions.moveDown.disabled).toBe(false);
     }
+    const pluginItem = { ...queued('q-2'), text: 'run', sourcePlugin: { pluginId: 'ghost-github', name: 'GitHub' } };
+    expect(isAutoSentQueueItem(pluginItem)).toBe(true);
+    const pluginRow = buildQueueRowPresentation({ item: pluginItem, originalIndex: 0, projection, queueLength: 1 });
+    expect(pluginRow.actions.edit.disabled).toBe(true);
+    expect(pluginRow.actions.steer.disabled).toBe(true);
+    expect(pluginRow.actions.remove.disabled).toBe(false);
+    expect(isAutoSentQueueItem({ sourcePlugin: { name: 'no id' } })).toBe(false);
     expect(isAutoSentQueueItem({ origin: { kind: 'orca', senderLabel: 'Lead' } })).toBe(false);
     expect(isAutoSentQueueItem({})).toBe(false);
   });
@@ -327,6 +347,14 @@ describe('queueItemVisibleText', () => {
       persistedContent: 'heartbeat prompt',
       origin: { kind: 'scheduler', scheduleId: 's' },
     })).toBe('heartbeat prompt');
+  });
+
+  it('keeps an intentionally empty persisted body instead of exposing agent instructions', () => {
+    expect(queueItemVisibleText({
+      text: '[silent-run protocol] internal agent instructions',
+      persistedContent: '',
+      origin: { kind: 'session', senderSessionId: 'bot-task' },
+    })).toBe('');
   });
 
   it('unwraps the host attachment envelope only when files are attached', () => {

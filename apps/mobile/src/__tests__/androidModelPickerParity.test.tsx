@@ -134,6 +134,10 @@ vi.mock("react-i18next", () => ({
       values?.mode ? `${key}:${values.mode}` : key,
   }),
 }));
+vi.mock("react-native-svg", () => ({
+  default: ({ children, ...props }: AnyProps) => createElement("svg", props, children),
+  Path: (props: AnyProps) => createElement("path", props),
+}));
 vi.mock("lucide-react-native", async () => {
   const { createElement: el } = await import("react");
   const icon =
@@ -225,10 +229,10 @@ vi.mock("@/components/MobileAgentMark", async () => {
 vi.mock("@/session/MobileProviderMark", async () => {
   const { createElement: el } = await import("react");
   return {
-    MobileProviderMark: ({ providerId }: AnyProps) =>
-      el("i", { "data-provider-mark": providerId }),
-    MobileModelIconMark: ({ providerId }: AnyProps) =>
-      el("i", { "data-model-mark": providerId }),
+    MobileProviderMark: ({ providerId, remote }: AnyProps) =>
+      el("i", { "data-provider-mark": providerId, ...(remote ? { "data-remote-mark": "" } : {}) }),
+    MobileModelIconMark: ({ providerId, remote }: AnyProps) =>
+      el("i", { "data-model-mark": providerId, ...(remote ? { "data-remote-mark": "" } : {}) }),
   };
 });
 vi.mock("@/session/sessionAgentSwitch", () => ({

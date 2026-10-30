@@ -11,6 +11,15 @@ import {
 /** Additive, same-account business channel. Never broadcast screen data or input. */
 export const REMOTE_DESKTOP_CHANNEL = "device-link:remote-desktop:v1";
 export const REMOTE_DESKTOP_LEASE_MS = 12_000;
+/** Human inactivity, independent of transport heartbeats. Zero disables it. */
+export const REMOTE_DESKTOP_IDLE_MINUTES = [0, 1, 5, 10, 15, 30] as const;
+export const REMOTE_DESKTOP_DEFAULT_IDLE_MINUTES = 5;
+export function isRemoteDesktopIdleMinutes(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    REMOTE_DESKTOP_IDLE_MINUTES.some((minutes) => minutes === value)
+  );
+}
 export const REMOTE_DESKTOP_MAX_FRAME_BYTES = 180_000;
 
 export const REMOTE_DESKTOP_MAX_CLIPBOARD_CHARS = 16_384;
@@ -107,14 +116,17 @@ type LegacyVideoBitrate = 0 | 2_000_000 | 8_000_000 | 20_000_000;
 const LEGACY_BITRATES: readonly number[] = [
   0, 2_000_000, 8_000_000, 20_000_000,
 ];
-/** Older hosts only accept `bitrate` and ignore `quality`; send both. Saver
- * also caps the frame rate, which older hosts can only learn from `fps`. */
+/** Older hosts only accept `bitrate` and ignore `quality`; send both. */
 export function remoteDesktopVideoSettingsWire(
   settings: RemoteDesktopVideoSettings,
 ): RemoteDesktopVideoSettings & { bitrate: LegacyVideoBitrate } {
-  if (settings.quality === "saver")
-    return { ...settings, fps: 30, bitrate: 2_000_000 };
-  return { ...settings, bitrate: settings.quality === "hd" ? 20_000_000 : 0 };
+  const bitrate =
+    settings.quality === "saver"
+      ? 2_000_000
+      : settings.quality === "hd"
+        ? 20_000_000
+        : 0;
+  return { ...settings, bitrate };
 }
 function legacyVideoQuality(bitrate: number): RemoteDesktopVideoQuality {
   return bitrate === 0 ? "auto" : bitrate === 2_000_000 ? "saver" : "hd";
@@ -150,8 +162,10 @@ export interface RemoteDesktopCapabilities {
   automaticReconnect?: boolean;
   /** Explicit same-account replacement of the active viewer. */
   connectionTakeover?: boolean;
-  /** Explicit remote exit can lock the host; ordinary stop/recovery is unchanged. */
+  /** Can lock the host on exit. New hosts also honor the lease's lockOnExit policy. */
   lockOnExit?: boolean;
+  /** Host enforces human inactivity and locks before ending the lease. */
+  idleLock?: boolean;
   videoSettings?: boolean;
   trickleIce?: boolean;
   systemAudio?: boolean;
@@ -169,6 +183,12 @@ export interface RemoteDesktopCapabilities {
   channelRequests?: boolean;
   /** Display changes requested with `keepVideo` may keep the live video stream. */
   liveDisplaySwitch?: boolean;
+  /**
+   * `start` and display changes accept `control: true`: the host takes control
+   * (starts input) within the same request and replies `controlling: true`, so
+   * the viewer needs no separate `control` request.
+   */
+  autoControl?: boolean;
   backgroundViewing?: boolean;
   cursorOverlay?: boolean;
   clipboardText?: boolean;
@@ -178,10 +198,21 @@ export interface RemoteDesktopCapabilities {
   clipboardInline?: boolean;
   privacyScreen?: boolean;
   hostMute?: boolean;
+  /**
+   * Accepts `viewerHidden`: the host stops sending video while the viewer is
+   * hidden, keeping audio, input and the lease. Each new offer starts unpaused.
+   */
+  viewerHidden?: boolean;
   /** Explicit host actions, independent of user-configured keyboard bindings. */
   windowActions?: boolean;
   workspaceNavigation?: boolean;
   omarchyMenu?: boolean;
+  /**
+   * Accepts `start` with `handoff`: a live view of only the window a pending
+   * 代输入 step is about, with input confined to that window. The host picks the
+   * window; a viewer can never name one.
+   */
+  handoffWindow?: boolean;
 }
 export type DesktopPermission = "screenRecording" | "accessibility";
 export type DesktopPermissionStatus =
@@ -208,6 +239,13 @@ export interface RemoteDesktopLease {
   viewerDisplayRequest?: { width: number; height: number };
   /** The display change kept the existing video stream; no new offer is needed. */
   videoKept?: boolean;
+  /** A 代输入 live view: the video is this one window, and input stays inside it. */
+  window?: RemoteDesktopLeaseWindow;
+}
+/** Host-verified description of the single window a 代输入 live view shows. */
+export interface RemoteDesktopLeaseWindow {
+  app: string;
+  title?: string;
 }
 export type RemoteDesktopRequest =
   | { op: "windowAction"; lease: string; action: "list" | "desktop" }
@@ -224,14 +262,30 @@ export type RemoteDesktopRequest =
       lockOnExit?: boolean;
     }
   | { op: "hostMute"; lease: string; enabled: boolean }
+  | { op: "viewerHidden"; lease: string; hidden: boolean }
   | { op: "clipboardSync"; lease: string; enabled: boolean }
   | { op: "clipboardVersion"; lease: string }
   | RemoteDesktopIceRequest
   | ClipboardContentRequest
   | { op: "capabilities" }
   | { op: "permissions"; action: "check" | "guide" }
-  | { op: "start"; displayId: string; resume?: boolean; takeover?: boolean }
-  | { op: "heartbeat"; lease: string }
+  | {
+      op: "start";
+      displayId: string;
+      resume?: boolean;
+      takeover?: boolean;
+      control?: boolean;
+      lockOnExit?: boolean;
+      idleTimeoutMinutes?: number;
+      /** 代输入 request id; only to hosts advertising `handoffWindow`. */
+      handoff?: string;
+    }
+  | {
+      op: "heartbeat";
+      lease: string;
+      lockOnExit?: boolean;
+      idleTimeoutMinutes?: number;
+    }
   | { op: "stop"; lease: string; lockScreen?: boolean }
   | { op: "frame"; lease: string; cursorOverlay?: boolean }
   | { op: "control" | "presentation"; lease: string; enabled: boolean }
@@ -253,14 +307,21 @@ export type RemoteDesktopRequest =
       width: number;
       height: number;
       keepVideo?: boolean;
+      control?: boolean;
     }
-  | { op: "restoreViewerDisplay"; lease: string; keepVideo?: boolean }
+  | {
+      op: "restoreViewerDisplay";
+      lease: string;
+      keepVideo?: boolean;
+      control?: boolean;
+    }
   | {
       op: "resolution";
       lease: string;
       modeId: string;
       temporary?: boolean;
       keepVideo?: boolean;
+      control?: boolean;
     };
 
 export function parseRemoteDesktopRequest(
@@ -269,6 +330,26 @@ export function parseRemoteDesktopRequest(
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("INVALID_REQUEST");
   const v = value as Record<string, unknown>;
+  const idleTimeout = () => {
+    if (v.idleTimeoutMinutes === undefined) return {};
+    if (!isRemoteDesktopIdleMinutes(v.idleTimeoutMinutes))
+      throw new Error("INVALID_REQUEST");
+    return { idleTimeoutMinutes: v.idleTimeoutMinutes };
+  };
+  const lockOnExit = () => {
+    if (v.lockOnExit !== undefined && typeof v.lockOnExit !== "boolean")
+      throw new Error("INVALID_REQUEST");
+    return typeof v.lockOnExit === "boolean"
+      ? { lockOnExit: v.lockOnExit }
+      : {};
+  };
+  // Optional on start and display changes; older hosts drop it and the viewer
+  // asks for control separately.
+  const control = () => {
+    if (v.control !== undefined && typeof v.control !== "boolean")
+      throw new Error("INVALID_REQUEST");
+    return v.control === true ? { control: true as const } : {};
+  };
   if (v.op === "capabilities") return { op: v.op };
   if (v.op === "permissions" && (v.action === "check" || v.action === "guide"))
     return { op: v.op, action: v.action };
@@ -283,11 +364,21 @@ export function parseRemoteDesktopRequest(
       throw new Error("INVALID_REQUEST");
     if (v.takeover === true && v.resume === true)
       throw new Error("INVALID_REQUEST");
+    if (
+      v.handoff !== undefined &&
+      (typeof v.handoff !== "string" ||
+        !/^[A-Za-z0-9_-]{1,128}$/.test(v.handoff))
+    )
+      throw new Error("INVALID_REQUEST");
     return {
       op: v.op,
       displayId: v.displayId,
+      ...(typeof v.handoff === "string" ? { handoff: v.handoff } : {}),
       ...(v.takeover === true ? { takeover: true } : {}),
       ...(typeof v.resume === "boolean" ? { resume: v.resume } : {}),
+      ...control(),
+      ...lockOnExit(),
+      ...idleTimeout(),
     };
   }
   if (typeof v.lease !== "string" || v.lease.length > 128 || !v.lease)
@@ -330,6 +421,8 @@ export function parseRemoteDesktopRequest(
   )
     return { op: v.op, lease, enabled: v.enabled };
   if (v.op === "clipboardVersion") return { op: v.op, lease };
+  if (v.op === "viewerHidden" && typeof v.hidden === "boolean")
+    return { op: v.op, lease, hidden: v.hidden };
   if (v.op === "ice") {
     if (!isDesktopAttemptId(v.attemptId) || !isDesktopIceCursor(v.after))
       throw new Error("INVALID_REQUEST");
@@ -372,7 +465,8 @@ export function parseRemoteDesktopRequest(
       ...(v.lockScreen === true ? { lockScreen: true } : {}),
     };
   }
-  if (v.op === "heartbeat") return { op: v.op, lease };
+  if (v.op === "heartbeat")
+    return { op: v.op, lease, ...lockOnExit(), ...idleTimeout() };
   if (
     (v.op === "control" || v.op === "presentation") &&
     typeof v.enabled === "boolean"
@@ -385,7 +479,7 @@ export function parseRemoteDesktopRequest(
     return v.keepVideo === true ? { keepVideo: true as const } : {};
   };
   if (v.op === "restoreViewerDisplay")
-    return { op: v.op, lease, ...keepVideo() };
+    return { op: v.op, lease, ...keepVideo(), ...control() };
   if (v.op === "displayModes") return { op: v.op, lease };
   if (v.op === "viewerDisplay") {
     if (
@@ -404,6 +498,7 @@ export function parseRemoteDesktopRequest(
       width: v.width as number,
       height: v.height as number,
       ...keepVideo(),
+      ...control(),
     };
   }
   if (
@@ -417,7 +512,7 @@ export function parseRemoteDesktopRequest(
       op: v.op,
       lease,
       modeId: v.modeId,
-      ...(v.temporary === true ? { temporary: true } : {}),
+      ...(v.temporary === true ? { temporary: true, ...control() } : {}),
       ...keepVideo(),
     };
   }

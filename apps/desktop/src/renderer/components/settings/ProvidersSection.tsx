@@ -1,3 +1,10 @@
+import { AddSpeechModelsDialog } from './AddSpeechModelsDialog';
+import { providerSpeechSetup } from '../../../shared/speechProviderSetup';
+import { useCodexRateLimits } from '@/hooks/useCodexRateLimits';
+import { SubscriptionFastSetting } from '@/features/provider-share/SubscriptionFastSetting';
+import { useCodexRateLimitReset } from '@/hooks/useCodexRateLimitReset';
+import { CodexResetCredits } from '../status/CodexResetCredits';
+import { providerWeeklyQuotaSource } from '../new-chat/useProviderWeeklyQuota';
 /**
  * ProvidersSection —— 设置 → 模型供应商页(2026-07 重构:双栏管理)。
  *
@@ -47,6 +54,7 @@ import { useClaudeAccountUsageResult } from '@/hooks/useClaudeAccountUsage';
 import { useXdAssetPrimaryAction } from '@/hooks/useXdAssetPrimaryAction';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { Tip } from '@/components/ui/tooltip';
 import { useConfirmDialog } from '@/components/ui/confirm-dialog-provider';
 import { useSignInToCindy } from '@/hooks/useSignInToCindy';
@@ -83,10 +91,18 @@ import { BILLING_CURRENCY, formatBillingAmount } from '@/features/billing/money'
 import { canAccessBillingSettings } from './billingVisibility';
 import { resolveXdAssetModuleState } from './providerAssetModule';
 import { useProviderSubscriptionCard } from './useProviderSubscriptionCard';
+import { ProviderAccountUsageModule } from './ProviderAccountUsageModule';
 import { QuotaHoverCard } from '../status/QuotaHoverCard';
 import { ProviderConnectionDialog } from './ProviderConnectionDialog';
 import { AddProviderWizard, type WizardEntry } from './AddProviderWizard';
+import type { DetectedProviderDraft } from '../../../shared/providerDetection';
 import { OllamaProviderDetail } from './OllamaProviderDetail';
+import {
+  OwnRemoteProviderDetail,
+  OwnRemoteProviderRows,
+  useOwnRemoteProviderList,
+  type OwnRemoteProvider,
+} from './OwnRemoteProviders';
 import { LlamaCppProviderDetail } from './LlamaCppProviderDetail';
 import { MANAGED_LLAMACPP_PROVIDER_ID } from '../../../shared/llamaCpp';
 import {
@@ -95,20 +111,43 @@ import {
   MANAGED_OLLAMA_PROVIDER_ID,
 } from '../../../shared/localModelRuntime';
 import { OAuthBrowserLink, OAuthDeviceCodeCard } from './OAuthDeviceCodeCard';
-import { ProviderImportDialog } from './ProviderImportDialog';
+import { ProviderImportDialog, ProviderImportBatchDialog, ProviderImportFileButton } from './ProviderImportDialog';
 import { SettingsTextInput } from './SettingsTextInput';
 import { buildUnionRows, UnifiedModelList } from './UnifiedModelList';
 import { AnthropicMark } from '@/components/icons/AnthropicMark';
 import { OpenAIMark } from '@/components/icons/OpenAIMark';
-import { XDIncMark } from '@/components/icons/XDIncMark';
+import { CindyMark } from '@/components/icons/CindyMark';
 import { hasProviderLogo, ProviderLogoMark } from '@/components/icons/ProviderLogoMark';
 import { SortableList } from '@/components/sidebar/SortableList';
+import { ProviderShareEntryButton } from '@/features/provider-share/ProviderShareEntryButton';
+import { useLocalProviderGroupsState } from '@/features/provider-group/useLocalProviderGroups';
+import { ProviderShareManagePage } from '@/features/provider-share/ProviderShareManagePage';
+import { ProviderSharePasteButton } from '@/features/provider-share/ProviderSharePasteDialog';
+import { useOwnedProviderShares } from '@/features/provider-share/useOwnedProviderShares';
+import {
+  ProviderShareReceivedDetail,
+  ProviderShareReceivedRailGroup,
+} from '@/features/provider-share/ProviderShareReceivedRail';
+import {
+  pendingRequestCountByProvider,
+  providerShareGate,
+} from '@/features/provider-share/providerShareFormat';
+import {
+  PROVIDER_SHARE_MANAGE_PARAM,
+  PROVIDER_SHARE_RECEIVED_PARAM,
+} from '@/features/provider-share/providerShareNavigation';
+import {
+  useProviderSharePendingRequests,
+  useProviderSharePendingReshares,
+  useProviderShareReceived,
+} from '@/features/provider-share/providerShareStore';
 
 import { localCliDisplayName, type LocalCliDetection } from '../../../shared/localCliDetect';
 import { isBuiltinRefreshableProviderId } from '../../../shared/providerModelRefresh';
+import { providerGroupDeviceCount } from '../../../shared/providerGroup';
 import { applyProviderOrder } from '../../../shared/providerOrder';
 import type { AgentKind, CustomProviderConfig, ProviderView } from '@cindy/model-providers';
-import { isCustomRoutedProvider, isOrganizationManagedProvider } from '@cindy/model-providers';
+import { isCustomRoutedProvider, isOrganizationManagedProvider, storedCustomProviderId } from '@cindy/model-providers';
 
 // ---------------------------------------------------------------------------
 // 工具
@@ -138,10 +177,145 @@ function writeProviderDisabled(providerId: string, disabled: boolean, errorText:
     .catch(() => toast.error(errorText));
 }
 
+/**
+ * 「允许被远程调用」(供应商级远程 Agent 授权)与「远程与分享」入口合成的一行。默认关闭。能力逐级开启(产品规则
+ * docs/product-rules/provider-sharing.md §3)：允许远程控制 → 允许被远程调用 → 分享。
+ * 前两级任一未开启时整行仍显示，但开关不可用，并说明先开启哪一级。
+ * 成功后 main 广播 PROVIDER_CHANGED 刷新快照。
+ *
+ * 供应商组不另占一行(2026-10-11 用户反馈详情太长)：组的状态写在开关左侧的入口按钮上，组设置在入口进去的
+ * 「远程与分享」页。组状态取本机组设置快照，第一次读完之前整行不出现，免得先显示「没有组」再跳成组。
+ */
+function RemoteProviderAccessRow({
+  provider,
+  remoteControlEnabled,
+  pendingShareRequests,
+  onManageShare,
+}: {
+  provider: ProviderView;
+  remoteControlEnabled: boolean;
+  pendingShareRequests: number;
+  onManageShare: () => void;
+}) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const localGroups = useLocalProviderGroupsState();
+  const [enabled, setEnabled] = useState(provider.remoteInvocationEnabled === true);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setEnabled(provider.remoteInvocationEnabled === true);
+  }, [provider.remoteInvocationEnabled]);
+  if (!localGroups.ready) return null;
+  const group = localGroups.groups[provider.id] ?? null;
+  const gate = providerShareGate({ remoteControlEnabled, invocationEnabled: enabled });
+  return (
+    <div
+      data-testid="provider-remote-access"
+      data-share-gate={gate}
+      className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-t px-5 py-3"
+      style={{ borderColor: 'var(--settings-theme-card-border)' }}
+    >
+      <div className="flex min-w-[min(100%,240px)] flex-1 flex-col gap-1">
+        <span className="text-13 font-medium text-[var(--text-primary)]">
+          {t('settings.providers.detail.remoteAccess.label')}
+        </span>
+        <span className="text-12 leading-[1.4] text-[var(--text-tertiary)]">
+          {gate === 'remote-off' ? (
+            <>
+              {t('providerShare.entry.remoteControlOff')}{' '}
+              <button
+                type="button"
+                onClick={() => navigate('/settings?tab=remote-control')}
+                className="text-[var(--text-secondary)] underline underline-offset-2 transition-colors hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+              >
+                {t('providerShare.entry.openRemoteControl')}
+              </button>
+            </>
+          ) : gate === 'invocation-off' ? (
+            t('providerShare.entry.descriptionOff')
+          ) : group ? (
+            // 有组时 Agent 由组选一台运行，不再是「在这台电脑上运行」。
+            t('settings.providers.detail.remoteAccess.descriptionGroup')
+          ) : (
+            t('settings.providers.detail.remoteAccess.description')
+          )}
+        </span>
+      </div>
+      <div className="ml-auto flex shrink-0 items-center gap-3">
+        <ProviderShareEntryButton
+          groupSize={group ? providerGroupDeviceCount(group.members) : null}
+          pendingCount={pendingShareRequests}
+          onOpen={onManageShare}
+        />
+        <Switch
+          checked={enabled}
+          disabled={busy || !remoteControlEnabled}
+          aria-label={t('settings.providers.detail.remoteAccess.ariaLabel')}
+          onCheckedChange={(next) => {
+            const previous = enabled;
+            setEnabled(next);
+            setBusy(true);
+            void window.electronAPI.maker
+              .setProviderRemoteAccess({ providerId: provider.id, enabled: next })
+              .catch(() => {
+                setEnabled(previous);
+                toast.error(t('settings.providers.detail.remoteAccess.writeFailed'));
+              })
+              .finally(() => setBusy(false));
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 本机是否允许同账号设备远程控制(「允许被远程调用」与分享的第一级)。设备互联没有单独的
+ * 开关变更事件：relay 状态、持有权变化以及窗口回到前台时重读一次，保持与「远程连接」页一致。
+ */
+function useRemoteControlEnabled(): boolean | null {
+  // null = 还没读到：整行先不出现，避免「未开远程控制」的说明闪一下。
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    let seq = 0;
+    const read = () => {
+      const current = ++seq;
+      // 读不到(设备互联未就绪等)按未开启处理：开关不可用，不影响供应商页其余部分。
+      void Promise.resolve()
+        .then(() => window.electronAPI.deviceLink.getState())
+        .then((state) => {
+          if (!cancelled && current === seq) setEnabled(state.remoteControlEnabled);
+        })
+        .catch(() => {
+          if (!cancelled && current === seq) setEnabled(false);
+        });
+    };
+    read();
+    // 设备互联预加载不可用(旧窗口 / 测试)时只读一次，不订阅。
+    const deviceLink = (window as Partial<Window>).electronAPI?.deviceLink;
+    const offStatus = deviceLink?.onStatusChanged?.(() => read());
+    const offOwnership = deviceLink?.onOwnershipChanged?.(() => read());
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') read();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', read);
+    return () => {
+      cancelled = true;
+      offStatus?.();
+      offOwnership?.();
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', read);
+    };
+  }, []);
+  return enabled;
+}
+
 /** 供应商行图标(内置品牌 mark / 首字母 monogram)。 */
 function providerIcon(p: ProviderView, size: number): ReactNode {
   if (hasProviderLogo(p.id, p.routing)) {
-    return <ProviderLogoMark providerId={p.id} routing={p.routing} size={size} />;
+    return <ProviderLogoMark providerId={p.id} routing={p.routing} logoKind={p.logoKind} size={size} />;
   }
   return <span className="text-15 font-medium leading-none">{providerMonogram(p.name)}</span>;
 }
@@ -525,6 +699,9 @@ function DetailHeader({
         }
       : undefined);
   const subscription = useProviderSubscriptionCard(provider);
+  const resetEnabled = Boolean(provider && providerWeeklyQuotaSource({ ...provider, suspended: false }) === 'codex');
+  const { snapshot: resetSnapshot, refresh: refreshResets } = useCodexRateLimits(resetEnabled, provider?.id ?? 'openai');
+  const manualReset = useCodexRateLimitReset(resetSnapshot, refreshResets, provider?.id ?? 'openai');
   const detailScrollRef = useRef<HTMLDivElement>(null);
   const hasDetail = Boolean(detail);
   useLayoutEffect(() => {
@@ -695,8 +872,9 @@ function DetailHeader({
         className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-contain [&>*]:shrink-0"
       >
         {detail && <div className="px-5 pb-4">{detail}</div>}
+        {provider?.subscriptionFastPolicy && <div className="px-5 pb-4"><SubscriptionFastSetting key={provider.id} provider={provider} /></div>}
         {assetModule ??
-          (subscription && (
+          (subscription ? (
             <div
               data-testid="provider-usage-module"
               className="border-t px-1 py-2"
@@ -728,8 +906,14 @@ function DetailHeader({
                       ? () => void window.electronAPI.openExternal('https://grok.com')
                       : undefined
                 }
-              />
+              >
+                {resetEnabled ? (
+                  <CodexResetCredits providerId={provider?.id} onChanged={refreshResets} key={provider?.id} variant="embedded" snapshot={resetSnapshot} busy={manualReset.busy} canReset={manualReset.canReset} canRetry={manualReset.canRetry} onReset={(credit) => void manualReset.reset(credit)} />
+                ) : null}
+              </QuotaHoverCard>
             </div>
+          ) : (
+            <ProviderAccountUsageModule provider={provider} />
           ))}
         {children}
       </div>
@@ -903,7 +1087,6 @@ function OpenAiHeader({
     refresh,
     triggerLogin,
     cancelLogin,
-    logout,
   } = useCodexAuth();
   const reconnectRequired = state.kind === 'reconnect-required';
   const loggingIn = state.kind === 'login-pending';
@@ -1561,6 +1744,7 @@ function XdGatewayHeader({
     available: credit.usage?.available ?? null,
     quotaAccessible,
     quota: quota.usage,
+    quotaUnlimited: quota.unlimited,
     loading: billingAccessible ? credit.loading : quota.loading,
   });
   const primaryAction = useXdAssetPrimaryAction(assetState.kind === 'balance');
@@ -1720,7 +1904,7 @@ function XdGatewayHeader({
             </p>
             <PillButton label={t('settings.providers.xd.sync.retry')} onClick={handleRetry} />
           </>
-        ) : assetState.kind === 'loading' || assetState.kind === 'unavailable' ? (
+        ) : assetState.kind === 'loading' || assetState.kind === 'unavailable' || assetState.kind === 'unlimited' ? (
           <>
             <div>
               <p className="text-12 text-[var(--text-secondary)]">
@@ -1734,7 +1918,9 @@ function XdGatewayHeader({
                 {t(
                   assetState.kind === 'loading'
                     ? 'settings.providers.xd.asset.loading'
-                    : 'settings.providers.xd.asset.unavailable',
+                    : assetState.kind === 'unlimited'
+                      ? 'settings.providers.xd.asset.noPersonalLimit'
+                      : 'settings.providers.xd.asset.unavailable',
                 )}
               </p>
             </div>
@@ -1834,8 +2020,8 @@ function XdGatewayHeader({
   return (
     <DetailHeader
       children={children}
-      icon={<XDIncMark size={18} />}
-      title={t('settings.providers.xd.title')}
+      icon={<ProviderLogoMark providerId="xd" logoKind={provider?.logoKind} size={18} />}
+      title={provider ? providerDisplayName(provider, t) : t('settings.providers.xd.title')}
       identityBadge={
         syncStatus.accountTier === 'free' ? (
           <span
@@ -2048,7 +2234,7 @@ function CindySigninRow({ selected, onSelect }: { selected: boolean; onSelect: (
           color: 'var(--settings-integration-avatar-icon)',
         }}
       >
-        <XDIncMark size={14} />
+        <CindyMark size={14} />
       </div>
       <span
         className="min-w-0 flex-1 truncate text-13 font-medium"
@@ -2093,7 +2279,7 @@ function ListRow({
     () => (providerHasModels(provider) ? buildUnionRows(provider).length : null),
     [provider],
   );
-  const title = provider.id === 'xd' ? t('settings.providers.xd.title') : provider.name;
+  const title = providerDisplayName(provider, t);
   return (
     <div
       className={cn(
@@ -2165,7 +2351,8 @@ function ListRow({
               {t('settings.providers.pill.suspended')}
             </span>
           ) : (
-            modelCount !== null && (
+            // Keep the account suffix visible in the narrow rail; the detail lists the count.
+            provider.id !== 'xd' && modelCount !== null && (
               <span
                 className="shrink-0 text-11 tabular-nums"
                 style={{ color: 'var(--text-tertiary)' }}
@@ -2206,7 +2393,7 @@ function SuggestionRow({
 }) {
   const { t } = useTranslation();
   const cliName = localCliDisplayName(detection.cli);
-  const title = provider.id === 'xd' ? t('settings.providers.xd.title') : provider.name;
+  const title = providerDisplayName(provider, t);
   return (
     <button
       type="button"
@@ -2260,9 +2447,51 @@ export function ProvidersSection() {
   // OpenAI 的 reconnect-required 是 useCodexAuth 独有状态(目录 connected 此时为 false):
   // 该状态下 OpenAI 行必须留在左栏,否则「重新连接」入口不可达,用户被迫从向导重发现。
   const codexAuth = useCodexAuth();
+  const remoteControlEnabled = useRemoteControlEnabled();
+  // 供应商分享：入口提示点读待审批申请与待处理的转分享请求；管理页是本页的子页面(返回回到供应商详情)。
+  // 带 hostDeviceId 的申请在另一台电脑的分享里(那台的供应商 id 可能与本机重名)，只计入那台的组入口。
+  const pendingShareRequests = useProviderSharePendingRequests();
+  const pendingReshares = useProviderSharePendingReshares();
+  const pendingShareCounts = useMemo(
+    () => pendingRequestCountByProvider([
+      ...pendingShareRequests.filter((item) => !item.hostDeviceId).map((item) => item.share),
+      ...pendingReshares.map((item) => item.share),
+    ]),
+    [pendingShareRequests, pendingReshares],
+  );
+  const [shareManageProviderId, setShareManageProviderId] = useState<string | null>(null);
+  const [shareManageRemote, setShareManageRemote] = useState<OwnRemoteProvider | null>(null);
   const openaiReconnectRequired = codexAuth.state.kind === 'reconnect-required';
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 左栏里选中的另一台电脑上的供应商：「分享给我的」一条，或自己其他电脑上的一个(两者互斥)；
+  // 选中本机供应商或登录引导时清空。
+  const [selectedShareId, setSelectedShareId] = useState<string | null>(null);
+  const [selectedRemoteKey, setSelectedRemoteKey] = useState<string | null>(null);
+  const { received: receivedShares, loaded: receivedSharesLoaded } = useProviderShareReceived();
+  const selectedShare = selectedShareId
+    ? receivedShares.find((share) => share.shareId === selectedShareId) ?? null
+    : null;
+  const { entries: ownRemoteProviders, hiddenShareIds: groupedShareIds } = useOwnRemoteProviderList();
+  const ownedShares = useOwnedProviderShares(ownRemoteProviders.map(entry => entry.deviceId));
+  const selectedRemote = selectedRemoteKey
+    ? ownRemoteProviders.find((entry) => entry.key === selectedRemoteKey) ?? null
+    : null;
+  const otherDeviceSelected = selectedShare !== null || selectedRemote !== null;
+  // 用户或深链、向导完成、导入完成等「打开某个供应商」时，右栏回到那个供应商(即使它就是当前选中项)。
+  const selectProvider = useCallback((providerId: string) => {
+    setSelectedShareId(null);
+    setSelectedRemoteKey(null);
+    setSelectedId(providerId);
+  }, []);
+  const selectShare = useCallback((shareId: string) => {
+    setSelectedRemoteKey(null);
+    setSelectedShareId(shareId);
+  }, []);
+  const selectRemote = useCallback((key: string) => {
+    setSelectedShareId(null);
+    setSelectedRemoteKey(key);
+  }, []);
   const [pendingProviderOrder, setPendingProviderOrder] = useState<{
     dataOwnerId: string | null;
     ids: string[];
@@ -2277,11 +2506,12 @@ export function ProvidersSection() {
     ids: Set<string>;
   }>({ dataOwnerId, ids: new Set<string>() });
   // 向导:null = 关;{ entry } = 打开(entry 指定直达的供应商,来自检测建议)。
-  const [wizard, setWizard] = useState<null | { entry?: WizardEntry }>(null);
+  const [speechProvider, setSpeechProvider] = useState<{ provider: ProviderView; owner: string | null; generation: number | null } | null>(null);
+  const [wizard, setWizard] = useState<null | { entry?: WizardEntry; detected?: DetectedProviderDraft }>(null);
   // 自定义供应商完整表单(编辑,或从向导「自定义端点」进入新建)。
   const [dialog, setDialog] = useState<
     | null
-    | { mode: 'create' }
+    | { mode: 'create'; draft?: DetectedProviderDraft }
     | {
         mode: 'edit';
         config: CustomProviderConfig;
@@ -2293,15 +2523,15 @@ export function ProvidersSection() {
     modelId: string;
     agent?: AgentKind;
   } | null>(null);
-  const [providerImportId, setProviderImportId] = useState<string | null>(null);
+  const [providerImportId, setProviderImportId] = useState<string | string[] | null>(null);
   const closeProviderImport = useCallback(() => setProviderImportId(null), []);
   const finishProviderImport = useCallback(
     (providerId: string) => {
       setProviderImportId(null);
-      setSelectedId(providerId);
+      selectProvider(providerId);
       refetch();
     },
-    [refetch],
+    [refetch, selectProvider],
   );
   const addProviderButtonRef = useRef<HTMLButtonElement>(null);
   const [detections, setDetections] = useState<LocalCliDetection[]>([]);
@@ -2390,6 +2620,8 @@ export function ProvidersSection() {
           p.id === MANAGED_LLAMACPP_PROVIDER_ID ||
           p.id === MANAGED_LMSTUDIO_PROVIDER_ID ||
           providerHasModels(p) ||
+          // Suspension gates actions, not the empty connection's enable entry.
+          !!providerSpeechSetup({ ...p, suspended: false }) ||
           (p.auth.method === 'oauth' && (!!p.auth.oauth || !!p.auth.native)))
       ) {
         rows.push(p);
@@ -2410,6 +2642,10 @@ export function ProvidersSection() {
         : orderedVisibleProviders,
     [orderedVisibleProviders, pendingProviderOrderIds],
   );
+  const sharedLocalProviders = listProviders.filter(provider => ownedShares.get(null)?.has(provider.id));
+  const ordinaryLocalProviders = listProviders.filter(provider => !ownedShares.get(null)?.has(provider.id));
+  const sharedRemoteProviders = ownRemoteProviders.filter(entry => ownedShares.get(entry.deviceId)?.has(entry.provider.id));
+  const ordinaryRemoteProviders = ownRemoteProviders.filter(entry => !ownedShares.get(entry.deviceId)?.has(entry.provider.id));
 
   useEffect(() => {
     if (pendingProviderOrder && pendingProviderOrder.dataOwnerId !== dataOwnerId) {
@@ -2503,27 +2739,29 @@ export function ProvidersSection() {
 
   const moveProviderWithKeyboard = useCallback(
     (providerId: string, delta: -1 | 1): void => {
-      const currentIds = listProviders.map((provider) => provider.id);
+      const shared = ownedShares.get(null)?.has(providerId) === true;
+      const currentIds = listProviders
+        .filter(provider => (ownedShares.get(null)?.has(provider.id) === true) === shared)
+        .map(provider => provider.id);
       const index = currentIds.indexOf(providerId);
       const nextIndex = index + delta;
       if (index < 0 || nextIndex < 0 || nextIndex >= currentIds.length) return;
       const nextIds = [...currentIds];
       const [moved] = nextIds.splice(index, 1);
       nextIds.splice(nextIndex, 0, moved!);
-      persistVisibleProviderOrder(nextIds);
+      const sectionIds = new Set(currentIds);
+      let sectionIndex = 0;
+      persistVisibleProviderOrder(listProviders.map(provider => sectionIds.has(provider.id) ? nextIds[sectionIndex++]! : provider.id));
       const provider = byId.get(providerId);
       setOrderAnnouncement(
         t('settings.providers.order.moved', {
-          provider:
-            provider?.id === 'xd'
-              ? t('settings.providers.xd.title')
-              : (provider?.name ?? providerId),
+          provider: provider ? providerDisplayName(provider, t) : providerId,
           position: nextIndex + 1,
           total: currentIds.length,
         }),
       );
     },
-    [byId, listProviders, persistVisibleProviderOrder, t],
+    [byId, listProviders, ownedShares, persistVisibleProviderOrder, t],
   );
 
   // 检测建议:CLI 已安装 + 对应渠道存在于目录 + 未连接,且**未以任何形态占行**
@@ -2548,6 +2786,44 @@ export function ProvidersSection() {
    *   - wizard=1 → 打开向导目录第一步。
    */
   const [searchParams, setSearchParams] = useSearchParams();
+  // 分享管理页深链(?shareProvider=<id>，来自审批通知)：一次性消费并从 URL 摘除。
+  useEffect(() => {
+    const target = searchParams.get(PROVIDER_SHARE_MANAGE_PARAM);
+    if (!target) return;
+    setShareManageProviderId(target);
+    setShareManageRemote(null);
+    const next = new URLSearchParams(searchParams);
+    next.delete(PROVIDER_SHARE_MANAGE_PARAM);
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+  // 分享来的供应商深链(?receivedShare=<shareId>，来自模型选择器底部「配置模型」)：等分享列表到了再消费
+  // 并从 URL 摘除；这条分享已不在列表里(刚被撤销或退出)时只停在供应商页。设备互联断开或换账号时 main
+  // 会先推一份空列表表示「暂时读不到」(providerShareStore 同一口径)，这时保留参数，等列表回来再选中；
+  // 等待期间用户自己改选了别的，就放弃这次跳转，不在列表回来时把右栏切走。
+  const selectionKey = `${selectedId ?? ''}\n${selectedShareId ?? ''}\n${selectedRemoteKey ?? ''}`;
+  const receivedShareWaitRef = useRef<string | null>(null);
+  useEffect(() => {
+    const target = searchParams.get(PROVIDER_SHARE_RECEIVED_PARAM);
+    if (!target) {
+      receivedShareWaitRef.current = null;
+      return;
+    }
+    const waiting = !receivedSharesLoaded || receivedShares.length === 0;
+    const userMoved = receivedShareWaitRef.current !== null && receivedShareWaitRef.current !== selectionKey;
+    if (waiting && !userMoved) {
+      receivedShareWaitRef.current ??= selectionKey;
+      return;
+    }
+    receivedShareWaitRef.current = null;
+    if (!userMoved && receivedShares.some((share) => share.shareId === target)) {
+      setShareManageProviderId(null);
+      setFocusedModel(null);
+      selectShare(target);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete(PROVIDER_SHARE_RECEIVED_PARAM);
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams, receivedSharesLoaded, receivedShares, selectShare, selectionKey]);
   useEffect(() => {
     if (loading) return;
     const connect = searchParams.get('connect');
@@ -2560,6 +2836,9 @@ export function ProvidersSection() {
         : undefined;
     const importId = searchParams.get('import');
     if (!connect && !wizardFlag && !importId) return;
+    // 这些深链要显示供应商主页或弹窗：先离开分享管理页，不能被它挡住。
+    setShareManageProviderId(null);
+    setShareManageRemote(null);
     // 不用一次性 ref:消费后立即删参(下方 replace)即防重放;组件常驻期间
     // 再次带参导航(如二次深链)仍应生效(review 反馈)。
     if (importId) {
@@ -2567,13 +2846,13 @@ export function ProvidersSection() {
     } else if (connect) {
       const target = byId.get(connect);
       if (listProviders.some((p) => p.id === connect)) {
-        setSelectedId(connect);
+        selectProvider(connect);
         setFocusedModel(
           model ? { providerId: connect, modelId: model, ...(agent ? { agent } : {}) } : null,
         );
       } else if (connect === 'xd') {
         // 无账号会话目录不含 xd → 落到登录引导行(不能当 preset 交给向导)。
-        setSelectedId(CINDY_SIGNIN_ID);
+        selectProvider(CINDY_SIGNIN_ID);
       } else if (connect === MANAGED_OLLAMA_PROVIDER_ID) {
         setWizard({});
       } else if (target && target.source === 'builtin') {
@@ -2591,7 +2870,7 @@ export function ProvidersSection() {
     next.delete('agent');
     next.delete('import');
     setSearchParams(next, { replace: true });
-  }, [loading, searchParams, setSearchParams, byId, listProviders]);
+  }, [loading, searchParams, setSearchParams, byId, listProviders, selectProvider]);
 
   // Cindy AI 登录引导:无账号会话目录不含 xd(见 CindySigninRow 头注释),置顶
   // 引导行;列表为空时默认选中它(右栏直接展示登录引导,不留「点击添加」空态)。
@@ -2653,8 +2932,8 @@ export function ProvidersSection() {
 
   /**
    * 自定义供应商「刷新模型」:读回各 runtime 密钥 → fetchProviderModels →
-   * additions-only 合并进配置。新增模型默认隐藏,避免刷新扩大用户当前可用模型范围;
-   * 已有模型及其显式可见性不变。
+   * additions-only 合并进配置;已确认的 API Key 连接缺少语音型号时补一个参考。
+   * 已有型号及其显式可见性不变;后台自动刷新不补参考型号。
    */
   const handleRefreshModels = useCallback(
     async (p: ProviderView) => {
@@ -2662,7 +2941,7 @@ export function ProvidersSection() {
       try {
         const config = providerViewToCustomProviderConfig(p);
         let added = 0;
-        let anyOk = false;
+        const refreshedAgents = new Set<AgentKind>();
         for (const agent of p.agents) {
           const rt = config.runtimes[agent];
           if (!rt?.baseUrl) continue;
@@ -2686,7 +2965,7 @@ export function ProvidersSection() {
             refetch();
             return;
           }
-          anyOk = true;
+          refreshedAgents.add(agent);
           const openRouterCatalog = /^https:\/\/openrouter\.ai\/api(?:\/v1)?\/?$/.test(rt.baseUrl)
             ? (rt.modelsUrl ?? 'https://openrouter.ai/api/v1/models')
             : undefined;
@@ -2698,12 +2977,25 @@ export function ProvidersSection() {
           rt.models = merged.models;
           added += merged.addedIds.length;
         }
-        if (!anyOk) {
+        if (!refreshedAgents.size) {
           toast.error(t('settings.providers.models.refreshFailed'));
           return;
         }
-        await updateCustomProvider(config, {});
-        if (added > 0) {
+        // Main owns the active Registry and classifies the complete discovery
+        // result in the same save, without freezing defaults into user overrides.
+        let speechReferenceAdded = false;
+        const saved = await confirmProviderChange(async (options) => {
+          const result = await updateCustomProvider(config, {}, {
+            ...options,
+            ...(providerSpeechSetup(p) ? { speechReferenceRefreshAgents: [...refreshedAgents] } : {}),
+          });
+          speechReferenceAdded = result.ok && result.speechReferenceAdded === true;
+          return result;
+        });
+        if (!saved) return;
+        if (speechReferenceAdded) {
+          toast.success(t('settings.providers.models.refreshSpeechAdded'));
+        } else if (added > 0) {
           toast.success(t('settings.providers.models.refreshAdded', { count: added }));
         } else {
           toast.success(t('settings.providers.models.refreshNoNew'));
@@ -2715,7 +3007,7 @@ export function ProvidersSection() {
         finishProviderRefresh(p.id);
       }
     },
-    [beginProviderRefresh, finishProviderRefresh, refetch, t],
+    [beginProviderRefresh, confirmProviderChange, finishProviderRefresh, refetch, t],
   );
 
   /** 内置四家复用 main 已有的 provider-specific 真源刷新，不在 Renderer 复制网络逻辑。 */
@@ -2819,18 +3111,96 @@ export function ProvidersSection() {
     );
   };
 
+  // 「分享 {供应商}」管理页：设置内的子页面，返回回到该供应商的详情。只替换主体内容，
+  // 下方的添加 / 编辑 / 导入弹窗层保持挂载，不会因打开管理页而丢失正在填写的内容。
+  const shareManageProvider = shareManageRemote?.provider ?? (shareManageProviderId ? byId.get(shareManageProviderId) ?? null : null);
+  const shareManagePage = shareManageProviderId ? (
+    <ProviderShareManagePage
+      key={`${shareManageRemote?.deviceId ?? 'local'}:${shareManageProviderId}`}
+      providerId={shareManageProviderId}
+      providerName={shareManageProvider ? providerDisplayName(shareManageProvider, t) : shareManageProviderId}
+      providerIcon={shareManageProvider ? providerIcon(shareManageProvider, 18) : null}
+      deviceId={shareManageRemote?.deviceId}
+      deviceName={shareManageRemote?.deviceName}
+      initialGroup={shareManageRemote?.group}
+      remoteProvider={shareManageRemote?.provider}
+      // 供应商还没加载出来时不判「未开放」；生成链接时 main 会再校验。
+      gate={providerShareGate({
+        remoteControlEnabled: shareManageRemote ? true : remoteControlEnabled,
+        invocationEnabled: !shareManageProvider || shareManageProvider.remoteInvocationEnabled === true,
+      })}
+      onBack={() => {
+        if (shareManageRemote) setSelectedRemoteKey(shareManageRemote.key);
+        else setSelectedId(shareManageProviderId);
+        setShareManageProviderId(null);
+        setShareManageRemote(null);
+      }}
+    />
+  ) : null;
+
+  const renderLocalProviderList = (sectionProviders: ProviderView[]) => (
+    <SortableList
+      items={sectionProviders}
+      getId={provider => provider.id}
+      onReorder={ids => {
+        const sectionIds = new Set(ids);
+        let index = 0;
+        persistVisibleProviderOrder(listProviders.map(provider => sectionIds.has(provider.id) ? ids[index++]! : provider.id));
+      }}
+      renderItem={(provider, index) => (
+        <ListRow
+          provider={provider}
+          selected={!otherDeviceSelected && !cindySigninActive && effectiveSelected?.id === provider.id}
+          reconnectRequired={
+            (provider.id === 'openai' && openaiReconnectRequired) ||
+            provider.openAiAccount?.reconnectRequired === true
+          }
+          onSelect={() => {
+            setFocusedModel(null);
+            selectProvider(provider.id);
+          }}
+          position={index + 1}
+          total={sectionProviders.length}
+          onMove={delta => moveProviderWithKeyboard(provider.id, delta)}
+          sortable={sectionProviders.length > 1}
+        />
+      )}
+      disabled={sectionProviders.length < 2}
+      reducedMotion={reducedMotion}
+      filter="input, textarea, select, a, [data-no-drag]"
+      className="flex flex-col gap-0.5"
+      rowClassName="provider-settings-sortable-row"
+    />
+  );
+
+  const renderRemoteProviderRows = (entries: readonly OwnRemoteProvider[]) => (
+    <OwnRemoteProviderRows
+      entries={entries}
+      selectedKey={selectedRemote?.key ?? null}
+      onSelect={key => {
+        setFocusedModel(null);
+        selectRemote(key);
+      }}
+    />
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-[14px]">
-      <div className="flex shrink-0 flex-col gap-1">
-        <h2
-          className="text-16 font-medium leading-[1.2]"
-          style={{ color: 'var(--settings-section-title)' }}
-        >
-          {t('settings.providers.title')}
-        </h2>
-        <p className="text-13 leading-[1.5]" style={{ color: 'var(--settings-section-desc)' }}>
-          {t('settings.providers.subtitle')}
-        </p>
+      {shareManagePage ?? (<>
+      <div className="flex shrink-0 items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-1">
+          <h2
+            className="text-16 font-medium leading-[1.2]"
+            style={{ color: 'var(--settings-section-title)' }}
+          >
+            {t('settings.providers.title')}
+          </h2>
+          <p className="text-13 leading-[1.5]" style={{ color: 'var(--settings-section-desc)' }}>
+            {t('settings.providers.subtitle')}
+          </p>
+        </div>
+        {/* 收到别人的供应商分享链接时从这里输入(加入网页唤起 Cindy 失败时也指引到这里)。 */}
+        <ProviderSharePasteButton />
       </div>
 
       {/* 先取数据再渲染卡片(规则 7:首帧即终态高度,不出现连接态翻转的跳变帧)。
@@ -2856,48 +3226,48 @@ export function ProvidersSection() {
             <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2">
               {showCindySignin && (
                 <CindySigninRow
-                  selected={cindySigninActive}
-                  onSelect={() => setSelectedId(CINDY_SIGNIN_ID)}
+                  selected={cindySigninActive && !otherDeviceSelected}
+                  onSelect={() => {
+                    selectProvider(CINDY_SIGNIN_ID);
+                  }}
                 />
               )}
-              {listProviders.length > 1 && (
+              {(ordinaryLocalProviders.length > 1 || sharedLocalProviders.length > 1) && (
                 <div className="select-none px-1.5 pb-1 pt-1">
                   <span className="text-11" style={{ color: 'var(--text-tertiary)' }}>
                     {t('settings.providers.order.hint')}
                   </span>
                 </div>
               )}
-              <SortableList
-                items={listProviders}
-                getId={(provider) => provider.id}
-                onReorder={persistVisibleProviderOrder}
-                renderItem={(provider, index) => (
-                  <ListRow
-                    provider={provider}
-                    selected={!cindySigninActive && effectiveSelected?.id === provider.id}
-                    reconnectRequired={
-                      (provider.id === 'openai' && openaiReconnectRequired) ||
-                      provider.openAiAccount?.reconnectRequired === true
-                    }
-                    onSelect={() => {
-                      setFocusedModel(null);
-                      setSelectedId(provider.id);
-                    }}
-                    position={index + 1}
-                    total={listProviders.length}
-                    onMove={(delta) => moveProviderWithKeyboard(provider.id, delta)}
-                    sortable={listProviders.length > 1}
-                  />
-                )}
-                disabled={listProviders.length < 2}
-                reducedMotion={reducedMotion}
-                filter="input, textarea, select, a, [data-no-drag]"
-                className="flex flex-col gap-0.5"
-                rowClassName="provider-settings-sortable-row"
-              />
+              {renderLocalProviderList(ordinaryLocalProviders)}
               <span className="sr-only" aria-live="polite" aria-atomic="true">
                 {orderAnnouncement}
               </span>
+              {/* 自己其他电脑上能用的供应商：接在本机供应商后面，图标带远程角标。 */}
+              {renderRemoteProviderRows(ordinaryRemoteProviders)}
+              {(sharedLocalProviders.length > 0 || sharedRemoteProviders.length > 0) && (
+                <div
+                  data-testid="provider-share-owned"
+                  role="group"
+                  aria-label={t('providerShare.owned.title')}
+                  className="flex flex-col gap-0.5"
+                >
+                  <span className="truncate px-2.5 pb-1 pt-3 text-11 font-medium text-[var(--text-tertiary)]">
+                    {t('providerShare.owned.title')}
+                  </span>
+                  {renderLocalProviderList(sharedLocalProviders)}
+                  {renderRemoteProviderRows(sharedRemoteProviders)}
+                </div>
+              )}
+              {/* 分享给我的供应商(受邀者)：单独成组，没有分享时不显示。 */}
+              <ProviderShareReceivedRailGroup
+                selectedShareId={selectedShare?.shareId ?? null}
+                hiddenShareIds={groupedShareIds}
+                onSelect={(shareId) => {
+                  setFocusedModel(null);
+                  selectShare(shareId);
+                }}
+              />
               {suggestions.length > 0 && (
                 <>
                   <span
@@ -2920,7 +3290,7 @@ export function ProvidersSection() {
               )}
             </div>
             <div id="settings-search-settings-providers-addProvider"
-              className="border-t p-2"
+              className="flex flex-col gap-2 border-t p-2"
               style={{ borderColor: 'var(--settings-theme-card-border)' }}
             >
               <Button
@@ -2934,12 +3304,37 @@ export function ProvidersSection() {
                 <Plus size={15} />
                 {t('settings.providers.addProvider')}
               </Button>
+              <ProviderImportFileButton
+                key={`${dataOwnerId}:${ownerGeneration}`}
+                onImported={setProviderImportId}
+              />
             </div>
           </div>
 
           {/* 右栏身份固定；说明、资产和模型共用 DetailHeader 的滚动区。 */}
-          <div key={effectiveSelected?.id} className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {cindySigninActive ? (
+          <div
+            key={
+              selectedShare
+                ? `share:${selectedShare.shareId}`
+                : selectedRemote
+                  ? `remote:${selectedRemote.key}`
+                  : effectiveSelected?.id
+            }
+            className="flex min-h-0 min-w-0 flex-1 flex-col"
+          >
+            {selectedShare ? (
+              <ProviderShareReceivedDetail share={selectedShare} />
+            ) : selectedRemote ? (
+              <OwnRemoteProviderDetail
+                entry={selectedRemote}
+                pendingShareRequests={pendingShareRequests.filter((item) =>
+                  item.hostDeviceId === selectedRemote.deviceId && item.share.providerId === selectedRemote.provider.id).length}
+                onManage={() => {
+                  setShareManageRemote(selectedRemote);
+                  setShareManageProviderId(selectedRemote.provider.id);
+                }}
+              />
+            ) : cindySigninActive ? (
               /* 登录引导是 brand-scale surface(DESIGN §3):48px 标识 → 24px 名字 →
                  一行价值主张 → 赠送余额徽标 → 黑 CTA,间距走 8px 系统。底部留白比
                  顶部多,视觉重心才落在上三分之一。 */
@@ -2952,7 +3347,7 @@ export function ProvidersSection() {
                     color: 'var(--settings-integration-avatar-icon)',
                   }}
                 >
-                  <XDIncMark size={24} />
+                  <CindyMark size={24} />
                 </div>
                 <span
                   className="mt-4 text-24 font-medium leading-[1.2]"
@@ -3044,6 +3439,22 @@ export function ProvidersSection() {
                         />
                       </div>
                     )}
+                  {/* 允许被远程调用 + 「远程与分享」入口(含供应商组)：供应商已连接且能跑 Agent 时出现。
+                      本机未允许远程控制时整行仍显示，但开关不可用(provider-sharing.md §3)；入口始终可用，
+                      只给本机用时也可以建组(provider-groups.md §10)。 */}
+                  {remoteControlEnabled !== null &&
+                    !effectiveSelected.suspended &&
+                    effectiveSelected.connected &&
+                    effectiveSelected.agents.length > 0 &&
+                    effectiveSelected.remoteInvocationEnabled !== undefined && (
+                      <RemoteProviderAccessRow
+                        key={effectiveSelected.id}
+                        provider={effectiveSelected}
+                        remoteControlEnabled={remoteControlEnabled}
+                        pendingShareRequests={pendingShareCounts.get(effectiveSelected.id) ?? 0}
+                        onManageShare={() => { setShareManageRemote(null); setShareManageProviderId(effectiveSelected.id); }}
+                      />
+                    )}
                   {!effectiveSelected.suspended &&
                     (providerHasModels(effectiveSelected) ||
                       isCustomRoutedProvider(effectiveSelected) ||
@@ -3060,6 +3471,9 @@ export function ProvidersSection() {
                         )}
                         <UnifiedModelList
                           provider={effectiveSelected}
+                          onAddSpeechModels={providerSpeechSetup(effectiveSelected) ? () => {
+                            setSpeechProvider({ provider: effectiveSelected, owner: dataOwnerId, generation: ownerGeneration });
+                          } : undefined}
                           focusModelId={
                             focusedModel?.providerId === effectiveSelected.id
                               ? focusedModel.modelId
@@ -3159,10 +3573,19 @@ export function ProvidersSection() {
         </div>
       )}
 
+      </>)}
+
+      {speechProvider && speechProvider.owner === dataOwnerId && speechProvider.generation === ownerGeneration && (
+        <AddSpeechModelsDialog key={`${dataOwnerId}:${ownerGeneration}:${speechProvider.provider.id}`}
+          provider={speechProvider.provider} onClose={() => setSpeechProvider(null)}
+          onSaved={() => { setSpeechProvider(null); void refetch(); }} />
+      )}
       {wizard && (
         <AddProviderWizard
           providers={providers}
           entry={wizard.entry}
+          detected={wizard.detected}
+          onReturnCustom={(draft) => { setWizard(null); setDialog({ mode: 'create', draft }); }}
           onOpenCustomForm={() => {
             setWizard(null);
             setDialog({ mode: 'create' });
@@ -3171,14 +3594,18 @@ export function ProvidersSection() {
           onDone={async (providerId) => {
             await refetch();
             setWizard(null);
-            if (providerId) setSelectedId(providerId);
+            if (providerId) selectProvider(providerId);
           }}
         />
       )}
 
       {dialog && (
         <ProviderConnectionDialog
+          draft={dialog.mode === 'create' ? dialog.draft : undefined}
+          onDetected={(detected) => { setDialog(null); setWizard({ detected }); }}
           initial={dialog.mode === 'edit' ? dialog.config : undefined}
+          catalogModels={dialog.mode === 'edit' ? providers.find(p =>
+            p.source === 'user' && storedCustomProviderId(p.id) === dialog.config.id)?.models : undefined}
           focusAgent={dialog.mode === 'edit' ? dialog.focusAgent : undefined}
           existingIds={providers.map((p) => p.id)}
           returnFocusRef={dialog.mode === 'create' ? addProviderButtonRef : undefined}
@@ -3190,7 +3617,14 @@ export function ProvidersSection() {
         />
       )}
 
-      {providerImportId && (
+      {Array.isArray(providerImportId) ? (
+        <ProviderImportBatchDialog
+          key={`${dataOwnerId}:${ownerGeneration}:${providerImportId.join(',')}`}
+          importIds={providerImportId}
+          onClose={closeProviderImport}
+          onDone={finishProviderImport}
+        />
+      ) : providerImportId && (
         <ProviderImportDialog
           key={`${dataOwnerId}:${ownerGeneration}:${providerImportId}`}
           importId={providerImportId}

@@ -17,6 +17,24 @@ export function setSessionOpeningModelAdmission(admission: ModelAdmission): void
   admitModel = admission;
 }
 
+function agentRunsOnOtherDevice(body: SessionOpenBody): boolean {
+  return typeof body.agentDeviceId === 'string' && body.agentDeviceId.trim().length > 0;
+}
+
+/** Project git bootstrap of a newly opened task (deferred to the first send for unsent tasks). */
+export async function ensureOpenedProjectGit(row: {
+  id: string;
+  workingDir: string | null | undefined;
+  workspaceKind: string | null | undefined;
+  remoteHostId: string | null | undefined;
+}): Promise<void> {
+  const safety = readGitSafetySettings();
+  await ensureProjectGitInitialized({ workingDir: row.workingDir, workspaceKind: row.workspaceKind,
+    remoteHostId: row.remoteHostId ?? null, sessionId: row.id,
+    autoSnapshotEnabled: safety.autoSnapshotEnabled,
+    autoInitProjectGit: safety.autoInitProjectGit, source: 'session-open' });
+}
+
 /**
  * Open a normal Cindy Session. No messages are sent and no callback Agent is started.
  * Entry adapters authorize the caller/directory. A companion may atomically commit
@@ -27,6 +45,10 @@ export async function openSession<T = void>(input: {
   now?: number;
   body: SessionOpenBody;
   source?: OpenedSessionRow['source'];
+  /** Background task (plugin `agent.hiddenTasks`): committed hidden in the same INSERT. */
+  hiddenAt?: number;
+  /** Unsent task opened while the user types: project git bootstrap waits for the first send. */
+  deferGitInit?: boolean;
   assertCurrent?: () => void;
   /** Sample effective authority after async preparation, directly before committing. */
   finalize?: () => Pick<SessionOpenBody, 'permissionMode' | 'parentSessionId'>;
@@ -43,21 +65,24 @@ export async function openSession<T = void>(input: {
   const now = input.now ?? Date.now();
   if (!admitModel) throw new Error('任务模型服务尚未就绪，请稍后重试');
   // Remote model admission belongs to the execution host. Preserve the existing remote path.
-  const selected = input.body.remoteHostId ? input.body : await admitModel({ ...input.body });
+  // Agent 在另一台电脑运行的任务同理：模型与来源来自那台，由那台启动时按它的目录校验。
+  const selected = input.body.remoteHostId || agentRunsOnOtherDevice(input.body)
+    ? input.body
+    : await admitModel({ ...input.body });
   assertCurrent();
   const workspaceKind = selected.workspaceKind ?? 'project';
   const explicitDir = normalizeWorkingDirForStorage(selected.workingDir) ?? undefined;
   const workingDir = workspaceKind === 'dialogue' && !explicitDir
     ? ensureDialogueWorkspaceDir(id, now) : explicitDir;
   const prepared = { ...selected, workspaceKind, workingDir };
-  const safety = readGitSafetySettings();
-  await ensureProjectGitInitialized({ workingDir, workspaceKind, remoteHostId: prepared.remoteHostId ?? null,
-    sessionId: id, autoSnapshotEnabled: safety.autoSnapshotEnabled,
-    autoInitProjectGit: safety.autoInitProjectGit, source: 'session-open' });
-  assertCurrent();
+  if (!input.deferGitInit) {
+    await ensureOpenedProjectGit({ id, workingDir, workspaceKind, remoteHostId: prepared.remoteHostId ?? null });
+    assertCurrent();
+  }
   const mapped = sessionCreateToRow(id, { ...prepared, ...input.finalize?.() }, now);
   if (!mapped.model) throw new Error('任务模型不可用，请重新选择');
-  const row = { ...mapped, model: mapped.model, ...(input.source ? { source: input.source } : {}) };
+  const row = { ...mapped, model: mapped.model, ...(input.source ? { source: input.source } : {}),
+    ...(input.hiddenAt !== undefined ? { hiddenAt: input.hiddenAt } : {}) };
   input.onPersistenceStarted?.();
   let value: T;
   if (commit) value = await commit(row, assertCurrent);

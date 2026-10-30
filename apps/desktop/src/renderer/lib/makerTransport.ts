@@ -34,6 +34,13 @@ import * as sessionService from '@/lib/sessionService';
 import { extractIpcError } from '@/utils/ipcError';
 import type { TurnChangeSetUpdatedPayload } from '../../shared/turnChangeSet';
 import type { LocalPluginOauthRequest, LocalPluginSecretRequest, LocalPluginConnectionRequest } from '../../shared/pluginOauth';
+import {
+  INPUT_HANDOFF_ACTION_ID,
+  INPUT_HANDOFF_GHOST_ID,
+  type InputHandoffPicture,
+  type InputHandoffPresentation,
+  type InputHandoffSubmission,
+} from '@cindy/device-link';
 
 type FullMaker = typeof window.electronAPI.maker;
 
@@ -91,6 +98,77 @@ export function submitRemotePluginConnection(sessionId: string, request: Omit<Lo
 }
 
 /**
+ * 代输入 values. Local tasks use the trusted local channel; tasks on another
+ * computer go through Main's signed relay. Never makerApiFor/device-link invoke.
+ */
+export function submitInputHandoff(
+  sessionId: string,
+  request: { submission: InputHandoffSubmission; presentation: InputHandoffPresentation },
+): Promise<{ accepted: boolean }> {
+  const deviceId = getStickySessionDeviceId(sessionId);
+  if (!deviceId)
+    return window.electronAPI.maker.submitInputHandoff(request.presentation.requestId, request.submission);
+  return window.electronAPI.maker.submitRemoteInputHandoff({
+    deviceId,
+    ghostId: INPUT_HANDOFF_GHOST_ID,
+    requestId: request.presentation.requestId,
+    actionId: INPUT_HANDOFF_ACTION_ID,
+    expectedRevision: request.submission.expectedRevision,
+    submission: request.submission,
+    presentation: request.presentation,
+  });
+}
+
+/** One opened 代输入 screenshot step: its picture, and one answer (or close). */
+export interface InputHandoffPictureSession {
+  picture: InputHandoffPicture;
+  answer(submission: InputHandoffSubmission): Promise<{ accepted: boolean }>;
+  close(): void;
+}
+
+/**
+ * The current screenshot step. On this computer Main hands it over directly;
+ * for a task on another computer it arrives inside the sealed v3 offer, and
+ * the answer goes back on the same exchange.
+ */
+export async function openInputHandoffPicture(
+  sessionId: string,
+  presentation: InputHandoffPresentation,
+): Promise<InputHandoffPictureSession> {
+  const deviceId = getStickySessionDeviceId(sessionId);
+  if (!deviceId) {
+    const picture = await window.electronAPI.maker.getInputHandoffPicture(presentation.requestId, presentation.revision);
+    if (!picture) throw new Error('INPUT_HANDOFF_UNAVAILABLE');
+    return {
+      picture,
+      answer: (submission) => window.electronAPI.maker.submitInputHandoff(presentation.requestId, submission),
+      close: () => undefined,
+    };
+  }
+  const opened = await window.electronAPI.maker.openRemoteInputHandoffPicture({
+    deviceId,
+    ghostId: INPUT_HANDOFF_GHOST_ID,
+    requestId: presentation.requestId,
+    actionId: INPUT_HANDOFF_ACTION_ID,
+    expectedRevision: presentation.revision,
+    presentation,
+  });
+  let open = true;
+  return {
+    picture: opened.picture,
+    answer: (submission) => {
+      open = false;
+      return window.electronAPI.maker.answerRemoteInputHandoffPicture(opened.token, submission);
+    },
+    close: () => {
+      if (!open) return;
+      open = false;
+      void window.electronAPI.maker.answerRemoteInputHandoffPicture(opened.token, null).catch(() => undefined);
+    },
+  };
+}
+
+/**
  * makerChatStore / ChatInput 经传输层调用的会话操作子集。本地直接复用
  * window.electronAPI.maker;远程转 deviceLink.invoke。所有 channel 均在
  * REMOTE_INVOKE_ALLOWLIST 白名单内(被控端执行前还会再校验一层)。
@@ -120,6 +198,8 @@ export interface RoutableMaker {
   // —— 完整对等:会话级功能(fork / rewind / context-usage / extra-dirs / close / orca)——
   // 本地分支返回完整 maker 天然带这些;远程分支在 remoteMakerApi 里逐一隧道映射。
   fork: FullMaker['fork'];
+  createSideChat: FullMaker['createSideChat'];
+  listSideChats: FullMaker['listSideChats'];
   forkStripEncrypted: FullMaker['forkStripEncrypted'];
   rewindPreview: FullMaker['rewindPreview'];
   rewindCommit: FullMaker['rewindCommit'];
@@ -151,6 +231,8 @@ export interface RoutableMaker {
     | 'updateText'
     | 'updateContent'
     | 'clearError'
+    | 'cancelUsageLimitWait'
+    | 'retryImageDelivery'
     | 'retryLastError'
     | 'clearSession'
     | 'persistTurnErrorDeferred'
@@ -230,6 +312,8 @@ function remoteMakerApi(deviceId: string): RoutableMaker {
     ) as FullMaker['getPendingInteractions'],
     deleteMessage: t('maker:message:delete') as FullMaker['deleteMessage'],
     fork: t('maker:fork') as FullMaker['fork'],
+    createSideChat: t('maker:side-chat:v1') as FullMaker['createSideChat'],
+    listSideChats: t('maker:side-chat:list:v1') as FullMaker['listSideChats'],
     forkStripEncrypted: t('maker:fork-strip-encrypted') as FullMaker['forkStripEncrypted'],
     rewindPreview: t('maker:rewind:preview') as FullMaker['rewindPreview'],
     rewindCommit: t('maker:rewind:commit') as FullMaker['rewindCommit'],
@@ -265,6 +349,8 @@ function remoteMakerApi(deviceId: string): RoutableMaker {
       updateText: t('maker:input:update-text') as FullMaker['input']['updateText'],
       updateContent: t('maker:input:update-content') as FullMaker['input']['updateContent'],
       clearError: t('maker:input:clear-error') as FullMaker['input']['clearError'],
+      cancelUsageLimitWait: t('maker:input:cancel-usage-limit-wait') as FullMaker['input']['cancelUsageLimitWait'],
+      retryImageDelivery: t('maker:images:retry') as FullMaker['input']['retryImageDelivery'],
       retryLastError: t('maker:input:retry-last-error') as FullMaker['input']['retryLastError'],
       clearSession: t('maker:input:clear-session') as FullMaker['input']['clearSession'],
       // device-link:auth error 重试失败/放弃时在被控端落库,经隧道路由到被控端 main。
@@ -287,10 +373,12 @@ export function agentCapabilitiesForDevice(
 ): Promise<{
   supportsOrcaWorkerPermissionMode?: boolean;
   supportsDeferredOrcaUiAssignment?: boolean;
+  supportsOrcaWorkerUpdate?: boolean;
 }> {
   return invokeRemote(deviceId, 'maker:get-capabilities', [agentKind]) as Promise<{
     supportsOrcaWorkerPermissionMode?: boolean;
     supportsDeferredOrcaUiAssignment?: boolean;
+    supportsOrcaWorkerUpdate?: boolean;
   }>;
 }
 
@@ -302,6 +390,16 @@ export function agentCapabilitiesForDevice(
 export function makerApiFor(sessionId: string): RoutableMaker {
   const deviceId = getSessionDeviceId(sessionId);
   return deviceId ? makerApiForDevice(deviceId) : window.electronAPI.maker;
+}
+
+/**
+ * 输入框开始打字时请任务所在电脑提前启动 Agent。尽力而为：旧被控端没有该 channel、
+ * 断线或拒绝都只意味着下一次发送照常冷启动，调用方不需要处理结果。
+ */
+export function prewarmSessionFor(sessionId: string, createOpts: unknown): Promise<unknown> {
+  const deviceId = getSessionDeviceId(sessionId);
+  if (deviceId) return invokeRemote(deviceId, 'maker:session:prewarm', [sessionId, createOpts]);
+  return window.electronAPI.maker.prewarmSession?.(sessionId, createOpts) ?? Promise.resolve(undefined);
 }
 
 /**
@@ -408,6 +506,23 @@ export function isSessionTurnRunningFor(sessionId: string): Promise<boolean> {
   const deviceId = getSessionDeviceId(sessionId);
   if (!deviceId) return Promise.resolve(false);
   return invokeRemote(deviceId, 'maker:session-in-turn', [sessionId]) as Promise<boolean>;
+}
+
+/**
+ * 「应用退出中断」横幅的运行态真值:时间戳来自哪台设备的 session 行,就问哪台设备。
+ * 远程会话的 turn 只在被控端跑,控制端本机 main 永远答「不在 turn 中」,拿它当真值会把
+ * 被控端正在跑的任务误判成中断。deviceId 由调用方显式传入(视图的粘滞归属),不在这里
+ * 重新解析易失的 session origin —— 重连窗口内退回本机同样会得到错误的 false。
+ */
+export async function getSessionTurnActiveOn(
+  sessionId: string,
+  deviceId: string | null | undefined,
+): Promise<boolean> {
+  if (!deviceId) {
+    const result = await window.electronAPI.maker.getSessionTurnActive(sessionId);
+    return result?.inTurn === true;
+  }
+  return (await invokeRemote(deviceId, 'maker:session-in-turn', [sessionId])) === true;
 }
 
 /**
@@ -566,6 +681,60 @@ export function listSessionBackgroundTasksFor(
       typeof window.electronAPI.maker.listSessionBackgroundTasks
     >
   ).catch(() => ({ tasks: [] }));
+}
+
+/**
+ * 会话后台活动快照(只读,best-effort):「turn 已结束但子进程仍在调模型」的信号
+ * 由被控端 loopback proxy 观察,远程会话必须隧道读(控制端本机查恒为 false)。
+ * 隧道失败一律按无活动降级,与 listSessionBackgroundTasksFor 同口径。
+ */
+export async function sessionBackgroundActivityFor(sessionId: string): Promise<{ active: boolean }> {
+  const deviceId = getStickySessionDeviceId(sessionId);
+  if (!deviceId) return window.electronAPI.maker.getSessionBackgroundActivity(sessionId);
+  return (
+    invokeRemote(deviceId, 'maker:session-background-activity', [sessionId]) as Promise<{
+      active: boolean;
+    }>
+  ).catch(() => ({ active: false }));
+}
+
+/**
+ * 停止类操作的执行端:远程 → 被控设备 id(粘滞解析,relay 瞬断窗口内不退回本机);
+ * 本机 → null,但仅当本机库确有该会话。两者都不是即归属未解析(冷启动时远程注册表
+ * 尚未就绪),拒绝执行 —— 本机停止对不存在的会话会幂等「成功」,任务却在被控端继续跑。
+ */
+async function resolveStopOwner(sessionId: string): Promise<string | null> {
+  const deviceId = getStickySessionDeviceId(sessionId);
+  if (deviceId) return deviceId;
+  try {
+    await sessionService.get(sessionId);
+  } catch {
+    throw new Error('[DEVICE_LINK_NOT_CONNECTED] Background task ownership is unresolved');
+  }
+  // 本机查询在途期间远程注册表可能完成水合(恢复 / 复制的本机库可含同 id 会话):
+  // 查询落地后再核验一次,远程归属优先,停止不落到同 id 的本机会话。
+  return getStickySessionDeviceId(sessionId) ?? null;
+}
+
+/**
+ * 精确停止单个后台任务,在会话归属端执行(见 resolveStopOwner)。错误原样透传:
+ * 老被控端回 DEVICE_LINK_CHANNEL_NOT_ALLOWED,调用方据此提示升级。
+ */
+export async function stopAgentTaskFor(sessionId: string, taskId: string): Promise<{ ok: true }> {
+  const deviceId = await resolveStopOwner(sessionId);
+  if (!deviceId) return window.electronAPI.maker.stopAgentTask(sessionId, taskId);
+  return invokeRemote(deviceId, 'maker:agent-task:stop', [sessionId, taskId]) as Promise<{
+    ok: true;
+  }>;
+}
+
+/** 会话级「全部停止」(关闭归属端常驻 agent 进程);路由与错误语义同 stopAgentTaskFor。 */
+export async function stopSessionBackgroundTasksFor(sessionId: string): Promise<{ ok: true }> {
+  const deviceId = await resolveStopOwner(sessionId);
+  if (!deviceId) return window.electronAPI.maker.stopSessionBackgroundTasks(sessionId);
+  return invokeRemote(deviceId, 'maker:session-background-tasks:stop', [sessionId]) as Promise<{
+    ok: true;
+  }>;
 }
 
 /**
@@ -833,8 +1002,11 @@ export interface RoutableOrcaWorkflows {
   switchFocus: FullOrca['switchFocus'];
   idleWorker: FullOrca['idleWorker'];
   archiveWorker: FullOrca['archiveWorker'];
+  /** 修改 worker 的展示角色名与 team 内唯一标识。 */
+  updateWorker: FullOrca['updateWorker'];
   endTeam: FullOrca['endTeam'];
   getCollaborationSettings: FullOrca['getCollaborationSettings'];
+  listExecutionDevices: FullOrca['listExecutionDevices'];
 }
 
 /**
@@ -876,10 +1048,17 @@ function remoteOrcaWorkflows(deviceId: string): RoutableOrcaWorkflows {
       invokeRemote(deviceId, 'maker:worker:archive', [
         { leadSessionId, workerId },
       ])) as FullOrca['archiveWorker'],
+    updateWorker: ((input: {
+      leadSessionId: string;
+      workerId: string;
+      role?: string;
+      label?: string;
+    }) => invokeRemote(deviceId, 'maker:worker:update', [input])) as FullOrca['updateWorker'],
     endTeam: t('maker:team:end') as FullOrca['endTeam'],
     getCollaborationSettings: t(
       'maker:collaboration-settings:get',
     ) as FullOrca['getCollaborationSettings'],
+    listExecutionDevices: t('maker:orca:execution-devices') as FullOrca['listExecutionDevices'],
   };
 }
 

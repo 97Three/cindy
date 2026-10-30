@@ -1,3 +1,4 @@
+import { getPluginToolUi, pluginHasToolUi, pluginToolVisible, pluginUiDomains, pluginUiPermissionsExpand } from '../toolUi.js';
 import { describe, expect, it } from 'vitest';
 import {
   GHOST_MANUAL_DESCRIPTION_MAX_CHARS,
@@ -31,6 +32,32 @@ const validManifest = {
 } as const;
 
 describe('Ghost manifest contract', () => {
+  it.each([2, 3])('preserves the optional Host task card visibility flag in schema v%s', (schemaVersion) => {
+    const base = {
+      ...validManifest,
+      schemaVersion,
+      ...(schemaVersion === 3 ? { minCindyVersion: '0.1.0' } : {}),
+      slots: schemaVersion === 2 ? ['agent'] : undefined,
+      tools: undefined,
+      agent: { tasks: true },
+    };
+    for (const showTaskPreferences of [undefined, true, false]) {
+      const result = validateGhostManifest({ ...base, showTaskPreferences });
+      expect(result.ok).toBe(true);
+      if (!result.ok) continue;
+      expect(result.manifest.showTaskPreferences).toBe(showTaskPreferences);
+      expect(Object.hasOwn(result.manifest, 'showTaskPreferences')).toBe(showTaskPreferences !== undefined);
+      expect(result.manifest.agent?.tasks).toBe(true);
+      expect(validateGhostManifest(result.manifest)).toEqual(result);
+    }
+    for (const showTaskPreferences of [null, 0, 1, 'false', {}, []]) {
+      expect(validateGhostManifest({ ...base, showTaskPreferences })).toMatchObject({
+        ok: false,
+        reason: 'showTaskPreferences 必须是布尔值',
+      });
+    }
+  });
+
   it('keeps main-view in the v2 compatibility contract', () => {
     expect(LEGACY_GHOST_SLOTS).toContain('main-view');
     expect(GHOST_MAIN_VIEW_ICONS).toEqual([
@@ -965,6 +992,26 @@ describe('Ghost manifest contract', () => {
     }
   });
 
+  // 跟对话的任务页:v3 直接声明保留;v2 必须与 task-view 槽成对;入口路径与 mainView 同一套安全约束。
+  it('accepts direct v3 taskView, pairs v2 task-view, and rejects unsafe or missing entries', () => {
+    const direct = {
+      schemaVersion: 3,
+      minCindyVersion: '1.2.3',
+      id: 'direct-task-view',
+      name: 'Direct Task View',
+      version: '1.0.0',
+      entry: 'index.js',
+      taskView: { title: 'Simulator', html: 'ui/task.html' },
+    } as const;
+    expect(validateGhostManifest(direct)).toMatchObject({ ok: true, manifest: { taskView: direct.taskView } });
+    expect(validateGhostManifest({ ...direct, taskView: { html: '../task.html' } }).ok).toBe(false);
+    expect(validateGhostManifest({ ...direct, taskView: { title: 'Simulator' } }).ok).toBe(false);
+    const v2 = { ...validManifest, minCindyVersion: '1.2.3', slots: ['task-view'], tools: undefined, taskView: { html: 'task.html' } };
+    expect(validateGhostManifest(JSON.parse(JSON.stringify(v2)))).toMatchObject({ ok: true });
+    expect(validateGhostManifest({ ...v2, slots: [] }).ok).toBe(false);
+    expect(validateGhostManifest({ ...v2, taskView: undefined }).ok).toBe(false);
+  });
+
   it('accepts direct v3 mainView and round-trips v2 main-view compatibility', () => {
     const direct = {
       schemaVersion: 3,
@@ -1784,11 +1831,35 @@ describe('Ghost manifest contract', () => {
       if (!rejected.ok) expect(rejected.reason).toContain('仅停靠形态');
     }
 
-    // top/bottom 仍收词明确拒绝,野值仍拒。
-    const pending = validateGhostManifest(withPanel({ position: 'top' }));
-    expect(pending.ok).toBe(false);
-    if (!pending.ok) expect(pending.reason).toContain('暂未支持');
+    // 四条边都是真实的页签组位置(与 Desktop 校验一致),野值仍拒。
+    for (const side of ['left', 'right', 'top', 'bottom'] as const) {
+      const ok = validateGhostManifest(withPanel({ position: side }));
+      expect(ok.ok, side).toBe(true);
+      if (ok.ok) expect(ok.manifest.panel?.position).toBe(side);
+    }
     expect(validateGhostManifest(withPanel({ position: 'center' })).ok).toBe(false);
+  });
+
+  it('mainView.open / side / multiple 与 Desktop 校验一致:合法保留,野值与错配拒', () => {
+    const withView = (mainView: Record<string, unknown>) =>
+      validateGhostManifest({
+        schemaVersion: 3,
+        minCindyVersion: '0.1.61',
+        id: 'view-helper',
+        name: 'View Helper',
+        version: '1.0.0',
+        entry: 'main.js',
+        mainView: { html: 'main-view.html', ...mainView },
+      });
+    const ok = withView({ open: 'sidebar', side: 'bottom', multiple: true });
+    expect(ok.ok).toBe(true);
+    if (ok.ok) {
+      expect(ok.manifest.mainView).toMatchObject({ open: 'sidebar', side: 'bottom', multiple: true });
+    }
+    expect(withView({ open: 'popup' }).ok).toBe(false);
+    expect(withView({ open: 'page', side: 'left' }).ok).toBe(false);
+    expect(withView({ open: 'sidebar', side: 'middle' }).ok).toBe(false);
+    expect(withView({ multiple: false }).ok).toBe(false);
   });
 });
 
@@ -1865,3 +1936,133 @@ describe('cindy 详单:media/text/embed/search 类目与 oneshotModel 校验', (
     }
   });
 });
+
+describe('agent.hiddenTasks declaration', () => {
+  const v3 = { schemaVersion: 3, minCindyVersion: '0.1.0', id: 'bg-tasks', name: 'Background', version: '1.0.0', entry: 'main.js' };
+  it('accepts it only together with agent.tasks', () => {
+    const ok = validateGhostManifest({ ...v3, agent: { tasks: true, hiddenTasks: true } });
+    expect(ok.ok && ok.manifest.agent).toEqual({ tasks: true, hiddenTasks: true });
+    expect(validateGhostManifest({ ...v3, agent: { hiddenTasks: true } }).ok).toBe(false);
+    expect(validateGhostManifest({ ...v3, agent: { tasks: true, hiddenTasks: 'yes' } }).ok).toBe(false);
+    const visible = validateGhostManifest({ ...v3, agent: { tasks: true, hiddenTasks: false } });
+    expect(visible.ok && visible.manifest.agent).toEqual({ tasks: true });
+  });
+});
+
+// New target access is not implied by the old plugin-owned tasks declaration.
+it('validates independent target access without dropping the tasks dependency', () => {
+  const base = { schemaVersion: 3, minCindyVersion: '0.1.0', id: 'target-test', name: 'Targets', version: '1.0.0', entry: 'main.js' };
+  const approved = validateGhostManifest({ ...base, agent: { tasks: true, targets: true } });
+  expect(approved.ok && approved.manifest.agent).toEqual({ tasks: true, targets: true });
+  expect(validateGhostManifest({ ...base, agent: { targets: true } }).ok).toBe(false);
+  expect(validateGhostManifest({ ...base, agent: { tasks: true, targets: 'yes' } }).ok).toBe(false);
+  const disabled = validateGhostManifest({ ...base, agent: { tasks: true, targets: false } });
+  expect(disabled.ok && disabled.manifest.agent).toEqual({ tasks: true });
+});
+
+describe('package release notes', () => {
+  const base = { schemaVersion: 3, minCindyVersion: '0.1.0', id: 'notes-test', name: 'Notes test', version: '1.0.0', entry: 'main.js' };
+  it('keeps old packages without notes installable', () => {
+    const result = validateGhostManifest(base);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.manifest).not.toHaveProperty('releaseNotes');
+  });
+  it('retains the complete package text without turning it into manifest summary', () => {
+    const releaseNotes = 'First change\nSecond change\n' + 'More changes '.repeat(500);
+    const result = validateGhostManifest({ ...base, releaseNotes });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.manifest.releaseNotes).toBe(releaseNotes);
+  });
+  it('rejects a non-text package releaseNotes', () => {
+    expect(validateGhostManifest({ ...base, releaseNotes: { version: '1' } }).ok).toBe(false);
+  });
+});
+
+// ui is a preserved v3 capability, not a change to existing tool declarations.
+// The old top-level extension tests cover preservation; these cases protect the new
+// page/reference/path/domain authority at the production validator. Tier: unit.
+describe('interactive page declarations', () => {
+  const base = { ...validManifest, schemaVersion: 3, slots: undefined, minCindyVersion: '0.1.0',
+    network: { hosts: ['api.example.com'] },
+    mcpApps: { ui: { resources: [{
+            uri: "ui://planner",
+            file: 'ui/planner.html',
+            csp: { connectDomains: ['https://api.example.com'] }
+        }], tools: { help: { resourceUri: "ui://planner", visibility: ['model', 'app'] } } } } };
+  it('preserves top-level pages while leaving the original tool declaration unchanged', () => {
+    const original = validateGhostManifest({ ...base, mcpApps: undefined });
+    const result = validateGhostManifest(base);
+    expect(result.ok).toBe(true);
+    if (!result.ok || !original.ok) throw new Error('invalid fixture');
+    expect(result.manifest.mcpApps).toEqual(base.mcpApps);
+    expect(result.manifest.tools).toEqual(original.manifest.tools);
+    expect(validateGhostManifest({ ...base, mcpApps: { ui: { resources: [], tools: { help: { visibility: ['app'] } } } } }).ok).toBe(true);
+  });
+  it.each([
+    { resources: [{
+            uri: "ui://planner",
+            file: '../outside.html'
+        }], tools: base.mcpApps.ui.tools },
+    { resources: base.mcpApps.ui.resources, tools: { missing: { resourceUri: "ui://planner" } } },
+    { resources: base.mcpApps.ui.resources, tools: { help: { resourceUri: "ui://unknown" } } },
+    { resources: [{
+            uri: "ui://planner",
+            file: 'ui/planner.html',
+            csp: { resourceDomains: ['https://outside.example'] }
+        }], tools: base.mcpApps.ui.tools },
+    { resources: base.mcpApps.ui.resources, tools: { help: { visibility: ['admin'] } } },
+    { resources: [{
+            uri: "ui://planner",
+            file: 'ui/planner.html',
+            csp: { connectDomains: null }
+        }], tools: base.mcpApps.ui.tools },
+    { resources: [{
+            uri: "ui://planner",
+            file: 'ui/planner.html',
+            csp: { connectDomains: ['https://api.example.com; unsafe-inline'] }
+        }], tools: base.mcpApps.ui.tools },
+  ])('rejects invalid page authority: %j', ui => {
+    expect(validateGhostManifest({ ...base, mcpApps: { ui } }).ok).toBe(false);
+  });
+  // Declared mcpApps extensions must survive normalization without becoming authority.
+  // Minimal inputs distinguish duplicate IDs, wrong URI scheme and inert standard metadata.
+  it('preserves future extensions and standard resource metadata without granting them', () => {
+    const resource = { ...base.mcpApps.ui.resources[0], domain: 'app.example.com', permissions: { camera: {} } };
+    const mcpApps = { future: { enabled: true }, ui: { ...base.mcpApps.ui, resources: [resource] } };
+    const result = validateGhostManifest({ ...base, mcpApps });
+    expect(result).toMatchObject({ ok: true, manifest: { mcpApps } });
+    expect(validateGhostManifest({ ...base, mcpApps: { future: { enabled: true } } })).toMatchObject({ ok: true });
+  });
+  it.each([
+    { uri: 'https://planner' }, { uri: 'ui://' }, { domain: false },
+    { permissions: { camera: true } }, { permissions: { camera: { allow: true } } },
+  ])('rejects malformed resource metadata: %j', patch => {
+    const resources = [{ ...base.mcpApps.ui.resources[0], ...patch }];
+    expect(validateGhostManifest({ ...base, mcpApps: { ui: { ...base.mcpApps.ui, resources } } }).ok).toBe(false);
+  });
+  it('rejects duplicate resource URIs even when their files differ', () => {
+    const resources = [base.mcpApps.ui.resources[0], { ...base.mcpApps.ui.resources[0], file: 'other.html' }];
+    expect(validateGhostManifest({ ...base, mcpApps: { ui: { ...base.mcpApps.ui, resources } } }).ok).toBe(false);
+  });
+  it('does not silently add page capabilities to schema v2', () => {
+    expect(validateGhostManifest({ ...base, schemaVersion: 2 }).ok).toBe(false);
+  });
+});
+
+// Unit: historical unknown mcpApps must stay inert; the strict authoring validator
+// already rejects these values, but capability checks previously accepted traversal.
+it.each(['../page.html', '/page.html', 'ui/../page.html', 'ui\\page.html', 'con.html'])(
+  'does not grant any page authority for historical path %s', file => {
+    const manifest = { schemaVersion: 3, tools: [{ name: 'help' }], network: { hosts: ['api.example.com'] },
+      mcpApps: { ui: { resources: [{ uri: 'ui://help', file, csp: { connectDomains: ['https://api.example.com'] } }],
+        tools: { help: { resourceUri: 'ui://help', visibility: ['app'] } } } } };
+    expect(getPluginToolUi(manifest)).toBeUndefined();
+    expect(pluginHasToolUi(manifest)).toBe(false);
+    expect(pluginToolVisible(manifest, 'help', 'model')).toBe(true);
+    expect(pluginToolVisible(manifest, 'help', 'app')).toBe(false);
+    expect(pluginUiDomains(manifest)).toEqual([]);
+    expect(pluginUiPermissionsExpand({}, manifest)).toBe(false);
+    const valid = { ...manifest, mcpApps: { ui: { ...manifest.mcpApps.ui, resources: [{ uri: 'ui://help', file: 'page.html' }] } } };
+    expect(pluginUiPermissionsExpand(manifest, valid)).toBe(true);
+  },
+);

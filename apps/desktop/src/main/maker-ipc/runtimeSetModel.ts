@@ -26,7 +26,7 @@ interface RuntimeSetModelSession {
   model: string;
   setModel: (
     model: string,
-    opts?: { providerId?: string | null; effort?: Effort },
+    opts?: { providerId?: string | null; effort?: Effort; contextWindowBudget?: number | null; thinkingEnabled?: boolean },
   ) => Promise<void>;
   requiresModelSwitchRebuild?: (
     model: string,
@@ -34,7 +34,7 @@ interface RuntimeSetModelSession {
   ) => boolean | Promise<boolean>;
   previewModelSwitch?: (
     model: string,
-    opts?: { providerId?: string | null },
+    opts?: { providerId?: string | null; contextWindowBudget?: number | null },
   ) => Promise<{
     action: 'hot' | 'refresh' | 'rebuild' | 'unavailable';
     targetContextWindow: number | null;
@@ -68,16 +68,29 @@ export interface ApplyRuntimeSetModelChangeInput {
   providerId?: string | null;
   effort?: Effort;
   /**
+   * Pi-only:目标模型的思考开关意图(renderer 的 providerModelMemory 记忆，缺省开)。
+   * Pi 的 set_model 不会重置 thinking level，不收敛就会让上一个模型的 off/旧档位
+   * 漂移给新模型(实报：切模后模型把推理写进正文)。非 Pi 引擎忽略。
+   */
+  thinkingEnabled?: boolean;
+  /**
    * Orca Worker 的 live model/provider 属于执行单元身份，不能热切。即使凭证
    * 形态相同，也必须沿用 credential-switch 的 idle close / busy defer 边界。
    */
   forceSessionRebuild?: boolean;
+  /**
+   * 任务级工作上下文预算：host 已按**目标路由**重新收敛（含目录上限与模型级上限）。
+   * 只在会话已有显式预算且目标路由变化时下发；缺席 = 引擎保持当前预算。
+   */
+  contextWindowBudget?: number | null;
   /** Re-evaluate the current Pi descriptor, including immutable spawn inputs. */
   refreshPiConfiguration?: boolean;
   /** Fail closed before an otherwise-required runtime replacement mutates route state. */
   assertSessionCloseSupported?: () => void;
   /** Called after async preflight, immediately before the first setting side effect. */
   admit?: () => void;
+  /** Host authorization refreshed after async route preparation, before admission. */
+  beforeMutation?: () => Promise<void>;
   isSessionInTurn?: (sessionId: string) => boolean;
   /**
    * 会话自己正在跑 turn 时的延迟生效登记(PendingCredentialSwitchService.register)。
@@ -209,8 +222,16 @@ export async function applyRuntimeSetModelChange(
   // that its native session needs replacement.
   const piRouteChanged = sess?.agentKind === 'pi' &&
     (sess.model !== model || currentProviderId !== nextProviderId);
+  // 预算必须与下面 setModel 拿到的**同一份**目标值：外层预演决定要不要重建，而
+  // switchModel 会先把预算写成新值再预演。用旧预算就会判「可热切」，内层按新预算
+  // 发现保留量不匹配便抛错，宿主此时已错过重建分支 —— 首次发送必失败（Greptile P1）。
   const piPreview = piRouteChanged || (sess?.agentKind === 'pi' && input.refreshPiConfiguration === true)
-    ? await sess.previewModelSwitch?.(model, { providerId: nextProviderId })
+    ? await sess.previewModelSwitch?.(model, {
+        providerId: nextProviderId,
+        ...(typeof input.contextWindowBudget === 'number'
+          ? { contextWindowBudget: input.contextWindowBudget }
+          : {}),
+      })
     : undefined;
   if ((piRouteChanged || (sess?.agentKind === 'pi' && input.refreshPiConfiguration === true)) && !piPreview) {
     throw new Error('Pi model switch preview is unavailable; runtime selection was not changed');
@@ -258,6 +279,7 @@ export async function applyRuntimeSetModelChange(
   }
 
   if (!sess && requiresCodexThreadRelink) {
+    if (input.beforeMutation) await input.beforeMutation();
     input.admit?.();
     await input.relinkCodexThread?.();
     if (providerId !== undefined) setSessionProvider(sessionId, nextProviderId);
@@ -278,6 +300,7 @@ export async function applyRuntimeSetModelChange(
     // 把 route/model 的生效边界固定在 turn 结束；pending 收口只关闭本 Session，
     // 当前账号保持到回合边界，不能让工具续轮命中新账号。
     if (input.registerPendingCredentialSwitch) {
+      if (input.beforeMutation) await input.beforeMutation();
       input.admit?.();
       await input.registerPendingCredentialSwitch(sessionId, {
         model,
@@ -300,6 +323,7 @@ export async function applyRuntimeSetModelChange(
 
   if (sess && (shouldCloseSession || requiresCodexThreadRelink)) {
     input.assertSessionCloseSupported?.();
+    if (input.beforeMutation) await input.beforeMutation();
     input.admit?.();
     if (isSelfBusy() && input.registerPendingCredentialSwitch) {
       // A required credential rebuild must also survive close failure: keeping
@@ -409,6 +433,7 @@ export async function applyRuntimeSetModelChange(
       : { status: 'applied', retiredRuntime: true };
   }
 
+  if (input.beforeMutation) await input.beforeMutation();
   input.admit?.();
   if (providerId !== undefined) {
     setSessionProvider(sessionId, nextProviderId);
@@ -439,6 +464,10 @@ export async function applyRuntimeSetModelChange(
         ? { providerId: nextProviderId }
         : {}),
       ...(effort !== undefined ? { effort } : {}),
+      ...(input.contextWindowBudget !== undefined
+        ? { contextWindowBudget: input.contextWindowBudget }
+        : {}),
+      ...(input.thinkingEnabled !== undefined ? { thinkingEnabled: input.thinkingEnabled } : {}),
     });
   } catch (err) {
     if (providerId !== undefined) {

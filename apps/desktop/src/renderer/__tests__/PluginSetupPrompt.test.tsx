@@ -1,12 +1,18 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import '@/i18n';
 import i18n from '@/i18n';
 import { PluginSetupPrompt } from '@/components/new-chat/PluginSetupPrompt';
+import { PluginUiEnablePrompt } from '@/components/new-chat/PluginUiEnablePrompt';
 import { parsePendingPluginSetup, type PendingPluginSetup } from '@/lib/makerChatStore';
+import { sharedTaskHostPeer } from '@cindy/device-link';
+
+vi.mock('@/features/device-link/useDeviceLinkDeviceList', () => ({
+  useDeviceLinkDeviceList: () => [{ deviceId: 'computer-a', name: 'Studio' }],
+}));
 
 const pending: PendingPluginSetup = {
   requestId: 'setup-1',
@@ -248,6 +254,46 @@ describe('PluginSetupPrompt', () => {
     expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(
       false,
     );
+  });
+
+  it('opens the target computer’s remote desktop for steps only it can finish', async () => {
+    const openRemoteDesktop = vi.fn(async () => {});
+    Object.assign(window.electronAPI, { openRemoteDesktop });
+    const props = {
+      viewerState: 'expanded' as const,
+      commandInFlight: null,
+      remote: true,
+      onViewerStateChange: vi.fn(),
+      onCommand: vi.fn(),
+    };
+    const { rerender } = render(
+      <PluginSetupPrompt pending={pending} remoteDeviceId="computer-a" {...props} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open remote desktop' }));
+    expect(openRemoteDesktop).toHaveBeenCalledWith({ deviceId: 'computer-a', name: 'Studio' });
+    await vi.waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: 'Open remote desktop' }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+    // A secret entered on this card is saved remotely; nothing to do on the computer.
+    rerender(
+      <PluginSetupPrompt
+        pending={{ ...inlinePending, remoteSecret: true }}
+        remoteDeviceId="computer-a"
+        {...props}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Open remote desktop' })).toBeNull();
+    // A shared task's host computer is not this account's to control.
+    rerender(
+      <PluginSetupPrompt
+        pending={pending}
+        remoteDeviceId={sharedTaskHostPeer('task-1', 'computer-b')}
+        {...props}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Open remote desktop' })).toBeNull();
   });
 
   it('enables only OAuth actions advertised by the cloud Host', () => {
@@ -660,5 +706,38 @@ describe('teammate authorization card presentation', () => {
       commandInFlight={null} remote={false} onViewerStateChange={() => {}} onCommand={() => {}} />);
     expect(screen.getByText('Filo Google')).toBeTruthy();
     expect(screen.queryByRole('button')).toBeNull();
+  });
+});
+
+// F23 regression: real local-only prompt (not the cross-device pending setup DTO).
+// Existing setup-card tests don't exercise consent or draft/live-task timing. Unit.
+describe('local interactive-page enable prompt', () => {
+  function host(granted = true) {
+    const api = { uiPrompts: vi.fn(async () => [{ id: 'demo', name: 'Demo', version: '1' }]),
+      onChanged: vi.fn(() => () => {}),
+      requestUiApproval: vi.fn(async () => ({ granted })),
+      deferUiPrompt: vi.fn(async () => {}) };
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: { ghosts: api } });
+    return api;
+  }
+  it('enables pages for the next plugin call without replacing the task', async () => {
+    const api = host();
+    render(<PluginUiEnablePrompt />);
+    fireEvent.click(await screen.findByRole('button', { name: i18n.t('newChat.pluginUi.enable') }));
+    await screen.findByText(i18n.t('newChat.pluginUi.ready'));
+    expect(api.requestUiApproval).toHaveBeenCalledWith('demo');
+  });
+  it('defers only this plugin version without opening consent', async () => {
+    const api = host(); render(<PluginUiEnablePrompt />);
+    fireEvent.click(await screen.findByRole('button', { name: i18n.t('newChat.pluginUi.later') }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: i18n.t('newChat.pluginUi.enable') })).toBeNull());
+    expect(api.deferUiPrompt).toHaveBeenCalledWith('demo', '1');
+    expect(api.requestUiApproval).not.toHaveBeenCalled();
+  });
+  it('does not claim activation when consent was declined', async () => {
+    host(false); render(<PluginUiEnablePrompt />);
+    fireEvent.click(await screen.findByRole('button', { name: i18n.t('newChat.pluginUi.enable') }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: i18n.t('newChat.pluginUi.enable') })).toBeNull());
+    expect(screen.queryByText(i18n.t('newChat.pluginUi.ready'))).toBeNull();
   });
 });

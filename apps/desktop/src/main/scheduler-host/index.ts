@@ -24,9 +24,11 @@ import type { FeishuIM } from '@cindy/im';
 
 import { dialogueWorkspaceRoots } from '../localDb/dialogueWorkspace';
 import { sessions } from '../localDb/schema.js';
+import { getDbClient } from '../localDb/client/current';
 import { isReviewSessionSource } from '../../shared/sessionSource.js';
 import { dbToMakerAgentKind } from '../../shared/agentKindConversion.js';
 import { assertScheduledHarnessSupported } from '../maker-ipc/scheduledModelSelection';
+import { readRemoteProviderRoute } from '../remote-agent/controller/deviceCatalog.js';
 import {
   resolveDefaultScheduleRoute,
   resolveRouteCopyCapabilities,
@@ -38,9 +40,14 @@ import { getDesktopNotificationsEnabled } from '../notificationService.js';
 import {
   applyPiImModelSelectionUnderLock,
   acquirePendingAgentSwitchForDirectSend,
+  prepareScheduledModelPreferencesUnderLock,
+  recordDispatchedModel,
   broadcastSessionCreated,
   cancelSchedulerAutoResume,
   enqueueSchedulerPrompt,
+  ensureSchedulerQueueRestored,
+  findSchedulerUsageLimitWait,
+  getSessionLastUserActionAt,
   hasQueuedSchedulerPrompt,
   isSchedulerAutoResumePending,
   isSchedulerPromptTracked,
@@ -50,7 +57,8 @@ import {
 } from '../maker-ipc/register.js';
 import { DrizzleScheduleStorage, type SchedulerDrizzleDb } from './storage';
 import { ProjectAutomationLoader } from './project-automation-loader';
-import { MakerScheduleRunner } from './runner';
+import { MakerScheduleRunner, type SchedulerQueueDeps } from './runner';
+import { setSilencedRunProbe } from './silent-output';
 import { listMessagesForAgentHandoff } from '../localDb/ipc/messages.js';
 import { drainPersistQueue } from '../messagePersistBroadcaster.js';
 import { buildForcedFailureRun } from './forcedFailureRun';
@@ -69,11 +77,12 @@ export interface StartSchedulerDeps {
   getMainWindow: () => BrowserWindow | null;
   feishuIm: FeishuIM;
   logger: Logger;
-  beforeDispatchUserTurn?: (sessionId: string) => void | Promise<void>;
+  beforeDispatchUserTurn?: (sessionId: string, signal?: AbortSignal) => void | Promise<void>;
   onUndispatchedUserTurn?: (sessionId: string) => void;
 }
 
 let _scheduler: Scheduler | null = null;
+let _promptRunner: MakerScheduleRunner | null = null;
 let _storage: DrizzleScheduleStorage | null = null;
 let _loader: ProjectAutomationLoader | null = null;
 // Reset increments this before awaiting stop(). A start that was already
@@ -123,18 +132,37 @@ async function startSchedulerInternal(deps: StartSchedulerDeps): Promise<Schedul
       return listMessagesForAgentHandoff(sessionId, null, undefined, 'authorization');
     },
     onUndispatchedUserTurn: deps.onUndispatchedUserTurn,
+    findUsageLimitWait: findSchedulerUsageLimitWait,
     acquirePendingAgentSwitch: acquirePendingAgentSwitchForDirectSend,
+    prepareModelPreferences: prepareScheduledModelPreferencesUnderLock,
+    onModelDispatched: recordDispatchedModel,
     applyPiModelSelectionUnderLock: applyPiImModelSelectionUnderLock,
-    resolveModelSelection: resolveScheduledModelSelectionLive,
+    resolveModelSelection: (selection, location) => {
+      const route = { ...selection, agentDeviceId: selection.agentDeviceId === undefined ? location?.agentDeviceId : selection.agentDeviceId };
+      return resolveScheduledModelSelectionLive(route, async (agentDeviceId) => [
+        (await readRemoteProviderRoute({ ...route, agentDeviceId })).provider,
+      ]);
+    },
     onSessionCreated: broadcastSessionCreated,
     // 停用轴裁决:每次 fire 前判保存路由是否已被用户停用(见 runner deps 注释)。
     checkModelRoute: verdictForModelRoute,
+    // Agent 在另一台电脑运行的任务按那台的目录裁决，本机停用轴不适用(读失败按本机任务处理)。
+    isAgentOnOtherDevice: async (sessionId) => {
+      const [row] = await getDbClient()
+        .drizzle.select({ agentDeviceId: sessions.agentDeviceId, remoteHostId: sessions.remoteHostId })
+        .from(sessions)
+        .where(eq(sessions.id, sessionId))
+        .limit(1);
+      return !!row?.agentDeviceId && !row.remoteHostId;
+    },
     // 隐式改道后按落地拷贝 reconcile effort/Fast(见 runner deps 注释,R27)。
     resolveRouteCopyCapabilities,
     resolveDefaultModelRoute: resolveDefaultScheduleRoute,
     // 心跳撞忙排队桥:实现挂在 maker-ipc/register.ts 的 coordinator 装配处
-    // (holder 未就绪时 isSessionBusy 返回 false → runner 走原直发路径)。
+    // 先恢复快照再判忙闲；holder 未就绪时恢复返回 false，由 runner 顺延。
     schedulerQueue: {
+      getLastUserActionAt: getSessionLastUserActionAt,
+      ensureQueueRestored: ensureSchedulerQueueRestored,
       isSessionBusy: isSchedulerTargetSessionBusy,
       hasQueuedPrompt: hasQueuedSchedulerPrompt,
       enqueuePrompt: enqueueSchedulerPrompt,
@@ -196,7 +224,8 @@ async function startSchedulerInternal(deps: StartSchedulerDeps): Promise<Schedul
       const [row] = await deps
         .getDb()
         .select({ source: sessions.source, agentKind: sessions.agentKind,
-          status: sessions.status, remoteHostId: sessions.remoteHostId, orcaRole: sessions.orcaRole })
+          status: sessions.status, agentDeviceId: sessions.agentDeviceId,
+          remoteHostId: sessions.remoteHostId, orcaRole: sessions.orcaRole })
         .from(sessions)
         .where(eq(sessions.id, targetSessionId))
         .limit(1);
@@ -205,7 +234,8 @@ async function startSchedulerInternal(deps: StartSchedulerDeps): Promise<Schedul
       }
       assertScheduledHarnessSupported(row ? {
         ...row, agentKind: dbToMakerAgentKind(row.agentKind),
-      } : null, selection.modelAgentKind);
+      } : null, selection.modelAgentKind, selection.modelAgentDeviceId === undefined
+        ? undefined : selection.modelAgentDeviceId || null);
     },
     // 卡死收口的通知出口。通知投递平时住在两个 runner 里(它们各自持 notifier),而
     // 卡死收口刻意绕过 runner —— 要么它压根不返回、要么它把守卫 abort 当普通中断处理。
@@ -245,6 +275,8 @@ async function startSchedulerInternal(deps: StartSchedulerDeps): Promise<Schedul
     },
   });
   _scheduler = scheduler;
+  _promptRunner = promptRunner;
+  setSilencedRunProbe((runId) => scheduler.isRunSilenced(runId));
   void getRoutineEngine().catch((error) => deps.logger.warn?.('routine startup failed', { error: String(error) }));
   _loader = loader;
   deps.logger.info?.(`[scheduler-host] started${passive ? ' (passive: auto-fire disabled)' : ''}`);
@@ -254,6 +286,18 @@ async function startSchedulerInternal(deps: StartSchedulerDeps): Promise<Schedul
     );
   });
   return scheduler;
+}
+
+/** Called only by the host's validated, explicit Continue input path. */
+export async function resumeInterruptedScheduleRun(
+  sessionId: string,
+  enqueuePrompt: SchedulerQueueDeps['enqueuePrompt'],
+) {
+  const runner = _promptRunner;
+  if (!_scheduler || !runner) return null;
+  return _scheduler.resumeInterruptedRun(sessionId, {
+    fire: (schedule, ctx) => runner.fireManualContinuation(schedule, ctx, enqueuePrompt),
+  });
 }
 
 /** Cold-start probe for callers that own a durable deferred queue. */
@@ -306,10 +350,12 @@ export async function resetScheduler(): Promise<void> {
       // Superseded startup rejects after stopping itself; teardown continues.
     }
   }
+  setSilencedRunProbe(null);
   if (_scheduler) {
     await _scheduler.stop();
   }
   _scheduler = null;
+  _promptRunner = null;
   _storage = null;
   _loader = null;
 }

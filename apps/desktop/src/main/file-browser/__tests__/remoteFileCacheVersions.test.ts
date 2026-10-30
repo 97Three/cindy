@@ -118,6 +118,35 @@ it('distinguishes same-size sub-millisecond versions in downloads and write-thro
   );
 });
 
+it.each(['success', 'failure', 'cancel'] as const)('revalidates unchanged stat without losing the old copy on %s', async (outcome) => {
+  await putCachedContent(id, 'old');
+  const original = __cacheTesting.cachePathFor(id);
+  const started = barrier();
+  const release = barrier();
+  const controller = new AbortController();
+  const finished = barrier();
+  const executor = vi.fn(async (dest: string) => {
+    started.resolve();
+    await release.promise;
+    try {
+      if (outcome === 'failure') throw new Error('offline');
+      await fs.writeFile(dest, 'new');
+    } finally { finished.resolve(); }
+  });
+  const pending = fetchRemoteFileToCache(id, executor, vi.fn(), controller.signal, { revalidate: true });
+  const settled = pending.then(() => 'success', () => 'failure');
+  try {
+    await vi.waitFor(() => expect(executor).toHaveBeenCalledOnce());
+    await started.promise;
+    expect(await fs.readFile(original, 'utf8')).toBe('old');
+    if (outcome === 'cancel') controller.abort();
+  } finally { release.resolve(); }
+  expect(await settled).toBe(outcome === 'success' ? 'success' : 'failure');
+  await finished.promise;
+  await vi.waitFor(async () => expect((await fs.readdir(getRemoteFileCacheRoot())).some(name => name.endsWith('.part'))).toBe(false));
+  expect(await fs.readFile(original, 'utf8')).toBe(outcome === 'success' ? 'new' : 'old');
+});
+
 it('keeps legacy rounded copies available offline without accepting them as exact hits', async () => {
   const exact = { ...id, mtimeMs: 1000 };
   const currentPath = __cacheTesting.cachePathFor(exact);
@@ -251,4 +280,71 @@ it('does not start work for an already cancelled caller', async () => {
     'FILE_PEER_CANCELLED',
   );
   expect(executor).not.toHaveBeenCalled();
+});
+
+it.each(['first', 'joined'] as const)(
+  'shares and replays progress, then removes the cancelled %s consumer',
+  async (cancelled) => {
+    const started = barrier();
+    const release = barrier();
+    const firstAbort = new AbortController();
+    const joinedAbort = new AbortController();
+    const firstProgress = vi.fn();
+    const joinedProgress = vi.fn();
+    let report!: import('../remote-file-cache').FetchProgressFn;
+    const executor = vi.fn(async (dest: string, progress: typeof report) => {
+      report = progress;
+      report(1, 3, 'upload');
+      started.resolve();
+      await release.promise;
+      await fs.writeFile(dest, 'new');
+      report(3, 3, 'download');
+    });
+    const first = fetchRemoteFileToCache(id, executor, firstProgress, firstAbort.signal);
+    await started.promise;
+    const joined = fetchRemoteFileToCache(id, executor, joinedProgress, joinedAbort.signal);
+    expect(joinedProgress).toHaveBeenCalledWith(1, 3, 'upload');
+    report(2, 3, 'download');
+    expect(firstProgress).toHaveBeenLastCalledWith(2, 3, 'download');
+    expect(joinedProgress).toHaveBeenLastCalledWith(2, 3, 'download');
+    const cancelledProgress = cancelled === 'first' ? firstProgress : joinedProgress;
+    const survivorProgress = cancelled === 'first' ? joinedProgress : firstProgress;
+    (cancelled === 'first' ? firstAbort : joinedAbort).abort();
+    await expect(cancelled === 'first' ? first : joined).rejects.toThrow('FILE_PEER_CANCELLED');
+    const callsBefore = cancelledProgress.mock.calls.length;
+    release.resolve();
+    await (cancelled === 'first' ? joined : first);
+    expect(executor).toHaveBeenCalledOnce();
+    expect(cancelledProgress).toHaveBeenCalledTimes(callsBefore);
+    expect(survivorProgress).toHaveBeenLastCalledWith(3, 3, 'download');
+    const survivorCalls = survivorProgress.mock.calls.length;
+    report(3, 3, 'download');
+    expect(survivorProgress).toHaveBeenCalledTimes(survivorCalls);
+  },
+);
+
+it('does not let a failing progress observer break another consumer or the transfer', async () => {
+  const started = barrier();
+  const release = barrier();
+  const observer = vi.fn(() => {
+    throw new Error('window closed');
+  });
+  const executor = vi.fn(
+    async (dest: string, report: import('../remote-file-cache').FetchProgressFn) => {
+      report(1, 3);
+      started.resolve();
+      await release.promise;
+      await fs.writeFile(dest, 'new');
+      report(3, 3);
+    },
+  );
+  const first = fetchRemoteFileToCache(id, executor, observer);
+  await started.promise;
+  const progress = vi.fn();
+  const joined = fetchRemoteFileToCache(id, executor, progress);
+  release.resolve();
+  const [a, b] = await Promise.all([first, joined]);
+  expect(a).toBe(b);
+  expect(executor).toHaveBeenCalledOnce();
+  expect(progress).toHaveBeenLastCalledWith(3, 3);
 });
