@@ -249,7 +249,8 @@ function SheetHeader({ snapshot }: { snapshot: InputHandoffSnapshot }) {
       {inputHandoffWarnings(snapshot, t).map((warning) => (
         <HStack key={warning} spacing={6} alignment="top">
           <Image systemName="exclamationmark.triangle.fill" size={iconSize.sm} color={colors.warningFg} />
-          <Text modifiers={[font({ textStyle: "footnote" }), foregroundStyle(colors.textPrimary), frame({ maxWidth: Infinity, alignment: "leading" })]}>{warning}</Text>
+          {/* Wraps in full: the AI-screenshot warning carries the check-the-site instruction. */}
+          <Text modifiers={[font({ textStyle: "footnote" }), foregroundStyle(colors.textPrimary), frame({ maxWidth: Infinity, alignment: "leading" }), fixedSize({ horizontal: false, vertical: true })]}>{warning}</Text>
         </HStack>
       ))}
     </VStack>
