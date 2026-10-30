@@ -139,6 +139,8 @@ host 在 `browser-managed-config.ts` 用 `buildManagedConfig({proxyServer?})` �
 
 ## 5. UI 开关模型(设置 →「自动操作」)
 
+设置里的「浏览器自动化目标」三选一(专用浏览器 / 侧边栏 / 我的浏览器)写 `browser-backend-settings.json` 的 `kind`,是全局默认目标;「我的浏览器」依赖声明 `browserExtension.pageControl` 的插件(见 §9「用户浏览器执行端」)。
+
 浏览器是个 builtin plugin(id `browser`),走 `plugin-registry.ts` 的三层判定:essential → 项目级 override → 内置默认。**内置默认是开**,所以浏览器在所有项目里默认可用;设置里的开关写的是"当前项目的 override"。无项目上下文时开关变灰(`workingDir` 来自最近本地会话的内存单例,见 `renderer/state/lastWorkingDir.ts`)。
 
 > ⚠️ **已知限制 — 项目级开关只对 Claude Code 生效,本地 Codex 不生效:** Claude Code 每个会话用真实 `workingDir` 重新求一次 `provider.isEnabled(ctx)`,所以"在 A 项目关掉浏览器"对它有效。本地 Codex 不行——`codexEnvironment.ts` 在**首次 codex spawn** 时就用 `workingDir: ''` 的全局空 ctx 求值一次 `provider.isEnabled(ctx)`(见 `doStart` 里 `serverFactories` 那段),空 `workingDir` 命中不到任何项目级 override、回落到"内置默认开"那一档,并且**冻结**、之后不再 per-session 重判。`ctx.getSessionContext` 虽然在 tool-call 时能拿到真实 `workingDir`,但 gate 不消费它。所以本地 Codex 永远把浏览器当"开",项目级关闭被无视。**TODO:** 在 codex tool-call 时按真实 `workingDir` 重新 gate(而非进程级一次性求值),才能让本地 Codex 也尊重项目级开关。修这块属于敏感的 codex bridge,改前先确认。
@@ -224,6 +226,18 @@ pnpm --filter @cindy/browser-control-runtime test    # 契约 + SSRF guard
 - 大结果超过 16 Ki 字符时给确定性结构样例，完整 JSON 保留当前会话最近四份（单份最多 200 万字符），通过 `readResult` 分段读；超上限沿用明确截断。摘要不授权猜测省略的事实或 ref。原文引用沿用来源页的代输入保护，过期必须只读补取，不能重放写操作。输出重复、空字段、HTML 只给 advisory。
 - 内置配方仍走现有随应用分发的 L1 目录，个人 L2 覆盖保留；不自动上传个人经验。`itch-search` 是公开网页人工验证后加入的通用例子。
 - 实现：L2 `experience.ts` / `result-cache.ts` / `tools.ts`，Desktop `browser-recipes/experience.ts`；回归使用真实 MCP 入口与既有 writer 测试。模型用量须与工具文本计量分开，不能把执行器没有新增模型调用说成整个任务零 token。
+
+### 用户浏览器执行端（2026-10-27）
+
+- 第三个 `BackendKind` `user-browser`:`apps/desktop/src/main/mcp-integrations/browser-backend/user-browser-backend.ts` 把 `BrowserControlRequest` 翻译成随包浏览器扩展的页面作业,经 `cindy-brain/browserExtensionSlot.ts` 持有的桥接(`main/browser-extension/bridge.ts`,从 Cindy Chrome 插件的接线进程原样迁入,线协议 `cindy-browser-extension/3` 不变,已装扩展无需更新)投递到用户正在使用的 Chrome / Edge。
+- 设置 →「自动操作」三选一:专用浏览器(默认)/ 侧边栏 / 我的浏览器;选哪一个是**默认**目标,Agent 的 `setBackend` 仍是同一个全局持久选择。没有声明 `browserExtension.pageControl` 的插件时该目标 `status.ready === false`,健康面板报 `extension-disconnected`,不提供恢复按钮。
+- 能力边界由扩展版本决定(`USER_BROWSER_PARITY_VERSION`,当前 0.4.43):
+  - 0.4.43 起与专用浏览器对齐:截图(含整页、元素、后台标签页)、evaluate、requests、上传、对话框、console、PDF、focus、关闭、坐标与拖拽、站点配方的协议会话都可用;调试接口(`chrome.debugger`)是可选权限,只在需要的动作里临时接上、用完断开,第一次用到时由扩展弹出授权页。
+  - 更旧的扩展只有基础能力(tabs / open / navigate / snapshot / extract / act),由 `deps.backendCapabilities()`(`userBrowserCapabilities`)让 MCP 层在派发前拒绝其余动作,错误文案要求模型告知用户而不是自行切换。没有任何连接时按完整能力报,具体断开由后端按作业报告。
+  - extract 与登录墙检测走 PR #7432 的声明式 `domRead`,不需要任意脚本。
+- 寻址:新版扩展(≥ 0.4.43)按 tabId 寻址,后端维护 targetId ↔ {连接, 浏览器启动标识, tabId, url};targetId 带启动标识,浏览器重启后旧句柄不再解析。旧版扩展仍按精确 URL 寻址:作业前用 `tabs` 核对,URL 变化报 `PAGE_CHANGED` 并刷新记录,不猜新页。
+- 没有站点名单(2026-10-30 取消,取代 2026-10-28 的名单口径):读与交互对本机、私网和公网网站一视同仁。线上 `policy` 字段只为旧端兼容、恒为「全部允许」,`setPolicy` 应答但不生效;宿主不缓存也不等待插件策略,配对缓存只存已配对的浏览器。作业在桥接处只校验动作与无凭证 http(s) 地址。`cindy_browser` 的免审批前提由 `setBackend user-browser` 与 `upload` 的逐次任务审批(询问档问用户、自动档审核、完全访问放行)和任务权限档位承担,不再有站点层兜底。
+- 回归:`browser-extension/__tests__/bridge.test.ts`(协议)、`cindy-brain/__tests__/browserExtensionSlot.test.ts`(槽)、`browser-backend/__tests__/user-browser-backend.test.ts`(翻译)、`lizi-mcps` 的 capability gating 用例;真实 Chrome 验收用 Google Play 发包案例与插件翻译。
 
 ## 10. 相关文档
 

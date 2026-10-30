@@ -660,6 +660,13 @@ describe('remote connection pool with a real host', () => {
       expect(session.isTurnRunning()).toBe(false);
       expect(seen.filter(event => event.type === 'done')).toHaveLength(2);
       await sending;
+      // dispose() schedules asynchronous disk cleanup. A real process restart
+      // cannot leave that old process deleting the replacement's workspace.
+      // Drain the old session directory before creating the replacement host.
+      const workspaces = path.join(hostRoot, 'workspaces');
+      const [controllerDirectory] = fs.readdirSync(workspaces);
+      expect(controllerDirectory).toBeTruthy();
+      await vi.waitFor(() => expect(fs.readdirSync(path.join(workspaces, controllerDirectory))).toEqual([]));
       // Same production lazy-rebuild boundary: a closed Session is replaced,
       // carrying its native resume ID rather than a fresh conversation.
       host = createHost();
