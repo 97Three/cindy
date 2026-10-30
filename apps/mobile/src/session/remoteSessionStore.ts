@@ -3316,7 +3316,13 @@ function sweepDevicesOffline(deviceIds: readonly string[]): boolean {
     // invalidation, or actual device removal will retire them.
     changed = freezeUnboundPendingHostAnchorsForOffline(sessionId, indexedDeviceId) || changed;
     changed = writeMakerTurnRunning(sessionId, false) || changed;
-    changed = writeSessionRunStatus(sessionId, EMPTY_SESSION_RUN_STATUS) || changed;
+    // Soft offline keeps history. Keep its known terminal identity too: reconnect
+    // restores the error projection without replaying the terminal maker event.
+    // The next running transition or session/device removal still retires it.
+    const terminalError = readSessionRunStatus(sessionId).terminalError;
+    changed = writeSessionRunStatus(sessionId, terminalError
+      ? { ...EMPTY_SESSION_RUN_STATUS, hasTerminalError: true, terminalError }
+      : EMPTY_SESSION_RUN_STATUS) || changed;
   }
   for (const [sessionId, pendingAnchors] of pendingHostAnchorLiveAssistantClientIds) {
     for (const identity of pendingAnchors.values()) {

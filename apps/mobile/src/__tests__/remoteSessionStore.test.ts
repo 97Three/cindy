@@ -4078,7 +4078,10 @@ describe('remoteSessionStore', () => {
     expect(remoteSessionStore.isSessionMakerTurnRunning('s1')).toBe(false);
   });
 
-  it('keeps terminal prediction eligibility through acknowledgement and clears it for the next run', () => {
+  // Unit, #8147 r4427259022: soft offline must retain the known failure ID;
+  // reconnect restores the projection but does not replay the terminal event.
+  it('keeps terminal prediction eligibility and identity through acknowledgement and reconnect until the next run', () => {
+    remoteSessionStore.setDeviceSessions('dev-1', 'Mac', [session('s1')]);
     pushMakerStatus('s1', { isRunning: true });
     remoteSessionStore.applyRemotePush('dev-1', 'maker:event', {
       sessionId: 's1', persistId: 'failed-row', event: { type: 'error', data: { message: 'Failed', isTerminal: true } },
@@ -4090,6 +4093,15 @@ describe('remoteSessionStore', () => {
     pushMakerStatus('s1', { isRunning: false });
     expect(remoteSessionStore.getSessionRunStatus('s1').hasTerminalError).toBe(true);
     expect(remoteSessionStore.getSessionRunStatus('s1').terminalError?.clientId).toBe('failed-row');
+    remoteSessionStore.markDeviceOffline('dev-1');
+    remoteSessionStore.markDeviceOffline('dev-1');
+    expect(remoteSessionStore.getSessionRunStatus('s1').isRunning).toBe(false);
+    remoteSessionStore.setDeviceSessions('dev-1', 'Mac', [session('s1')]);
+    remoteSessionStore.setInputProjection('s1', { ...projection('s1'), error: 'Failed' });
+    pushMakerStatus('s1', { isRunning: false });
+    expect(remoteSessionStore.getSessionRunStatus('s1').terminalError).toEqual({
+      clientId: 'failed-row', message: remoteSessionStore.getInputProjection('s1').error,
+    });
     pushMakerStatus('s1', { isRunning: true });
     expect(remoteSessionStore.getSessionRunStatus('s1').hasTerminalError).toBe(false);
     expect(remoteSessionStore.getSessionRunStatus('s1').terminalError).toBeNull();
