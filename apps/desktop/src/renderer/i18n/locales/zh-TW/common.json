@@ -2269,7 +2269,7 @@
         "title": "關閉 Cindy",
         "message": "關閉主視窗時要執行什麼操作？",
         "detail": "收起到系統匣後，任務會繼續執行；右鍵系統匣圖示可以退出。你可以稍後在設定中修改。",
-        "linuxDetail": "最小化視窗後，任務會繼續執行；你可以從工作列或視窗概覽恢復 Cindy，也可以稍後在設定中修改。"
+        "linuxDetail": "收起視窗後，任務會繼續執行；再次開啟 Cindy 即可恢復視窗，也可以稍後在設定中修改。"
       },
       "trayMenu": {
         "show": "開啟 Cindy",
@@ -7511,8 +7511,8 @@
         "updated": "更新",
         "unchanged": "其餘 {{count}} 項權限不變",
         "noChange": "權限無變化。",
-        "pick": "可請求你選擇一個資料夾交給它",
-        "pickDetail": "它發起請求時，Cindy 會彈出系統的選擇資料夾視窗；選哪個、給不給，都由你親手決定，取消則它什麼都拿不到。",
+        "pick": "可請你選擇檔案或資料夾交給它",
+        "pickDetail": "它發起請求時，Cindy 會彈出系統選擇視窗；選哪個、給不給，都由你親手決定，取消則它什麼都拿不到。",
         "workspace": "可請求為專案資料夾在側邊欄建立任務入口",
         "workspaceDetail": "它發起請求時，由你親手選擇資料夾，或在確認卡上看到完整路徑後再決定；它正在處理你發起的呼叫時，當前任務工作目錄內的子資料夾可直接使用，不再單獨確認。資料夾已有任務時直接複用，不重複建立。建立的只是空任務，不會自動開始執行。",
         "sessionContext": "可獲知當前任務正在使用的專案資料夾位置",
@@ -7526,7 +7526,11 @@
         "nodeChildSpawnDetail": "只能啟動它自己包裡申報過的 JS 檔案(與主程式同樣的本機權限)，不能執行任意命令；插件停用或退出時子處理程序一併關閉。",
         "skill": "為 AI 助手新增技能「{{name}}」",
         "skillDetail": "技能是一份指令檔案，AI 會把它當作自己的指令載入執行，擁有你的全部權限，對 Claude Code 與 Codex、所有專案都生效——不受本插件沙箱約束。插件啟用期間持續可用，停用或解除安裝即移除；僅對某個資料夾關閉本插件不會隱藏它。此處無法預覽技能全文——請只安裝你信任的插件。",
-        "routineEvents": "例行任務事件"
+        "routineEvents": "例行任務事件",
+        "mcpUi": "可在對話中顯示互動頁面",
+        "mcpUiDomains": "頁面可連線網域：{{domains}}",
+        "mcpAppOnly": "僅頁面可用",
+        "uiPageAccess": "頁面：{{pages}}；網域：{{domains}}；頁面可呼叫的工具：{{tools}}"
       },
       "connections": {
         "confirmTitle": "新增連線地址",
@@ -8099,6 +8103,14 @@
         "viewPendingVersion": "查看正在審核的版本",
         "submitFailed": "提交失敗",
         "viewDetails": "查看詳情"
+      },
+      "fileTransfer": {
+        "reading": "正在讀取檔案",
+        "uploading": "正在上傳",
+        "saving": "正在儲存檔案",
+        "importing": "正在匯入檔案",
+        "finished": "檔案處理結束",
+        "importFinished": "檔案匯入結束"
       }
     },
     "mcp": {
@@ -12410,6 +12422,13 @@
         "busy": "儲存庫忙碌中，請稍後重試",
         "changed": "檢出的分支已變更，請重試"
       }
+    },
+    "pluginUi": {
+      "title": "插件「{{name}}」新增了互動頁面，需要你確認後才能使用",
+      "enable": "檢視並啟用",
+      "later": "以後再說",
+      "ready": "互動頁面已啟用。下次呼叫插件工具時即可顯示。",
+      "updateHost": "請先更新執行電腦上的 Cindy，才能在這裡確認互動頁面。"
     }
   },
   "onboarding": {
@@ -15533,6 +15552,7 @@
       "embedded-frame": "輸入框位於嵌入的其他網站中，請確認來源可信。"
     },
     "agentControlled": "這個介面由 Agent 開啟。填寫前請確認它確實是你要登入的地方。",
+    "agentPicture": "這張 QR 碼來自 Agent 的截圖，Cindy 看不到原本的畫面，掃完也不會自動繼續。請確認它指向的網站是你要登入的地方，掃完點「交還給 Agent」。",
     "error": {
       "decision": "操作沒有送達，請重試。",
       "stale": "介面已經變化，請依最新內容操作。",
@@ -17237,6 +17257,18 @@
     "compression": "用於精簡冗長內容。"
   },
   "routines": {
+    "deliveryLabel": "最終送達",
+    "deliveryDirect": "直接顯示在夥伴對話裡",
+    "deliveryProcess": "交給夥伴處理後回覆",
+    "deliveryIm": "傳送到訊息機器人",
+    "deliveryNone": "只保留在執行任務裡",
+    "deliveryHint": "預設直接顯示結果，不額外呼叫模型。開啟靜默檢查後，無事時不送達。",
+    "deliveryRecipient": "接收位置",
+    "deliveryUnavailable": "目前接收位置無法使用",
+    "deliveryNoRecipients": "請先連接訊息機器人，並與它聊過一次，再重新開啟此設定。",
+    "deliveryFailed": "已完成，送達失敗",
+    "deliveryFailedHint": "執行結果已保留。請檢查送達設定；不要為了補發而重新執行任務。",
+    "deliveryDelivered": "結果已送達",
     "onEvent": "事件：{{source}} · {{event}}",
     "triggerDetails": "查看觸發條件（{{count}} 項，符合任一項即執行）",
     "noTriggers": "尚未設定觸發條件",
@@ -18384,7 +18416,18 @@
     "cardTitle": "{{title}} · $t(mcpApps.appName)",
     "messageSource": "由 $t(mcpApps.appName)「{{name}}」傳送",
     "serverId": "MCP 伺服器 ID：{{id}}",
-    "exitFullscreen": "離開全螢幕"
+    "exitFullscreen": "離開全螢幕",
+    "pluginTrust": {
+      "unverified": "未驗證",
+      "cindy-official": "Cindy 官方",
+      "reviewed": "已審核",
+      "verified-publisher": "發佈者已驗證"
+    },
+    "pluginRevoked": "插件已停用或發生變更，此頁面已失效",
+    "pluginCspRejected": "頁面要求未宣告的網域，已拒絕載入",
+    "filesOnExecutionComputer": "檔案內容請在執行電腦查看",
+    "awaitingApproval": "等待你確認",
+    "pendingApprovals": "{{count}} 個待確認"
   },
   "richAnswer": {
     "send": "傳送訊息",

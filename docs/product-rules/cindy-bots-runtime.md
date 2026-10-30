@@ -685,7 +685,11 @@ Session 任务遵守同一套机制与呈现契约：
 - Session 任务只创建一层子任务，受并发上限约束；超时是持久化的执行边界。默认执行预算
   30 分钟，创建时 `timeout_ms` 可指定至 24 小时；终态续接从新的开始时间按原预算计算，
   普通补充不延长正在运行的期限。没有 Host 回读证据不得声称已延长。
-- 项目执行显式传 `working_dir`，可用 `use_worktree=true` 在启动前复用现有 worktree 管理器
+- 新建独立任务省略 `project_path` 继承来源归属，传路径选择已有项目，传 `null` 明确不绑项目；
+  无法确定来源归属时明确失败。新增或恢复项目显式走 `create_project`。
+  `working_dir` 只决定执行位置，缺省为所选或继承的项目；不绑项目则分配独立托管目录。
+  不绑项目且启用 `use_worktree` 时必须显式指定执行目录。临时目录和 worktree
+  不登记项目，复制或续跑保留 `projectDir`。可用 `use_worktree=true` 在启动前复用现有 worktree 管理器
   完成独立分支、目录与 Session 绑定；失败不得落回共享目录。只在 Shell 中新建 worktree
   不会修改任务登记或运行时 cwd；`check_session_task` 返回实际登记目录与项目归属。
   终态续接复用原 Session、完整历史、目录和分支，worktree 归属不迁移；每轮有独立的
@@ -1069,8 +1073,8 @@ Todo 在桌面与手机都只在伙伴近况（6.3.4）里展示，两端共享�
 - 不隐瞒能力缺口：未安装、未连接、全局停用或当前引擎/远端不支持时明确返回状态。目录读取失败
   必须报告，不能用空列表启动并宣称已全配。Cindy 安装更新只能经 `install_app_update`
   由宿主向主人弹确认卡后执行（见 [`agent-app-update.md`](agent-app-update.md)），`check_app_update` 只检查更新。
-- 代输入（2026-10-13，[产品规则](input-handoff.md)）：伙伴与普通任务共用 `request_input_handoff` 与
-  终端 askpass，卡片同样只交给主人。伙伴设置能力页有独立开关（`capabilities.inputHandoff`，缺省为开）；
+- 代输入（2026-10-13，[产品规则](input-handoff.md)）：伙伴与普通任务共用 `ask_owner`（fill／scan，
+  旧名 `request_input_handoff` 仍可调用）与终端 askpass，卡片同样只交给主人。伙伴设置能力页有独立开关（`capabilities.inputHandoff`，缺省为开）；
   关闭后按伙伴**当前** Profile 即时对它所有运行中任务生效，工具调用与终端口令都直接拒绝，不影响普通任务。
 - 本改动不引入跨设备控制协议、新的 `control_session` 大工具或新的幂等数据库表。
   通用工具保留原名和发现路径。伙伴的身份、个人记忆和 Skill 学习与工具权限分开维护。
