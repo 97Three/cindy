@@ -6,13 +6,13 @@ const frame=document.createElement('iframe');
 frame.setAttribute('sandbox','allow-scripts allow-same-origin');
 frame.setAttribute('allow',"camera 'none'; microphone 'none'; geolocation 'none'; clipboard-write 'none'");
 frame.style.cssText='border:0;width:100%;height:100%;display:block';
-let after=0,stopped=false;
+let after=0,stopped=false,generation=0,initialized=false,initializationTimer;
 const state=(message,fromHost=false)=>{
  // App notifications cannot assert Host-owned context such as display mode.
  if(['ui/notifications/initialized','ui/notifications/size-changed','ui/notifications/sandbox-escape'].includes(message.method)||(fromHost&&message.method==='ui/notifications/host-context-changed'))
   window.parent.postMessage(message,'*');
 };
-const fail=()=>{if(stopped)return;stopped=true;window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/sandbox-failed'},'*');};
+const fail=()=>{if(stopped)return;stopped=true;clearTimeout(initializationTimer);window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/sandbox-failed'},'*');};
 async function invoke(input){
  const response=await fetch(${encode(bridgeUrl)},{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
  if(!response.ok)throw new Error('MCP_APP_VIEW_UNAVAILABLE');
@@ -22,6 +22,13 @@ window.addEventListener('message',event=>{
  if(stopped||event.source!==frame.contentWindow)return;
  const message=event.data;
  if(!message||message.jsonrpc!=='2.0'||typeof message.method==='string'&&message.method.startsWith('ui/notifications/sandbox-'))return;
+ if(message.method==='ui/initialize'&&initialized){
+  generation++;initialized=false;
+  const current=generation;
+  clearTimeout(initializationTimer);
+  initializationTimer=setTimeout(()=>{if(generation===current&&!initialized)fail();},45000);
+ }
+ if(message.method==='ui/notifications/initialized'){initialized=true;clearTimeout(initializationTimer);}
  state(message);
  void invoke({op:'message',message}).catch(fail);
 });
@@ -35,6 +42,7 @@ async function poll(){
   for(const event of events){
    if(!Number.isSafeInteger(event.seq)||event.seq<=after)continue;
    after=event.seq;
+   if((event.generation??0)!==generation)continue;
    if(event.openLink){
     let success=false;
     try{await invoke({op:'open-link',linkId:event.openLink.id,url:event.openLink.url});success=true;}catch{}

@@ -362,3 +362,51 @@ describe('MCP App transport lifecycle', () => {
     await f.controller.close();
   });
 });
+
+// Greptile 4427568732: the phone controller must discard a response already in transit.
+it('ignores an old poll reply reusing the new document initialize ID', async () => {
+  let reply!: (value: unknown) => void;
+  const f = fixture(vi.fn().mockImplementationOnce(() => new Promise(resolve => { reply = resolve; })).mockImplementation(never));
+  await f.controller.open({});
+  f.controller.sandboxReady();
+  f.controller.receive({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  f.controller.receive({ jsonrpc: '2.0', id: 70, method: 'ui/initialize', params: {} });
+  const old = { jsonrpc: '2.0', id: 70, error: { code: -1, message: 'old document' } };
+  const current = { jsonrpc: '2.0', id: 70, result: { protocolVersion: '2026-01-26' } };
+  reply([{ seq: 1, message: old }, { seq: 2, generation: 1, message: current }]);
+  await flush();
+  expect(f.error).not.toHaveBeenCalled();
+  expect(f.post).not.toHaveBeenCalledWith(old);
+  expect(f.post).toHaveBeenCalledWith(current);
+  await f.controller.close();
+});
+
+// Codex 4427748540: replacement initialization needs the same bounded failure as the first page.
+it('times out a replacement document without extending its deadline for a retry', async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  await f.controller.open({});
+  f.controller.receive({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  f.controller.receive({ jsonrpc: '2.0', id: 1, method: 'ui/initialize' });
+  await vi.advanceTimersByTimeAsync(20_000);
+  f.controller.receive({ jsonrpc: '2.0', id: 2, method: 'ui/initialize' });
+  await vi.advanceTimersByTimeAsync(25_000);
+  expect(f.error).toHaveBeenCalledWith(expect.objectContaining({ message: 'MCP_APP_INITIALIZATION_TIMEOUT' }));
+  expect(f.invoke).toHaveBeenCalledWith('task', expect.objectContaining({ op: 'teardown' }));
+  await f.controller.close();
+});
+it('ignores a cleared document timer that runs after a new initialization starts', async () => {
+  vi.useFakeTimers();
+  const timer = vi.spyOn(globalThis, 'setTimeout');
+  const f = fixture();
+  await f.controller.open({});
+  const oldTimeout = timer.mock.calls.at(-1)![0] as () => void;
+  f.controller.receive({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  f.controller.receive({ jsonrpc: '2.0', id: 1, method: 'ui/initialize' });
+  oldTimeout();
+  expect(f.error).not.toHaveBeenCalled();
+  f.controller.receive({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  await vi.advanceTimersByTimeAsync(45_000);
+  expect(f.error).not.toHaveBeenCalled();
+  await f.controller.close();
+});

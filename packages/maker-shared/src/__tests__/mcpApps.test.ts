@@ -239,3 +239,33 @@ it('does not treat an SVG script as an HTML importmap', () => {
 it.each([undefined, '/relative.js'])('requires an absolute SDK URL: %s', url => {
   expect(() => Reflect.apply(withHostAppSdk, undefined, [sdkModule, url])).toThrow();
 });
+
+// Greptile 4427568750: template-literal dynamic imports are valid module requests.
+it('supplies the SDK for a template-literal dynamic import', () => {
+  const html = '<script type="module">import(`@modelcontextprotocol/ext-apps`);</script>';
+  expect(withHostAppSdk(html, sdkUrl)).toContain(sdkUrl);
+});
+
+// Codex 4427968307: built bundles may mention the package without importing it.
+// Production HTML preparation must leave their bytes (and remote budget) alone.
+// Unit tier: ordinary strings, license comments and source text in templates.
+it.each([
+  'const packageName = "@modelcontextprotocol/ext-apps";',
+  '/* import "@modelcontextprotocol/ext-apps"; */ console.log("bundled");',
+  '// import("@modelcontextprotocol/ext-apps")',
+  'const example = `import "@modelcontextprotocol/ext-apps"`;',
+])('does not supply the SDK for JavaScript text without a module request: %s', source => {
+  const html = '<!doctype html><script type="module">' + source + '</script>';
+  expect(withHostAppSdk(html, sdkUrl)).toBe(html);
+});
+
+// Codex 4428250526: the browser accepts prefix importmap entries; overriding one
+// changes an installed page's SDK. Unit / production preparation, exact bytes.
+it.each([
+  { '@modelcontextprotocol/': 'https://vendor.example/mcp/' },
+  { '@modelcontextprotocol/': null },
+  { '@modelcontextprotocol/ext-apps': null },
+])('preserves authored SDK prefix mappings and explicit blocks: %j', imports => {
+  const html = '<script type="importmap">' + JSON.stringify({ imports }) + '</script>' + sdkModule;
+  expect(withHostAppSdk(html, sdkUrl)).toBe(html);
+});

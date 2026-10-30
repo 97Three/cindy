@@ -101,11 +101,15 @@ async function initialized(host: McpAppsHost, caller: string) {
 }
 
 describe('MCP Apps serialized remote result budgets', () => {
-  it('accepts the complete remote document at its limit, including CSP and JSON escaping', async () => {
+  // Ordinary metadata and an authored SDK prefix both keep the legacy wire budget.
+  it.each([
+    '<script>const packageName = "@modelcontextprotocol/ext-apps";</script>',
+    '<script type="importmap">{"imports":{"@modelcontextprotocol/":"https://vendor.example/mcp/"}}</script><script type="module">import "@modelcontextprotocol/ext-apps";</script>',
+  ])('accepts the complete remote document at its limit with authored SDK provisioning: %s', async (prefix) => {
     const f = fixture();
     const empty = await f.host.open('renderer:local', 'task', 'card', {});
-    const overhead = Buffer.byteLength(JSON.stringify({ ...empty, sdk: undefined }));
-    const html = 'x'.repeat(MCP_APPS_MAX_REMOTE_BYTES - overhead);
+    const overhead = Buffer.byteLength(JSON.stringify({ ...empty, html: prefix, sdk: undefined }));
+    const html = prefix + 'x'.repeat(MCP_APPS_MAX_REMOTE_BYTES - overhead);
     f.resource.mockResolvedValue({ result: f.contents(html) });
     const document = await f.host.open('device:phone', 'task', 'card', {});
     expect(document.sdk).toBeUndefined();
@@ -115,6 +119,20 @@ describe('MCP Apps serialized remote result budgets', () => {
     await expect(f.host.open('device:phone', 'task', 'card', {})).rejects.toThrow(
       'MCP_APP_RESOURCE_TOO_LARGE',
     );
+  });
+
+  // Codex 4427537663: dropping a required SDK returns an unusable remote page.
+  // Unit / real Host.open: HTML fits the old budget, but HTML + SDK exceeds it.
+  it('rejects SDK-dependent remote pages instead of silently dropping their SDK', async () => {
+    const f = fixture();
+    const html = '<script type="module">import "@modelcontextprotocol/ext-apps";</script>' + 'x'.repeat(MCP_APPS_MAX_REMOTE_BYTES - 4096);
+    f.resource.mockResolvedValue({ result: f.contents(html) });
+    const local = await f.host.open('renderer:local', 'task', 'card', {});
+    expect(local.sdk).toBeDefined();
+    expect(Buffer.byteLength(JSON.stringify({ ...local, sdk: undefined }))).toBeLessThan(MCP_APPS_MAX_REMOTE_BYTES);
+    expect(Buffer.byteLength(JSON.stringify(local))).toBeGreaterThan(MCP_APPS_MAX_REMOTE_BYTES);
+    const outcome = await f.host.open('device:phone', 'task', 'card', {}).then(() => 'opened', error => error.message);
+    expect(outcome).toBe('MCP_APP_RESOURCE_TOO_LARGE');
   });
 
   it.each(['multibyte', 'quotes', 'control characters'] as const)(

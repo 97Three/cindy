@@ -1,7 +1,29 @@
 import { parse, type DefaultTreeAdapterTypes } from 'parse5';
+import { parse as parseJavaScript, type AnyNode } from 'acorn';
 
 const moduleName = '@modelcontextprotocol/ext-apps';
 const htmlNamespace = 'http://www.w3.org/1999/xhtml';
+function importsSdk(source: string, module: boolean): boolean {
+  if (!source.includes(moduleName)) return false;
+  try {
+    const pending: unknown[] = [parseJavaScript(source, { ecmaVersion: 'latest', sourceType: module ? 'module' : 'script' })];
+    while (pending.length) {
+      const value = pending.pop();
+      if (!value || typeof value !== 'object') continue;
+      const node = value as AnyNode;
+      if (node.type === 'ImportDeclaration' || node.type === 'ImportExpression' ||
+          node.type === 'ExportNamedDeclaration' || node.type === 'ExportAllDeclaration') {
+        const source = node.source;
+        if (source?.type === 'Literal' && source.value === moduleName) return true;
+        if (source?.type === 'TemplateLiteral' && source.expressions.length === 0 &&
+            source.quasis[0]?.value.cooked === moduleName) return true;
+      }
+      pending.push(...Object.values(value));
+    }
+  } catch { /* Invalid JavaScript remains the browser's responsibility. */ }
+  return false;
+}
+
 function sdkPlan(html: string) {
   // Ordinary pages keep their exact bytes and never pay for HTML parsing.
   if (!html.includes(moduleName)) return;
@@ -21,12 +43,15 @@ function sdkPlan(html: string) {
         const type = (node.attrs.find(attr => attr.name === 'type')?.value ?? '')
           .replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '').toLowerCase();
         const text = node.childNodes.map(child => 'value' in child ? child.value : '').join('');
-        if (['module', '', 'text/javascript', 'application/javascript'].includes(type))
-          imported ||= text.includes('"' + moduleName + '"') || text.includes("'" + moduleName + "'");
+        if (!node.attrs.some(attr => attr.name === 'src') && ['module', '', 'text/javascript', 'application/javascript'].includes(type))
+          imported ||= importsSdk(text, type === 'module');
         if (type === 'importmap') {
           try {
             const map = JSON.parse(text);
-            authoredSdk ||= typeof map?.imports?.[moduleName] === 'string';
+            authoredSdk ||= Object.entries(map?.imports ?? {}).some(([name, address]) =>
+              (name === moduleName || (name.endsWith('/') && moduleName.startsWith(name))) &&
+              (address === null || (typeof address === 'string' &&
+                (name === moduleName || address.endsWith('/')))));
             const location = node.sourceCodeLocation;
             if (!authoredMap && map && typeof map === 'object' && !Array.isArray(map) &&
                 (map.imports === undefined || (map.imports && typeof map.imports === 'object' && !Array.isArray(map.imports))) &&

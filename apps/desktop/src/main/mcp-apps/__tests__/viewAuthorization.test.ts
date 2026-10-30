@@ -768,6 +768,7 @@ it('drops an old poll snapshot when its final authorization straddles a new docu
   expect(await poll).toEqual([]);
   const next = await f.poll(0);
   expect(next.some(e => e.message && 'id' in e.message && e.message.id === 1)).toBe(true);
+  expect(next.every(event => event.generation === 1)).toBe(true);
   expect(next.some(e => e.message && 'method' in e.message && e.message.method === 'ui/notifications/tool-input')).toBe(false);
 });
 
@@ -825,4 +826,29 @@ it('does not supply the SDK to an SDK-free BOM page', async () => {
   const f = await fixture('device:phone', false, html);
   expect(f.document.html).toBe(html);
   expect(f.document.sdk).toBeUndefined();
+});
+
+// Accepted queued input must survive replacement, but preparation has not accepted it yet.
+// Unit / Host -> real sender, hold session metadata before the enqueue fence.
+it('cancels a ui/message still preparing when its document is replaced', async () => {
+  const metadata = deferred<Record<string, never>>();
+  const getSessionMeta = vi.fn(() => metadata.promise);
+  const enqueue = vi.fn();
+  const owner = {};
+  let finished = false;
+  const sender = createAppMessageSender({ owner: () => owner, readClearBoundary: async () => null,
+    restoreQueue: async () => {}, clearBoundary: () => null, shouldQueue: () => true,
+    getSessionMeta, buildCreateOpts: async () => ({ agentKind: 'pi' as const }),
+    createClientId: () => 'preparing', buildQueueItem: async params => ({ ...params, text: params.message }) as unknown as AgentInputQueuedMessage,
+    enqueue, sendToAgentAccepted: vi.fn(),
+  });
+  const f = await fixture('renderer:1', false, '<p>Form</p>', {
+    sendMessage: async (...args) => { try { await sender(...args); } finally { finished = true; } },
+  });
+  await f.dispatch({ jsonrpc: '2.0', id: 91, method: 'ui/message', params: { role: 'user', content: [{ type: 'text', text: 'Not accepted yet' }] } });
+  await vi.waitFor(() => expect(getSessionMeta).toHaveBeenCalledOnce());
+  await f.dispatch({ jsonrpc: '2.0', id: 1, method: 'ui/initialize', params: { protocolVersion: '2026-01-26', appInfo: { name: 'New', version: '1' }, appCapabilities: {} } });
+  metadata.resolve({});
+  await vi.waitFor(() => expect(finished).toBe(true));
+  expect(enqueue).not.toHaveBeenCalled();
 });

@@ -21,6 +21,9 @@ CSP 各 origin 必须符合 network.hosts。只经工具调用后端时，connec
 resourceDomains 都可为空。标准 SDK 由宿主提供，不必给 CDN 增加白名单。
 mcpApps 是 Cindy 的清单写法；标准页面使用 App SDK，不使用 window.openai。
 
+已有页面自带 SDK 的 importmap 时，Cindy 保留映射，不覆盖它，也不额外提供 SDK；
+用 null 禁止导入的映射同样保留。新页面直接使用裸 import，不写 importmap。
+
 ## 等待、取消与页面生命周期
 
 SDK 调用默认等待时间不足以覆盖所有用户确认。工具调用统一显式设置两个预算：
@@ -50,6 +53,10 @@ cindy.send({ type: 'tool-progress', callId: msg.callId,
 progress 保持递增；total 可省略。cindy.pick、上传、下载等文件操作已报告自身进度，
 不必重复发。页面关闭时清理自己的计时器、订阅和事件；不依赖文档替换清除所有
 JavaScript 状态。临时输入要由页面自行保存，卡片重开默认显示最初工具结果。
+
+整页替换并重新连接后，旧请求会被取消，旧回复不会交给新页面。已被 Cindy 接收的
+sendMessage 消息仍会继续发送；不要因旧页面未收到回执而重复发送。尚未接收的消息
+可能因换页取消。工具调用取消也不代表后端已撤销写入，仍需按请求编号核对。
 
 ## SDK 方法
 
@@ -125,6 +132,7 @@ resource_link，不能让页面直接请求接口或把令牌拼进图片 URL。
 | --- | --- |
 | 标准 import 无法解析 | 执行端及查看端版本是否支持宿主 SDK；不要改用任意 CDN 绕过 |
 | 页面自带 importmap 或从 CDN 加载 SDK，被拦截或加载失败 | 删掉自带映射和外部 SDK 加载，直接写 `import { App } from '@modelcontextprotocol/ext-apps'`，SDK 由 Cindy 提供 |
+| 远程打开报 MCP_APP_RESOURCE_TOO_LARGE | HTML、依赖的宿主 SDK 和元数据一起计入体积限制；缩小 HTML，通过工具按需读数据，不要改用 CDN |
 | 页面一直等初始结果 | 是否在加载器之后再次等待 ontoolresult；数据应已在首屏 HTML 中 |
 | MCP_APP_TOOL_NOT_VISIBLE | 工具是否在清单中对 app 可见，名字是否一致 |
 | fetch ok:true 但业务失败 | 检查 HTTP status，非 2xx 不当成功 |
