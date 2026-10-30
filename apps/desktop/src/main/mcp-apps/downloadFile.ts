@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { McpUiDownloadFileRequest } from '@modelcontextprotocol/ext-apps';
+import { replaceFile } from '../utils/replaceFile.js';
 
 export type AppDownloadContent = McpUiDownloadFileRequest['params']['contents'][number];
 export function appDownloadName(value: string): string {
@@ -52,7 +53,7 @@ export async function saveAppDownload(input: {
       await file.sync();
     } finally { await file.close(); }
     await check();
-    await fs.rename(staging, destination);
+    await replaceFile(staging, destination);
     return {};
   } finally {
     await reader?.cancel().catch(() => {});
