@@ -1351,6 +1351,13 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     const actor = actors.find(a => a.id === actorId && a.kind === 'bot');
     return profiles.find(p => p.id === actor?.externalId);
   }
+  // Membership is account-wide; only execution requires an active local installation.
+  function addableOwnedBot(actor: Actor): boolean {
+    if (actor.kind !== 'bot' || actor.disabled || !actor.externalId) return false;
+    const local = localBot(actor.id);
+    if (actor.homeDeviceId && actor.homeDeviceId !== selfDeviceId) return true;
+    return !local || local.status === 'active';
+  }
   function messageView(m: Message, members: Member[], ownerMembers: readonly Member[] = members): BotGroupMessageView {
     // Only the server-owned origin establishes a system event. A user-supplied
     // card with the same namespace must remain an ordinary chat message.
@@ -2872,7 +2879,12 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
           text:m.reply.content.map(block=>block.text ?? block.fallback ?? block.caption ?? '').join('\n')}} : {})}));
       return {mentions,hasMore:page.hasMore};
     }),
-    ownedBots: () => result(async () => { await register('foreground'); return { bots: actors.flatMap(a => { const bot = a.kind === 'bot' ? localBot(a.id) : undefined; return bot?.status === 'active' ? [{ actorId: a.id, botId: bot.id, name: a.name }] : []; }) }; }),
+    ownedBots: () => result(async () => {
+      await register('foreground');
+      return { bots: actors.filter(addableOwnedBot).map(a => ({
+        actorId: a.id, botId: a.externalId, name: a.name, avatar: a.avatar, homeDeviceId: a.homeDeviceId,
+      })) };
+    }),
     refreshProfile: () => result(async () => {
       await api('/profile/refresh', 'POST'); profileRefreshedAt = Date.now();
       for (const roomId of rooms.keys()) changed(roomId);
@@ -3286,7 +3298,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     createGroup: input => safe(async () => {
       const i = groupInput.parse(input); await register('foreground'); beginUpgrade();
       const participants = i.botIds.map(botId => {
-        const a = actors.find(a => a.kind === 'bot' && a.externalId === botId);
+        const a = actors.find(a => a.externalId === botId && addableOwnedBot(a));
         if (!a) throw new Error('MEMBER_UNAVAILABLE'); return a.id;
       });
       const room = await api<{ id: string }>('/conversations', 'POST', { operationId: randomUUID(), kind: 'group', name: i.name, participants });

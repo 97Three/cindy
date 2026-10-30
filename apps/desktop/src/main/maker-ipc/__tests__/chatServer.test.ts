@@ -4443,6 +4443,30 @@ describe('Chat Server directed sends', () => {
     expect(result.ok && result.bots.some(bot => bot.botId === 'local-bot' && typeof bot.actorId === 'string')).toBe(true);
   });
 
+  it('lists owned companions on other devices without importing them locally, excluding disabled actors', async () => {
+    const original = fixture.handle.getMockImplementation()!;
+    fixture.handle.mockImplementation((route, method, body) => route === '/actors' ? { body: [
+      { id: botId, kind: 'bot', externalId: 'local-bot', name: 'Bot' },
+      { id: humanId, kind: 'bot', externalId: 'linux-bot', name: 'Linux', homeDeviceId: 'linux', avatar: '🐧' },
+      { id: rootId, kind: 'bot', externalId: 'deleted-bot', name: 'Deleted', disabled: true },
+    ] } : original(route, method, body));
+    expect(await service.chatServer!.ownedBots()).toMatchObject({ ok: true, bots: [
+      { actorId: botId, botId: 'local-bot' },
+      { actorId: humanId, botId: 'linux-bot', name: 'Linux', homeDeviceId: 'linux', avatar: '🐧' },
+    ] });
+    expect(fixture.profiles).toHaveLength(1);
+  });
+
+  it.each([null, 'another-device'])('respects local pause only while this computer owns execution (home=%s)', async homeDeviceId => {
+    fixture.profiles = [{ id: 'local-bot', displayName: 'Bot', status: 'paused' }];
+    const original = fixture.handle.getMockImplementation()!;
+    fixture.handle.mockImplementation((route, method, body) => route === '/actors' ? { body: [
+      { id: botId, kind: 'bot', externalId: 'local-bot', name: 'Bot', homeDeviceId },
+    ] } : original(route, method, body));
+    const result = await service.chatServer!.ownedBots();
+    expect(result.ok && result.bots.map(bot => bot.botId)).toEqual(homeDeviceId ? ['local-bot'] : []);
+  });
+
   it.each(['main', 'thread'])('rejects a selected bot that left before the %s send instead of posting empty mentions', async entry => {
     await service.chatServer!.ownedBots();
     members[1]!.state = 'left';
