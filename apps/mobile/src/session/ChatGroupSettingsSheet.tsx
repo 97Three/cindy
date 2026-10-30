@@ -100,7 +100,7 @@ export function ChatGroupSettingsSheet({ visible, group, host, identityFor, onli
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   // An edit keeps the revision it started from; after a failed save the next one uses the latest.
-  const [draft, setDraft] = useState({ name: '', topic: '', description: '', revision: group.revision, failed: false });
+  const [draft, setDraft] = useState({ name: '', topic: '', description: '', base: { name: '', topic: '', description: '' }, revision: group.revision, failed: false });
   const [nickname, setNickname] = useState('');
   // Each opening is its own scope: a reply to a request from an earlier opening changes nothing.
   const [opening, setOpening] = useState(0);
@@ -142,7 +142,8 @@ export function ChatGroupSettingsSheet({ visible, group, host, identityFor, onli
     t(`groupChat.lifecycle.${action}`), () => act(action, action === 'dissolve' ? { expectedRevision: group.revision } : undefined));
   const home = () => setPage({ kind: 'home' });
   const openEdit = () => {
-    setDraft({ name: group.name, topic: group.topic ?? '', description: group.description ?? '', revision: group.revision, failed: false });
+    const base = { name: group.name, topic: group.topic ?? '', description: group.description ?? '' };
+    setDraft({ ...base, base, revision: group.revision, failed: false });
     setPage({ kind: 'edit' });
   };
 
@@ -180,13 +181,18 @@ export function ChatGroupSettingsSheet({ visible, group, host, identityFor, onli
         () => management ? management.act('archive', { archived: archive }) : act('delete', throughComputer({})))} />;
   } else if (page.kind === 'edit') {
     title = k('editTitle');
-    dirty = draft.name !== group.name || draft.topic !== (group.topic ?? '') || draft.description !== (group.description ?? '');
+    // Only what you changed is sent, so a retry on the latest revision keeps others' concurrent edits.
+    const name = draft.name.trim();
+    const changes = { ...(name !== draft.base.name ? { name } : {}),
+      ...(direct && draft.topic !== draft.base.topic ? { topic: draft.topic } : {}),
+      ...(direct && draft.description !== draft.base.description ? { description: draft.description } : {}) };
+    dirty = Object.keys(changes).length > 0;
     // A computer only renames the group; the topic and description are edited where they are stored.
     content = <EditPage k={k} draft={draft} full={direct} editable={writable && !busy} onChange={change => setDraft(current => ({ ...current, ...change }))} />;
-    trailing = { label: k('save'), busy, disabled: !writable || !draft.name.trim(), testID: 'botGroup.settings.editSave',
-      onPress: () => void settings('update', { name: draft.name.trim(), ...(direct ? { topic: draft.topic, description: draft.description } : {}),
-        expectedRevision: draft.failed ? group.revision : draft.revision })
-        .then(ok => { if (ok) home(); else setDraft(current => ({ ...current, failed: true })); }) };
+    trailing = { label: k('save'), busy, disabled: !writable || !name, testID: 'botGroup.settings.editSave',
+      onPress: () => { if (!Object.keys(changes).length) { home(); return; }
+        void settings('update', { ...changes, expectedRevision: draft.failed ? group.revision : draft.revision })
+          .then(ok => { if (ok) home(); else setDraft(current => ({ ...current, failed: true })); }); } };
   } else if (page.kind === 'profile' && me?.actorId) {
     title = k('myProfile');
     dirty = nickname.trim() !== (me.nickname ?? '');

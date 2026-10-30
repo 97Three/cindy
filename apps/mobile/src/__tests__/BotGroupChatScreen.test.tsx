@@ -1257,7 +1257,7 @@ describe('group settings', () => {
     await act(async () => { h.inputs['botGroup.settings.name'].onChangeText('Managed'); });
     await act(async () => { h.inputs['botGroup.settings.topic'].onChangeText('Launch'); });
     await click('botGroup.settings.editSave');
-    expect(manage).toHaveBeenCalledWith('update', { name: 'Managed', description: '', topic: 'Launch', expectedRevision: 5 });
+    expect(manage).toHaveBeenCalledWith('update', { name: 'Managed', topic: 'Launch', expectedRevision: 5 });
     expect(h.chat.act).not.toHaveBeenCalled(); expect(h.chat.reload).toHaveBeenCalled();
     // Back on the first page: your own teammate joins from the one 邀请 menu.
     await click('botGroup.settings.invite.action.bots');
@@ -1282,11 +1282,12 @@ describe('group settings', () => {
     expect(manage).toHaveBeenLastCalledWith('update', expect.objectContaining({ description: 'My draft', expectedRevision: 5 }));
     expect(h.inputs['botGroup.settings.description'].value).toBe('My draft');
     expect(byId('botGroup.settings')?.textContent).toContain('groupChat.settings.conflict');
-    h.management.group = { ...data, description: 'Other edit', revision: 6 };
+    // Another manager renamed the group meanwhile: the retry sends only your field, never your stale name.
+    h.management.group = { ...data, name: 'Renamed elsewhere', description: 'Other edit', revision: 6 };
     await render(h.management.group);
     expect(h.inputs['botGroup.settings.description'].value).toBe('My draft');
     await click('botGroup.settings.editSave');
-    expect(manage).toHaveBeenLastCalledWith('update', expect.objectContaining({ description: 'My draft', expectedRevision: 6 }));
+    expect(manage).toHaveBeenLastCalledWith('update', { description: 'My draft', expectedRevision: 6 });
     await click('botGroup.settings.tab.members');
     await click(`botGroup.settings.memberMenu.${data.members[1].botId}.action.role`);
     expect(manage).toHaveBeenLastCalledWith('set-member-role', { actorId: 'member-actor', role: 'admin' });

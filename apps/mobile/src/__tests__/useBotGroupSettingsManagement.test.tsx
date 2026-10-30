@@ -52,9 +52,12 @@ beforeEach(() => {
 afterEach(() => { act(() => root?.unmount()); root = undefined; });
 
 it('reads and saves cloud settings and offers offline companions without any host connection', async () => {
+  // The chat page knows where your teammate runs; the settings read alone does not.
+  source = chatGroupView({ snapshot, messages: [], before: null }, id(2), [{ id: id(3), kind: 'bot', externalId: 'bot', name: 'Bot', avatar: null, homeDeviceId: 'pc' }]);
   await render();
   expect(result.editable).toBe(true);
   expect(result.group).toMatchObject({ description: 'Original', singleSpeaker: true });
+  expect(result.group?.members.find(member => member.actorId === id(3))?.homeDeviceId).toBe('pc');
   expect(candidates.rows.map(row => row.id)).toEqual([id(4)]);
   await act(async () => { await result.act('update', { name: 'Renamed', description: 'Shared background', replyMode: 'mentioned', organizerBotId: id(3) }); });
   expect(writes()[0]).toEqual([`/conversations/${id(1)}`, 'PATCH', { operationId: 'operation-1', expectedRevision: 4, name: 'Renamed', description: 'Shared background', responseMode: 'mentioned', organizerId: id(3) }, id(2)]);

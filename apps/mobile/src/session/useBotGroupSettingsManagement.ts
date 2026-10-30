@@ -129,7 +129,12 @@ export function useBotGroupSettingsManagement(source: BotGroupRemoteChatData, en
   const settings = own ? state.settings : undefined;
   const loading = enabled && (!own || state.loading);
   const editable = !loading && !!settings?.managerId && canManageBotGroup(settings.group) && !settings.group.dissolvedAt;
-  return { group: settings?.group, act, invite, refresh, loading, editable, ready: !loading && !!settings,
+  // Settings reads skip `/actors`; the chat page already knows which computer runs each of your teammates.
+  const homes = new Map(source.members.flatMap(member => member.homeDeviceId && member.actorId ? [[member.actorId, member.homeDeviceId] as const] : []));
+  const group = settings && homes.size ? { ...settings.group, members: settings.group.members.map(member =>
+    member.homeDeviceId === null && member.actorId && homes.has(member.actorId) ? { ...member, homeDeviceId: homes.get(member.actorId) } : member) }
+    : settings?.group;
+  return { group, act, invite, refresh, loading, editable, ready: !loading && !!settings,
     reason: loading ? null : own && state.failed ? 'unavailable' as const : editable ? null : 'permission' as const };
 }
 
