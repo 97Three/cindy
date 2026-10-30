@@ -113,6 +113,7 @@ import {
 } from '../localDb/ipc/sessions.js';
 import { getInputHandoffService } from '../input-handoff/service.js';
 import { isInputHandoffDisabledForSession } from '../input-handoff/botPolicy.js';
+import { readHandoffPicture } from '../input-handoff/pictureRef.js';
 import { isIpcError } from '../../shared/ipc-errors.js';
 import type { PluginRegistry } from '../maker-host/plugins/plugin-registry.js';
 import { getDesktopContactsManager } from '../maker-host/maker-contacts-host.js';
@@ -209,6 +210,22 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     authorizeDesktopSessionPath(request, deps.getLiveSessionGrantState),
   );
   const { pluginRegistry } = deps;
+  // 代输入 gates shared by window and picture handoffs: a current local task,
+  // the service, and the teammate switch (unknown policy fails closed).
+  const admitInputHandoff = async (context: { sessionId?: string; sessionInstanceId?: string }) => {
+    if (!context.sessionId || !deps.isCurrentLocalSessionInstance?.(context.sessionId, context.sessionInstanceId))
+      return { ok: false as const, errorCode: 'NO_SESSION_CONTEXT', message: 'This task is no longer current.' };
+    const service = getInputHandoffService();
+    if (!service) return { ok: false as const, errorCode: 'CAPABILITY_NOT_AVAILABLE', message: 'Input handoff is not ready yet.' };
+    if (await isInputHandoffDisabledForSession(context.sessionId).catch(() => true))
+      return {
+        ok: false as const,
+        errorCode: 'DISABLED_BY_OWNER',
+        message: 'The owner turned off input handoff for this teammate. Tell the owner what is still needed instead.',
+      };
+    const row = await getSessionRowSnapshot(context.sessionId).catch(() => null);
+    return { ok: true as const, service, sessionId: context.sessionId, requester: row?.title?.trim().slice(0, 120) };
+  };
   let redactSshText: ((snapshot: SshHostSnapshotLike, text: string) => string) | undefined;
   const loadRemoteSsh = async () => {
     const remoteSsh = await import('../remote-ssh/index.js');
@@ -767,28 +784,43 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       // 代输入: Host-owned card; values never return through this tool.
       inputHandoff: {
         start: async (context, request) => {
-          if (!context.sessionId || !deps.isCurrentLocalSessionInstance?.(context.sessionId, context.sessionInstanceId))
-            return { ok: false, errorCode: 'NO_SESSION_CONTEXT', message: 'This task is no longer current.' };
-          const service = getInputHandoffService();
-          if (!service) return { ok: false, errorCode: 'CAPABILITY_NOT_AVAILABLE', message: 'Input handoff is not ready yet.' };
-          // Unknown policy (store unreadable) fails closed; a teammate switch must hold.
-          if (await isInputHandoffDisabledForSession(context.sessionId).catch(() => true))
-            return {
-              ok: false,
-              errorCode: 'DISABLED_BY_OWNER',
-              message: 'The owner turned off input handoff for this teammate. Tell the owner what is still needed instead.',
-            };
-          const row = await getSessionRowSnapshot(context.sessionId).catch(() => null);
-          const requester = row?.title?.trim().slice(0, 120);
-          const result = service.start({
-            sessionId: context.sessionId,
+          const ready = await admitInputHandoff(context);
+          if (!ready.ok) return ready;
+          // Report a bad target now, not as target_gone after the turn ended.
+          const problem = await ready.service.checkTarget(request.target).catch(() => null);
+          if (problem) return { ok: false, ...problem };
+          const result = ready.service.start({
+            sessionId: ready.sessionId,
             purpose: request.purpose,
             ...(request.note ? { note: request.note } : {}),
-            ...(requester ? { requester } : {}),
+            ...(ready.requester ? { requester: ready.requester } : {}),
             target: request.target,
             ...(request.completeWhen ? { completeWhen: request.completeWhen } : {}),
             ...(request.timeoutMinutes ? { timeoutMinutes: request.timeoutMinutes } : {}),
           });
+          return result.ok ? { ok: true, requestId: result.requestId } : result;
+        },
+        startImage: async (context, request) => {
+          const ready = await admitInputHandoff(context);
+          if (!ready.ok) return ready;
+          const picture = await readHandoffPicture(request.image, context.workingDir, (absPath) => authorizeDesktopSessionPath({
+            sessionId: ready.sessionId,
+            sessionInstanceId: context.sessionInstanceId,
+            workingDir: context.workingDir ?? '',
+            path: absPath,
+            toolName: 'cindy_helper.ask_owner',
+            operation: 'read',
+          }, deps.getLiveSessionGrantState));
+          if (!picture.ok) return picture;
+          const result = await ready.service.startImageQr({
+            sessionId: ready.sessionId,
+            purpose: request.purpose,
+            ...(request.note ? { note: request.note } : {}),
+            ...(ready.requester ? { requester: ready.requester } : {}),
+            image: picture.bytes,
+            ...(request.timeoutMinutes ? { timeoutMinutes: request.timeoutMinutes } : {}),
+          });
+          picture.bytes.fill(0);
           return result.ok ? { ok: true, requestId: result.requestId } : result;
         },
       },

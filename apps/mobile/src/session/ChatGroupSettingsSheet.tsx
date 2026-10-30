@@ -545,18 +545,24 @@ function InviteBotsPage({ k, group, host, direct, visible, online, busy, avatar,
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const [query, setQuery] = useState('');
-  const cloud = useCloudGroupCandidates(direct && visible);
+  const cloud = useCloudGroupCandidates(visible);
   const computer = useHostTeammates(host, !direct && visible, query);
-  const rows = direct
-    ? cloud.rows.map(row => { const image = chatMemberAvatar(row.avatar); return { id: row.id, name: row.name,
-      avatar: botGroupMemberAvatar({ ...image, name: row.name, avatarColor: '' }), avatarUrl: image.avatarUrl }; })
-    : computer.rows.map(row => ({ id: row.item.ref.id, name: resolveRemoteText(row.item.display.title, i18n.language), avatar: row.item.display.avatar, avatarUrl: undefined }));
+  const local = direct ? [] : computer.rows.map(row => ({ id: row.item.ref.id, actorId: undefined as string | undefined,
+    name: resolveRemoteText(row.item.display.title, i18n.language), avatar: row.item.display.avatar, avatarUrl: undefined as string | undefined }));
+  // A computer also adds your teammates whose main computer is another one, by their stable external id.
+  const remote = cloud.rows.filter(row => direct || (row.externalId && row.homeDeviceId && row.homeDeviceId !== host.deviceId
+    && !local.some(item => item.id === row.externalId))).map(row => {
+    const image = chatMemberAvatar(row.avatar);
+    return { id: direct ? row.id : row.externalId, actorId: row.id as string | undefined, name: row.name,
+      avatar: botGroupMemberAvatar({ ...image, name: row.name, avatarColor: '' }), avatarUrl: image.avatarUrl };
+  });
+  const rows = [...local, ...remote];
   const inGroup = new Set(group.members.flatMap(member => [member.actorId, member.botId]));
-  const addable = rows.filter(row => !inGroup.has(row.id));
+  const addable = rows.filter(row => !inGroup.has(row.id) && !(row.actorId && inGroup.has(row.actorId)));
   const needle = query.trim().toLocaleLowerCase();
   const shown = needle ? addable.filter(row => row.name.toLocaleLowerCase().includes(needle)) : addable;
-  const loading = direct ? cloud.loading : computer.loading;
-  const failed = direct ? cloud.failed : computer.failed;
+  const loading = cloud.loading || (!direct && computer.loading);
+  const failed = cloud.failed || (!direct && computer.failed);
   return <>
     <TextInput value={query} onChangeText={setQuery} accessibilityLabel={k('searchTeammates')} placeholder={k('searchTeammates')}
       placeholderTextColor={colors.textPlaceholder} autoCorrect={false} returnKeyType="search" style={styles.search} testID="botGroup.settings.inviteSearch" />

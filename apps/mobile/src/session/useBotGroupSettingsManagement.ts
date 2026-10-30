@@ -151,5 +151,5 @@ export function useCloudGroupCandidates(enabled: boolean) {
     }).catch(() => { if (!cancelled && api.current()) setState({ owner: api.owner, rows: [], loading: false, failed: true }); });
     return () => { cancelled = true; };
   }, [api, enabled]);
-  return state?.owner === api.owner && enabled ? state : { rows: [], loading: enabled, failed: false };
+  return state?.owner === api.owner && enabled && api.enabled ? state : { rows: [], loading: enabled && api.enabled, failed: false };
 }

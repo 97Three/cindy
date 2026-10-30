@@ -1115,7 +1115,7 @@ import { getInputHandoffService, initInputHandoffService } from '../input-handof
 import { closeInputHandoffAskpass, initInputHandoffAskpass } from '../input-handoff/askpass/index.js';
 import { onQuit } from '../lifecycle.js';
 import { isInputHandoffDisabledForSession } from '../input-handoff/botPolicy.js';
-import { createMacHandoffDriver } from '../input-handoff/macDriver.js';
+import { createMacHandoffDriver, readPictureQr } from '../input-handoff/macDriver.js';
 import { supportsRemotePluginOauth } from '../plugin-oauth/runtime.js';
 import {
   parseOrcaRemoteLead,
@@ -3622,6 +3622,7 @@ initInputHandoffService({
     }
   },
   createDriver: () => (process.platform === 'darwin' ? createMacHandoffDriver() : null),
+  ...(process.platform === 'darwin' ? { qrFromPicture: readPictureQr } : {}),
   hostPid: process.pid,
   remoteInputAvailable: supportsRemotePluginOauth,
   // A live view of just the window rides remote desktop, so only where the owner allowed it.
@@ -11540,8 +11541,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     closeSession: (sessionId) => maker.closeSession(sessionId, 'agent-switch'),
     listMessagesForHandoff: (sessionId, after) =>
       listMessagesForAgentHandoff(sessionId, 400, after),
-    findParkedEngineSession: (sessionId, targetDbKind) =>
-      findParkedEngineSession(sessionId, targetDbKind),
+    findParkedEngineSession: (sessionId, targetDbKind, fromAgentDeviceId) =>
+      findParkedEngineSession(sessionId, targetDbKind, fromAgentDeviceId),
     applyAgentSwitchToDb: async (sessionId, patch) => {
       // 把 Agent 挪到另一台电脑时那台的目录才算数，不拿本机目录的窗口写进去。
       const movingToOtherDevice = typeof patch.agentDeviceId === 'string';
