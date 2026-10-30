@@ -461,6 +461,8 @@ describe('X managed video delivery', () => {
   it.each([
     ['旁路预览图让位给正文视频', '[视频](cindy-media://blobs/clip.mp4)', ['/blobs/preview.jpg'], ['clip.mp4'], []],
     ['旁路视频不抢正文视频', '[视频](cindy-media://blobs/clip.mp4)', ['/blobs/other.mp4'], ['clip.mp4'], []],
+    ['旁路 GIF 不抢正文图片', '![封面](cindy-media://blobs/cover.jpg)', ['/blobs/a.gif'], ['cover.jpg'], []],
+    ['旁路视频不抢正文图片', '![封面](cindy-media://blobs/cover.jpg)', ['/blobs/other.mp4'], ['cover.jpg'], []],
     ['正文图片与视频并存时点名没发出的图片', '![封面](cindy-media://blobs/cover.jpg)\n[视频](cindy-media://blobs/clip.mp4)', [], ['clip.mp4'], ['封面']],
     ['GIF 不与图片混发', '![动图](cindy-media://blobs/a.gif)', ['/blobs/preview.jpg'], ['a.gif'], []],
     ['第二个视频保留说明并点名', '[甲](xdt-file:///w/a.mp4) [乙](xdt-file:///w/b.mp4)', [], ['a.mp4'], ['乙']],
@@ -470,7 +472,7 @@ describe('X managed video delivery', () => {
     const bytes = Buffer.from('media');
     const files = Object.fromEntries(['clip.mp4', 'cover.jpg', 'a.gif', '1.png', '2.png', '3.png', '4.png', '5.png']
       .map((name) => ['/blobs/blobs/' + name, bytes]));
-    const io = deps({ ...files, '/blobs/preview.jpg': bytes, '/blobs/other.mp4': bytes, '/w/a.mp4': bytes, '/w/b.mp4': bytes }, { allowedFileRoots: ['/w'] });
+    const io = deps({ ...files, '/blobs/preview.jpg': bytes, '/blobs/a.gif': bytes, '/blobs/other.mp4': bytes, '/w/a.mp4': bytes, '/w/b.mp4': bytes }, { allowedFileRoots: ['/w'] });
     const result = await collectOutboundAttachments(reply, tools, { ...io, provider: 'x' });
     expect(result.attachments.map((item) => item.name)).toEqual(sent);
     expect(result.skipped).toBe(omitted.length);

@@ -211,13 +211,15 @@ interface OutboundItem {
 
 /**
  * X 一条帖子最多四张图片，或一个 GIF/视频。其它组合会被服务端拒绝，整条回帖连正文都发不出去，
- * 所以发送前就选定：回复里引用的优先，视频和 GIF 优先于图片。
+ * 所以发送前就选定：回复里引用的优先，同组内视频和 GIF 优先于图片。
  */
 function selectXMedia(items: OutboundItem[], implicitPaths: ReadonlySet<string>): OutboundItem[] {
   const ranked = [...items].sort((a, b) =>
     Number(implicitPaths.has(a.absPath)) - Number(implicitPaths.has(b.absPath)));
-  const motion = ranked.find(({ mimeType }) => mimeType === 'image/gif' || mimeType.startsWith('video/'));
-  return motion ? [motion] : ranked.slice(0, MAX_X_IMAGES);
+  const explicit = ranked.filter((item) => !implicitPaths.has(item.absPath));
+  const isMotion = ({ mimeType }: OutboundItem) => mimeType === 'image/gif' || mimeType.startsWith('video/');
+  const motion = (explicit.length ? explicit : ranked).find(isMotion);
+  return motion ? [motion] : ranked.filter((item) => !isMotion(item)).slice(0, MAX_X_IMAGES);
 }
 
 function defaultIncompleteNotice(skippedNames: string[]): string {
