@@ -12,7 +12,7 @@ import type {
 
 import type { MenubarView } from '../../shared/menubarQuota.js';
 import { familyLogo, MENUBAR_CINDY_LOGO } from './logos.js';
-import type { MenubarFamily } from './snapshot.js';
+import type { MenubarFamily, MenubarModelSeries } from './snapshot.js';
 
 const WIDGET_DAYS = 30;
 const FAMILIES: MenubarFamily[] = ['claude', 'codex', 'grok', 'kimi'];
@@ -29,6 +29,7 @@ export function buildUsageWidgetSnapshot(
   view: MenubarView,
   nowMs: number,
   raw: (key: string) => string | null,
+  series?: MenubarModelSeries,
 ): MobileUsageWidgetSnapshot | null {
   if (view.gate) return null;
   const logoOf = new Map<string, MobileUsageWidgetSource['logo']>(
@@ -73,6 +74,9 @@ export function buildUsageWidgetSnapshot(
   const scope = view.settings.scope;
   const data = view.usage.scopes[scope] ?? view.usage.scopes.all;
   const count = Math.min(view.usage.days.length, data?.daily.length ?? 0, WIDGET_DAYS);
+  // Same days as the view; the series is collected alongside it, so it only lines up when its length matches.
+  const seriesDaily = series && series.daily.length === view.usage.days.length && count > 0
+    ? series.daily.slice(-count) : undefined;
   const strings: Record<string, string> = {};
   for (const key of UI_KEYS) {
     const value = view.strings[key];
@@ -94,11 +98,11 @@ export function buildUsageWidgetSnapshot(
     usage: {
       scope,
       days: count > 0 ? view.usage.days.slice(-count) : [],
-      daily: count > 0 && data ? data.daily.slice(-count).map(day => ({
-        money: day.money,
-        paid: day.paid,
-        tokens: day.tokens,
-      })) : [],
+      daily: count > 0 && data ? data.daily.slice(-count).map((day, i) => {
+        const models = seriesDaily?.[i];
+        return { money: day.money, paid: day.paid, tokens: day.tokens, ...(models ? { models } : {}) };
+      }) : [],
+      ...(seriesDaily ? { models: series!.models } : {}),
     },
     strings,
   };

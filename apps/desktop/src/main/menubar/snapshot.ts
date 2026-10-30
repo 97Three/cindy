@@ -163,6 +163,15 @@ export interface MenubarUsageScopeInput {
   daily: MenubarUsageScopeData['daily'];
   models: MenubarUsageScopeData['models'];
   devices: MenubarUsageDeviceInput[];
+  /** Daily value split by model for the iPhone widgets; not sent to the menu bar helper. */
+  modelSeries?: MenubarModelSeries;
+}
+
+/** The busiest models of the last 30 days; each day lists their value and then everything else. */
+export interface MenubarModelSeries {
+  models: { name: string; harness: MenubarHarness }[];
+  /** Aligned with `MenubarUsageInput.days`; `models.length + 1` values, the last one is the rest. */
+  daily: number[][];
 }
 
 export interface MenubarUsageInput {

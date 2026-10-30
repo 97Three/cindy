@@ -36,6 +36,7 @@ import {
   type MenubarSubscriptionInput,
   type MenubarTaskInput,
   type MenubarUsageInput,
+  type MenubarModelSeries,
   type MenubarUsageScopeInput,
   type MenubarWalletPools,
   type MenubarWindowInput,
@@ -562,7 +563,36 @@ export function usageScope(
     }
   }
   for (const window of windows) scope.models[window] = topModels(modelRows[window]);
+  scope.modelSeries = modelSeries(payload, indexOfDay, days.length);
   return scope;
+}
+
+const SERIES_MODELS = 5;
+const SERIES_DAYS = 30;
+
+/** Per-model daily value: the top models by value over the last 30 days, the rest summed last. */
+function modelSeries(payload: UsageHistoryPayload, indexOfDay: Map<string, number>, dayCount: number): MenubarModelSeries {
+  const byModel = new Map<string, { harness: MenubarHarness; daily: number[]; recent: number }>();
+  for (const row of payload.modelDaily) {
+    const index = indexOfDay.get(row.day);
+    if (index === undefined) continue;
+    const name = formatModelShort(row.model);
+    const entry = byModel.get(name) ?? { harness: harnessOf(row.agentKind), daily: new Array<number>(dayCount).fill(0), recent: 0 };
+    const money = finite(row.money?.amount);
+    entry.daily[index] += money;
+    if (dayCount - 1 - index < SERIES_DAYS) entry.recent += money;
+    byModel.set(name, entry);
+  }
+  const ranked = [...byModel.entries()].filter(([, entry]) => entry.recent > 0).sort((a, b) => b[1].recent - a[1].recent);
+  const top = ranked.slice(0, SERIES_MODELS);
+  const rest = ranked.slice(SERIES_MODELS).map(([, entry]) => entry.daily);
+  return {
+    models: top.map(([name, entry]) => ({ name, harness: entry.harness })),
+    daily: Array.from({ length: dayCount }, (_, day) => [
+      ...top.map(([, entry]) => entry.daily[day]),
+      rest.reduce((sum, daily) => sum + daily[day], 0),
+    ]),
+  };
 }
 
 function devicesOf(payload: UsageHistoryPayload | null, selfName: string): MenubarUsageScopeInput['devices'] {

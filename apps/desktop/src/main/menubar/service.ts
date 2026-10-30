@@ -154,6 +154,8 @@ export class MenubarService {
   private started = false;
   private panelOpen = false;
   private lastView: MenubarView | null = null;
+  /** Usage input behind `lastView`; the widgets read its per-model series. */
+  private lastUsage: MenubarCollected['usage'] | null = null;
   /** Null until the first build, so launching while low does not notify. */
   private wasLow: boolean | null = null;
   private lowNotification: Notification | null = null;
@@ -223,7 +225,9 @@ export class MenubarService {
   widgetSnapshot(): MobileUsageWidgetSnapshot | null {
     if (!this.started || !this.lastView) return null;
     const locale = getResolvedMainLocale();
-    return buildUsageWidgetSnapshot(this.lastView, Date.now(), key => rawMainString(key, locale));
+    const scope = this.lastView.settings.scope;
+    const series = this.lastUsage?.scopes[scope]?.modelSeries;
+    return buildUsageWidgetSnapshot(this.lastView, Date.now(), key => rawMainString(key, locale), series);
   }
 
   /** Opens the panel under the status item. */
@@ -492,6 +496,7 @@ export class MenubarService {
       ...(gate ? { gate } : {}),
     };
     const view = buildMenubarView(input);
+    this.lastUsage = collected.usage;
     Object.assign(view, this.taskOverview(gate));
     Object.assign(view, this.controlState(gate));
     this.lastView = view;

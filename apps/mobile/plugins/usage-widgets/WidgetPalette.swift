@@ -47,6 +47,18 @@ enum WidgetPalette {
   static let claude2 = Color(rgb(0xE8A184))
   static let claude3 = Color(rgb(0xF2C9B6))
 
+  /// Usage History model palette (`--usage-model-1…5`): teal, rose, violet, indigo, amber.
+  private static let models: [Color] = [
+    dynamic(rgb(0x14B8A6), rgb(0x2DD4BF)),
+    dynamic(rgb(0xF43F5E), rgb(0xFB7185)),
+    dynamic(rgb(0x8B5CF6), rgb(0xA78BFA)),
+    dynamic(rgb(0x6366F1), rgb(0x818CF8)),
+    dynamic(rgb(0xF59E0B), rgb(0xFBBF24)),
+  ]
+  static func model(_ rank: Int) -> Color { models[rank % models.count] }
+  /// Everything beyond the named models.
+  static let otherModel = neutral(0.24, 0.30)
+
   /// The panel's semantic color names (`MenubarColor`).
   static func named(_ name: String?) -> Color {
     switch name {

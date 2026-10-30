@@ -1,9 +1,62 @@
 import SwiftUI
 import WidgetKit
 
-/// Stacking order bottom to top, same as the Mac chart: Codex, Claude Code, Pi.
-private let harnessStack = [1, 0, 2]
-private let harnessKeys = ["claude-code", "codex", "pi"]
+/// How a day's value is split: by model when the computer sends a model series (busiest
+/// first, the rest last), otherwise by harness like the Mac chart (Codex, Claude Code, Pi).
+struct UsageBreakdown {
+  /// Series keys in stacking order, bottom to top.
+  let keys: [Int]
+  private let models: [WidgetModel]?
+  private let locale: Locale
+
+  init(snapshot: WidgetSnapshot?, locale: Locale) {
+    self.locale = locale
+    if let models = snapshot?.usage.models, !models.isEmpty,
+       snapshot?.usage.daily.allSatisfy({ $0.models?.count == models.count + 1 }) == true {
+      self.models = models
+      keys = Array(0...models.count)
+    } else {
+      self.models = nil
+      keys = [1, 0, 2]
+    }
+  }
+
+  func value(_ day: WidgetDay, _ key: Int) -> Double {
+    if models != nil { return day.models?[key] ?? 0 }
+    return day.money[key]
+  }
+
+  func label(_ key: Int, format: WidgetFormat) -> String {
+    guard let models else { return format.s("harness.\(["claude-code", "codex", "pi"][key])") }
+    return key < models.count ? models[key].name : WidgetText.text("other", locale: locale)
+  }
+
+  func color(_ key: Int, accented: Bool) -> Color {
+    guard let models else {
+      return accented ? Color.white.opacity(WidgetPalette.accentedOpacity(key)) : WidgetPalette.harness(key)
+    }
+    let isOther = key >= models.count
+    if accented { return Color.white.opacity(isOther ? 0.2 : [1, 0.75, 0.56, 0.42, 0.32][min(key, 4)]) }
+    return isOther ? WidgetPalette.otherModel : WidgetPalette.model(key)
+  }
+
+  /// Non-zero parts of `total(key)`, largest first; beyond `limit` the smallest merge into one
+  /// "other" row (key -1).
+  func ranked(limit: Int, total: (Int) -> Double) -> [(key: Int, value: Double)] {
+    let rows = keys.map { (key: $0, value: total($0)) }.filter { $0.value > 0 }.sorted { $0.value > $1.value }
+    guard rows.count > limit else { return rows }
+    let kept = rows.prefix(limit - 1)
+    return Array(kept) + [(key: -1, value: rows.dropFirst(limit - 1).reduce(0) { $0 + $1.value })]
+  }
+
+  func rowLabel(_ key: Int, format: WidgetFormat) -> String {
+    key < 0 ? WidgetText.text("other", locale: locale) : label(key, format: format)
+  }
+
+  func rowColor(_ key: Int, accented: Bool) -> Color {
+    key < 0 ? (accented ? Color.white.opacity(0.2) : WidgetPalette.otherModel) : color(key, accented: accented)
+  }
+}
 
 /// Monotone cubic through the points (no overshoot), like Swift Charts' `.monotone`.
 func monotonePath(_ points: [CGPoint], into path: inout Path, move: Bool) {
@@ -34,6 +87,7 @@ func monotonePath(_ points: [CGPoint], into path: inout Path, move: Bool) {
 /// The month card's stacked area with the total line.
 struct StackedAreaChart: View {
   let daily: [WidgetDay]
+  let breakdown: UsageBreakdown
   @Environment(\.widgetRenderingMode) private var renderingMode
 
   var body: some View {
@@ -47,33 +101,31 @@ struct StackedAreaChart: View {
           CGPoint(x: CGFloat(i) / CGFloat(n - 1) * size.width, y: size.height - CGFloat(layer[i] / maxTotal) * size.height)
         }
         ZStack {
-          ForEach(0..<3, id: \.self) { k in
-            let harness = harnessStack[k]
+          ForEach(breakdown.keys.indices, id: \.self) { k in
             Path { path in
               monotonePath((0..<n).map { point(layers[k + 1], $0) }, into: &path, move: true)
               monotonePath((0..<n).reversed().map { point(layers[k], $0) }, into: &path, move: false)
               path.closeSubpath()
             }
-            .fill(fill(harness, height: size.height))
+            .fill(fill(breakdown.keys[k]))
           }
-          Path { path in monotonePath((0..<n).map { point(layers[3], $0) }, into: &path, move: true) }
+          Path { path in monotonePath((0..<n).map { point(layers[breakdown.keys.count], $0) }, into: &path, move: true) }
             .stroke(WidgetPalette.ink.opacity(0.55), lineWidth: 1)
         }
       }
     }
   }
 
-  private func fill(_ harness: Int, height: CGFloat) -> LinearGradient {
-    let accented = renderingMode == .accented
-    let color = accented ? Color.white.opacity(WidgetPalette.accentedOpacity(harness)) : WidgetPalette.harness(harness)
+  private func fill(_ key: Int) -> LinearGradient {
+    let color = breakdown.color(key, accented: renderingMode == .accented)
     return LinearGradient(colors: [color.opacity(0.95), color.opacity(0.55)], startPoint: .top, endPoint: .bottom)
   }
 
   private func cumulative() -> [[Double]] {
     var layers: [[Double]] = [Array(repeating: 0, count: daily.count)]
-    for harness in harnessStack {
+    for key in breakdown.keys {
       let previous = layers.last!
-      layers.append(daily.indices.map { previous[$0] + daily[$0].money[harness] })
+      layers.append(daily.indices.map { previous[$0] + breakdown.value(daily[$0], key) })
     }
     return layers
   }
@@ -83,6 +135,7 @@ struct StackedAreaChart: View {
 struct DailyBars: View {
   let daily: [WidgetDay]
   let gap: CGFloat
+  let breakdown: UsageBreakdown
   var average: Double? = nil
   @Environment(\.widgetRenderingMode) private var renderingMode
 
@@ -105,11 +158,11 @@ struct DailyBars: View {
           } else {
             let height = max(3, CGFloat(day.total / maxTotal) * size.height)
             VStack(spacing: 0) {
-              ForEach(harnessStack.reversed(), id: \.self) { harness in
-                let value = day.money[harness]
+              ForEach(breakdown.keys.reversed(), id: \.self) { key in
+                let value = breakdown.value(day, key)
                 if value > 0 {
                   Rectangle()
-                    .fill(accented ? Color.white.opacity(WidgetPalette.accentedOpacity(harness)) : WidgetPalette.harness(harness))
+                    .fill(breakdown.color(key, accented: accented))
                     .frame(height: CGFloat(value / day.total) * height)
                 }
               }
@@ -150,20 +203,16 @@ struct AverageLegend: View {
   }
 }
 
-struct HarnessDot: View {
-  let harness: Int
-  @Environment(\.widgetRenderingMode) private var renderingMode
-  var body: some View {
-    Circle()
-      .fill(renderingMode == .accented ? Color.white.opacity(WidgetPalette.accentedOpacity(harness)) : WidgetPalette.harness(harness))
-      .frame(width: 6, height: 6)
-  }
+struct BreakdownDot: View {
+  let color: Color
+  var body: some View { Circle().fill(color).frame(width: 6, height: 6) }
 }
 
 struct UsageWidgetView: View {
   let state: WidgetState
   let now: Date
   @Environment(\.widgetFamily) private var family
+  @Environment(\.widgetRenderingMode) private var renderingMode
 
   var body: some View {
     switch state {
@@ -176,18 +225,20 @@ struct UsageWidgetView: View {
         let locale = Locale(identifier: snapshot.locale)
         EmptyStateView(title: WidgetText.text("emptyUsageTitle", locale: locale), body_: WidgetText.text("emptyUsageBody", locale: locale)).padding(16)
       } else {
-        content(snapshot, format: WidgetFormat(snapshot: snapshot, now: now))
+        let format = WidgetFormat(snapshot: snapshot, now: now)
+        content(snapshot, format: format, breakdown: UsageBreakdown(snapshot: snapshot, locale: format.locale))
       }
     }
   }
 
   @ViewBuilder
-  private func content(_ snapshot: WidgetSnapshot, format: WidgetFormat) -> some View {
+  private func content(_ snapshot: WidgetSnapshot, format: WidgetFormat, breakdown: UsageBreakdown) -> some View {
     let daily = snapshot.usage.daily
     let days = snapshot.usage.days
     let today = daily[daily.count - 1]
     let average = daily.reduce(0) { $0 + $1.total } / Double(daily.count)
     let todayLabel = format.s("today")
+    let accented = renderingMode == .accented
     switch family {
     case .systemSmall:
       VStack(alignment: .leading, spacing: 0) {
@@ -206,7 +257,7 @@ struct UsageWidgetView: View {
           .font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3).lineLimit(1)
         Spacer(minLength: 0)
         let week = Array(daily.suffix(7)), weekDays = Array(days.suffix(7))
-        DailyBars(daily: week, gap: 8).frame(height: 36)
+        DailyBars(daily: week, gap: 8, breakdown: breakdown).frame(height: 36)
         HStack(spacing: 8) {
           ForEach(weekDays.indices, id: \.self) { i in
             Text(format.weekdayNarrow(weekDays[i]))
@@ -222,7 +273,6 @@ struct UsageWidgetView: View {
       let total = daily.reduce(0) { $0 + $1.total }
       let paid = daily.reduce(0) { $0 + $1.paid }
       let tokens = daily.reduce(0) { $0 + $1.totalTokens }
-      let byHarness = (0..<3).map { h in daily.reduce(0) { $0 + $1.money[h] } }
       let lastDay = days[days.count - 1]
       VStack(alignment: .leading, spacing: 0) {
         HStack {
@@ -236,14 +286,14 @@ struct UsageWidgetView: View {
           .font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3).padding(.top, 3)
         Spacer(minLength: 6)
         AverageLegend(text: "\(format.s("dailyAverage")) \(format.money(average))").padding(.bottom, 5)
-        DailyBars(daily: daily, gap: 3, average: average).frame(height: 108)
+        DailyBars(daily: daily, gap: 3, breakdown: breakdown, average: average).frame(height: 100)
         HStack {
           Text(format.monthDay(days[0]))
           Spacer()
           Text(todayLabel)
         }
         .font(.system(size: 10)).foregroundStyle(WidgetPalette.ink3).padding(.top, 4)
-        Rectangle().fill(WidgetPalette.line).frame(height: 0.5).padding(.top, 12).padding(.bottom, 10)
+        Rectangle().fill(WidgetPalette.line).frame(height: 0.5).padding(.top, 10).padding(.bottom, 9)
         HStack(alignment: .firstTextBaseline, spacing: 6) {
           Text(format.s(snapshot.usage.scope == "local" ? "monthScopeLocal" : "monthScopeAll").components(separatedBy: " · ").first ?? "")
             .font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3)
@@ -252,7 +302,9 @@ struct UsageWidgetView: View {
           Text("\(format.s("paid")) \(format.money(paid)) · \(format.tokens(tokens)) \(format.s("tokenUnit"))")
             .font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3).lineLimit(1)
         }
-        HarnessSplit(byHarness: byHarness, format: format).padding(.top, 9)
+        BreakdownSplit(rows: breakdown.ranked(limit: 4) { key in daily.reduce(0) { $0 + breakdown.value($1, key) } },
+                       total: total, breakdown: breakdown, format: format)
+          .padding(.top, 8)
       }
       .padding(EdgeInsets(top: 16, leading: 16, bottom: 14, trailing: 16))
     default:
@@ -268,22 +320,23 @@ struct UsageWidgetView: View {
               .font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3)
             Spacer(minLength: 0)
             VStack(alignment: .leading, spacing: 4) {
-              ForEach([0, 1, 2].filter { today.money[$0] > 0 }.sorted { today.money[$0] > today.money[$1] }, id: \.self) { h in
+              ForEach(breakdown.ranked(limit: 3) { breakdown.value(today, $0) }, id: \.key) { row in
                 HStack(spacing: 5) {
-                  HarnessDot(harness: h)
-                  Text(format.s("harness.\(harnessKeys[h])")).font(.system(size: 10.5)).foregroundStyle(WidgetPalette.ink2)
-                    .lineLimit(1).minimumScaleFactor(0.85)
+                  BreakdownDot(color: breakdown.rowColor(row.key, accented: accented))
+                  Text(breakdown.rowLabel(row.key, format: format)).font(.system(size: 10.5)).foregroundStyle(WidgetPalette.ink2)
+                    .lineLimit(1).truncationMode(.tail)
                   Spacer(minLength: 2)
-                  Text(format.money(today.money[h])).font(WidgetNumFont.font(14)).foregroundStyle(WidgetPalette.ink)
+                  Text(format.money(row.value)).font(WidgetNumFont.font(14)).foregroundStyle(WidgetPalette.ink)
+                    .fixedSize()
                 }
               }
             }
           }
-          .frame(width: 116)
+          .frame(width: 124)
           VStack(spacing: 0) {
             Spacer(minLength: 0)
             AverageLegend(text: "\(format.s("dailyAverage")) \(format.money(average))").padding(.bottom, 5)
-            DailyBars(daily: Array(daily.suffix(14)), gap: 4, average: average).frame(height: 80)
+            DailyBars(daily: Array(daily.suffix(14)), gap: 4, breakdown: breakdown, average: average).frame(height: 80)
             HStack {
               Text(format.monthDay(days[max(0, days.count - 14)]))
               Spacer()
@@ -298,43 +351,39 @@ struct UsageWidgetView: View {
   }
 }
 
-/// One thin bar and three columns: name and share above, amount below (Mac usage page).
-struct HarnessSplit: View {
-  let byHarness: [Double]
+/// One thin bar, then the parts in two columns: dot, name and share, amount on the right.
+struct BreakdownSplit: View {
+  let rows: [(key: Int, value: Double)]
+  let total: Double
+  let breakdown: UsageBreakdown
   let format: WidgetFormat
   @Environment(\.widgetRenderingMode) private var renderingMode
 
   var body: some View {
-    let total = max(byHarness.reduce(0, +), 0.0001)
-    let order = [1, 0, 2]
+    let accented = renderingMode == .accented
+    let sum = max(total, 0.0001)
     VStack(alignment: .leading, spacing: 8) {
       GeometryReader { geometry in
-        let present = order.filter { byHarness[$0] > 0 }
-        let available = geometry.size.width - CGFloat(max(0, present.count - 1)) * 2
+        let available = geometry.size.width - CGFloat(max(0, rows.count - 1)) * 2
         HStack(spacing: 2) {
-          ForEach(present, id: \.self) { h in
+          ForEach(rows, id: \.key) { row in
             Capsule()
-              .fill(renderingMode == .accented ? Color.white.opacity(WidgetPalette.accentedOpacity(h)) : WidgetPalette.harness(h))
-              .frame(width: max(6, CGFloat(byHarness[h] / total) * available))
+              .fill(breakdown.rowColor(row.key, accented: accented))
+              .frame(width: max(6, CGFloat(row.value / sum) * available))
           }
         }
       }
       .frame(height: 4)
-      HStack(alignment: .top, spacing: 0) {
-        ForEach(order.indices, id: \.self) { position in
-          let h = order[position]
-          if position > 0 { Spacer(minLength: 10) }
-          VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 5) {
-              HarnessDot(harness: h)
-              Text(format.s("harness.\(harnessKeys[h])")).foregroundStyle(WidgetPalette.ink2)
-              Text("\(Int((byHarness[h] / total * 100).rounded()))%").foregroundStyle(WidgetPalette.ink3)
-            }
-            .font(.system(size: 10.5))
-            .lineLimit(1)
-            Text(format.money(byHarness[h])).font(WidgetNumFont.font(16)).foregroundStyle(WidgetPalette.ink).padding(.leading, 11)
+      LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], alignment: .leading, spacing: 5) {
+        ForEach(rows, id: \.key) { row in
+          HStack(spacing: 5) {
+            BreakdownDot(color: breakdown.rowColor(row.key, accented: accented))
+            Text(breakdown.rowLabel(row.key, format: format)).foregroundStyle(WidgetPalette.ink2).lineLimit(1).truncationMode(.tail)
+            Text("\(Int((row.value / sum * 100).rounded()))%").foregroundStyle(WidgetPalette.ink3).fixedSize()
+            Spacer(minLength: 2)
+            Text(format.money(row.value)).font(WidgetNumFont.font(14)).foregroundStyle(WidgetPalette.ink).fixedSize()
           }
-          .fixedSize()
+          .font(.system(size: 10.5))
         }
       }
     }

@@ -11,6 +11,7 @@ import {
   paygSource,
   planLabel,
   type MenubarCollectDeps,
+  usageScope,
 } from '../collect';
 import { topModels, type MenubarSubscriptionInput } from '../snapshot';
 import type { UsageHistoryPayload, UsageHistoryTask } from '../../usage/usageHistory';
@@ -355,4 +356,20 @@ it('maps Kimi periods and removes expired or stale numbers from the menu bar', (
   expect(source.windows).toMatchObject([{ kind: 'session', usedPercent: 20, windowMinutes: 300 }, { kind: 'period', usedPercent: 30, windowMinutes: 0 }]);
   expect(kimiSource(account, { ...result, stale: true } as never, NOW).windows).toEqual([]);
   expect(kimiSource(account, { status: 'unavailable', error: 'auth' }, NOW).windows).toEqual([]);
+});
+
+// iPhone usage widgets split each day by model: the busiest five of the last 30 days keep
+// their own series and everything else is summed last.
+it('splits daily value by the five busiest models and sums the rest', () => {
+  const money = (amount: number) => ({ amount, currency: 'USD', approximate: false, kind: 'actual-cost' }) as const;
+  const days = dayKeysEndingAt('2026-10-11', 2);
+  const row = (day: string, model: string, amount: number) =>
+    ({ day, agentKind: 'codex', model, tokens: 1, money: money(amount), apiMoney: money(0), subscriptionEstimateMoney: money(amount) });
+  const payload = { todayKey: '2026-10-11', modelDaily: [
+    ...['m1', 'm2', 'm3', 'm4', 'm5', 'm6'].map((model, i) => row('2026-10-11', model, 60 - i * 10)),
+    row('2026-10-10', 'm6', 4),
+  ] } as unknown as UsageHistoryPayload;
+  const series = usageScope(payload, days, []).modelSeries!;
+  expect(series.models.map((m) => m.name)).toEqual(['m1', 'm2', 'm3', 'm4', 'm5']);
+  expect(series.daily).toEqual([[0, 0, 0, 0, 0, 4], [60, 50, 40, 30, 20, 10]]);
 });
