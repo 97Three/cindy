@@ -48,7 +48,10 @@ function sdkPlan(html: string) {
         if (type === 'importmap') {
           try {
             const map = JSON.parse(text);
-            authoredSdk ||= typeof map?.imports?.[moduleName] === 'string';
+            authoredSdk ||= Object.entries(map?.imports ?? {}).some(([name, address]) =>
+              (name === moduleName || (name.endsWith('/') && moduleName.startsWith(name))) &&
+              (address === null || (typeof address === 'string' &&
+                (name === moduleName || address.endsWith('/')))));
             const location = node.sourceCodeLocation;
             if (!authoredMap && map && typeof map === 'object' && !Array.isArray(map) &&
                 (map.imports === undefined || (map.imports && typeof map.imports === 'object' && !Array.isArray(map.imports))) &&

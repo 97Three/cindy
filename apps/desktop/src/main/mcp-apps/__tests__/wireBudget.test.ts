@@ -101,11 +101,13 @@ async function initialized(host: McpAppsHost, caller: string) {
 }
 
 describe('MCP Apps serialized remote result budgets', () => {
-  it('accepts the complete remote document at its limit, including CSP and JSON escaping', async () => {
+  // Ordinary metadata and an authored SDK prefix both keep the legacy wire budget.
+  it.each([
+    '<script>const packageName = "@modelcontextprotocol/ext-apps";</script>',
+    '<script type="importmap">{"imports":{"@modelcontextprotocol/":"https://vendor.example/mcp/"}}</script><script type="module">import "@modelcontextprotocol/ext-apps";</script>',
+  ])('accepts the complete remote document at its limit with authored SDK provisioning: %s', async (prefix) => {
     const f = fixture();
     const empty = await f.host.open('renderer:local', 'task', 'card', {});
-    // A bundled page's package metadata is not a dependency on the Host SDK.
-    const prefix = '<script>const packageName = "@modelcontextprotocol/ext-apps";</script>';
     const overhead = Buffer.byteLength(JSON.stringify({ ...empty, html: prefix, sdk: undefined }));
     const html = prefix + 'x'.repeat(MCP_APPS_MAX_REMOTE_BYTES - overhead);
     f.resource.mockResolvedValue({ result: f.contents(html) });

@@ -258,3 +258,14 @@ it.each([
   const html = '<!doctype html><script type="module">' + source + '</script>';
   expect(withHostAppSdk(html, sdkUrl)).toBe(html);
 });
+
+// Codex 4428250526: the browser accepts prefix importmap entries; overriding one
+// changes an installed page's SDK. Unit / production preparation, exact bytes.
+it.each([
+  { '@modelcontextprotocol/': 'https://vendor.example/mcp/' },
+  { '@modelcontextprotocol/': null },
+  { '@modelcontextprotocol/ext-apps': null },
+])('preserves authored SDK prefix mappings and explicit blocks: %j', imports => {
+  const html = '<script type="importmap">' + JSON.stringify({ imports }) + '</script>' + sdkModule;
+  expect(withHostAppSdk(html, sdkUrl)).toBe(html);
+});
