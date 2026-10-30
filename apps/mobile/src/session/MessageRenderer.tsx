@@ -1,3 +1,5 @@
+import { segmentTeammateWork, summarizeTeammateWork, teammateWorkSummaryText } from '@cindy/maker-shared/work-activity-projection';
+import { TeammateProcess, TeammateWorkSegment, useTeammateElapsedTitle } from './TeammateProcess';
 import { VideoSitePreview } from './VideoSitePreview';
 import { InlineVideoPlayer } from './InlineVideoPlayer';
 import { youtubeVideo } from '@cindy/maker-shared/rich-answer';
@@ -568,11 +570,13 @@ interface CompanionQuoteActions extends CompanionQuoteOptions {
 interface MessageActions {
   onRetryImageDelivery?: (imageId: string) => Promise<void>;
   companion?: boolean;
+  intermediateProcess?: boolean;
   companionQuoteActions?: CompanionQuoteActions;
   companionThreads?: CompanionThreads;
   onCompanionReadThrough?: (at: number) => void;
   onOpenCompanionSettings?: (page: 'memory' | 'capabilities') => void;
   companionWorkingLabel?: string | null;
+  companionAttentionLabel?: string;
   /** Teammate portrait beside its replies (Desktop withAssistantAvatar). */
   companionAvatar?: ReactNode;
   /** First visible message of each five-minute teammate time group → its timestamp. */
@@ -651,6 +655,7 @@ export function MessageRenderer({
   companionThreads,
   conversationHeader,
   companionWorkingLabel,
+  companionAttentionLabel,
   onOpenCompanionSettings,
   companionAvatar,
   companionPluginInvocations,
@@ -719,6 +724,7 @@ export function MessageRenderer({
   conversationHeader?: ReactNode;
   onOpenCompanionSettings?: (page: 'memory' | 'capabilities') => void;
   companionWorkingLabel?: string | null;
+  companionAttentionLabel?: string;
   companionAvatar?: ReactNode;
   companionPluginInvocations?: ReadonlyMap<string, PluginInvocation[]>;
   /** Offscreen preload and disappearing native screens must not replace the user's bookmark. */
@@ -1726,7 +1732,8 @@ export function MessageRenderer({
     companionQuoteActions,
     companionThreads,
     companionWorkingLabel,
-  onOpenCompanionSettings,
+    companionAttentionLabel,
+    onOpenCompanionSettings,
     companionAvatar,
     companionTimeGroups,
     companionPluginWork,
@@ -1771,7 +1778,8 @@ export function MessageRenderer({
     companionQuoteActions,
     companionThreads,
     companionWorkingLabel,
-  onOpenCompanionSettings,
+    companionAttentionLabel,
+    onOpenCompanionSettings,
     companionAvatar,
     companionTimeGroups,
     companionPluginWork,
@@ -2977,7 +2985,7 @@ const RenderItemView = memo(function RenderItemView({
       node = <AgentTaskCard item={item} screenWidth={actions.screenWidth} />;
       break;
     case 'work_group':
-      node = <WorkGroupCard item={item} actions={actions} />;
+      node = item.teammateJournal ? <TeammateProcessCard item={item} actions={actions} /> : <WorkGroupCard item={item} actions={actions} />;
       break;
     case 'subagent_group':
       node = <SubagentCard item={item} actions={actions} />;
@@ -3594,10 +3602,10 @@ function MessageBubble({
     hasTurnCost: !!turnCost || !!turnTokens,
     isStreaming: isStreamingAssistant,
   }), [canCopy, canFork, isStreamingAssistant, isUser, messageMenu.length, relativeTime, turnCost, turnTokens]);
-  const threadEligible = actions.companion && actions.companionThreads && clientId && !isStreamingAssistant
+  const threadEligible = !actions.intermediateProcess && actions.companion && actions.companionThreads && clientId && !isStreamingAssistant
     && !!companionReplyQuoteFor(item.message);
-  const hasActions = actionBar.items.length > 0 || canShare || !!threadEligible;
-  const reserveActionSlot = !shareSelectionActive
+  const hasActions = !actions.intermediateProcess && (actionBar.items.length > 0 || canShare || !!threadEligible);
+  const reserveActionSlot = !actions.intermediateProcess && !shareSelectionActive
     && !actions.companion
     && isStreamingAssistant
     && !item.message.systemCardType
@@ -3764,6 +3772,7 @@ function MessageBubble({
         presentation.density === 'rich' && styles.bubbleRich,
         isUser ? styles.userBubble : styles.agentBubble,
         actions.companion && !isUser && !item.message.systemCardType && styles.companionAnswer,
+        actions.intermediateProcess && { paddingVertical: 0 },
         hookSource && styles.hookSourceBubble,
         isUser && !item.message.systemCardType && userBubbleColors
           && isOwnUserBubble(item.message, { accountId: viewer?.id, remoteDeviceId: actions.remoteDeviceId })
@@ -4753,6 +4762,69 @@ function AgentTaskCard({
       )}
     </FoldablePanel>
   );
+}
+
+/** Teammate-specific presentation; ordinary task folds keep their existing contract. */
+function TeammateProcessCard({ item, actions }: { item: MobileWorkGroupItem; actions: MessageActions }) {
+  const title = useTeammateElapsedTitle(item.isStreaming === true, item.startedAtMs, item.durationMs);
+  return <TeammateProcess id={item.key} running={item.isStreaming} title={item.isStreaming && actions.companionAttentionLabel || title}>
+    <TeammateProcessContents item={item} actions={actions} />
+  </TeammateProcess>;
+}
+
+function TeammateProcessContents({ item, actions }: { item: MobileWorkGroupItem; actions: MessageActions }) {
+  const { t } = useTranslation();
+  const { colors } = useTheme();
+  const flattened = useMemo(() => {
+    const leaves: MobileWorkGroupItem['children'] = [];
+    const loaders: NonNullable<MobileWorkGroupItem['deferred']>[] = [];
+    const walk = (group: MobileWorkGroupItem) => {
+      if (group.deferred) loaders.push(group.deferred);
+      group.children.forEach(child => child.type === 'work_group' ? walk(child) : leaves.push(child));
+    };
+    walk(item);
+    return { leaves, loaders };
+  }, [item]);
+  const loadersRef = useRef(flattened.loaders);
+  loadersRef.current = flattened.loaders;
+  const loaderKey = flattened.loaders.map(loader => `${loader.owner}:${loader.key}`).join('|');
+  useLayoutEffect(() => {
+    const loaders = loadersRef.current;
+    const releases = loaders.map(loader => {
+      if (loader.setVisible) return loader.setVisible(true, false);
+      if (!loader.expanded) loader.toggle();
+      return undefined;
+    });
+    return () => releases.forEach(release => release?.());
+  }, [loaderKey]);
+  const childActions = useMemo(() => ({ ...actions, companionAvatar: undefined, intermediateProcess: true }), [actions]);
+  const segments = useMemo(() => segmentTeammateWork(flattened.leaves, child => child.type === 'thinking' || child.type === 'tool_group'), [flattened.leaves]);
+  return <>
+    {segments.map((segment, index) => segment.kind === 'content'
+      ? <RenderItemView key={segment.key} item={segment.item} actions={childActions} />
+      : <TeammateProcessActivities key={segment.key} id={`${item.key}:${segment.key}`} items={segment.items} actions={childActions}
+          streaming={item.isStreaming === true && index === segments.length - 1} last={index === segments.length - 1} />)}
+    {flattened.loaders.some(loader => loader.loading) && <ActivityIndicator color={colors.textSecondary} />}
+    {flattened.loaders.filter(loader => loader.failed).map(loader => <Pressable key={loader.key} accessibilityRole="button"
+      onPress={loader.retry} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.textSecondary }}>{t('message.renderer.retryPreview')}</Text></Pressable>)}
+    {item.isStreaming && segments.at(-1)?.kind === 'content' && <TeammateWorkSegment id={`${item.key}:pending`} title={t('chat.teammateProcess.thinking')} running hasTools={false} failed={false} />}
+  </>;
+}
+function TeammateProcessActivities({ id, items, actions, streaming, last }: {
+  id: string; items: MobileWorkGroupItem['children']; actions: MessageActions; streaming: boolean; last: boolean;
+}) {
+  const { t } = useTranslation();
+  const projection = useMemo(() => projectMobileWorkActivities(items, streaming, true), [items, streaming]);
+  const summary = useMemo(() => summarizeTeammateWork(projection.activities), [projection]);
+  const title = teammateWorkSummaryText({ ...summary, thinking: summary.thinking || items.some(child => child.type === 'thinking') }, streaming, t);
+  const layout = useMemo(() => buildMessageContentLayout({ screenWidth: actions.screenWidth }), [actions.screenWidth]);
+  return <TeammateWorkSegment id={id} title={title} running={streaming && (summary.running || !summary.toolCount)} last={last}
+    hasTools={summary.toolCount > 0} failed={summary.failedCount > 0}>
+    {items.map(child => child.type === 'tool_group' ? <View key={child.key}>
+      {(projection.toolActivitiesByChildKey.get(child.key) ?? []).map(activity => <WorkToolActivityRow key={activity.key}
+        activity={activity} actions={actions} contentLayout={layout} />)}
+    </View> : null)}
+  </TeammateWorkSegment>;
 }
 
 function WorkGroupCard({

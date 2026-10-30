@@ -102,10 +102,10 @@ describe('伙伴设置包含独立能力选择入口', () => {
   });
 });
 
-describe('伙伴消息流与普通任务同一套工作过程', () => {
-  it('工作组按普通任务渲染，输入框上方只保留普通状态栏', () => {
+describe('伙伴消息流复用工作组件并保留独立过程分组', () => {
+  it('伙伴过程使用伙伴分组入口，输入框上方仍保留普通状态栏', () => {
     expect(sessionView).toContain('simplifiedBotConversation={Boolean(botChatIdentity)}');
-    expect(messageStream).toContain('simplifyBotRenderItems(grouped, isSessionStreaming, visibleGeneratedFileKeys)');
+    expect(messageStream).toContain('botProcessItems(grouped, isSessionStreaming)');
     // Text/tool grouping is covered by botConversationPresentation behavioral tests.
     expect(messageStream).toContain("from '@/features/bots/botConversationPresentation'");
     expect(messageStream).toContain('compact={false}');

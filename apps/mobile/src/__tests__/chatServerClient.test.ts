@@ -5,7 +5,7 @@ import { botGroupNewMessageCount } from '@cindy/maker-shared/botGroupPresentatio
 import { createChatHistory, type ChatHistoryState } from '@cindy/maker-shared/chat-history';
 import { chatGroupView, chatRoomRow, chatReadAt, createChatServerClient, type ChatMessage, type ChatPage, type ChatRoom, type ChatSnapshot } from '@/chat/chatServerClient';
 import type { ChatHistory } from '@cindy/maker-shared/chat-history';
-import { botGroupQuoteFromMessage, resolveBotGroupQuote, buildBotGroupQuoteCard, buildBotGroupTaskCard } from '@cindy/maker-shared/botGroupChat';
+import { botGroupQuoteFromMessage, resolveBotGroupQuote, buildBotGroupQuoteCard, buildBotGroupTaskCard, botGroupProcessCard } from '@cindy/maker-shared/botGroupChat';
 import { orderedBotGroups } from '@/session/botGroupRemote';
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const room = (n = 1, state = 'joined'): ChatRoom => ({ id: id(n), name: 'Discussion', kind: 'group', state, archived: false,
@@ -580,6 +580,21 @@ it('reads Cindy preset identity without inferring from names and retains known I
   const ids = await createChatServerClient(request as any).cindyCompanionIds(actors, ['bot-4']);
   expect(ids).toEqual(['bot-1', 'bot-2', 'bot-4']);
   expect(request.mock.calls.every(call => call[0] === '/preferences' && call[1] === 'GET')).toBe(true);
+});
+
+// Unit: group and thread projections retain the optional process locator while
+// old messages, human-authored cards and deleted replies keep their prior behavior.
+it('keeps process metadata out of the reply and preview, and exposes it only for a bot', () => {
+  const ref = { groupId: id(1), executionId: id(40), sessionId: 'lane', clientId: 'source' };
+  const reply = { ...message(20), author: { kind: 'bot' as const, name: 'Cindy' },
+    threadRootId: id(15), content: [{ type: 'text', text: 'Result' }, botGroupProcessCard(ref)] };
+  const page = { snapshot: snapshot(), messages: [reply], before: null } as ChatPage;
+  const [view] = chatGroupView(page, id(11)).messages;
+  expect(view).toMatchObject({ content: 'Result', process: ref, threadRootId: id(15) });
+  expect(chatRoomRow(room(), { ...snapshot(), messages: [reply] }, id(11)).item.display.preview).toBe('Result');
+  for (const changed of [{ ...reply, author: { kind: 'human' as const, name: 'Other' } }, { ...reply, deleted: true }]) {
+    expect(chatGroupView({ ...page, messages: [changed] }, id(11)).messages[0]?.process).toBeUndefined();
+  }
 });
 
 // Unit: invitation contract (bot-group-chat §10). Existing client tests covered joined rooms only.

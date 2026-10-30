@@ -1400,10 +1400,27 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
               />
             </div>
           ) : null}
-          {speakers.map((speaker) => (runningStep && speaker.activity === 'step'
-            // The progress strip carries a running step's status; only its confirmations stay here.
-            ? <BotGroupSpeakerInteraction key={speaker.executionId ?? `${speaker.member.botId}:${speaker.activity}`} speaker={speaker} />
-            : <BotGroupSpeakingLine key={speaker.executionId ?? `${speaker.member.botId}:${speaker.activity}`} speaker={speaker} />))}
+          {speakers.map(speaker => speaker.activity === 'planning'
+            ? <BotGroupSpeakingLine key={speaker.executionId ?? speaker.member.botId} speaker={speaker} />
+            : <BotGroupSpeakerInteraction key={speaker.executionId ?? speaker.member.botId} speaker={speaker} />)}
+      {running && (runningStep || speakers.length > 0) && !sharing && !group.archived ? (
+        <BotGroupProgressStrip
+          key={runningStep ? `step:${runningStep.plan.id}:${runningStep.step.position}` : speakingKey}
+          step={runningStep ? {
+            ...runningStep,
+            member: memberById.get(runningStep.step.botId),
+            displayName: (() => {
+              const member = memberById.get(runningStep.step.botId);
+              return member ? botGroupMemberDisplayName(member) : runningStep.step.botName;
+            })(),
+          } : null}
+          speakers={speakers}
+          onStop={scope => void stopRound(scope)}
+          canStopAll={!!group.canStopAll && !!group.round.othersActive}
+          stopping={stopping}
+        />
+      ) : null}
+
         </div>
       </div>
       <div className="relative h-0 shrink-0" inert={newMessageCount <= 0}>
@@ -1432,23 +1449,6 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
               onReadMentions={personalMask ? () => personalMask.markMentionsRead() : undefined} saving={personalMask?.saving} />
           </div>
         </div>
-      ) : null}
-      {running && (runningStep || speakers.length > 0) && !sharing && !group.archived ? (
-        <BotGroupProgressStrip
-          key={runningStep ? `step:${runningStep.plan.id}:${runningStep.step.position}` : speakingKey}
-          step={runningStep ? {
-            ...runningStep,
-            member: memberById.get(runningStep.step.botId),
-            displayName: (() => {
-              const member = memberById.get(runningStep.step.botId);
-              return member ? botGroupMemberDisplayName(member) : runningStep.step.botName;
-            })(),
-          } : null}
-          speakers={speakers}
-          onStop={scope => void stopRound(scope)}
-          canStopAll={!!group.canStopAll && !!group.round.othersActive}
-          stopping={stopping}
-        />
       ) : null}
       {sharing ? <ShareSelectionBar sessionId={shareScope} barWidth="100%"
         getContentWidth={() => contentRef.current?.querySelector('article')?.getBoundingClientRect().width ?? 760} /> : group.archived || group.dissolvedAt ? <p className="border-t border-[var(--border-default)] p-4 text-center text-13 text-[var(--text-tertiary)]">{t(group.dissolvedAt ? 'bots.groupChat.lifecycle.dissolved' : 'bots.groupChat.server.settings.archived')}</p> : <BotGroupComposer

@@ -1,3 +1,4 @@
+import { botGroupProcessCard, readBotGroupProcessCard } from '../../shared/botGroupChat.js';
 import { createChatWorkPolling, createWorkRequestGate, WorkRequestDeferred } from './chatWorkPolling.js';
 import { teammateChatActivity } from '@cindy/maker-shared/teammate-status';
 import { prepareChatReplyFiles } from './chatServerReplyFiles.js';
@@ -114,7 +115,7 @@ interface ServerPlan {
   created_at: string; updated_at: string;
 }
 interface Running {
-  execution: Execution; sessionId: string; clientId: string; accepted: boolean; started: number;
+  execution: Execution; sessionId: string; clientId: string; accepted: boolean; started: number; durationMs?: number;
   /** The conversation this turn answers in (see executionLane); unknown until its source is read. */
   lane?: string;
   laneLookup?: Promise<void>;
@@ -207,7 +208,7 @@ const groupInput = z.object({ name: z.string().trim().min(1).max(40), botIds: z.
 // A recognized quote card is shown as the quote, not as body text; unknown revisions keep their fallback.
 // A task card is the message's task only on a teammate's own message; a human may not post one for it.
 const taskCardOf = (m: Message) => m.author.kind === 'bot' ? m.content.map(readBotGroupTaskCard).find(Boolean) ?? null : null;
-const bodyBlocks = (m: Message) => m.content.filter(b => (b.namespace !== 'cindy.local-history' || b.data?.activity === true) && !readBotGroupQuoteCard(b)
+const bodyBlocks = (m: Message) => m.content.filter(b => !readBotGroupProcessCard(b) && (b.namespace !== 'cindy.local-history' || b.data?.activity === true) && !readBotGroupQuoteCard(b)
   && !(m.author.kind === 'bot' && readBotGroupTaskCard(b)));
 const contentText = (m: Message, forModel: boolean) => m.deleted ? '（消息已删除）' : readImportedBotGroupRuntimeFailureCode(m) ? '' : bodyBlocks(m)
   .flatMap(b => b.type !== 'media' ? [b.text ?? b.fallback ?? ''] : forModel ? [b.text ?? b.fallback ?? `[附件: ${b.caption ?? '文件'}]`] : []).join('\n');
@@ -1405,8 +1406,9 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       planId: null, files: [], attachments: [], createdAt: Date.parse(m.createdAt) };
     const quote = m.deleted || planCard ? null : readBotGroupQuote(m.content);
     const task = m.deleted || planCard ? null : taskCardOf(m);
+    const process = !m.deleted && m.author.kind === 'bot' ? m.content.map(readBotGroupProcessCard).find(Boolean) : null;
     return { id: m.id, maskAttribution: m.maskAttribution, sequence: Number(m.seq), serverSequence: m.seq, deleted: m.deleted, kind: planCard ? 'plan' : 'message', authorKind: legacy?.authorKind === 'system' ? 'system' : m.author.kind === 'human' ? 'user' : 'bot',
-      isSelf: m.authorId === selfId, threadRootId: m.threadRootId, replyCount: m.replyCount ?? 0, reactions: m.reactions ?? [], ...(quote ? { quote } : {}), ...(task ? { task } : {}),
+      isSelf: m.authorId === selfId, threadRootId: m.threadRootId, replyCount: m.replyCount ?? 0, reactions: m.reactions ?? [], ...(quote ? { quote } : {}), ...(task ? { task } : {}), ...(process ? { process } : {}),
       authorBotId: localBot(m.authorId)?.id ?? m.authorId, authorName: legacy?.authorKind === 'system' && typeof legacy.authorName === 'string' ? legacy.authorName : member ? memberName(member, ownerMembers) : m.author.name, content: displayText(m),
       mentions: { all: false, botIds: (m.mentions ?? []).map(actorId => localBot(actorId)?.id ?? actorId) }, noticeCode: null, planId: typeof planCard?.data?.planId === 'string' ? planCard.data.planId : null, files: [], attachments: [], createdAt: Date.parse(m.createdAt) };
   }
@@ -2087,6 +2089,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
   async function settleExecution(run: Running, terminal: BotGroupLaneTerminal, abort = false): Promise<void> {
     if (!current() || running.get(run.execution.id) !== run) return;
     if (!run.settlement) {
+      run.durationMs = Math.max(0, Date.now() - run.started);
       run.settlement = { terminal: { ...terminal }, retryAt: 0 };
       run.releaseToolAuthority?.();
       // Retries and late SDK events must not abort the lane again or change its result.
@@ -2170,7 +2173,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
             if (failureCodes.size > 1000) failureCodes.delete(failureCodes.keys().next().value!);
           }
           pending.payload = terminal.outcome === 'error' ? { detail: botGroupRuntimeFailureDetail(terminal.failureCode ?? 'RUNTIME_ERROR') }
-            : { ...(isBotGroupNoReplyText(text) && !files.length ? {} : { content: [{ type: 'text', text: contentText.slice(0, 16000) || '已完成' }, ...files] }),
+            : { ...(isBotGroupNoReplyText(text) && !files.length ? {} : { content: [{ type: 'text', text: contentText.slice(0, 16000) || '已完成' }, ...files, botGroupProcessCard({ groupId: run.execution.conversation_id, executionId: run.execution.id, sessionId: run.sessionId, clientId: run.clientId, durationMs: run.durationMs, ...(selfDeviceId ? { deviceId: selfDeviceId } : {}) })] }),
               // A single-speaker server never chains rounds, so there is nothing to continue.
               ...(singleSpeaker || run.execution.mask_owner_id ? {} : { continueDiscussion: run.context?.kind !== 'member.joined' && !run.plan && !isBotGroupNoReplyText(text) }) };
         }

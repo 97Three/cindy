@@ -1,3 +1,4 @@
+import { BotGroupProcess } from './BotGroupProcess';
 import { useGroupPersonalMask } from './useGroupPersonalMask';
 import { GroupMaskAvatar, GroupMaskStatus, GroupMaskSettingsSheet, GroupMaskCatchupSheet } from './GroupMaskControls';
 import type { ChatMaskMention } from '@cindy/maker-shared/botGroupChat';
@@ -665,6 +666,8 @@ function BotGroupChatContent({ deviceId, deviceName, groupId, messageId, notific
           onPlanAction={(action, planId) => void runPlanAction(action, planId)}
           onEditStep={(planId, step, action, botId) => void editPlanStep(planId, step, action, botId)}
           />
+      {!imageSelectionActive && !threadRootId ? <BotGroupWorkArea group={group} deviceId={deviceId} online={chat.online} identityFor={identityFor}
+        onError={message => { if (message) Alert.alert(message); }} /> : null}
       </ScrollView>
       </MessageListVisibilityContext.Provider>
       {newMessageCount > 0 || mask.mentions.length > 0 ? <View style={styles.newMessages} accessibilityLiveRegion="polite">
@@ -694,8 +697,6 @@ function BotGroupChatContent({ deviceId, deviceName, groupId, messageId, notific
         <View style={styles.flex}><BotGroupQuote display={resolveBotGroupQuote(replyTo, group.messages)} onPress={() => locateMessage(replyTo.messageId)} /></View>
         <MainWindowActionButton density="compact" action={{ label: t('message.quote.remove'), onPress: () => setReplyTo(null), testID: 'botGroup.cancelReply' }} />
       </View> : null}
-      {!imageSelectionActive && !threadRootId ? <BotGroupWorkArea group={group} deviceId={deviceId} online={chat.online} identityFor={identityFor}
-        onError={message => { if (message) Alert.alert(message); }} /> : null}
       <BotGroupTopicImageShare key={shareScope} selectionScope={shareScope} messages={selectedMessages} allIds={shareableIds}
         resolveMedia={chat.media} onBusyChange={setImageShareBusy} />
       <View style={selectedImages ? styles.hiddenComposer : undefined} testID="botGroup.composerContainer">
@@ -855,7 +856,7 @@ export function BotGroupTimeline({
         {!threadRootId && groupTime !== undefined ? <Text style={styles.time}>{formatBotMessageGroupTime(groupTime, i18n.language)}</Text> : null}
         {firstNew !== undefined && index === firstNew && firstNew > firstReply ? <View style={styles.newReplyBoundary}><View style={styles.newReplyLine} /><Text style={styles.newReplyDivider}>{t('groupChat.thread.newRepliesDivider')}</Text></View> : null}
         <CompanionEntering id={key} createdAt={message.createdAt} kind={message.authorKind === 'user' ? 'send' : 'reply'}>
-        <BotGroupTimelineItem footer={selectedImages || queued || message.kind !== 'message' || message.deleted ? undefined : <View style={[styles.messageFooter, ownMessage && styles.ownMessageFooter]}>
+        <BotGroupTimelineItem groupId={group.id} footer={selectedImages || queued || message.kind !== 'message' || message.deleted ? undefined : <View style={[styles.messageFooter, ownMessage && styles.ownMessageFooter]}>
         {onOpenThread && !message.threadRootId && !message.threadShare ?
           <BotGroupThreadEntry message={message} identityFor={identityFor} onPress={() => onOpenThread(message)} />
         : null}
@@ -908,9 +909,10 @@ export function BotGroupTimeline({
 }
 
 function BotGroupTimelineItem({
-  message, footer, topic = false, isRoot = false, onRetrySource, continued = false, quoteDisplay, onLocateQuote, member, members, deviceId, online, identityFor, mentionLabels, resolveMedia, resolveServerMedia, canContinue, continuing, onContinue,
+  groupId, message, footer, topic = false, isRoot = false, onRetrySource, continued = false, quoteDisplay, onLocateQuote, member, members, deviceId, online, identityFor, mentionLabels, resolveMedia, resolveServerMedia, canContinue, continuing, onContinue,
   plan, planActionable, planReassignable, planPending, onPlanAction, onEditStep,
 }: {
+  groupId: string;
   message: BotGroupMessageView;
   footer?: ReactNode;
   onRetrySource?: () => void;
@@ -1013,6 +1015,8 @@ function BotGroupTimelineItem({
         {isRoot ? <Text style={styles.threadCaption}>{t('groupChat.thread.root')}</Text> : null}
         {isPlanCard ? <BotGroupOrganizerTag /> : null}
       </View>}
+      {message.process && message.process.groupId === groupId ? <BotGroupProcess process={message.process} owned={member?.isOwned === true}
+        deviceId={member?.homeDeviceId || deviceId || ''} /> : null}
       {isPlanCard
         ? <BotGroupPlanCard plan={plan} members={members} identityFor={identityFor} deviceId={deviceId} online={online}
           actionable={planActionable} reassignable={planReassignable} pending={planPending}

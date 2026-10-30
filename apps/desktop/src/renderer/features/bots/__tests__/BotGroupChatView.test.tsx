@@ -17,6 +17,7 @@ import { getBotGroupOutbox, getBotGroupOutboxPreviews, resetBotGroupOutboxForTes
 import { resetCompanionCloudStoreForTests } from '../companionCloudStore';
 import { botGroupWorkPreview } from '../BotGroupLivePreview';
 import { BotGroupChatView } from '../BotGroupChatView';
+import { BotGroupProcess } from '../BotGroupProcess';
 import { ControlledBanner, __resetControlledBannerForTests } from '../../remote-device/ControlledBanner';
 import type {
   BotGroupChangedPayload,
@@ -73,6 +74,7 @@ vi.mock('react-i18next', async (original) => ({
     i18n: { language: 'en-US', resolvedLanguage: 'en' },
   }),
 }));
+vi.mock('@/features/cc-agent/hooks/useRemoteSessionSync', () => ({ useRemoteSessionSync: () => {} }));
 vi.mock('react-router-dom', () => ({
   useLocation: () => ({ pathname: `/bots/groups/${mocks.groupId}`, search: '', state: mocks.locationState }),
   useNavigate: () => mocks.navigate,
@@ -1326,15 +1328,15 @@ describe('BotGroupChatView', () => {
         speakingBotIds: ['mimi'],
         round: {
           status: 'running',
-          speakers: [{ botId: 'mimi', sessionId: 'lane-mimi', activity: 'reply' }],
+          speakers: [{ botId: 'mimi', sessionId: 'lane-mimi', activity: 'reply', startedAt: Date.now() - 125_000 }],
           canContinue: false,
         },
       }),
     });
     renderView();
-    const speaking = await screen.findByTestId('bot-group-speaking');
+    const speaking = await screen.findByTestId('bot-group-progress');
     expect(speaking.textContent).toContain('咪咪');
-    expect(speaking.textContent).toContain('phase:processing');
+    expect(speaking.textContent).toContain('chat.teammateProcess.elapsed');
     expect(screen.getByTestId('pending-interaction').textContent).toBe('lane-mimi');
     expect(screen.queryByRole('button', { name: 'bots.groupChat.timeline.continue' })).toBeNull();
 
@@ -1362,8 +1364,8 @@ describe('BotGroupChatView', () => {
       }),
     });
     renderView();
-    await screen.findAllByTestId('bot-group-speaking');
-    const rows = screen.getAllByTestId('bot-group-speaking');
+    await screen.findAllByTestId('bot-group-progress');
+    const rows = screen.getAllByTestId('bot-group-progress');
     expect(rows.map((row) => row.textContent?.includes('咪咪') ? 'mimi' : row.textContent?.includes('小满') ? 'xiaoman' : '?'))
       .toEqual(['mimi', 'xiaoman']);
     expect(screen.getAllByTestId('pending-interaction').map((node) => node.textContent))
@@ -2788,11 +2790,13 @@ describe('BotGroupChatView', () => {
       });
       renderView();
       const rows = await screen.findAllByTestId('bot-group-speaking');
-      expect(rows.map((row) => row.getAttribute('data-activity'))).toEqual(['planning', 'step']);
+      expect(rows.map((row) => row.getAttribute('data-activity'))).toEqual(['planning']);
+      const step = await screen.findByTestId('bot-group-progress');
+      expect(step.textContent).toContain('小满');
       // The row already names the Bot; planning has no Session phase, a step shows its live phase.
       expect(rows[0]!.textContent).toContain('bots.groupChat.speaking.planning');
       expect(rows[0]!.textContent).not.toContain('bots.groupChat.speaking.planning:');
-      expect(rows[1]!.textContent).not.toContain('bots.groupChat.speaking.planning');
+      expect(step.textContent).not.toContain('bots.groupChat.speaking.planning');
       expect(screen.getAllByTestId('pending-interaction').map((node) => node.textContent)).toEqual(['plan-xiaoman']);
     });
 
@@ -3376,11 +3380,13 @@ describe('Telegram / Slack-grade timeline', () => {
     }) });
     renderView();
     const strip = await screen.findByTestId('bot-group-progress');
-    expect(strip.textContent).toContain('phase:processing');
+    // A plan edit is not an execution start (#7583); keep unknown time unknown.
+    expect(strip.textContent).toContain('chat.teammateProcess.processing');
+    expect(strip.textContent).not.toContain('chat.teammateProcess.elapsed');
     expect(strip.textContent).not.toContain('bots.groupChat.progress.step');
   });
 
-  it('pins a progress strip above the composer while a plan step runs', async () => {
+  it('keeps the running step and its confirmations in the timeline', async () => {
     const running = plan({
       status: 'running',
       currentStep: 0,
@@ -3393,9 +3399,8 @@ describe('Telegram / Slack-grade timeline', () => {
     }) });
     renderView();
     const strip = await screen.findByTestId('bot-group-progress');
-    expect(strip.textContent).toContain('bots.groupChat.progress.step');
+    expect(strip.textContent).toContain('chat.teammateProcess.elapsed');
     expect(strip.textContent).toContain('想清楚这页讲什么');
-    expect(strip.textContent).toContain('bots.groupChat.progress.elapsed');
     // The strip stands in for the step's speaking line; its confirmations stay in the timeline.
     expect(screen.queryByTestId('bot-group-speaking')).toBeNull();
     expect(screen.getByTestId('pending-interaction').textContent).toBe('plan-mimi');
@@ -4363,4 +4368,20 @@ it.each([false, true])('keeps the group stop control enabled for another running
     fireEvent.click(buttons[0]!);
     await waitFor(() => expect(mocks.stopBotGroupRound).toHaveBeenCalledWith('g1'));
   }
+});
+
+
+// Unit: a companion home change does not move the group session history.
+// Exercise the actual historical disclosure and its existing device-link reader.
+it('reads historical group process from the execution computer after a home change', async () => {
+  const process = { groupId: 'g1', executionId: 'moved-home', sessionId: 'old-lane', clientId: 'source', deviceId: 'original-mac' };
+  mocks.remoteInvoke.mockResolvedValue([{ clientId: 'source', role: 'user', content: 'Request' },
+    { clientId: 'note', role: 'assistant', content: 'Original computer progress', agentMeta: { assistantPhase: 'commentary' } },
+    { clientId: 'seal', role: 'assistant', content: 'Final answer', agentMeta: { turnCompleted: true } }]);
+  const view = render(<Tooltip.Provider><BotGroupProcess process={process}
+    member={{ ...detail().members[0]!, isOwned: true, homeDeviceId: 'new-mac' }} /></Tooltip.Provider>);
+  fireEvent.click(view.container.querySelector('[data-teammate-process] button')!);
+  await screen.findByText('Original computer progress');
+  expect(mocks.remoteInvoke).toHaveBeenCalledWith('original-mac', 'local-db:messages:around-client-id', ['old-lane', 'source', { radius: 80 }]);
+  expect(mocks.remoteInvoke.mock.calls.every(([device]) => device === 'original-mac')).toBe(true);
 });

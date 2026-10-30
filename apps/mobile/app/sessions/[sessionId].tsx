@@ -13,7 +13,7 @@ import { modelNeedsReselection } from '@/session/modelReselection';
 import { getCachedDeviceProviders } from '@/device-link/deviceProvidersCache';
 import { MountOnFirstOpen } from '@/session/MountOnFirstOpen';
 import { RunningTokenRatePopover } from '@/session/RunningTokenRatePopover';
-import { companionConversationItems } from '@/session/companionConversationPresentation';
+import { companionProcessItems } from '@/session/companionConversationPresentation';
 import { useRunningTokenRateHistory } from '@/session/useRunningTokenRateHistory';
 import { HomeHeaderGlassButton } from '@/session/HomeHeaderGlassButton';
 import { HomeNewTaskButton } from '@/session/HomeNewTaskButton';
@@ -6191,8 +6191,8 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
     ],
   );
   const messageListItems = useMemo(
-    () => mergePendingSendItems(companionChat ? companionConversationItems(renderWindow.items) : renderWindow.items, pendingSendItems, optimisticClientIds),
-    [companionChat, pendingSendItems, renderWindow.items, optimisticClientIds],
+    () => mergePendingSendItems(companionChat ? companionProcessItems(renderWindow.items, isMessageListStreaming) : renderWindow.items, pendingSendItems, optimisticClientIds),
+    [companionChat, pendingSendItems, renderWindow.items, optimisticClientIds, isMessageListStreaming],
   );
   const canLoadEarlierHistory = (historyView.snapshot.ready ? historyView.snapshot.hasMore : hasOlderMessages && messages.length > 0)
     && !isScheduleDetail;
@@ -10495,6 +10495,7 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
                   <MessageRenderer companion={companionChat} companionQuote={companionQuoteOptions}
                     companionThreads={companionThreads} conversationHeader={companionThreadRoot}
                     onOpenCompanionSettings={openCompanionSettings} onCompanionReadThrough={companionChat ? companionEntry.markReadThrough : undefined} companionWorkingLabel={companionWorkGroupLabel}
+                    companionAttentionLabel={activePendingKind ? companionWorkGroupLabel ?? undefined : undefined}
                     companionAvatar={companionReplyAvatar}
                     companionPluginInvocations={companionPluginInvocations}
                     remoteDeviceId={deviceId}
@@ -10929,7 +10930,7 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
               ) : null}
               {/* Desktop BotWorkingStatus: a teammate's paced public status stays above the composer,
                   also while the user reads older messages. Interactions carry their own panel. */}
-              {companionChat && companionWorkingLabel && !companionInlineInteraction
+              {companionChat && companionWorkingLabel && !messageListItems.some(item => item.type === 'work_group' && item.teammateJournal && item.isStreaming) && !companionInlineInteraction
                 && !(syncingWhileEmpty && !hasRenderedMessages) ? (
                 <View
                   style={[
