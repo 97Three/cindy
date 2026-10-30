@@ -159,10 +159,13 @@ describe('writeProviderGroupCooling (real file)', () => {
       release(); await writes;
       expect(coolingStore.readProviderGroupCooling().anthropic).toEqual({ 'device:studio:a': { '': studioUntil }, 'device:mini:a': { '': miniUntil } });
     } finally {
-      release();
-      await writes;
-      await vi.waitFor(() => expect(coolingStore.readProviderGroupCooling().anthropic).toEqual({ 'device:studio:a': { '': studioUntil }, 'device:mini:a': { '': miniUntil } }));
-      spy.mockRestore();
+      try {
+        release();
+        await writes;
+        await vi.waitFor(() => expect(coolingStore.readProviderGroupCooling().anthropic).toEqual({ 'device:studio:a': { '': studioUntil }, 'device:mini:a': { '': miniUntil } }));
+      } finally {
+        spy.mockRestore();
+      }
     }
   });
 
