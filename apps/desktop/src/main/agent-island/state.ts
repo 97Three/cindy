@@ -797,10 +797,12 @@ export function applyAgentIslandEvent(
     session.running = false;
     session.currentToolUseId = null;
     session.toolDetailUntil = null;
-    // Codex ask_user / plan_review can outlive a successful turn. Permission
-    // cards belong to the dead turn and must not keep the island waiting.
+    // Codex ask_user / plan_review can outlive a successful turn, and an input
+    // handoff never blocks it (the agent usually ends the turn right after
+    // asking). Permission cards belong to the dead turn and must not keep the
+    // island waiting.
     for (const [requestId, kind] of [...session.pendingInteractionKinds.entries()]) {
-      if (kind === 'ask_user_question' || kind === 'plan_review') continue;
+      if (kind === 'ask_user_question' || kind === 'plan_review' || kind === 'input_handoff') continue;
       dismissPendingInteraction(state, session, requestId, now, {
         requirePending: true,
         pruneIfIdle: false,

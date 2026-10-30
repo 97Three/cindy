@@ -9,9 +9,10 @@ import { registerSessionTagTools, type SessionTagsCallback } from './xdt-helper/
  * 设计:
  *  - server name = `cindy_helper`,essential(常开,不可被用户关闭)
  *  - 通用工具走 `list_tools` / `call_tool` 两个入口,渐进式发现:
- *    异步提问使用独立的 ask_user_question_async 入口，以便 harness 验证根代理身份。
+ *    找主人（选择、亲自输入、扫码、连接账号）使用独立的 ask_owner 入口，以便 harness 验证根代理身份。
  *    - 'cindy'   : 只读自省 (get_capabilities / get_current_session_id)
- *    - 'auth'    : 由 Host 保存凭证的供应商授权；代输入(request_input_handoff)
+ *    - 'auth'    : MCP 设置表单（request_mcp_setup）与 Grok 设备码状态、取消；旧名
+ *                  request_input_handoff / start_grok_device_login 不再列出，仍可经 call_tool 调用
  *    - 'history' : 只读查询本地数据库聊天历史与输入队列 (list_workdirs /
  *                  list_sessions / list_session_queue / get_chat_history /
  *                  search_chat_history / get_task_digest)
@@ -39,7 +40,15 @@ import { registerBotRoutineTools, type BotRoutineCallbacks } from './xdt-helper/
 import { registerGrokLoginTools, type GrokLoginCallbacks } from './xdt-helper/grok_login.js';
 import { registerInputHandoffTool, type InputHandoffCallbacks } from './xdt-helper/input_handoff.js';
 import { jsonObjectArg } from './json-object-arg.js';
-import { registerAsyncQuestionTool, supportsAsyncQuestionTool, type AskUserQuestionAsyncCallback } from './xdt-helper/ask_user_question_async.js';
+import {
+  ASK_OWNER_TOOL_NAME,
+  askOwnerDescription,
+  askOwnerInputShape,
+  askOwnerKinds,
+  registerAskOwnerTool,
+  type AskOwnerDeps,
+  type AskUserQuestionAsyncCallback,
+} from './xdt-helper/ask_owner.js';
 import { stringArrayParam } from './xdt-helper/_array-param.js';
 
 import { XdtHelperToolRegistry } from './lizi_xdtHelperToolRegistry.js';
@@ -124,7 +133,7 @@ export type {
 // ── Entry-tool descriptions ─────────────────────────────────────────────────
 
 const D_LIST_TOOLS =
-  `探索当前任务获准的 ${BRAND_NAME} 能力：登录、验证码、二维码交接查 auth；` +
+  `探索当前任务获准的 ${BRAND_NAME} 能力。要主人选择、亲自输入账号密码验证码、扫码或连接账号时直接用 ask_owner，不经这里；` +
   '其它先不传 category 查看用途与本机/跨电脑范围，再按类目发现工具，用 call_tool 执行。';
 
 const D_CALL_TOOL =
@@ -149,7 +158,7 @@ const CATEGORY_ENUM = ['cindy', 'auth', 'control', 'history', 'feedback', 'hando
  */
 export const HELPER_CATEGORY_DESCRIPTIONS: Record<(typeof CATEGORY_ENUM)[number], string> = {
   cindy: `${BRAND_NAME} 能力说明、界面操作帮助（get_capabilities scope=help）与当前任务信息/交付回执（report_task_delivery）；get_capabilities({key:"self-management"}) 是管理自己的任务、定时任务、项目、伙伴的工具索引。本机。`,
-  auth: '本机窗口的账号、密码、验证码、二维码交给主人填写或扫码（request_input_handoff）；MCP 设置表单（request_mcp_setup）；Grok 设备码授权。',
+  auth: 'MCP 设置表单（request_mcp_setup）；Grok 设备码授权的状态查询与取消。要主人亲自输入、扫码或连接账号时用 ask_owner。',
   control: '管理任务与项目：归档/取消归档支持本机与跨电脑（deviceId::sessionId）；改名、移动、标签、排队消息、插话、停止、运行设置、项目列表与增删改仅本机。',
   history: '按话题查找跨渠道聊天，支持伙伴归属（teammate_id）、最近活动时间与真实来源；不要默认限制当前工作目录或创建日期。查询任务、工作目录、聊天记录、任务摘要与输入队列；任务结果附带可直接引用的 sessionUrl，已知 id 要链接用 get_task_digest。任务列表、搜索、读取聊天记录、任务摘要（get_task_digest）可跨电脑（device 参数 / deviceId::sessionId）；其余本机。',
   feedback: `向 ${BRAND_NAME} 官方提交反馈。`,
@@ -1081,23 +1090,45 @@ export function createXdtHelperMcpServer(
     ...(deps.authorizeCall ? { authorizeCall: deps.authorizeCall } : {}),
   }, allowedSurface);
 
-  // A dedicated tool identity lets native Claude enforce root-only provenance
-  // before MCP dispatch. Do not expose an alias through the generic call_tool.
-  const questionTools: Tool[] = [];
-  if (deps.askUserQuestionAsync) {
-    const questions = new XdtHelperToolRegistry();
-    registerAsyncQuestionTool(questions, () => resolveLiziMcpSessionContext(sessionCtx), deps.askUserQuestionAsync);
-    const definition = questions.get('ask_user_question_async')!;
-    const inputSchema = z.strictObject(definition.inputShape);
-    server.registerTool(definition.name, { description: definition.description, inputSchema }, async (args) => {
-      if (!(await allowedSurface()).categories?.has('cindy')) {
-        return errorPayload('CAPABILITY_NOT_AVAILABLE', 'Question UI is unavailable for this task.');
-      }
-      return questions.call(definition.name, args);
-    });
-    questionTools.push({ name: definition.name, description: definition.description,
-      inputSchema: z.toJSONSchema(inputSchema) as Tool['inputSchema'] });
+  // ask_owner: the one listed way to have the owner choose, type what only they
+  // may, scan a sign-in code or connect an account. A dedicated tool identity
+  // lets native Claude enforce root-only provenance before MCP dispatch. Do not
+  // expose an alias through the generic call_tool.
+  const askOwnerDeps: AskOwnerDeps = {
+    ...(deps.askUserQuestionAsync ? { ask: deps.askUserQuestionAsync } : {}),
+    ...(deps.inputHandoff ? { inputHandoff: deps.inputHandoff } : {}),
+    ...(deps.grokLogin ? { grokLogin: deps.grokLogin } : {}),
+  };
+  const hasAskOwner = !!(deps.askUserQuestionAsync || deps.inputHandoff || deps.grokLogin);
+  if (hasAskOwner) {
+    const owner = new XdtHelperToolRegistry();
+    registerAskOwnerTool(
+      owner,
+      () => resolveLiziMcpSessionContext(sessionCtx),
+      askOwnerDeps,
+      async () => (await allowedSurface()).categories,
+    );
+    const definition = owner.get(ASK_OWNER_TOOL_NAME)!;
+    // Pi lists registered tools as they are; describe the kinds its host wired.
+    const wired = askOwnerKinds({ agentKind: sessionCtx.agentKind, workingDir: '' }, askOwnerDeps, null);
+    server.registerTool(definition.name, {
+      description: askOwnerDescription(wired, { agentKind: sessionCtx.agentKind }),
+      inputSchema: z.strictObject(definition.inputShape),
+    }, async (args) => owner.call(definition.name, args));
   }
+  // Request-time listing: Codex shares one HTTP server across sessions, and each
+  // task only sees the kinds its harness and helper surface allow.
+  const askOwnerListing = async (): Promise<Tool[]> => {
+    if (!hasAskOwner) return [];
+    const context = resolveLiziMcpSessionContext(sessionCtx);
+    const kinds = askOwnerKinds(context, askOwnerDeps, (await allowedSurface()).categories);
+    if (kinds.length === 0) return [];
+    return [{
+      name: ASK_OWNER_TOOL_NAME,
+      description: askOwnerDescription(kinds, context),
+      inputSchema: z.toJSONSchema(z.strictObject(askOwnerInputShape(kinds))) as Tool['inputSchema'],
+    }];
+  };
 
   // Pi already provides direct Bot tools through its native bridge. CC and Codex
   // consume MCP tools/list instead; expose the same registered definitions there.
@@ -1140,8 +1171,7 @@ export function createXdtHelperMcpServer(
       const allowed = await allowedSurface();
       return { tools: [
         ...entryTools,
-        ...(allowed.categories?.has('cindy') && supportsAsyncQuestionTool(resolveLiziMcpSessionContext(sessionCtx))
-          ? questionTools : []),
+        ...(await askOwnerListing()),
         ...(allowed.categories?.has('bots')
           ? withCindyGatedBotToolDescriptions(botTools, cindyAvailableForSession(sessionCtx)) : []),
       ] };

@@ -1108,7 +1108,7 @@ import { getInputHandoffService, initInputHandoffService } from '../input-handof
 import { closeInputHandoffAskpass, initInputHandoffAskpass } from '../input-handoff/askpass/index.js';
 import { onQuit } from '../lifecycle.js';
 import { isInputHandoffDisabledForSession } from '../input-handoff/botPolicy.js';
-import { createMacHandoffDriver } from '../input-handoff/macDriver.js';
+import { createMacHandoffDriver, readPictureQr } from '../input-handoff/macDriver.js';
 import { supportsRemotePluginOauth } from '../plugin-oauth/runtime.js';
 import {
   parseOrcaRemoteLead,
@@ -3610,6 +3610,7 @@ initInputHandoffService({
     }
   },
   createDriver: () => (process.platform === 'darwin' ? createMacHandoffDriver() : null),
+  ...(process.platform === 'darwin' ? { qrFromPicture: readPictureQr } : {}),
   hostPid: process.pid,
   remoteInputAvailable: supportsRemotePluginOauth,
   // A live view of just the window rides remote desktop, so only where the owner allowed it.
