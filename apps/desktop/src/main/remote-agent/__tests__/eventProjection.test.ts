@@ -276,10 +276,14 @@ describe('remote file references on the task computer', () => {
   // 同一缺陷的图片写法：模型把示例里的 xdt-file 换成 xdt-image 时，渠道导入靠 localTaskImagePath 读本机文件。
   it('restores a hostless xdt-image reference for the channel image importer', async () => {
     const { real, controller } = setup('C:\\Agent\\workspace');
+    fs.writeFileSync(path.join(real, 'a.png'), 'image bytes');
     const output = await eventsFrom(controller, [
       { type: 'text', source: 'codex', data: { text: '![图](xdt-image:///C:/Agent/workspace/a.png)', isFinal: true } },
     ]);
-    expect(localTaskImagePath(/\((.+)\)/.exec(text(output[0]))![1])).toBe(path.join(real, 'a.png'));
+    const imagePath = localTaskImagePath(/\((.+)\)/.exec(text(output[0]))![1]);
+    // 本机文件路径按宿主语义比较：从 URI 解码出的 Windows 路径可以保留正斜杠。
+    expect(imagePath && path.normalize(imagePath)).toBe(path.join(real, 'a.png'));
+    expect(fs.readFileSync(imagePath!, 'utf8')).toBe('image bytes');
   });
 
   it('restores nested file changes and media file URLs while preserving external URLs, media identities and vendor metadata', async () => {
