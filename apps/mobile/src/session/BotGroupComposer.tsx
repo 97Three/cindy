@@ -54,6 +54,7 @@ import { nextBotGroupSendAttempt, type BotGroupSendAttempt } from './botGroupRem
 import { canBrowsePhotoLibraryDirectly } from './photoLibraryPolicy';
 import type { RemoteSerializedAttachment } from './types';
 import { useBotGroupComposerAttachments } from './useBotGroupComposerAttachments';
+import type { UseMobileLocalAttachmentsOptions } from './useMobileLocalAttachments';
 
 const CONTROL_SIZE = 34;
 const CONTROL_HIT_SLOP = { top: 8, bottom: 8, left: 8, right: 8 } as const;
@@ -76,7 +77,7 @@ type MentionOption =
   | { kind: 'member'; label: string; member: BotGroupMemberView };
 
 export function BotGroupComposer({
-  members, identityFor, deviceId, online, running, planState, attachmentsSupported, divisionSupported = true, quoteMessageId, focusRequest, onSend, onStop, topic = false, placeholder: placeholderOverride,
+  members, identityFor, deviceId, online, running, planState, attachmentsSupported, divisionSupported = true, uploadAttachment, quoteMessageId, focusRequest, onSend, onStop, topic = false, placeholder: placeholderOverride,
 }: {
   members: readonly BotGroupMemberView[];
   identityFor: BotGroupIdentityLookup;
@@ -84,8 +85,9 @@ export function BotGroupComposer({
   online: boolean;
   running: boolean;
   planState: BotGroupComposerPlanState | null;
-  /** The computer takes attachments on `send` (`BotGroupRemoteChatData.supportsAttachments`). */
+  /** The active server/computer path takes attachments on send. */
   attachmentsSupported: boolean;
+  uploadAttachment?: UseMobileLocalAttachmentsOptions['upload'];
   divisionSupported?: boolean;
   topic?: boolean;
   placeholder?: string;
@@ -130,6 +132,7 @@ export function BotGroupComposer({
   const focusInput = () => requestAnimationFrame(() => inputRef.current?.focus());
   const tray = useBotGroupComposerAttachments({
     deviceId,
+    upload: uploadAttachment,
     onPicked: () => { setSheetOpen(false); focusInput(); },
   });
   const pendingImagePreview = useComposerPendingImagePreview(tray);

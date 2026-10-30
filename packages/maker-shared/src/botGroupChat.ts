@@ -456,6 +456,8 @@ export interface BotGroupRoundView {
 }
 
 export interface BotGroupSummary {
+  /** Public roster state, optional for older hosts. */
+  teammateActivity?: { phase: string };
   /** Explicit direct-message landing; group management remains unavailable. */
   conversationKind?: 'direct' | 'group';
   serverBacked?: boolean;

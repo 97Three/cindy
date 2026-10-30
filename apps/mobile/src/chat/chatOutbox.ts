@@ -11,7 +11,7 @@ export async function enqueueChatMessage(store: DurableOutboxStore, accountId: s
     enqueueStarted: false, chat: { roomId, input, after, afterServerSequence,
       ...(input.alsoSendToMain && input.threadRootId ? { shareToMain: { state: 'pending' as const } } : {}), ...(quote ? { quote } : {}) },
     item: buildOutboxItem({ clientId: input.clientId, sessionId: roomId, text: input.text,
-      permissionModeAtSend: 'default', readyAttachments: [], claimedUploads: [] }) });
+      permissionModeAtSend: 'default', readyAttachments: [...(input.attachments ?? [])], claimedUploads: [] }) });
 }
 
 /** Sharing an existing reply enters the same ledger already past the reply stage. */
@@ -35,7 +35,9 @@ export function pendingChatMessage(record: DurableOutboxRecord): BotGroupMessage
     authorKind: 'user', authorBotId: null, authorName: '', isSelf: true,
     content: record.chat!.input.text, mentions: record.chat!.input.mentions,
     quote: record.chat!.quote, threadRootId: record.chat!.input.threadRootId,
-    noticeCode: null, planId: null, files: [], attachments: [], createdAt: record.createdAt };
+    noticeCode: null, planId: null, files: [], attachments: (record.chat!.input.attachments ?? []).map(attachment => ({
+      id: attachment.id, name: attachment.name, size: attachment.size ?? 0, mimeType: attachment.mimeType ?? 'application/octet-stream', category: attachment.category, url: null, path: null,
+    })), createdAt: record.createdAt };
 }
 
 /** Remove a receipt only after its canonical message is durable on this phone. */

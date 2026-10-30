@@ -1,3 +1,4 @@
+import { teammateChatActivity, type TeammateActivity } from '@cindy/maker-shared/teammate-status';
 import { inferBotTemplatePresetId } from '@cindy/maker-shared/bot-template-preset';
 import { createConversationListState } from '@cindy/maker-shared/chatConversationList';
 import type { ChatHistory } from '@cindy/maker-shared/chat-history';
@@ -9,6 +10,7 @@ import i18next from 'i18next';
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from '@/i18n/locale';
 import { mobileMarkdownPreviewText } from '@/session/messageMarkdown';
 import { buildBotGroupThreadShareCard, botGroupThreadShareOperationId, readBotGroupThreadShareCard, type BotGroupThreadShareView } from '@cindy/maker-shared/botGroupChat';
+import type { RemoteSerializedAttachment } from '@/session/types';
 
 export interface ChatRoom {
   id: string; name: string; state?: string; kind: string; archived: boolean; dissolved_at?: string | null;
@@ -64,6 +66,7 @@ export interface ChatSendInput {
   quote?: { messageId: string }; threadRootId?: string;
   /** Local delivery intent; never sent as a new server protocol field. */
   alsoSendToMain?: true;
+  attachments?: readonly RemoteSerializedAttachment[];
 }
 export interface ChatSendBody {
   operationId: string; content: ChatMessage['content']; mentions: string[]; threadRootId?: string;
@@ -127,7 +130,7 @@ function sharedReplyPreview(message: ChatMessage, members: ChatMember[], selfId?
 }
 
 /** Empty device identity means a server-owned conversation, never a fictitious computer. */
-export function chatRoomRow(room: ChatRoom, snapshot?: ChatSnapshot, selfId?: string): HostedRemoteCollectionItem {
+export function chatRoomRow(room: ChatRoom, snapshot?: ChatSnapshot, selfId?: string, activity?: TeammateActivity): HostedRemoteCollectionItem {
   const members = snapshot?.members.filter(member => member.state === 'joined') ?? [];
   const last = latestBotGroupMessage(snapshot?.messages ?? []);
   const joinedName = last && joinedMemberName(last);
@@ -149,6 +152,7 @@ export function chatRoomRow(room: ChatRoom, snapshot?: ChatSnapshot, selfId?: st
     ref: { collectionId: 'bot-groups', kind: 'bot-group', id: room.id },
     revision: String(room.head ?? room.revision), display: { title: room.name,
       subtitle,
+      ...(activity ? { teammateActivity: activity } : {}),
       ...(snapshot ? { preview } : {}),
       timestamp: botGroupActivityAt({ createdAt: Date.parse(room.created_at), lastMessage: last ? { createdAt: Date.parse(last.createdAt) } : null }),
       lastReplyAt: snapshot && selfId ? chatLastReplyAt(snapshot.messages, selfId) : undefined },
@@ -336,7 +340,7 @@ export function chatGroupView(page: ChatPage, selfId: string, actors: readonly C
     createdAt: Date.parse(room.created_at), updatedAt: Date.parse(room.updated_at),
     lastMessage: last ? { authorKind: last.authorKind, authorName: last.authorName, preview: mobileMarkdownPreviewText(last.threadShare ? i18next.t(last.isSelf ? 'groupChat.thread.sidebarOwn' : 'groupChat.thread.sidebarOther', { name: last.authorName }) : botGroupMessageSummaryText(last)).slice(0, 80), createdAt: last.createdAt } : null,
     speakingBotIds: speakers.map(speaker => speaker.botId), planningBotId: null, openPlan: null, plans: [], messages: projectBotGroupExecutionFailures(messages, failures),
-    hasMoreBefore: page.before !== null, round: { status: speakers.length ? 'running' : 'idle', speakers, canContinue: false }, supportsAttachments: false };
+    hasMoreBefore: page.before !== null, round: { status: speakers.length ? 'running' : 'idle', speakers, canContinue: false }, supportsAttachments: true };
 }
 
 export function createChatServerClient(request: ChatRequest, personalList = createConversationListState(),
@@ -545,6 +549,22 @@ export function createChatServerClient(request: ChatRequest, personalList = crea
       const room = chatId(roomId), id = chatId(messageId);
       const stored = await cache();
       return stored ? stored.message<ChatMessage>(room, id) : request<ChatMessage>(`/conversations/${room}/messages/${id}`);
+    },
+    /** Read-only roster state; independent of message heads because an approval can arrive silently. */
+    async rosterActivity(roomId: string, snapshot: ChatSnapshot): Promise<TeammateActivity | undefined> {
+      const room = chatId(roomId);
+      const results = await Promise.allSettled([
+        request<ChatExecution[]>(`/conversations/${room}/executions`),
+        request<Array<{ status: string }>>(`/conversations/${room}/plans`),
+      ]);
+      // Older servers can lack these reads. Never manufacture a result from an ordinary unread message.
+      if (results.some(result => result.status === 'rejected')) return undefined;
+      const executions = results[0].status === 'fulfilled' ? results[0].value : [];
+      const plans = results[1].status === 'fulfilled' ? results[1].value : [];
+      if (!Array.isArray(executions) || !Array.isArray(plans)) return undefined;
+      const last = latestBotGroupMessage(snapshot.messages);
+      return teammateChatActivity({ executions, plans, archived: snapshot.room.archived,
+        lastMessageAt: last ? Date.parse(last.createdAt) : 0 });
     },
     async snapshot(roomId: string, metadata = false): Promise<ChatSnapshot> {
       const stored = await cache();
@@ -796,9 +816,12 @@ export function createChatServerClient(request: ChatRequest, personalList = crea
       save(body: ChatSendBody): Promise<void>;
     }) {
       if (durable?.body) return request<ChatMessage>(`/conversations/${chatId(roomId)}/messages`, 'POST', durable.body);
-      const key = JSON.stringify([roomId, input.clientId, input.text, input.mentions, input.quote?.messageId, input.threadRootId]);
+      const key = JSON.stringify([roomId, input.clientId, input.text, input.mentions, input.quote?.messageId, input.threadRootId, input.attachments]);
       const known = input.quote ? postedQuotes.get(key) : undefined;
-      const content: ChatMessage['content'] = known?.content ?? [{ type: 'text', text: input.text }];
+      const content: ChatMessage['content'] = known?.content ?? [
+        ...(input.text ? [{ type: 'text', text: input.text }] : []),
+        ...(input.attachments ?? []).map(attachment => ({ type: 'media', mediaId: chatId(attachment.id), caption: attachment.name })),
+      ];
       const mentions = new Set(known?.mentions ?? input.mentions.botIds.map(chatId));
       if (input.quote && !known) {
         const [original, members] = await Promise.all([

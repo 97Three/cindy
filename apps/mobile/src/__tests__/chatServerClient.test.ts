@@ -18,6 +18,20 @@ const snapshot = (): ChatSnapshot => ({ room: room(), cursor: '9007199254741099'
 ] });
 
 describe('group list activity', () => {
+  it('refreshes pending execution state without a new message and tolerates an older server', async () => {
+    const request = vi.fn().mockResolvedValueOnce([{ status: 'running' }]).mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ status: 'needs_input' }]).mockResolvedValueOnce([])
+      .mockRejectedValueOnce(Object.assign(new Error('NOT_FOUND'), { status: 404 })).mockResolvedValueOnce([]);
+    const client = createChatServerClient(request);
+    const value = snapshot();
+    expect(await client.rosterActivity(value.room.id, value)).toEqual({ phase: 'running' });
+    const awaiting = await client.rosterActivity(value.room.id, value);
+    expect(chatRoomRow(value.room, value, undefined, awaiting).item.display.teammateActivity)
+      .toEqual({ phase: 'needs-interaction' });
+    expect(await client.rosterActivity(value.room.id, value)).toBeUndefined();
+    expect(request.mock.calls.every(([path]) => /\/(executions|plans)$/.test(path))).toBe(true);
+  });
+
   it('places a newly created empty group and a group with a new topic ahead of an older main chat', () => {
     const old = chatRoomRow(room(1), { ...snapshot(), messages: [{ ...message(20), createdAt: '2026-10-10T12:00:00Z' }] });
     const fresh = chatRoomRow({ ...room(2), created_at: '2026-10-11T12:00:00Z' }, { ...snapshot(), messages: [] });
@@ -440,6 +454,17 @@ describe('direct Chat Server client', () => {
     await client.send(id(1), input);
     expect(request.mock.calls.at(-1)).toEqual(posted);
     expect(request.mock.calls.filter(([, method]) => method !== 'POST')).toHaveLength(2);
+  });
+  it.each(['', 'with files'])('sends sealed attachment IDs with text=%s and preserves the retry body', async text => {
+    const request = vi.fn().mockResolvedValue({ id: id(9) });
+    const client = createChatServerClient(request);
+    const input = { text, clientId: 'same-media-message', mentions: { all: false, botIds: [] },
+      attachments: [{ id: id(2), name: 'report.pdf', category: 'file' as const, path: '', ext: 'pdf', mimeType: 'application/pdf', size: 42 }] };
+    await client.send(id(1), input); await client.send(id(1), input);
+    expect(request.mock.calls[0][2]).toEqual({ operationId: 'same-media-message', mentions: [],
+      content: [...(text ? [{ type: 'text', text }] : []), { type: 'media', mediaId: id(2), caption: 'report.pdf' }] });
+    expect(request.mock.calls[0]).toEqual(request.mock.calls[1]);
+    expect(chatGroupView({ snapshot: snapshot(), messages: [], before: null }, id(10)).supportsAttachments).toBe(true);
   });
   it('reauthorizes and replaces loaded older history on refresh instead of retaining deleted text', async () => {
     const recent = Array.from({ length: 100 }, (_, n) => message(200 - n));

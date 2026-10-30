@@ -496,7 +496,7 @@ function BotGroupChatContent({ deviceId, deviceName, groupId, messageId, notific
         ...(quote ? { quote: { messageId: quote.messageId } } : {}),
         ...(threadRootId && input.alsoSendToMain ? { alsoSendToMain: true } : {}),
         ...(input.division ? { division: true } : {}),
-        // Only a computer that declared `supportsAttachments` is offered any (see the composer).
+        // The active server/computer path declares attachment support (see the composer).
         ...(input.attachments.length > 0 ? { attachments: input.attachments } : {}),
       });
       if (quote) setReplyTo(current => current?.messageId === quote.messageId ? null : current);
@@ -674,7 +674,7 @@ function BotGroupChatContent({ deviceId, deviceName, groupId, messageId, notific
         quoteMessageId={replyTo?.messageId} focusRequest={replyFocusRequest}
         placeholder={threadRootId ? t('groupChat.thread.placeholder') : undefined}
         running={!threadRootId && group.round.status === 'running'} planState={threadRootId ? null : botGroupComposerPlanState(openBotGroupPlan(group), group.replyMode)}
-        divisionSupported={!threadRootId && !chat.server && (!group.singleSpeaker || group.supportsDivision === true)} attachmentsSupported={!threadRootId && group.supportsAttachments === true} onSend={send} onStop={stop} />
+        divisionSupported={!threadRootId && !chat.server && (!group.singleSpeaker || group.supportsDivision === true)} attachmentsSupported={!threadRootId && group.supportsAttachments === true} uploadAttachment={chat.uploadAttachment} onSend={send} onStop={stop} />
       </View>
     </KeyboardAvoidingView>;
   }
