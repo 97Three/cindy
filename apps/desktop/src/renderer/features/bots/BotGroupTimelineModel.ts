@@ -26,8 +26,8 @@ import type {
 import type { BotGroupOutboxEntry } from './botGroupOutbox';
 import { mergeBotGroupMessages, mergeBotGroupPlans } from './botGroupPresentation';
 
-/** A timeline row; `pending` marks the optimistic copy of a message still on its way. */
-export type BotGroupTimelineMessage = BotGroupMessageView & { pending?: true; outbox?: BotGroupOutboxEntry };
+/** `pending` retains the local row until its authorized echo; `sendConfirmed` ends sending on receipt. */
+export type BotGroupTimelineMessage = BotGroupMessageView & { pending?: true; sendConfirmed?: true; outbox?: BotGroupOutboxEntry };
 
 /** Consecutive messages by one author within this window share one header. */
 export const BOT_GROUP_MERGE_WINDOW_MS = 5 * 60 * 1_000;
@@ -193,6 +193,7 @@ export function pendingBotGroupMessage(send: BotGroupPendingSend): BotGroupTimel
     ...(send.quote ? { quote: send.quote } : {}),
     createdAt: send.createdAt,
     pending: true,
+    ...(send.messageId ? { sendConfirmed: true } : {}),
   };
 }
 

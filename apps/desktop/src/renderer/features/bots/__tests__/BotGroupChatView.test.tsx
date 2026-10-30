@@ -363,6 +363,28 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('BotGroupChatView', () => {
+  // Unit: an authenticated main-chat delta used to wait for the full room IPC
+  // (read state, plans and executions). A late full read must not erase that delta.
+  it.each([false, true])('renders committed messages during a full refresh and preserves revocation (revoked: %s)', async revoked => {
+    const initial = detail({ serverBacked: true, historyRevision: 'live', messages: [msg({ content: 'Already visible' })] });
+    mocks.getBotGroup.mockResolvedValue({ ok: true, group: initial });
+    renderView(); await screen.findByText('Already visible');
+    let finish!: (value: unknown) => void;
+    mocks.getBotGroup.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    act(() => { for (const push of mocks.pushes) push({ groupId: 'g1', change: 'messages' }); });
+    await waitFor(() => expect(finish).toBeTypeOf('function'));
+    const fresh = msg({ id: 'fresh-share', sequence: 200, content: 'Server confirmed delta' });
+    mocks.getBotGroup.mockImplementation(() => new Promise(() => {}));
+    act(() => { for (const push of mocks.pushes) push({ groupId: 'g1', change: 'messages', historyRevision: 'live', messages: [fresh] }); });
+    expect(await screen.findByText('Server confirmed delta')).toBeTruthy();
+    act(() => { for (const push of mocks.pushes) push({ groupId: 'g1', change: 'messages', historyRevision: 'revoked',
+      messages: [msg({ id: 'wrong-generation', sequence: 201, content: 'Stale account content' })] }); });
+    expect(screen.queryByText('Stale account content')).toBeNull();
+    await act(async () => finish(revoked ? { ok: false, errorCode: 'PERMISSION_DENIED' } : { ok: true, group: initial }));
+    if (revoked) expect(screen.queryByText('Server confirmed delta')).toBeNull();
+    else expect(screen.getAllByText('Server confirmed delta')).toHaveLength(1);
+  });
+
   // Regression: returning to a group must not replay its consumed creation intent.
   it('does not reopen a created invitation or regenerate its link after leaving and returning', async () => {
     mocks.locationState = { createdGroupInvite: 'g1' };
@@ -3653,6 +3675,66 @@ describe('thread previews and posting to the main chat', () => {
     expect(mocks.reply.mock.calls[1][0]).toMatchObject({ rootId: 'u1', text: '@咪咪 both' });
     // Each send starts from the default again.
     await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('false'));
+  });
+
+  // Unit, topic latency reproduction: the HTTP receipt arrived seconds before
+  // the history echo, but the real bubble still announced "sending" during that gap.
+  // Existing optimistic tests only settled after the next history read completed.
+  it('ends the topic sending state on its receipt while the history echo is still loading', async () => {
+    mocks.getBotGroup.mockResolvedValue({ ok: true, group: group([msg({ id: 'u1', content: 'Root' })]) });
+    let confirm!: (result: unknown) => void;
+    mocks.reply.mockImplementationOnce(() => new Promise(resolve => { confirm = resolve; }));
+    const user = userEvent.setup(); renderView();
+    await user.click(await screen.findByRole('button', { name: 'bots.groupChat.server.startTopic' }));
+    const panel = await screen.findByRole('complementary');
+    await within(panel).findByText('Thread root u1');
+    mocks.thread.mockImplementation(() => new Promise(() => {}));
+    mocks.shareToMain.mockImplementationOnce(() => new Promise(() => {}));
+    await user.click(within(panel).getByRole('checkbox', { name: t('alsoSend') }));
+    const input = within(panel).getByRole('textbox');
+    fireEvent.change(input, { target: { value: 'Receipt before echo' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    const article = (await within(panel).findByText('Receipt before echo')).closest('article')!;
+    expect(article.getAttribute('aria-busy')).toBe('true');
+    await act(async () => confirm({ ok: true, messageId: 'confirmed-topic-reply' }));
+    expect(article.getAttribute('aria-busy')).not.toBe('true');
+    expect(mocks.shareToMain).toHaveBeenCalledWith({ groupId: 'g1', messageId: 'confirmed-topic-reply' });
+    expect(input.hasAttribute('disabled')).toBe(false);
+    expect(within(panel).getAllByText('Receipt before echo')).toHaveLength(1);
+    // An acknowledged local row still waits for the authorized server projection
+    // before exposing message actions or borrowing server identity metadata.
+    expect(within(article).queryByRole('button', { name: 'chat.messageActionBar.moreActions' })).toBeNull();
+  });
+
+  // Unit: a slow share request previously left the main chat empty. The local
+  // row must appear before the receipt, settle only on success, roll back on failure,
+  // and adopt the real server row without duplicating it or losing its DOM identity.
+  it.each([false, true])('shows a pending main-chat copy immediately (failed: %s)', async failed => {
+    const initial = group([msg({ id: 'u1', content: 'Root' })]);
+    mocks.getBotGroup.mockResolvedValue({ ok: true, group: initial });
+    let settle!: (result: unknown) => void;
+    mocks.shareToMain.mockImplementationOnce(() => new Promise(resolve => { settle = resolve; }));
+    const user = userEvent.setup(); renderView();
+    await user.click(await screen.findByRole('button', { name: 'bots.groupChat.server.startTopic' }));
+    const panel = await screen.findByRole('complementary');
+    const reply = (await within(panel).findByText('Reply to u1')).closest('article')!;
+    fireEvent.pointerDown(within(reply).getByRole('button', { name: 'chat.messageActionBar.moreActions' }), { button: 0, ctrlKey: false });
+    await user.click(await screen.findByRole('menuitem', { name: t('postToMain') }));
+    const timeline = screen.getByTestId('bot-group-timeline');
+    const row = (await within(timeline).findByText('Reply to u1')).closest('article')!;
+    expect(row.getAttribute('aria-busy')).toBe('true');
+    expect(within(row).getByText('bots.groupChat.timeline.sending')).toBeTruthy();
+    await act(async () => settle(failed ? { ok: false, errorCode: 'SERVICE_ERROR' }
+      : { ok: true, messageId: 'real-main-copy', alreadyShared: false }));
+    if (failed) { expect(within(timeline).queryByText('Reply to u1')).toBeNull(); return; }
+    expect(row.getAttribute('aria-busy')).not.toBe('true');
+    const real = msg({ id: 'real-main-copy', sequence: 20, content: '', isSelf: true, threadShare: {
+      messageId: 'reply-u1', threadRootId: 'u1', status: 'available', authorKind: 'user', authorBotId: null,
+      authorName: '', sharedByAuthor: true, content: 'Reply to u1', attachments: [], createdAt: 1, edited: false } });
+    mocks.getBotGroup.mockResolvedValue({ ok: true, group: { ...initial, messages: [...initial.messages, real] } });
+    act(() => { for (const push of mocks.pushes) push({ groupId: 'g1', change: 'messages' }); });
+    await waitFor(() => expect(within(timeline).getAllByText('Reply to u1')).toHaveLength(1));
+    expect(within(timeline).getByText('Reply to u1').closest('article')).toBe(row);
   });
 
   it('retries only the main-chat copy after the reply already reached the thread', async () => {

@@ -530,6 +530,8 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
    * chooses where a reconnect resumes; every reconnect also re-reads each followed room.
    */
   const rooms = new Map<string, string>();
+  // Room kind is immutable. This account-local fact never authorizes a write.
+  const verifiedGroups = new Set<string>();
   /** Keep a room's newer cursor: a late snapshot or event must not rewind where it resumes. */
   const advanceRoom = (roomId: string, cursor: string) => {
     const known = rooms.get(roomId);
@@ -981,7 +983,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
         profiles.map(p => [p.id, p.status, p.displayName, p.avatar, p.avatarColor])]);
       if (key !== registryKey) {
         const replaced = registryKey !== '';
-        registryKey = key; summaries.clear(); snapshots.clear();
+        registryKey = key; summaries.clear(); snapshots.clear(); verifiedGroups.clear();
         // A list or room read may have finished on the old registry while this ran (a background
         // refresh, or actor.changed racing its own list notice): tell them to read again.
         if (replaced) { changed(''); for (const roomId of rooms.keys()) changed(roomId); }
@@ -1139,6 +1141,11 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
               if (change.type === 'message.updated' || change.type === 'message.deleted') threads.invalidate(roomId, change.entityId);
               if (change.type === 'reaction.changed' && typeof change.entityId === 'string') bumpMessageReactions(roomId, change.entityId);
             }
+            const createdIds = new Set((event.changes ?? []).flatMap((change: { type?: string; entityId?: string }) =>
+              change.type === 'message.created' && change.entityId ? [change.entityId] : []));
+            const committed = history()?.committedSnapshot<Snapshot>(roomId);
+            if (committed) void publishMessages(roomId, committed.messages.filter(message => createdIds.has(message.id)))
+              .catch(error => deps.log?.warn('Chat message presentation failed', chatErrorDiagnostic(error)));
             changed(roomId, true);
             const changes: unknown[] = Array.isArray(event.changes) ? event.changes : [];
             const types = changes.map(change => (change as { type?: unknown } | null)?.type);
@@ -1165,6 +1172,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
             }
           }
           else {
+            const readChanges = new Map<string, unknown[]>();
             for (const change of event.changes ?? []) {
               if (change.type === 'work.available' && Array.isArray(change.data?.work)) {
                 const targets: string[] = [];
@@ -1188,8 +1196,14 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
               if (change.type === 'membership.changed' || change.type === 'conversation.updated') changed(change.entityId);
               // A Thread read on another device clears its unread here too.
               if (change.type === 'read.changed' && typeof change.entityId === 'string') {
-                history()?.invalidate(change.entityId, true); changed(change.entityId);
+                const reads = readChanges.get(change.entityId) ?? [];
+                reads.push(change.data); readChanges.set(change.entityId, reads);
               }
+            }
+            for (const [roomId, reads] of readChanges) {
+              const cache = history();
+              if (!await cache?.readState(roomId, reads)) cache?.invalidate(roomId, true);
+              changed(roomId, true);
             }
             if ((event.changes ?? []).some((change: { type?: unknown }) => change?.type === 'actor.changed')) void refreshHomes('background');
             changed('');
@@ -1244,10 +1258,13 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     ws.on('error', () => ws.close());
     ws.on('close', () => {
       if (!current() || socket !== ws) return;
+      const wasConnected = connected;
       connected = false;
       // Already-scheduled connected waits must obey the disconnected fallback too.
       workPolling.shortenIdle();
-      for (const cache of histories.values()) cache.reconnect();
+      // A failed handshake introduced no new synchronization gap. Rechecking the
+      // same HTTP cache on every failed attempt would repeatedly download snapshots.
+      if (wasConnected) for (const cache of histories.values()) cache.reconnect();
       reconnect = setTimeout(connect, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 2, 15000);
     });
@@ -1326,6 +1343,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
   async function groupSnapshot(roomId: string) {
     const value = await readSnapshot(roomId);
     if (!isGroupRoom(value.room)) throw new Error('NOT_A_GROUP');
+    verifiedGroups.add(roomId);
     subscribe(roomId, value.cursor);
     return value;
   }
@@ -1339,7 +1357,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
   /** Every groupId entry resolves through here: a room that is not a group answers as missing before any other read or write. */
   async function groupRoom(groupId: string) {
     const room = await resolveGroup(groupId);
-    await groupSnapshot(room);
+    if (!verifiedGroups.has(room)) await groupSnapshot(room);
     return room;
   }
   function managementActor(s: Snapshot) {
@@ -1563,12 +1581,32 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     return { version, updates: Object.fromEntries(shownShares.filter(share => !byId.has(share.id)).map(({ id: shareId, sharerId, ...card }) =>
       [shareId, shareView(card, sharerId && (actors.find(actor => actor.externalId === sharerId)?.id ?? sharerId))])) };
   }
+  /** A server message is already authorized; unrelated room reads must not delay its first paint. */
+  async function publishMessages(roomId: string, rows: Message[], known: Message[] = []) {
+    const cache = history();
+    const snapshot = cache?.committedSnapshot<Snapshot>(roomId);
+    if (!snapshot || !isGroupRoom(snapshot.room)) return;
+    const latest = new Map(snapshot.messages.map(message => [message.id, message]));
+    const messages = rows.filter(message => !message.threadRootId).map(message => {
+      const committed = latest.get(message.id);
+      return committed && (committed.revision ?? 0) > (message.revision ?? 0) ? committed : message;
+    });
+    if (!messages.length) return;
+    const threadVersion = threads.version(roomId);
+    const views = await messageViews(roomId, messages, snapshot.members);
+    await decorateThreads(roomId, views, messages, [...known, ...snapshot.messages], snapshot.members, false);
+    if (!current() || cache?.generation(roomId) !== snapshot.cacheGeneration || threads.version(roomId) !== threadVersion) return;
+    deps.onChanged?.({ groupId: roomId, change: 'messages', messages: views, historyRevision: snapshot.cacheGeneration }, scope);
+  }
   async function writeReadState<T = unknown>(roomId: string, data: Record<string, unknown>): Promise<T> {
     const value = await api<T>(`/conversations/${roomId}/read`, 'POST', data);
-    // Reads/follows advance actor scope, not the conversation cursor. Apply the
-    // same metadata invalidation for every local writer, even without a WS echo.
-    history()?.invalidate(roomId, true);
-    changed(roomId);
+    const cache = history();
+    const ordinaryRead = data.following === undefined && data.muted === undefined && data.markedUnread === undefined;
+    const applied = ordinaryRead && await cache?.readState(roomId,
+      value && typeof value === 'object' ? { ...value, threadRootId: data.threadRootId ?? null } : value, true);
+    // Legacy/malformed receipts and preference changes retain authoritative metadata refresh.
+    if (!applied) cache?.invalidate(roomId, true);
+    changed(roomId, true);
     return value;
   }
   /**
@@ -1618,6 +1656,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     try {
       const s = cache ? await cache.snapshot<Snapshot>(i.groupId) : await groupSnapshot(i.groupId);
       if (!isGroupRoom(s.room)) throw new Error('NOT_A_GROUP');
+      verifiedGroups.add(i.groupId);
       const revision = cache ? (s as Snapshot & { cacheGeneration: string }).cacheGeneration : undefined;
       subscribe(i.groupId, s.cursor);
       const query = new URLSearchParams({ threadRootId: i.rootId, limit: '50' });
@@ -1683,6 +1722,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       const value = await history()!.snapshot<Snapshot>(roomId);
       cacheGeneration = value.cacheGeneration;
       if (direct ? value.room.kind !== 'direct' : !isGroupRoom(value.room)) throw new Error('NOT_A_GROUP');
+      if (!direct) verifiedGroups.add(roomId);
       subscribe(roomId, value.cursor);
       return value;
     })() : direct ? directSnapshot(roomId) : groupSnapshot(roomId);
@@ -2976,9 +3016,17 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     shareToMain: input => result(async () => {
       const i = z.object({ groupId: id, messageId: id }).strict().parse(input);
       const room = await groupRoom(i.groupId);
-      const source = await readMessage(room, i.messageId);
+      // A live room already has the server-authorized source on screen. Reuse
+      // that projection, or the same 30-second verified HTTP cache used for display.
+      // Expired/missing sources still get a visibility-checked read.
+      const known = history()?.committedSnapshot<Snapshot>(room);
+      const membersRead = known ? Promise.resolve(known.members) : api<Member[]>(`/conversations/${room}/members`);
+      membersRead.catch(() => undefined);
+      const reusable = hasLiveSubscription(room) || history()?.hasFreshMessages(room);
+      const liveSource = reusable ? known?.messages.find(message => message.id === i.messageId) : undefined;
+      const source = liveSource ?? await readMessage(room, i.messageId);
       if (!source || !isShareableThreadReply(source)) throw new Error('SHARE_UNAVAILABLE');
-      const members = await api<Member[]>(`/conversations/${room}/members`);
+      const members = await membersRead;
       const author = members.find(member => member.id === source.authorId);
       const card = buildBotGroupThreadShareCard({ messageId: source.id, threadRootId: source.threadRootId!,
         authorName: author ? memberName(author, members) : source.author.name,
@@ -2990,6 +3038,12 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
           // re-posting starts no companion round and the quoted @names stay inert.
           mentions: [selfId],
         });
+        // WS normally wins; this narrow authorized read also gives HTTP-only
+        // connections a fast delta, without waiting for execution/read metadata.
+        const generation = history()?.generation(room);
+        void readMessage(room, posted.id).then(message => {
+          if (message && generation && history()?.generation(room) === generation) return publishMessages(room, [message], [source]);
+        }).catch(() => undefined);
         changed(room); return { messageId: posted.id, alreadyShared: false };
       } catch (error) {
         // The same person shared this reply before and its text has changed since.

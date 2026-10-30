@@ -665,6 +665,10 @@ export type BotGroupChange = 'created' | 'updated' | 'deleted' | 'messages' | 'r
 export interface BotGroupChangedPayload {
   groupId: string;
   change: BotGroupChange;
+  /** Authenticated message deltas can render before the slower room metadata refresh. */
+  messages?: BotGroupMessageView[];
+  /** Only apply deltas to an already displayed projection of the same generation. */
+  historyRevision?: string;
   /** Personal state, only emitted after an authoritative account-scoped reply/event. */
   listState?: { hidden: boolean; revision: number };
 }
