@@ -187,6 +187,7 @@ export function SessionPrManager({
   const run = async (operation: SessionPrRefAction | { action: 'list' }) => {
     if (requestBusy.current) return;
     requestBusy.current = true;
+    const requestSessionId = session.id;
     const gen = generation.current;
     const request = ++requestSequence.current;
     const isCurrent = () => gen === generation.current && request === requestSequence.current;
@@ -194,11 +195,12 @@ export function SessionPrManager({
     setError('');
     try {
       const result = await invokeManage(operation);
+      // The host mutation survives closing the manager; only UI updates expire.
+      if (deviceId && operation.action !== 'list') invalidateRemotePrRefs(requestSessionId);
       if (!isCurrent()) return;
       setRows(result);
       void fetchStatuses(result, gen);
       if (operation.action === 'add') setUrl('');
-      if (deviceId && operation.action !== 'list') invalidateRemotePrRefs(session.id);
     } catch (err) {
       if (!isCurrent()) return;
       const code = extractIpcError(err)?.code;

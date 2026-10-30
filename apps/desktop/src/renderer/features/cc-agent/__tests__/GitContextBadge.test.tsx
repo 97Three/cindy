@@ -917,6 +917,48 @@ describe('SessionPrManager', () => {
     expect(order()).toEqual(original);
   });
 
+  // Unit regression for PR #8092: closing before a remote mutation resolves
+  // must not suppress cache invalidation. Existing late-result coverage only
+  // queries titles; a deferred pin plus a newer list exposes both effects.
+  it('invalidates the original remote session after close without replacing a newer list', async () => {
+    const f = fixture('device-2');
+    await f.open();
+    const originalRows: SessionPrRef[] = await f.manage.mock.results[0].value;
+    let finishPin!: (rows: SessionPrRef[]) => void;
+    f.manage.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishPin = resolve;
+        }),
+    );
+    await act(async () => {
+      fireEvent.click(
+        screen.getAllByRole('button', { name: 'ccAgent.gitContext.pr.manage.pin' })[0],
+      );
+    });
+    expect(f.manage).toHaveBeenLastCalledWith({
+      sessionId: dialogueSession.id,
+      action: 'pin',
+      id: 'manager-2',
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'common.dismiss' }));
+    });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(managerMocks.invalidate).not.toHaveBeenCalled();
+    f.addRef(9);
+    await f.open();
+    expect(screen.getByRole('link', { name: 'Title 9' })).toBeTruthy();
+    await act(async () => {
+      finishPin(
+        originalRows.map((row) => (row.id === 'manager-2' ? { ...row, pinned: true } : row)),
+      );
+    });
+    expect(managerMocks.invalidate).toHaveBeenCalledExactlyOnceWith(dialogueSession.id);
+    expect(screen.getByRole('link', { name: 'Title 9' })).toBeTruthy();
+    expect(f.statuses).toHaveBeenCalledTimes(2);
+  });
+
   it('discards late title results after close and reopens with a fresh request', async () => {
     const f = fixture();
     let resolve!: (statuses: PrStatusResult[]) => void;
