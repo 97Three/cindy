@@ -1674,7 +1674,9 @@
     }
   },
   "settings": {
-    "newChatDefaults": { "title": "新任务默认权限" },
+    "newChatDefaults": {
+      "title": "新任务默认权限"
+    },
     "imConnection": {
       "reconnect": "重新连接",
       "savedNote": "绑定信息已保留，可直接重试连接。",
@@ -2850,7 +2852,8 @@
         "hint": "自动识别当前语音；指定语言可减少多语言误判。",
         "ariaLabel": "语言选择",
         "options": {
-          "auto": "自动"
+          "auto": "自动",
+          "es": "Español"
         },
         "optionDescriptions": {
           "auto": "由识别服务自动判断",
@@ -2858,7 +2861,8 @@
           "zh-TW": "繁体中文（台湾）",
           "en": "English",
           "ja": "日本語",
-          "ko": "한국어"
+          "ko": "한국어",
+          "es": "西班牙语"
         }
       },
       "shortcut": {
@@ -3600,6 +3604,7 @@
           "nameRequired": "请填写显示名称",
           "runtimeRequired": "请至少配置一个 Runtime（填写它的基础 URL 和模型）",
           "baseUrlInvalid": "基础 URL 必须是合法的 http(s) 地址",
+          "baseUrlRequired": "请填写该 Runtime 的基础 URL，或把协议改回默认",
           "contextWindowInvalid": "上下文窗口必须是合法的正整数（数字组之间可用分隔符）",
           "requestPathInvalid": "精确请求路径需以单个 / 开头，不含片段标识或 .、.. 路径段；空格和不安全字符请使用百分号编码",
           "modelRequired": "请至少添加一个模型",
@@ -4008,9 +4013,7 @@
         "metaOAuth": "订阅账号",
         "metaApiKey": "API key",
         "metaNoAuth": "本机 / 自托管 · 无需鉴权",
-        "customTitle": "自定义端点",
-        "customMeta": "接入任意 OpenAI / Anthropic 兼容的模型来源",
-        "pickHint": "选择你要连接的账号或服务。",
+        "customAction": "没找到？添加自定义",
         "oauthDesc": "在浏览器中登录账号，无需 API key。",
         "deviceOAuthDesc": "使用一次性设备码，在供应商验证页面完成授权",
         "authorizeInBrowser": "在浏览器中授权",
@@ -7909,8 +7912,9 @@
         "usesExplanation": "当前共享范围内各版本累计的工具调用次数。下方个人调用仅统计本机当前账户，口径不同。"
       },
       "contribution": {
-        "unreadReview": "有新的审核结果",
+        "unreadReview": "有新的处理结果",
         "viewReviewResult": "查看 {{version}} 审核结果",
+        "viewMarketResult": "查看市场处理结果",
         "anonymous": "匿名发布",
         "anonymousHint": "对整款插件隐藏公开署名，可随时修改。关闭后显示各版本提审时保存的原作者昵称。",
         "anonymousAuthorOnly": "仅原作者可修改",
@@ -8006,6 +8010,7 @@
           "rejected": "已退回",
           "enabled": "已上架",
           "disabled": "已下架",
+          "archived": "已归档",
           "current_changed": "市场版本已切换",
           "revoked": "版本已撤销",
           "cancelled": "已取消"
@@ -12600,6 +12605,7 @@
     "verificationFailed": "暂时无法确认 ChatGPT 登录是否已恢复，请重新检测。"
   },
   "chat": {
+    "teammateProcess": {"record":"处理记录","operations":"操作记录","elapsed":"已处理 {{duration}}","took":"用时 {{duration}}","processing":"正在处理","worked":"处理记录","thinking":"正在思考","thought":"已思考","failed_other":"{{count}} 次调用失败","separator":"、","actions":{"running":{"read":"正在查看文件","edit":"正在编辑文件","search":"正在查找内容","web":"正在查阅网页","command":"正在运行命令","tools":"正在使用工具","delegate":"正在委派工作","plan":"正在整理计划"},"done":{"read":"查看了文件","edit":"编辑了文件","search":"查找了内容","web":"查阅了网页","command":"运行了命令","tools":"使用了工具","delegate":"委派了工作","plan":"整理了计划"}}},
     "imageDelivery": {
       "stored": "图片已交付",
       "failed": "图片交付失败，可重试传输已有图片。",
@@ -18594,6 +18600,23 @@
     "groupHint": "关闭后，经此组运行的任务使用普通模式，也适用于 Ultrafast。",
     "pending": "部分电脑尚未确认设置。请保持连接，并更新不支持此设置的组内电脑。",
     "saveFailed": "设置可能已保存，但运行中的任务尚未全部确认切换为普通模式。请检查连接后重试。"
+  },
+  "usageCost": {
+    "title": "费用明细",
+    "conversation": "对话",
+    "additional": "附加费用",
+    "unknownModel": "未记录模型",
+    "estimate": "估算价值",
+    "charged": "按量费用",
+    "loading": "正在读取明细…",
+    "unavailable": "这条记录暂无明细。",
+    "explanation": "按模型和渠道汇总。订阅价值是估算，不是额外扣费。仅包含已记录的费用，历史记录的明细可能不完整。",
+    "source": {
+      "subscription": "订阅账户",
+      "cindy-ai": "Cindy AI",
+      "provider": "API 供应商",
+      "unknown": "未记录渠道"
+    }
   },
   "performanceTrace": {
     "title": "性能跟踪",

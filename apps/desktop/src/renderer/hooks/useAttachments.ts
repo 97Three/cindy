@@ -37,7 +37,7 @@ import {
   getDraft as getComposerDraft,
   isDraftDiscardTokenCurrent,
   saveDraft as saveComposerDraft,
-  subscribeDraft as subscribeComposerDraft,
+  subscribeDraftContent as subscribeComposerDraft,
   type ComposerDraftDiscardToken,
 } from '@/lib/composerDraftStore';
 import { cleanupStagedChatAttachmentFiles } from '@/lib/chatAttachmentStageCleanup';
@@ -286,8 +286,8 @@ export function useAttachments(sessionId?: string, draftKey?: string): UseAttach
           text: existing?.text ?? null,
           attachments: mergeAttachmentsById(existing?.attachments ?? [], items),
         },
-        // A reopened composer must receive results owned by the unmounted one.
-        { silent: mountedRef.current, preserveRemoteOptimisticRecovery: true },
+        // Refresh attachment subscribers without replacing unsaved editor text.
+        { silent: true, preserveRemoteOptimisticRecovery: true },
       );
     },
     [appendAttachments, isAttachmentOperationScopeCurrent],
@@ -366,15 +366,16 @@ export function useAttachments(sessionId?: string, draftKey?: string): UseAttach
     };
   }, [dataOwner, storageKey]);
 
-  // Same-session external draft writes (rewind/fork prefill) must replace the
-  // parent-held attachment list immediately. Session switches are handled by
-  // the restore effect above; this covers the "storageKey did not change" path.
+  // Observe attachments on every write, including silent late cache results.
+  // ChatInput keeps the separate external-write channel for document replacement;
+  // attachment-only updates must not restore its potentially older saved text.
   useEffect(() => {
     if (storageKey === undefined || !isDataOwnerGenerationCurrent(dataOwner)) return;
     return subscribeComposerDraft(storageKey, () => {
       if (!isDataOwnerGenerationCurrent(dataOwner)) return;
       const draft = getComposerDraft(storageKey);
       const next = draft?.attachments ?? [];
+      if (next === attachmentsRef.current) return;
       attachmentsRef.current = next;
       setAttachments(next);
     });

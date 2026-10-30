@@ -48,6 +48,7 @@ const h = vi.hoisted(() => ({ t: (key: string) => key, confirm: vi.fn(), editor:
   listAgentSkills: vi.fn(),
   localProviders: [] as ProviderView[],
   uploadChatFolder: vi.fn(),
+  cacheImageFromBuffer: vi.fn(),
   atPanelStandin: false,
 }));
 
@@ -119,6 +120,7 @@ const noOp = () => {};
 const api: any = new Proxy({}, { get: (_obj, key) => {
   if (key === 'setModel') return h.setModel;
   if (key === 'uploadChatFolder') return h.uploadChatFolder;
+  if (key === 'cacheImageFromBuffer') return h.cacheImageFromBuffer;
   if (key === 'getFilePath') return () => '/controller/docs';
   if (key === 'listAgentSkills') return h.listAgentSkills;
   if (key === 'listAgentCommands' || key === 'listDesktopCommands') return async () => ({ success: true, commands: [] });
@@ -148,6 +150,7 @@ const annotatedImage: AttachedFile = {
 
 beforeEach(() => {
   h.uploadChatFolder.mockReset();
+  h.cacheImageFromBuffer.mockReset().mockResolvedValue(undefined);
   h.listAgentSkills.mockReset().mockResolvedValue({ success: true, skills: [] });
   h.localProviders = [];
   h.editor = null;
@@ -210,6 +213,48 @@ it('does not replace the empty editor after an external empty-draft notification
   }));
   expect(changed).not.toHaveBeenCalled();
   expect(h.editor!.state.selection.from).toBe(1);
+});
+
+// #8084 / r4428883080: thread textarea coverage missed ChatInput's debounced text save.
+// Unit: real ChatInput/Tiptap + attachment hook, one pending image across a remount;
+// its late result must appear in the tray without replacing unsaved editor text.
+it('keeps unsaved editor text when an unmounted composer finishes caching an image', async () => {
+  let finishCache!: (value: { url: string }) => void;
+  const cached = new Promise<{ url: string }>(resolve => { finishCache = resolve; });
+  h.cacheImageFromBuffer.mockReturnValue(cached);
+  let addImage!: ReturnType<typeof useAttachments>['addClipboardImage'];
+  function Composer() {
+    const attachmentState = useAttachments('composer-regression');
+    addImage = attachmentState.addClipboardImage;
+    return <ChatInput sessionId="composer-regression" deviceLinkDeviceId={null}
+      attachmentState={attachmentState} hideRuntimeControls showFolderPicker={false}
+      disableAutofocus onSend={async () => true} />;
+  }
+  const first = render(<Composer />);
+  await waitFor(() => expect(h.editor).not.toBeNull());
+  let pending!: Promise<void>;
+  act(() => {
+    pending = addImage({ type: 'image/png', size: 4,
+      arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer } as Blob);
+  });
+  await waitFor(() => expect(h.cacheImageFromBuffer).toHaveBeenCalledOnce());
+  first.unmount();
+  const reopened = render(<Composer />);
+  await waitFor(() => expect(h.editor?.isDestroyed).toBe(false));
+  vi.useFakeTimers();
+  try {
+    act(() => { h.editor!.commands.insertContent('Newest draft'); });
+    expect(JSON.stringify(getDraft('composer-regression')?.text)).not.toContain('Newest draft');
+    const url = 'cindy-media://blobs/late-composer.png';
+    await act(async () => { finishCache({ url }); await pending; });
+    expect(h.editor!.getText()).toBe('Newest draft');
+    expect(reopened.container.querySelector(`img[src="${url}"]`)).not.toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(120); });
+    expect(getDraft('composer-regression')?.text).toEqual(plainTextToTiptapDoc('Newest draft'));
+    expect(getDraft('composer-regression')?.attachments).toEqual([expect.objectContaining({ url })]);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 // Companion chat 「回复」 bug: the quote appeared above the composer but focus stayed on the

@@ -171,7 +171,7 @@ describe('rewind draft attachment wiring', () => {
   });
 
   it('useAttachments listens for same-session external draft writes', () => {
-    expect(useAttachmentsSrc).toMatch(/subscribeDraft\s+as\s+subscribeComposerDraft/);
+    expect(useAttachmentsSrc).toMatch(/subscribeDraftContent\s+as\s+subscribeComposerDraft/);
     expect(useAttachmentsSrc).toMatch(/subscribeComposerDraft\(storageKey,\s*\(\)\s*=>/);
     expect(useAttachmentsSrc).toMatch(/setAttachments\(next\)/);
   });

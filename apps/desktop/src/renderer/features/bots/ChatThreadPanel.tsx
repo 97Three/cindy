@@ -166,11 +166,12 @@ export function animateThreadPanelWidth(panel: HTMLElement, from: string, to: st
  * `quoteSources` are the main timeline's verified messages (older pages included), so a
  * 话题 root's quote reads the same as it does in the timeline; without them, the latest page.
  */
-export function ChatThreadPanel({ group, rootId, quoteSources = group.messages, focus, sharedReplies, onRevealShare, onClose, resize }: {
+export function ChatThreadPanel({ group, rootId, quoteSources = group.messages, focus, sharedReplies, onPostPending, onRevealShare, onClose, resize }: {
   group: BotGroupDetail; rootId: string; quoteSources?: readonly BotGroupMessageView[];
   /** A reply to bring into view; a new nonce repeats the jump. */
   focus?: { messageId: string; nonce: number } | null;
   sharedReplies?: BotGroupSharedReplies;
+  onPostPending?: (source: BotGroupMessageView) => (messageId: string | null) => void;
   /** Scroll the main chat to a share; false when it is not loaded there. */
   onRevealShare?: (messageId: string) => boolean;
   onClose: () => void;
@@ -502,10 +503,13 @@ export function ChatThreadPanel({ group, rootId, quoteSources = group.messages, 
   }, [focus, replies, hasMore, readLocatedMention]);
 
   /** One server operation per reply and person, so a retry never posts twice. */
-  async function postToMain(messageId: string, fromComposer: boolean) {
+  async function postToMain(messageId: string, fromComposer: boolean, acceptedSource?: BotGroupMessageView) {
     if (readOnly || postingRef.current.has(messageId)) return false;
     postingRef.current.add(messageId); setPosting(new Set(postingRef.current));
     const owner = getDataOwnerGeneration();
+    const source = acceptedSource ?? repliesRef.current.find(message => message.id === messageId);
+    const settlePending = source ? onPostPending?.({ ...source, threadRootId: rootId }) : undefined;
+    let receipt: string | null = null;
     const failed = (code?: string) => {
       if (!isDataOwnerGenerationCurrent(owner)) return;
       if (code === 'SHARE_UNAVAILABLE') {
@@ -518,13 +522,14 @@ export function ChatThreadPanel({ group, rootId, quoteSources = group.messages, 
       const result = await api().shareToMain({ groupId: group.id, messageId });
       if (!isDataOwnerGenerationCurrent(owner)) return false;
       if (!result.ok) { failed(result.errorCode); return false; }
+      receipt = result.messageId;
       setPosted(previous => new Map(previous).set(messageId, result.messageId));
       setUnposted(previous => { const next = new Set(previous); next.delete(messageId); return next; });
       if (result.alreadyShared && !fromComposer) toast.info(t(key('thread.alreadyPosted')));
       refreshBotGroups();
       return true;
     } catch { failed(); return false; }
-    finally { postingRef.current.delete(messageId); setPosting(new Set(postingRef.current)); }
+    finally { settlePending?.(receipt); postingRef.current.delete(messageId); setPosting(new Set(postingRef.current)); }
   }
   async function retryUnposted() {
     // The queue belongs to the account that started the retry; stop once it is switched.
@@ -553,7 +558,10 @@ export function ChatThreadPanel({ group, rootId, quoteSources = group.messages, 
     const result = await api().reply({ groupId: group.id, rootId, ...input });
     if (result.ok && isDataOwnerGenerationCurrent(owner)) {
       setAlsoSend(false);
-      if (toMain) await postToMain(result.messageId, true);
+      // The topic receipt settles its own send; the optional main-chat copy has its own retry.
+      if (toMain) void postToMain(result.messageId, true, { ...pendingBotGroupMessage({
+        clientId: input.clientId, text: input.text, mentions: input.mentions, attachments: [], quote: null,
+        createdAt: Date.now(), afterSequence: lastRealSequenceRef.current }), id: result.messageId, threadRootId: rootId });
     }
     return result;
   };

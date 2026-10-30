@@ -980,6 +980,18 @@ describe('Chat Server result delivery and refresh', () => {
     });
   });
 
+  it('projects a completed process locator only on a bot reply without changing visible text', async () => {
+    const ref = { groupId: roomId, executionId: execution.id, sessionId: 'lane', clientId: 'source' };
+    const reply = { id: '90000000-0000-4000-8000-000000000001', seq: '8', authorId: botId,
+      author: { kind: 'bot', name: 'Bot' }, origin: 'bot', deleted: false, threadRootId: null,
+      createdAt: '2026-10-03T00:00:00Z', content: [{ type: 'text', text: 'Result' },
+        { type: 'card', namespace: 'cindy.work-record', schemaRevision: 1, fallback: '', data: ref }] };
+    fixture.handle.mockImplementation(route => route.includes('/messages?') ? { body: [reply] } : response(route));
+    const result = await service.getGroup(roomId);
+    if (!result.ok) throw new Error('Expected group');
+    expect(result.group.messages[0]).toMatchObject({ content: 'Result', process: ref });
+  });
+
   async function start() {
     fixture.profiles = [{ id: 'local-bot', displayName: 'Bot', avatar: null, status: 'active' }];
     await vi.advanceTimersByTimeAsync(2000);
@@ -987,6 +999,22 @@ describe('Chat Server result delivery and refresh', () => {
   }
   const terminal = { sessionId: 'lane', activeInputClientId: null, outcome: 'done' as const, resultText: 'Finished reply' };
   const deliveries = () => fixture.handle.mock.calls.filter(([, , body]) => body?.action === 'complete');
+  const processRecord = { type: 'card', namespace: 'cindy.work-record', schemaRevision: 1, fallback: '',
+    data: { groupId: roomId, executionId: execution.id, sessionId: 'lane', durationMs: expect.any(Number),
+      clientId: `bot-group:${roomId}:${execution.id}:local-bot` } };
+
+  // Unit: the historical locator must keep the executing host even if the
+  // companion moves later; the production completion payload is the evidence.
+  it('records the execution computer in the completed process locator', async () => {
+    service.dispose();
+    fixture.handle.mockImplementation(route => route === '/me'
+      ? { body: { actor: { id: selfId }, deviceId: 'execution-mac' } } : response(route));
+    service = withChatServer({ dispose: vi.fn() } as unknown as BotGroupChatService, deps);
+    await start();
+    await service.settleLaneTurn(terminal);
+    expect(deliveries()[0][2].content).toContainEqual({ ...processRecord,
+      data: { ...processRecord.data, deviceId: 'execution-mac' } });
+  });
 
   // #7583, unit: runtime close without an SDK terminal left the leased execution
   // alive. Existing cases start from done/error; exercise the close adapter with
@@ -1017,12 +1045,12 @@ describe('Chat Server result delivery and refresh', () => {
     replyImages.mockResolvedValue({ text: display, attachments: [replyImage] }); fixture.upload.mockResolvedValue([imageBlock]);
     await start(); await service.settleLaneTurn({ ...terminal, resultText });
     expect(deliveries()[0][2]).toMatchObject({ continueDiscussion: true,
-      content: [{ type: 'text', text: display || '已完成' }, imageBlock] });
+      content: [{ type: 'text', text: display || '已完成' }, imageBlock, processRecord] });
   });
   it.each(['Hello', '', 'NO_REPLY'])('keeps the baseline no-image result for %j', async resultText => {
     await start(); await service.settleLaneTurn({ ...terminal, resultText });
     expect(deliveries()[0][2].continueDiscussion).toBe(resultText === 'Hello');
-    if (resultText === 'Hello') expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: 'Hello' }]);
+    if (resultText === 'Hello') expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: 'Hello' }, processRecord]);
     else expect(deliveries()[0][2]).not.toHaveProperty('content');
   });
   it.each([408, 429, 503])('reuses imported images after HTTP %s and completion ACK loss', async status => {
@@ -1035,7 +1063,7 @@ describe('Chat Server result delivery and refresh', () => {
     await start(); await service.settleLaneTurn({ ...terminal, resultText: '![](xdt-image:///task/generated.png)' });
     expect(deliveries()).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(status === 429 ? 61000 : 16000);
-    expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: 'Original image' }, imageBlock]);
+    expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: 'Original image' }, imageBlock, processRecord]);
     await vi.advanceTimersByTimeAsync(16000);
     expect(deliveries()).toHaveLength(2); expect(deliveries()[1][2]).toEqual(deliveries()[0][2]);
     expect(replyImages).toHaveBeenCalledOnce(); expect(fixture.upload).toHaveBeenCalledTimes(2);
@@ -1068,7 +1096,7 @@ describe('Chat Server result delivery and refresh', () => {
     expect(fixture.upload).toHaveBeenCalledOnce(); expect(deliveries()).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(2000);
     expect(fixture.upload).toHaveBeenCalledTimes(2);
-    expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: 'image' }, imageBlock]);
+    expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: 'image' }, imageBlock, processRecord]);
     expect(replyImages).toHaveBeenCalledOnce(); expect(deps.dispatch).toHaveBeenCalledOnce();
   });
 
@@ -1171,7 +1199,7 @@ describe('Chat Server result delivery and refresh', () => {
     await startFileReply();
     const uploads = fixture.upload.mock.calls.length;
     await service.settleLaneTurn({ ...terminal, resultText: '[Report](./report.pdf)' });
-    expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: 'Report' }, { type: 'media', mediaId: 'pdf', caption: 'report.pdf' }]);
+    expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: 'Report' }, { type: 'media', mediaId: 'pdf', caption: 'report.pdf' }, processRecord]);
     await vi.advanceTimersByTimeAsync(16000);
     expect(deliveries()).toHaveLength(2);
     expect(deliveries()[1][2]).toEqual(deliveries()[0][2]);
@@ -1231,7 +1259,7 @@ describe('Chat Server result delivery and refresh', () => {
     await vi.advanceTimersByTimeAsync(16000);
     expect(fixture.upload).toHaveBeenLastCalledWith(roomId, expect.any(String), [...images, pdf], expect.any(String), expect.any(Function));
     expect(deliveries()).toHaveLength(1);
-    expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: 'Delivered' }, ...blocks]);
+    expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: 'Delivered' }, ...blocks, processRecord]);
     expect(replyFiles.prepare).toHaveBeenCalledOnce(); expect(replyImages).toHaveBeenCalledOnce();
     expect(deps.dispatch).toHaveBeenCalledOnce();
   });
@@ -1272,7 +1300,7 @@ describe('Chat Server result delivery and refresh', () => {
     await service.settleLaneTurn({ ...terminal, resultText: '[Report](./report.pdf)' });
     expect(deliveries()).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(16000);
-    expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: 'Report' }, { type: 'media', mediaId: 'pdf', caption: 'report.pdf' }]);
+    expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: 'Report' }, { type: 'media', mediaId: 'pdf', caption: 'report.pdf' }, processRecord]);
     expect(replyFiles.prepare).toHaveBeenCalledOnce();
     expect(deps.dispatch).toHaveBeenCalledOnce();
   });
@@ -2103,7 +2131,7 @@ describe('Chat Server result delivery and refresh', () => {
     fixture.handle.mockImplementation(welcomeResponse);
     await start();
     await service.settleLaneTurn(terminal);
-    expect(deliveries()[0][2]).toMatchObject({ content: [{ type: 'text', text: terminal.resultText }], continueDiscussion: false });
+    expect(deliveries()[0][2]).toMatchObject({ content: [{ type: 'text', text: terminal.resultText }, processRecord], continueDiscussion: false });
     const socket = fixture.sockets[0];
     socket.emit('message', JSON.stringify({ type: 'changes', scope: `conversation:${roomId}`, cursor: '2',
       changes: [{ type: 'message.system.created', data: { executionTrigger: 'member.joined', message: joinedSource() } }] }));
@@ -2242,7 +2270,7 @@ describe('Chat Server result delivery and refresh', () => {
       await start();
       await service.settleLaneTurn({ ...terminal, resultText: 'My view.' });
       const [delivery] = deliveries();
-      expect(delivery[2].content).toEqual([{ type: 'text', text: 'My view.' }]);
+      expect(delivery[2].content).toEqual([{ type: 'text', text: 'My view.' }, processRecord]);
       expect(delivery[2]).not.toHaveProperty('continueDiscussion');
     });
 
@@ -2291,7 +2319,7 @@ describe('Chat Server result delivery and refresh', () => {
       await service.settleLaneTurn({ ...terminal, resultText: '![](cindy-media://image)' });
       if (kind === 'talk') {
         expect(replyImages).toHaveBeenCalledOnce();
-        expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: 'image' }, imageBlock]);
+        expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: 'image' }, imageBlock, processRecord]);
         expect(fixture.upload).toHaveBeenCalledWith(roomId, expect.any(String), [replyImage], botId, expect.any(Function));
       } else expect(replyImages).not.toHaveBeenCalled();
       expect(deliveries()[0][2]).not.toHaveProperty('continueDiscussion');
@@ -2313,10 +2341,10 @@ describe('Chat Server result delivery and refresh', () => {
       await service.settleLaneTurn({ ...terminal, resultText: '[Report](./report.pdf)' });
       expect(deliveries()[0][2]).not.toHaveProperty('continueDiscussion');
       if (kind === 'talk') {
-        expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: 'Report' }, { type: 'media', mediaId: 'pdf', caption: 'report.pdf' }]);
+        expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: 'Report' }, { type: 'media', mediaId: 'pdf', caption: 'report.pdf' }, processRecord]);
       } else {
         expect(replyFiles.prepare).not.toHaveBeenCalled();
-        expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: '[Report](./report.pdf)' }]);
+        expect(deliveries()[0][2].content).toEqual([{ type: 'text', text: '[Report](./report.pdf)' }, processRecord]);
       }
     });
 

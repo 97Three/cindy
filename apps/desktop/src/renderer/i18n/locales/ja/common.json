@@ -1674,7 +1674,9 @@
     }
   },
   "settings": {
-    "newChatDefaults": { "title": "新しいタスクのデフォルト権限" },
+    "newChatDefaults": {
+      "title": "新しいタスクのデフォルト権限"
+    },
     "imConnection": {
       "reconnect": "再接続",
       "savedNote": "連携情報は保存されています。そのまま再接続できます。",
@@ -2850,7 +2852,8 @@
         "hint": "自動では話している言語を判定します。指定すると多言語環境での誤認識を減らせます。",
         "ariaLabel": "言語の選択",
         "options": {
-          "auto": "自動"
+          "auto": "自動",
+          "es": "Español"
         },
         "optionDescriptions": {
           "auto": "認識サービスが自動判定",
@@ -2858,7 +2861,8 @@
           "zh-TW": "繁体字中国語（台湾）",
           "en": "英語",
           "ja": "日本語",
-          "ko": "韓国語"
+          "ko": "韓国語",
+          "es": "スペイン語"
         }
       },
       "shortcut": {
@@ -3600,6 +3604,7 @@
           "nameRequired": "表示名を入力してください",
           "runtimeRequired": "Runtime を 1 つ以上設定してください（ベース URL とモデル）",
           "baseUrlInvalid": "ベース URL は有効な http(s) アドレスである必要があります",
+          "baseUrlRequired": "この Runtime のベース URL を入力するか、プロトコルを既定に戻してください",
           "contextWindowInvalid": "コンテキストウィンドウは有効な正の整数である必要があります（数字グループの間に区切り記号を使用できます）",
           "requestPathInvalid": "正確なリクエストパスは 1 つの / で始め、フラグメントや .、.. のパスセグメントを含めないでください。空白や安全でない文字はパーセントエンコードしてください。",
           "modelRequired": "モデルを 1 つ以上追加してください",
@@ -4008,9 +4013,7 @@
         "metaOAuth": "サブスクリプションアカウント",
         "metaApiKey": "API key",
         "metaNoAuth": "ローカル / セルフホスト · 認証なし",
-        "customTitle": "カスタムエンドポイント",
-        "customMeta": "OpenAI / Anthropic 互換の任意のモデルソースを接続",
-        "pickHint": "接続するアカウントまたはサービスを選択してください。",
+        "customAction": "見つかりませんか？カスタム追加",
         "oauthDesc": "ブラウザーでログインします。API key は不要です。",
         "deviceOAuthDesc": "ワンタイムデバイスコードを使い、プロバイダーの認証ページで認証します",
         "authorizeInBrowser": "ブラウザで認証",
@@ -7909,8 +7912,9 @@
         "usesExplanation": "許可された共有範囲の全バージョンにおける累計ツール呼び出し数です。下の個人の呼び出しは、この端末の現在のアカウントのみを集計します。"
       },
       "contribution": {
-        "unreadReview": "新しい審査結果があります",
+        "unreadReview": "新しい処理結果があります",
         "viewReviewResult": "{{version}} の審査結果を見る",
+        "viewMarketResult": "マーケットの対応結果を見る",
         "anonymous": "匿名で公開",
         "anonymousHint": "プラグイン全体の公開作者名を非表示にします。オフにすると、各バージョンの審査提出時に保存された元の作者名が表示されます。",
         "anonymousAuthorOnly": "変更できるのは元の作者のみです",
@@ -8006,6 +8010,7 @@
           "rejected": "差し戻し",
           "enabled": "公開を開始",
           "disabled": "公開を停止",
+          "archived": "アーカイブ済み",
           "current_changed": "公開バージョンを変更",
           "revoked": "バージョンを取り消し",
           "cancelled": "取り消し済み"
@@ -12600,6 +12605,7 @@
     "verificationFailed": "ChatGPT ログインが復旧したか確認できませんでした。再確認してください。"
   },
   "chat": {
+    "teammateProcess": {"record":"作業履歴","operations":"操作履歴","elapsed":"処理中 {{duration}}","took":"所要時間 {{duration}}","processing":"処理中","worked":"作業履歴","thinking":"考えています","thought":"考えました","failed_other":"{{count}} 件の呼び出しに失敗","separator":"・","actions":{"running":{"read":"ファイルを確認しています","edit":"ファイルを編集しています","search":"検索しています","web":"ウェブを調べています","command":"コマンドを実行しています","tools":"ツールを使用しています","delegate":"作業を依頼しています","plan":"計画を更新しています"},"done":{"read":"ファイルを確認しました","edit":"ファイルを編集しました","search":"検索しました","web":"ウェブを調べました","command":"コマンドを実行しました","tools":"ツールを使用しました","delegate":"作業を依頼しました","plan":"計画を更新しました"}}},
     "imageDelivery": {
       "stored": "画像を受け取りました",
       "failed": "画像の転送に失敗しました。既存の画像の転送を再試行できます。",
@@ -18594,6 +18600,23 @@
     "groupHint": "オフにすると、このグループ経由のすべてのタスクは通常速度になります。Ultrafast も対象です。",
     "pending": "一部のコンピューターが設定を確認していません。接続を維持し、この設定に対応していないグループ内のコンピューターを更新してください。",
     "saveFailed": "設定は保存された可能性がありますが、一部の実行中タスクが通常速度への切り替えを確認していません。接続を確認して再試行してください。"
+  },
+  "usageCost": {
+    "title": "費用の内訳",
+    "conversation": "チャット",
+    "additional": "追加費用",
+    "unknownModel": "モデル未記録",
+    "estimate": "推定価値",
+    "charged": "従量料金",
+    "loading": "内訳を読み込み中…",
+    "unavailable": "この記録の内訳は取得できません。",
+    "explanation": "モデルと経路別に集計します。サブスクリプションの価値は推定であり、追加請求ではありません。記録済みの費用のみを含み、過去の内訳は不完全な場合があります。",
+    "source": {
+      "subscription": "サブスクリプション",
+      "cindy-ai": "Cindy AI",
+      "provider": "API プロバイダー",
+      "unknown": "経路未記録"
+    }
   },
   "performanceTrace": {
     "title": "パフォーマンスの記録",

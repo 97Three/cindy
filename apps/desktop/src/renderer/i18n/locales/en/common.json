@@ -1704,7 +1704,9 @@
     }
   },
   "settings": {
-    "newChatDefaults": { "title": "Default permission for new tasks" },
+    "newChatDefaults": {
+      "title": "Default permission for new tasks"
+    },
     "imConnection": {
       "reconnect": "Reconnect",
       "savedNote": "Your saved binding is retained. You can retry the connection.",
@@ -2880,7 +2882,8 @@
         "hint": "Auto detects the spoken language. Choose one to reduce multilingual mix-ups.",
         "ariaLabel": "Language selection",
         "options": {
-          "auto": "Auto"
+          "auto": "Auto",
+          "es": "Español"
         },
         "optionDescriptions": {
           "auto": "Let the recognition service detect it",
@@ -2888,7 +2891,8 @@
           "zh-TW": "Traditional Chinese (Taiwan)",
           "en": "English",
           "ja": "Japanese",
-          "ko": "Korean"
+          "ko": "Korean",
+          "es": "Spanish"
         }
       },
       "shortcut": {
@@ -3630,6 +3634,7 @@
           "nameRequired": "Display name is required",
           "runtimeRequired": "Configure at least one runtime (its base URL and models)",
           "baseUrlInvalid": "Base URL must be a valid http(s) address",
+          "baseUrlRequired": "Enter this runtime's Base URL, or switch its protocol back to the default",
           "contextWindowInvalid": "Context window must be a valid positive integer (separators allowed between digit groups)",
           "requestPathInvalid": "Begin the exact request path with a single /. Do not use fragments or . and .. path segments; percent-encode spaces and unsafe characters.",
           "modelRequired": "Add at least one model",
@@ -4040,9 +4045,7 @@
         "metaOAuth": "Subscription account",
         "metaApiKey": "API key",
         "metaNoAuth": "Local / self-hosted · no authentication",
-        "customTitle": "Custom endpoint",
-        "customMeta": "Connect any OpenAI / Anthropic compatible source",
-        "pickHint": "Choose the account or service to connect.",
+        "customAction": "Not listed? Add custom",
         "oauthDesc": "Sign in through your browser. No API key required.",
         "deviceOAuthDesc": "Authorize on the provider's verification page with a one-time device code",
         "authorizeInBrowser": "Authorize in browser",
@@ -7941,8 +7944,9 @@
         "usesExplanation": "Cumulative shared tool calls across all releases in the authorized audience. Your calls below count only this account on this computer."
       },
       "contribution": {
-        "unreadReview": "New review result",
+        "unreadReview": "New plugin result",
         "viewReviewResult": "View review result for {{version}}",
+        "viewMarketResult": "View Market Result",
         "anonymous": "Publish anonymously",
         "anonymousHint": "Hide public attribution for the entire plugin. When disabled, each version shows the original author’s name saved when it was submitted.",
         "anonymousAuthorOnly": "Only the original author can change this",
@@ -8038,6 +8042,7 @@
           "rejected": "Returned",
           "enabled": "Published",
           "disabled": "Unlisted",
+          "archived": "Archived",
           "current_changed": "Community Version Changed",
           "revoked": "Version Revoked",
           "cancelled": "Cancelled"
@@ -12642,6 +12647,7 @@
     "verificationFailed": "Cindy couldn’t confirm whether the ChatGPT sign-in has recovered. Check again."
   },
   "chat": {
+    "teammateProcess": {"record":"Activity","operations":"Activity log","elapsed":"Working for {{duration}}","took":"Took {{duration}}","processing":"Working","worked":"Activity","thinking":"Thinking","thought":"Thought","failed_one":"{{count}} call failed","failed_other":"{{count}} calls failed","separator":", ","actions":{"running":{"read":"Reading files","edit":"Editing files","search":"Searching","web":"Browsing the web","command":"Running commands","tools":"Using tools","delegate":"Delegating work","plan":"Updating the plan"},"done":{"read":"Read files","edit":"Edited files","search":"Searched","web":"Browsed the web","command":"Ran commands","tools":"Used tools","delegate":"Delegated work","plan":"Updated the plan"}}},
     "imageDelivery": {
       "stored": "Image delivered",
       "failed": "Image delivery failed. Retry transferring the existing image.",
@@ -18655,6 +18661,23 @@
     "groupHint": "When off, all tasks routed through this group use standard speed, including Ultrafast.",
     "pending": "Some computers have not confirmed the setting. Keep them connected and update group computers that do not support this setting.",
     "saveFailed": "The setting may be saved, but some running tasks have not confirmed standard speed. Check the connection and retry."
+  },
+  "usageCost": {
+    "title": "Cost details",
+    "conversation": "Conversation",
+    "additional": "Additional fees",
+    "unknownModel": "Model not recorded",
+    "estimate": "Estimated value",
+    "charged": "Usage charge",
+    "loading": "Loading details…",
+    "unavailable": "Details are unavailable for this record.",
+    "explanation": "Grouped by model and channel. Subscription value is an estimate, not an extra charge. Only recorded costs are included; older records may have incomplete details.",
+    "source": {
+      "subscription": "Subscription",
+      "cindy-ai": "Cindy AI",
+      "provider": "API provider",
+      "unknown": "Channel not recorded"
+    }
   },
   "performanceTrace": {
     "title": "Performance Trace",
