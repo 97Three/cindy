@@ -1,4 +1,5 @@
 import type { VoiceConversationApi } from '../shared/voiceConversation';
+import { PERFORMANCE_TRACE_CHANNEL, PERFORMANCE_TRACE_EVENTS_CHANNEL, PERFORMANCE_TRACE_STATE_CHANNEL, type PerformanceTraceAPI, type PerformanceTraceState } from '../shared/performanceTrace';
 import { createAccessibilitySupportBridge } from './accessibilitySupport';
 import { createWallpaperAssetsBridge } from './wallpaperAssets';
 import type { CompanionImportApi, CompanionImportSelection } from '@cindy/maker-shared/companion-import';
@@ -2133,6 +2134,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   resourceUsageWindow: {
     open: (): Promise<void> => ipcRenderer.invoke(RESOURCE_USAGE_WINDOW_OPEN_CHANNEL),
   },
+  performanceTrace: {
+    command: (command, note) => ipcRenderer.invoke(PERFORMANCE_TRACE_CHANNEL, command, note),
+    events: (events) => ipcRenderer.send(PERFORMANCE_TRACE_EVENTS_CHANNEL, events),
+    onState: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: PerformanceTraceState) => listener(state);
+      ipcRenderer.on(PERFORMANCE_TRACE_STATE_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(PERFORMANCE_TRACE_STATE_CHANNEL, handler);
+    },
+  } satisfies PerformanceTraceAPI,
 
   // ── 右侧栏单页签独立窗口(sidebar tab window)──────────────────────────
   // 每个弹出的页签一扇窗。状态机在 main(sidebar-tab-window/controller.ts),
