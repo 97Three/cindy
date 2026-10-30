@@ -17238,6 +17238,18 @@
     "compression": "用於精簡冗長內容。"
   },
   "routines": {
+    "deliveryLabel": "最終送達",
+    "deliveryDirect": "直接顯示在夥伴對話裡",
+    "deliveryProcess": "交給夥伴處理後回覆",
+    "deliveryIm": "傳送到訊息機器人",
+    "deliveryNone": "只保留在執行任務裡",
+    "deliveryHint": "預設直接顯示結果，不額外呼叫模型。開啟靜默檢查後，無事時不送達。",
+    "deliveryRecipient": "接收位置",
+    "deliveryUnavailable": "目前接收位置無法使用",
+    "deliveryNoRecipients": "請先連接訊息機器人，並與它聊過一次，再重新開啟此設定。",
+    "deliveryFailed": "已完成，送達失敗",
+    "deliveryFailedHint": "執行結果已保留。請檢查送達設定；不要為了補發而重新執行任務。",
+    "deliveryDelivered": "結果已送達",
     "onEvent": "事件：{{source}} · {{event}}",
     "triggerDetails": "查看觸發條件（{{count}} 項，符合任一項即執行）",
     "noTriggers": "尚未設定觸發條件",

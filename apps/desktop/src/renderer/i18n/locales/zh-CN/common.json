@@ -17238,6 +17238,18 @@
     "compression": "用于精简冗长内容。"
   },
   "routines": {
+    "deliveryLabel": "最终送达",
+    "deliveryDirect": "直接显示在伙伴对话里",
+    "deliveryProcess": "交给伙伴处理后回复",
+    "deliveryIm": "发送到消息机器人",
+    "deliveryNone": "只保留在执行任务里",
+    "deliveryHint": "默认直接显示结果，不额外调用模型。开启静默检查后，无事时不送达。",
+    "deliveryRecipient": "接收位置",
+    "deliveryUnavailable": "当前接收位置不可用",
+    "deliveryNoRecipients": "请先连接消息机器人，并与它聊过一次，再重新打开此设置。",
+    "deliveryFailed": "已完成，送达失败",
+    "deliveryFailedHint": "执行结果已保留。请检查送达设置；不要为了补发而重新执行任务。",
+    "deliveryDelivered": "结果已送达",
     "onEvent": "事件：{{source}} · {{event}}",
     "triggerDetails": "查看触发条件（{{count}} 项，满足任一项即运行）",
     "noTriggers": "尚未设置触发条件",

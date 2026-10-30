@@ -113,11 +113,11 @@ export const CAPABILITIES: readonly CapabilityEntry[] = [
     title: 'Session Handoff(把消息派给已有任务)',
     oneLiner: 'skill 可读当前 sessionId,并把消息 handoff 到一个既有 session,适合把同一业务对象的二次处理路由回原上下文。',
     detail: [
-      `【是什么】get_current_session_id(cindy_helper 自省类)+ send_to_worker(cindy_orca team 工具)/ send_to_session(cindy_helper handoff 类, 走 call_tool)配合使用。前者返回当前 ${BRAND_NAME} session 的 business id / agent_kind / working_dir, 后两者把一条控制层消息投递到指定 session;目标不在内存时会自动 resume, 投递成功即返回。`,
+      `【是什么】get_current_session_id(cindy_helper 自省类)+ send_to_worker(cindy_orca team 工具)/ send_to_session(cindy_helper handoff 类, 走 call_tool)配合使用。前者返回当前 ${BRAND_NAME} session 的 business id / agent_kind / project_path / working_dir, 后两者把一条控制层消息投递到指定 session;目标不在内存时会自动 resume, 投递成功即返回。`,
       '【典型场景】自动化 skill 首次处理某个外部业务对象(issue / jira / pr / 任意自定义 key)时, 先调 get_current_session_id 拿 session_id 并把它和外部 key 做持久化绑定;后续二次处理同一对象时, 调 send_to_worker(team 内 worker)或 send_to_session(任意已知 session)把增量信息 handoff 回那个 session, 保留原始上下文、决策链和历史工具调用。',
       '【skill 端伪代码】first_seen -> sid = get_current_session_id(); store(key, sid.session_id); later -> sid = load(key); if sid then send_to_worker / send_to_session({ target_session_id: sid, message: "...增量..." }) else fallback normal flow。',
       '【跨电脑】target_session_id 传 deviceId::sessionId(list_sessions 用 device 参数查到的 id)可发给另一台电脑上的既有任务,对方电脑需在线并开启远程控制;不能在另一台电脑新建任务。',
-      '【硬规则】send_to_session 要发给已有任务时 target_session_id 必传;不知道 id 先用 history 类目的 list_sessions 查。完全省略该参数不会报错,而是 create:静默新建一个专属任务、把消息当首条输入并立刻跑一轮,返回 wake_kind=created 和 note。只有明确要为业务对象新建专属任务时才省略;拿到 created 不等于已投给既有任务。',
+      '【硬规则】send_to_session 发给已有任务时 target_session_id 必传；不知道 id 先用 history/list_sessions 查。新建任务省略 project_path 继承来源归属，传已有项目路径切换项目，传 null 创建不绑项目的任务；可用 title 指定标题。get_current_session_id 可查询归属，control/list_projects 可选择其他项目。working_dir 只决定执行位置，不登记项目；新增或恢复项目单独用 create_project。无法确定来源归属时返回 INVALID_ARGS；成功创建返回 wake_kind=created 和 note，不等于投给既有任务。',
       '【失败码】NOT_FOUND / DELETED 通常表示绑定失效,skill 应清掉绑定并回退; ARCHIVED 表示 session 已归档，在已有恢复授权时可先用 control/unarchive_sessions 恢复，再发送新消息，不能自行推翻用户归档意图; 传了 id 但目标不存在只会返 NOT_FOUND,绝不自动新建。jump 撞上目标正在跑 turn 时不再返 BUSY,而是入队并成功返回 wake_kind=queued(可用 update/cancel_session_queued_message 管理);BUSY 仅是 create 模式的罕见兜底。',
       '【边界】它不是普通聊天入口,而是 session 间 handoff 的控制层能力;不会自动关闭当前 dispatcher session,也不会替 skill 管理绑定键的存储语义。',
     ].join(' '),
