@@ -232,6 +232,8 @@ describe('bot group remote resources', () => {
     const waiting = summary({
       openPlan: { id: 'p1', status: 'waiting', currentStep: 0, stepCount: 3, currentBotName: '咪咪', currentStepStatus: 'failed' },
     });
+    expect(botGroupRemoteItem(waiting).display.teammateActivity).toEqual({ phase: 'needs-interaction' });
+    expect(botGroupRemoteItem({ ...waiting, teammateActivity: { phase: 'error' } }).revision).not.toEqual(botGroupRemoteItem(waiting).revision);
     expect(botGroupRemotePreview(waiting)).toMatchObject({ translations: { 'zh-CN': '咪咪没做完' } });
     expect(botGroupRemotePreview(summary())).toMatchObject({ translations: { 'zh-CN': '阿布：写好了' } });
   });

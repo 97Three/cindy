@@ -291,6 +291,7 @@
     "failedStep": "Step {{step}} didn't finish"
   },
   "server": {
+    "attachmentTooLarge": "Group attachments must be {{size}} MB or smaller. Choose a smaller file.",
     "offline": "Can’t connect to group chat. Try again.",
     "loadFailed": "Can’t load this group chat right now. Try again.",
     "loadOlder": "Load Earlier Messages",

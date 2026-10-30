@@ -21,7 +21,7 @@ function setup(options: { home: string | null; handler?: ApiHandler; devices?: D
   installationId?: string; probe?: (deviceId: string) => Promise<boolean>; values?: Array<{ key: string; value: unknown }>;
   readValues?: () => Promise<Array<{ key: string; value: unknown }>>; syncProfile?: (botId: string) => Promise<void>;
   turnActive?: () => boolean; homeLink?: CompanionCloudHost['homeLink']; stopBotTurns?: CompanionCloudHost['stopBotTurns'];
-  canonicalSession?: CompanionCloudHost['canonicalSession']; paused?: (botId: string) => boolean }) {
+  canonicalSession?: CompanionCloudHost['canonicalSession']; paused?: (botId: string) => boolean; savedState?: string }) {
   const actors: CompanionRuntimeActor[] = [{ id: 'actor-1', kind: 'bot', externalId: 'bot_mia', name: 'Mia', avatar: null, homeDeviceId: options.home }];
   const { api, calls } = fakeApi(options.handler ?? ((route, method) => {
     // The home has uploaded the profile snapshot a take-over builds from.
@@ -33,7 +33,7 @@ function setup(options: { home: string | null; handler?: ApiHandler; devices?: D
     throw new Error(`unexpected ${method} ${route}`);
   }));
   const local = fakeLocal();
-  const { state } = memoryState();
+  const { state, files } = memoryState(options.savedState);
   const refresh = vi.fn(async () => undefined);
   const publish = vi.fn();
   const onShadowChanged = vi.fn();
@@ -53,7 +53,7 @@ function setup(options: { home: string | null; handler?: ApiHandler; devices?: D
     bots: () => actors.filter(a => a.homeDeviceId === 'desk' && !state.isDemoted(a.externalId)).map(a => ({ botId: a.externalId, actorId: a.id, name: a.name })),
     actors: () => actors, refresh, publish, onShadowChanged, ...(options.syncProfile ? { syncProfile: options.syncProfile } : {}),
     ...(options.paused ? { paused: options.paused } : {}) });
-  return { runtime, actors, calls, local, state, refresh, publish, onShadowChanged };
+  return { runtime, actors, calls, local, state, files, refresh, publish, onShadowChanged };
 }
 
 describe('take over', () => {
@@ -425,6 +425,50 @@ describe('transcript', () => {
 });
 
 describe('retire', () => {
+  // An explicit local deletion must survive an unavailable actor registry. Persist the
+  // known actor identity; a later registry must still prove home + installation ownership.
+  it('persists retirement without an actor registry and completes it after restart', async () => {
+    const t = setup({ home: 'desk' });
+    t.state.update('bot_mia', 'actor-1', entry => { entry.roomId = ROOM; });
+    t.actors.length = 0;
+    await t.runtime.retire('bot_mia');
+    const savedState = t.files.get('state.json');
+    expect(JSON.parse(savedState!).bots.bot_mia.retirePending).toBe(true);
+    expect(t.calls.some(call => call.method === 'PATCH')).toBe(false);
+    t.runtime.dispose();
+
+    const restarted = setup({ home: 'desk', savedState });
+    restarted.runtime.reconcile([]);
+    await vi.waitFor(() => expect(restarted.actors[0]!.disabled).toBe(true));
+    expect(restarted.state.bot('bot_mia')?.retirePending).toBeUndefined();
+    expect(restarted.local.host.createProfile).not.toHaveBeenCalled();
+  });
+
+  it.each(['laptop', 'replacement', 'disabled'])('does not apply a deferred deletion to %s', async target => {
+    const t = setup({ home: 'desk' });
+    t.state.update('bot_mia', 'actor-1', entry => { entry.retirePending = true; });
+    if (target === 'laptop') t.actors[0]!.homeDeviceId = 'laptop';
+    else if (target === 'replacement') t.actors[0]!.id = 'actor-replacement';
+    else t.actors[0]!.disabled = true;
+    // Keep a local row to avoid exercising automatic materialization in this retirement test.
+    t.runtime.reconcile([{ id: 'bot_mia', status: 'active' }]);
+    await Promise.resolve();
+    expect(t.calls.some(call => call.method === 'PATCH' && (call.data as { disabled?: boolean }).disabled)).toBe(false);
+    expect(t.actors[0]!.disabled === true).toBe(target === 'disabled');
+    expect(t.state.bot('bot_mia')?.retirePending).toBeUndefined();
+  });
+
+  it('does not queue an unknown or demoted companion when the registry is unavailable', async () => {
+    const t = setup({ home: 'desk' });
+    t.state.update('bot_mia', 'actor-1', entry => { entry.demoted = true; });
+    t.actors.length = 0;
+    await t.runtime.retire('bot_mia');
+    await t.runtime.retire('unknown');
+    expect(t.state.bot('bot_mia')?.retirePending).toBeUndefined();
+    expect(t.state.bot('unknown')).toBeNull();
+    expect(t.calls.some(call => call.method === 'PATCH')).toBe(false);
+  });
+
   it('disables the cloud companion when it is deleted on its main computer', async () => {
     const t = setup({ home: 'desk' });
     await t.runtime.retire('bot_mia');
