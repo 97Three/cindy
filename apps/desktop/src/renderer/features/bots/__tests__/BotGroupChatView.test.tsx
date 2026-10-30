@@ -4284,10 +4284,13 @@ it.each([null, 'live'] as const)('only shows server work elapsed with a live sta
   expect(screen.getByTestId('content-header').textContent).toContain('bots.groupChat.header.speaking:咪咪');
 });
 
-it('prioritizes a running speaker over a queued speaker in the header', async () => {
+it.each(['none', 'work', 'talk'] as const)('prioritizes a running speaker over a queued speaker in the header (plan: %s)', async kind => {
+  const queuedPlan = plan({ kind: kind === 'talk' ? 'talk' : 'work', status: 'running', currentStep: 0,
+    steps: [{ ...plan().steps[0]!, status: 'running' }, plan().steps[1]!] });
   mocks.getBotGroup.mockResolvedValue({ ok: true, group: detail({ speakingBotIds: ['mimi', 'xiaoman'],
+    ...(kind !== 'none' ? withPlan(queuedPlan, []) : {}),
     round: { status: 'running', canContinue: false, speakers: [
-      { botId: 'mimi', activity: 'reply', executionStatus: 'queued', sessionId: null },
+      { botId: 'mimi', activity: kind === 'none' ? 'reply' : 'step', executionStatus: 'queued', sessionId: null },
       { botId: 'xiaoman', activity: 'reply', executionStatus: 'running', sessionId: null },
     ] },
   }) });

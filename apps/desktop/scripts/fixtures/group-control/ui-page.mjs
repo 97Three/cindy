@@ -42,6 +42,7 @@ export default {
       viewport: { width: 720, height: 700 },
       data: { ...base, sidebar: false, remoteLimits: true },
     },
+    'work-queued-step-mixed': { about: '#8064 review: queued plan step does not override a running reply', data: { ...base, messages: 2, workState: 'queued', workParallel: true, workQueuedStep: true } },
     'work-queued': { about: '#8047: queued execution is busy without speaking or elapsed work', data: { ...base, messages: 2, workState: 'queued' } },
     'work-thinking': { about: 'Actual group work status, scenario data: thinking', data: { ...base, messages: 2, workState: 'thinking' } },
     'work-tools': { about: 'Actual group work status, scenario data: command execution', data: { ...base, messages: 2, workState: 'testing' } },
@@ -192,7 +193,15 @@ export default {
         startedAtMs: Date.now() - 83_000, lastActivityAtMs: Date.now(), attention: false,
         gracefulStopState: state === 'stopping' ? 'requested' : 'none', source: 'live' }]);
       await page.getByTestId('bot-group-progress').first().waitFor();
-      if (state === 'queued') {
+      if (definition.data.workQueuedStep) {
+        const header = await page.getByTestId('bot-group-content-header').innerText();
+        const sidebar = await page.getByTestId('bot-group-running').innerText();
+        assert.ok(header.includes(await ui.t('bots.groupChat.header.speaking', { name: 'Nova' })));
+        assert.ok(sidebar.includes('Nova') && !sidebar.includes('Aster'));
+        const progress = await page.getByTestId('bot-group-progress').allTextContents();
+        assert.equal(progress.length, 2);
+        assert.ok(progress[0].includes(await ui.t('bots.groupChat.progress.queued')));
+      } else if (state === 'queued') {
         const header = await page.getByTestId('bot-group-content-header').innerText();
         const progress = await page.getByTestId('bot-group-progress').innerText();
         assert.ok(header.includes(await ui.t('bots.groupChat.header.queued', { name: 'Aster' })));

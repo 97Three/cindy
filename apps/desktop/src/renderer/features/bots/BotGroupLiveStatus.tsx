@@ -278,11 +278,13 @@ export function botGroupHeaderStatus(
   };
   const executions = group.round?.speakers.filter(speaker => speaker.activity !== 'planning');
   const queued = executions?.find(speaker => speaker.executionStatus === 'queued');
+  const queuedStep = executions?.some(speaker => speaker.activity === 'step' && speaker.executionStatus === 'queued')
+    && !executions?.some(speaker => speaker.activity === 'step' && speaker.executionStatus !== 'queued');
   if (queued && executions?.every(speaker => speaker.executionStatus === 'queued') && !group.planningBotId) {
     return t('bots.groupChat.header.queued', { name: nameOf(queued.botId) });
   }
   const plan = group.openPlan;
-  if (plan?.status === 'running' && plan.currentStep !== null && plan.currentStepStatus === 'running') {
+  if (!queuedStep && plan?.status === 'running' && plan.currentStep !== null && plan.currentStepStatus === 'running') {
     // A queue's turn is someone speaking, not a step of work.
     if (plan.kind === 'talk') return t('bots.groupChat.header.speaking', { name: plan.currentBotName?.trim() || '' });
     return t('bots.groupChat.header.stepRunning', { name: plan.currentBotName?.trim() || '', step: plan.currentStep + 1 });

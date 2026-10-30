@@ -23,6 +23,7 @@ interface GroupData {
   workState?: 'thinking' | 'reading-file' | 'testing' | 'waiting' | 'stopping' | 'unknown' | 'queued';
   workRemote?: boolean;
   workParallel?: boolean;
+  workQueuedStep?: boolean;
   workLastStopping?: boolean;
   bodyAnswer?: boolean;
   remoteLimits?: boolean;
@@ -259,7 +260,7 @@ function groupFrom(data: GroupData) {
     lastMessage: null,
     speakingBotIds: data.workState ? data.workParallel ? ['a', 'b'] : ['a'] : [],
     planningBotId: null,
-    openPlan: null,
+    openPlan: data.workQueuedStep ? { id: 'queued-plan', kind: 'work', status: 'running', currentStep: 0, stepCount: 2, currentBotName: 'Aster', currentStepStatus: 'running' } : null,
     createdAt: 1,
     updatedAt: 1,
     plans: data.arrangement ? [{ ...arrangementPlan(data.arrangement), kind: planKind }] : data.division ? [divisionPlan(data.division)] : [],
@@ -293,7 +294,7 @@ function groupFrom(data: GroupData) {
       createdAt: 1700000000000 + i,
     })),
     hasMoreBefore: false,
-    round: data.workState ? { status: 'running', speakers: [{ botId: 'a', executionId: 'fixture-execution', sessionId: data.workRemote || data.workState === 'unknown' || data.workState === 'queued' ? null : 'fixture-work', activity: 'reply', executionStatus: data.workState === 'queued' ? 'queued' : data.workState === 'waiting' ? 'needs_input' : 'running', startedAt: Date.now() - 83_000, stopping: data.workState === 'stopping' },
+    round: data.workState ? { status: 'running', speakers: [{ botId: 'a', executionId: 'fixture-execution', sessionId: data.workRemote || data.workState === 'unknown' || data.workState === 'queued' ? null : 'fixture-work', activity: data.workQueuedStep ? 'step' : 'reply', executionStatus: data.workState === 'queued' ? 'queued' : data.workState === 'waiting' ? 'needs_input' : 'running', startedAt: Date.now() - 83_000, stopping: data.workState === 'stopping' },
       ...(data.workParallel ? [{ botId: 'b', executionId: 'fixture-second', sessionId: 'fixture-second-work', activity: 'reply', startedAt: Date.now() - 41_000, stopping: !!data.workLastStopping, executionStatus: data.workLastStopping ? 'stopping' : 'running' }] : [])], canContinue: false }
       : { status: 'idle', speakers: [], canContinue: false },
   };

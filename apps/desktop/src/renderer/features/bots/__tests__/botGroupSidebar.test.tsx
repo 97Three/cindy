@@ -544,10 +544,11 @@ it.each(['reply', 'step'] as const)('shows a queued %s in the sidebar without st
   expect(screen.queryByText('generation:lane-mimi')).toBeNull();
 });
 
-it('shows the executing teammate rather than a queued teammate in the sidebar', async () => {
+it.each([false, true])('shows the executing teammate rather than a queued teammate in the sidebar (plan: %s)', async hasPlan => {
   mocks.groups = [group({ speakingBotIds: ['mimi', 'xiaoman'],
+    ...(hasPlan ? { openPlan: openPlan({ status: 'running', currentStepStatus: 'running' }) } : {}),
     round: { status: 'running', canContinue: false, speakers: [
-      { botId: 'mimi', activity: 'reply', executionStatus: 'queued', sessionId: null },
+      { botId: 'mimi', activity: hasPlan ? 'step' : 'reply', executionStatus: 'queued', sessionId: null },
       { botId: 'xiaoman', activity: 'reply', executionStatus: 'running', sessionId: 'lane-xiaoman' },
     ] },
   })];
