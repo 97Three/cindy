@@ -165,6 +165,51 @@ it('keeps an older page when thread summary hydration finishes while it is loadi
   expect(chat.loadingOlder).toBe(false);
 });
 
+// #7847: the real hook must retain an older thread page when following changes during the request.
+// Unit: the hydration regression above does not exercise the follow acknowledgement and reload.
+it.each([false, true])('settles following without losing a concurrent older page (pagination fails=%s)', async paginationFails => {
+  const initial = Array.from({ length: 100 }, (_, index) => ({
+    id: `00000000-0000-4000-8000-${String(300 - index).padStart(12, '0')}`, seq: String(300 - index),
+    authorId: self, author: { kind: 'human', name: 'Me' }, content: [{ type: 'text', text: `Reply ${index}` }],
+    createdAt: '2026-10-09', deleted: false, threadRootId: id,
+  }));
+  const older = { ...initial[0], id: '00000000-0000-4000-8000-000000000200', seq: '200', content: [{ type: 'text', text: 'Older reply arrived' }] };
+  const threadRoot = { ...initial[0], id, seq: '1', threadRootId: null };
+  let finishOlder!: (rows: unknown[]) => void;
+  let failOlder!: (error: Error) => void;
+  const previousPage = new Promise<unknown[]>((resolve, reject) => { finishOlder = resolve; failOlder = reject; });
+  let following = true;
+  const original = h.auth.apiFetch.getMockImplementation()!;
+  h.auth.apiFetch.mockImplementation((path, options) => {
+    if (path.endsWith('/snapshot')) return Promise.resolve({ room, members: [], messages: [], cursor: '300',
+      reads: [{ thread_key: id, read_seq: '0', following }] });
+    if (path.endsWith('/read')) { following = options.body.following; return Promise.resolve({ following }); }
+    if (path.startsWith('/v1/changes?')) return Promise.resolve({ head: '300', cursor: '300', changes: [], hasMore: false });
+    if (path.endsWith(`/messages/${id}`)) return Promise.resolve(threadRoot);
+    if (path.includes('/messages?') && path.includes('before=')) return previousPage;
+    if (path.includes('/messages?')) return Promise.resolve(initial);
+    return original(path, options);
+  });
+  showChat = true; threadRootId = id; await render();
+  let loading!: Promise<void>;
+  let unfollowing!: Promise<boolean>;
+  let loadResult!: Promise<unknown>;
+  await act(async () => { loading = chat.loadOlder!(); loadResult = loading.catch(error => error); });
+  await act(async () => { unfollowing = chat.followThread!(false); });
+  expect(following).toBe(false);
+  await act(async () => {
+    if (paginationFails) failOlder(new Error('network unavailable'));
+    else finishOlder([older]);
+    await loadResult; await unfollowing;
+  });
+  expect(await loadResult).toEqual(paginationFails ? new Error('network unavailable') : undefined);
+  expect(chat.state).toMatchObject({ kind: 'ready', group: { hasMoreBefore: paginationFails } });
+  if (chat.state.kind !== 'ready') throw new Error('Expected paged thread');
+  expect(chat.state.group.messages.some(message => message.content === 'Older reply arrived')).toBe(!paginationFails);
+  expect(chat.threadMeta?.following).toBe(false);
+  expect(chat.loadingOlder).toBe(false);
+});
+
 it('shows safe execution failures through the direct phone entry and removes them after retry', async () => {
   const original = h.auth.apiFetch.getMockImplementation()!;
   let status = 'failed';

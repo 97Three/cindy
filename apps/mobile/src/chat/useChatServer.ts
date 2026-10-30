@@ -244,7 +244,7 @@ export function useChatServerGroup(groupId: string, enabled: boolean, threadRoot
   const page = useRef<{ identity: string; page: ChatPage; self: string; actors: ChatActor[] } | null>(cached ? { identity, ...cached } : null);
   const accessGeneration = useRef(0);
   const freshRead = useRef(false);
-  const olderPending = useRef(false);
+  const olderPending = useRef<Promise<void> | null>(null);
   const valid = () => api.current() && active.current === identity;
   const loseAccess = () => {
     accessGeneration.current++; freshRead.current = false; page.current = null;
@@ -364,22 +364,24 @@ export function useChatServerGroup(groupId: string, enabled: boolean, threadRoot
       await mobileDurableOutbox.update(row, { state: 'queued', error: undefined });
     }
   };
-  const loadOlder = async () => {
+  const loadOlder = () => {
     const previous = page.current;
-    if (!previous || previous.identity !== identity || olderPending.current) return;
-    olderPending.current = true;
+    if (!previous || previous.identity !== identity || olderPending.current) return Promise.resolve();
     setState(old => ({ ...old, loadingOlder: true }));
-    try {
-      const next = await api.client.older(groupId, previous.page);
-      if (!valid() || page.current !== previous) return;
-      page.current = { ...previous, page: next };
-      void cacheChatMessages(groupId, { version: 1, page: next, self: previous.self, actors: previous.actors });
-      setState({ identity, value: { kind: 'ready', group: view(next, previous.self, previous.actors) }, online: true, loadingOlder: false });
-      void hydrate(page.current).catch(() => undefined);
-    } catch (error) {
-      if (valid() && page.current === previous && chatAccessLost(error)) loseAccess();
-      throw error;
-    } finally { olderPending.current = false; if (valid()) setState(old => ({ ...old, loadingOlder: false })); }
+    olderPending.current = (async () => {
+      try {
+        const next = await api.client.older(groupId, previous.page);
+        if (!valid() || page.current !== previous) return;
+        page.current = { ...previous, page: next };
+        void cacheChatMessages(groupId, { version: 1, page: next, self: previous.self, actors: previous.actors });
+        setState({ identity, value: { kind: 'ready', group: view(next, previous.self, previous.actors) }, online: true, loadingOlder: false });
+        void hydrate(page.current).catch(() => undefined);
+      } catch (error) {
+        if (valid() && page.current === previous && chatAccessLost(error)) loseAccess();
+        throw error;
+      } finally { olderPending.current = null; if (valid()) setState(old => ({ ...old, loadingOlder: false })); }
+    })();
+    return olderPending.current;
   };
   const act = async (action: BotGroupRemoteActionId, input?: Record<string, unknown>): Promise<RemoteActionInvokeResponse> => {
     if (action === 'stop') {
@@ -483,6 +485,8 @@ export function useChatServerGroup(groupId: string, enabled: boolean, threadRoot
     if (!valid() || !enabled || !threadRootId) throw new Error('THREAD_FOLLOW_UNSUPPORTED');
     const operationId = (await import('expo-crypto')).randomUUID();
     const result = await api.client.followThread(groupId, threadRootId, following, operationId);
+    // Commit the page already being fetched before replacing it with follow metadata or a reload.
+    while (olderPending.current) await olderPending.current.catch(() => undefined);
     if (valid()) {
       const latest = page.current;
       if (latest?.identity === identity && latest.page.snapshot.reads) {
