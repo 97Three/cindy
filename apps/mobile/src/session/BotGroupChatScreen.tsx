@@ -117,6 +117,7 @@ import { useBotGroupChat } from './useBotGroupChat';
 import { useBotGroupRemoteMedia } from './useBotGroupRemoteMedia';
 import { botGroupRoute } from './botGroupNavigation';
 import { BotGroupThreadEntry, BotGroupThreadFollow, BotGroupThreadShare, BotGroupThreadPosted, BotGroupMessageActions } from './BotGroupThreadViews';
+import { compactMessageBubble, messageBubbleBase, userMessageBubble } from './messageBubbleStyles';
 
 /** Toast copy when a plan action fails without a more specific cause. */
 const PLAN_ACTION_FAILED: Record<BotGroupPlanAction, string> = {
@@ -858,10 +859,10 @@ export function BotGroupTimeline({
           <BotGroupThreadEntry message={message} summary={messages.find(candidate => candidate.id === message.threadShare?.threadRootId) ?? message.threadShare}
             identityFor={identityFor} onPress={() => onOpenTopic?.(message.threadShare!.threadRootId, message.threadShare!.messageId)} />
         : null}
-        {actions}
         {shared ?
           <BotGroupThreadPosted messageId={message.id} shared={shared} onPress={revealShare} />
         : null}
+        {actions}
         </View>} topic={!!threadRootId} isRoot={isRoot} onRetrySource={onRetrySource} message={displayMessage} continued={continued} member={message.authorBotId ? memberById.get(message.authorBotId) : undefined}
           quoteDisplay={message.quote ? resolveBotGroupQuote(message.quote, messages) : undefined}
           onLocateQuote={message.quote && onLocateMessage ? () => onLocateMessage(message.quote!.messageId) : undefined}
@@ -1078,10 +1079,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   userColumn: { flex: 1, minWidth: 0, alignItems: 'flex-end', gap: spacing.xs },
   userMessageContent: { width: '100%', alignItems: 'flex-end', gap: spacing.xs },
   botMessageContent: { gap: spacing.xs },
-  // The 1:1 user bubble (MessageRenderer userBubble): 86% wide, padding 12, compact 8/12.
-  userBubble: { maxWidth: '86%', backgroundColor: colors.surfaceElevated, borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: radius.container, padding: spacing.md },
-  userBubbleCompact: { paddingVertical: spacing.sm },
+  userBubble: { ...messageBubbleBase, ...userMessageBubble(colors) },
+  userBubbleCompact: compactMessageBubble,
   // The 1:1 reply geometry: avatar 28, 2pt down, 10 to the text.
   botRow: { flexDirection: 'row', alignItems: 'flex-start', gap: REPLY_AVATAR_GAP },
   botRowContinued: { marginTop: -spacing.sm },

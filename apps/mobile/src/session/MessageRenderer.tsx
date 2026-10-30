@@ -19,6 +19,7 @@ import { ErrorNotice } from '@/components/ErrorNotice';
 import { FileTypeIcon } from '@/components/FileTypeIcon';
 import { CompanionThreadSummary, type CompanionThreads } from './CompanionThreads';
 import { CompanionMessageActions } from './CompanionMessageActions';
+import { compactMessageBubble, messageBubbleBase, userMessageBubble } from './messageBubbleStyles';
 import { MarkdownCodeCopyButton } from './MarkdownCodeCopyButton';
 import { BotGroupQuote } from './BotGroupQuote';
 import { companionReplyQuoteDisplay, companionReplyQuoteFor } from './companionReplyQuote';
@@ -8861,17 +8862,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   agentMessageItem: {
     alignItems: 'stretch',
   },
-  bubble: {
-    borderRadius: radius.container,
-    borderWidth: StyleSheet.hairlineWidth,
-    gap: spacing.xs,
-    padding: spacing.md,
-  },
-  bubbleCompact: {
-    gap: 6,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
+  bubble: messageBubbleBase,
+  bubbleCompact: compactMessageBubble,
   bubbleRich: {
     gap: spacing.sm,
   },
@@ -8890,14 +8882,7 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     marginTop: spacing.sm,
     textAlign: 'center',
   },
-  userBubble: {
-    alignSelf: 'flex-end',
-    backgroundColor: colors.surfaceElevated,
-    borderColor: colors.border,
-    maxWidth: '86%',
-    minWidth: 0,
-    overflow: 'hidden',
-  },
+  userBubble: userMessageBubble(colors),
   agentBubble: {
     alignSelf: 'stretch',
     backgroundColor: colors.surface,
