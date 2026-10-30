@@ -1,5 +1,20 @@
 import type { LinuxCloseBehavior } from '../shared/windowBehavior.js';
-import { hideWindowToWindowsTray, type WindowsTrayWindow } from './windowsTrayLifecycle.js';
+import type { WindowsTrayWindow } from './windowsTrayLifecycle.js';
+
+/** Only the latest pending fullscreen hide may change a window's visibility. */
+const pendingHides = new WeakMap<object, () => void>();
+
+export function cancelPendingWindowHide(window: object): void {
+  pendingHides.get(window)?.();
+}
+
+interface MinimizableWindow extends LinuxCloseBehaviorWindow, WindowsTrayWindow {
+  once(event: 'leave-full-screen' | 'show' | 'focus' | 'closed', listener: () => void): unknown;
+  removeListener(
+    event: 'leave-full-screen' | 'show' | 'focus' | 'closed',
+    listener: () => void,
+  ): unknown;
+}
 
 /** Hyprland has no native minimize surface, including for XWayland windows. */
 export function isHyprlandDesktop(env: NodeJS.ProcessEnv): boolean {
@@ -15,7 +30,7 @@ export function isHyprlandDesktop(env: NodeJS.ProcessEnv): boolean {
 
 /** Keep all main-window minimize entry points on the same compositor policy. */
 export function minimizeDesktopWindow(
-  window: LinuxCloseBehaviorWindow & WindowsTrayWindow,
+  window: MinimizableWindow,
   options: {
     platform: NodeJS.Platform;
     env: NodeJS.ProcessEnv;
@@ -24,6 +39,7 @@ export function minimizeDesktopWindow(
     onTrayError(): void;
   },
 ): void {
+  cancelPendingWindowHide(window);
   if (options.platform !== 'linux' || !options.isMainWindow || !isHyprlandDesktop(options.env)) {
     window.minimize();
     return;
@@ -32,8 +48,29 @@ export function minimizeDesktopWindow(
     options.onTrayError();
     return;
   }
-  // This helper only leaves fullscreen and hides; it does not create a Windows tray.
-  hideWindowToWindowsTray(window);
+  if (!window.isFullScreen()) {
+    window.hide();
+    return;
+  }
+  const cancel = (): void => {
+    if (pendingHides.get(window) === cancel) pendingHides.delete(window);
+    window.removeListener('leave-full-screen', hide);
+    for (const event of ['show', 'focus', 'closed'] as const) window.removeListener(event, cancel);
+  };
+  const hide = (): void => {
+    if (pendingHides.get(window) !== cancel) return;
+    cancel();
+    if (!window.isDestroyed()) window.hide();
+  };
+  pendingHides.set(window, cancel);
+  window.once('leave-full-screen', hide);
+  for (const event of ['show', 'focus', 'closed'] as const) window.once(event, cancel);
+  try {
+    window.setFullScreen(false);
+  } catch (error) {
+    cancel();
+    throw error;
+  }
 }
 
 /** BrowserWindow surface needed for Linux's keep-running close action. */
@@ -75,6 +112,7 @@ export function requestMainWindowCloseBehavior(
   channel: string,
 ): void {
   if (window.isDestroyed() || window.webContents.isDestroyed()) return;
+  cancelPendingWindowHide(window);
   if (window.isMinimized()) window.restore();
   if (!window.isVisible()) window.show();
   window.focus();

@@ -1054,6 +1054,7 @@ import {
 import { createLinuxTrayController } from './linuxTrayLifecycle.js';
 import {
   applyLinuxMainWindowCloseBehavior,
+  cancelPendingWindowHide,
   createCloseBehaviorPromptFallbackController,
   minimizeDesktopWindow,
   requestMainWindowCloseBehavior,
@@ -2861,6 +2862,7 @@ function dispatchApplicationMenuCommand(
   if (mainWindow.isDestroyed()) return;
   const activateWindow = options.activateWindow ?? true;
   if (activateWindow) {
+    cancelPendingWindowHide(mainWindow);
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
@@ -3741,6 +3743,7 @@ function setMainWindowBackgroundThrottlingForActiveTurn(hasRunningTurn: boolean)
 function focusMainWindow(): boolean {
   const win = mainWindowRef;
   if (!win || win.isDestroyed()) return false;
+  cancelPendingWindowHide(win);
   if (!win.isVisible()) win.show();
   if (win.isMinimized()) win.restore();
   win.focus();

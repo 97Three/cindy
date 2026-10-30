@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   applyLinuxMainWindowCloseBehavior,
+  cancelPendingWindowHide,
   createCloseBehaviorPromptFallbackController,
   minimizeDesktopWindow,
   requestMainWindowCloseBehavior,
@@ -76,6 +77,7 @@ describe('main window close behavior prompt', () => {
   // Unit tier: visible state, fullscreen events and tray failures are in-memory.
   // Standalone Vitest duration: 0.158s (macOS, 2026-10-30).
   function hyprlandHarness() {
+    const listeners = new Map<string, Set<() => void>>();
     const window = {
       visible: true,
       fullscreen: false,
@@ -91,8 +93,20 @@ describe('main window close behavior prompt', () => {
       isFullScreen() {
         return this.fullscreen;
       },
-      once(_event: 'leave-full-screen', listener: () => void) {
-        this.leaveFullscreen = listener;
+      once(event: 'leave-full-screen' | 'show' | 'focus' | 'closed', listener: () => void) {
+        if (event === 'leave-full-screen') this.leaveFullscreen = listener;
+        const callbacks = listeners.get(event) ?? new Set();
+        callbacks.add(listener);
+        listeners.set(event, callbacks);
+      },
+      removeListener(event: string, listener: () => void) {
+        listeners.get(event)?.delete(listener);
+      },
+      emit(event: string) {
+        for (const listener of [...(listeners.get(event) ?? [])]) {
+          listeners.get(event)?.delete(listener);
+          listener();
+        }
       },
       setFullScreen(value: boolean) {
         this.fullscreen = value;
@@ -105,8 +119,39 @@ describe('main window close behavior prompt', () => {
       ensureTray: vi.fn(() => true),
       onTrayError: vi.fn(),
     };
-    return { window, options };
+    return { window, options, listeners };
   }
+
+  // PR #8051 review: reopen before leave-full-screen must override the old hide.
+  // The earlier fullscreen coverage only tested completion/destruction, not reopening.
+  it.each(['explicit reopen', 'show', 'focus', 'closed'])(
+    'invalidates a pending fullscreen hide on %s',
+    (event) => {
+      const { window, options, listeners } = hyprlandHarness();
+      window.fullscreen = true;
+      minimizeDesktopWindow(window, options);
+      const stale = window.leaveFullscreen;
+      if (event === 'explicit reopen') cancelPendingWindowHide(window);
+      else window.emit(event);
+      stale();
+      expect(window.visible).toBe(true);
+      expect([...listeners.values()].every((set) => set.size === 0)).toBe(true);
+    },
+  );
+
+  it('does not let an old hide consume a newer fullscreen request', () => {
+    const { window, options } = hyprlandHarness();
+    window.fullscreen = true;
+    minimizeDesktopWindow(window, options);
+    const stale = window.leaveFullscreen;
+    cancelPendingWindowHide(window);
+    window.fullscreen = true;
+    minimizeDesktopWindow(window, options);
+    stale();
+    expect(window.visible).toBe(true);
+    window.leaveFullscreen();
+    expect(window.visible).toBe(false);
+  });
 
   it.each(['minimize', 'close'] as const)(
     'hides the Hyprland main window on %s without quitting',
