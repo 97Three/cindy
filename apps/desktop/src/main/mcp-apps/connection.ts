@@ -24,7 +24,7 @@ export interface AppServerConfig {
   id: string;
   url: string;
   transport: 'http' | 'sse' | 'in-process';
-  plugin?: { ghostId?: string; namespace?: string | null; instance: string; revision: string; packageSha256: string; title: string; trust: string; domains: string[]; assertCurrent(sessionId?: string): void; createTransport(): Transport };
+  plugin?: { ghostId?: string; namespace?: string | null; instance: string; revision: string; packageSha256: string; directory: string; title: string; trust: string; domains: string[]; assertCurrent(sessionId?: string): void; createTransport(): Transport };
   headers?: Record<string, string>;
 }
 
@@ -215,7 +215,7 @@ const pluginConnections = new WeakMap<object, Map<string, AppConnection>>();
 export function sharedPluginConnection(config: AppServerConfig, owner: object): AppConnection {
   let entries = pluginConnections.get(owner);
   if (!entries) pluginConnections.set(owner, entries = new Map());
-  const key = JSON.stringify([config.id, config.plugin?.revision, config.plugin?.packageSha256]);
+  const key = JSON.stringify([config.id, config.plugin?.revision, config.plugin?.packageSha256, config.plugin?.directory]);
   let connection = entries.get(key);
   if (!connection || connection.isClosed) entries.set(key, connection = new AppConnection(config));
   return connection;

@@ -15,7 +15,7 @@ const hosts: McpAppsHost[] = [];
 // cover custom MCP only; minimal input is one undeclared CSP origin. Tier: unit.
 it.each([true, false])('enforces plugin CSP subset and revokes opened Views (declared=%s)', async declared => {
   const config: AppServerConfig = { id: 'plugin_fixture', url: '', transport: 'in-process', plugin: {
-    instance: 'fixture', revision: 'one', packageSha256: 'hash',
+    instance: 'fixture', revision: 'one', packageSha256: 'hash', directory: '/fixture',
     title: 'Fixture', trust: 'unverified', domains: ['https://allowed.example'],
     assertCurrent() {}, createTransport() { throw new Error('unused transport'); },
   } };
@@ -98,7 +98,7 @@ async function fixture(caller = 'renderer:1', plugin = false) {
   let enabled = true;
   let visible = true;
   const config: AppServerConfig = { id: 'example', url: 'https://mcp.example.invalid', transport: 'http',
-    ...(plugin ? { plugin: { instance: 'fixture', revision: 'one', packageSha256: 'hash', title: 'Fixture',
+    ...(plugin ? { plugin: { instance: 'fixture', revision: 'one', packageSha256: 'hash', directory: '/fixture', title: 'Fixture',
       trust: 'unverified', domains: [], assertCurrent() {}, createTransport() { throw new Error('unused'); } } } : {}),
   };
   const card: McpAppRecord = {
@@ -550,7 +550,7 @@ it('approves a plugin page call before binding its card and task in Main', async
             file: 'ui/form.html'
         }], tools: { open: { resourceUri: "ui://form" }, save: { visibility: ['app' as const] } } };
   const config: AppServerConfig = { id: 'plugin-gate', url: '', transport: 'in-process', plugin: {
-    instance: 'plugin', revision: 'approved', packageSha256: 'hash', title: 'Plugin', trust: 'unverified', domains: [], assertCurrent() {},
+    instance: 'plugin', revision: 'approved', packageSha256: 'hash', directory: '/fixture', title: 'Plugin', trust: 'unverified', domains: [], assertCurrent() {},
     createTransport: () => createPluginAppTransport({ instance: 'plugin', revision: 'approved', tools, ui, assertCurrent() {}, readHtml: () => '<html>Form</html>',
       call: async grant => { calls.push(`${grant.sessionId}/${grant.clientId}/${grant.tool}`); return { content: [{ type: 'text', text: 'saved' }] }; } }),
   } };
@@ -592,7 +592,7 @@ it.each(['initial', 'tool-result', 'standard'] as const)('degrades only remote p
         }], tools: { open: { resourceUri: "ui://form" } } };
   const content = [{ type: 'resource_link' as const, name: 'photo.png', uri: stage === 'standard' ? 'https://example.com/photo.png' : 'library:photo.png' }];
   const config: AppServerConfig = { id: 'plugin-files', url: '', transport: 'in-process', plugin: {
-    instance: 'plugin', revision: 'approved', packageSha256: 'hash', title: 'Plugin', trust: 'unverified', domains: [], assertCurrent() {},
+    instance: 'plugin', revision: 'approved', packageSha256: 'hash', directory: '/fixture', title: 'Plugin', trust: 'unverified', domains: [], assertCurrent() {},
     createTransport: () => createPluginAppTransport({ instance: 'plugin', revision: 'approved', tools, ui, assertCurrent() {}, readHtml: () => '<p>Page</p>', call: async () => ({ content }) }),
   } };
   const owner = {}, connection = new AppConnection(config), target = pluginAppTool('plugin', tools[0], ui);
@@ -642,7 +642,7 @@ it.each(['complete', 'unmount'] as const)('keeps plugin page calls alive past 60
             file: 'ui/form.html'
         }], tools: { pick: { resourceUri: "ui://form" } } };
   const config: AppServerConfig = { id: 'pick-lifetime', url: '', transport: 'in-process', plugin: {
-    instance: 'pick-lifetime', revision: 'approved', packageSha256: 'hash', title: 'Picker', trust: 'unverified', domains: [], assertCurrent() {},
+    instance: 'pick-lifetime', revision: 'approved', packageSha256: 'hash', directory: '/fixture', title: 'Picker', trust: 'unverified', domains: [], assertCurrent() {},
     createTransport: () => createPluginAppTransport({ instance: 'pick-lifetime', revision: 'approved', tools, ui, assertCurrent() {}, readHtml: () => '<p>Select</p>',
       call: async (_grant, _args, signal) => {
         const dispatched = dispatcher.callGhostTool({ ghostId: 'pick-lifetime', tool: 'pick', args: {}, callId: 'page-pick', signal });

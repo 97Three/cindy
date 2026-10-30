@@ -33,7 +33,7 @@ export function replacePluginAppServers(next: Map<string, () => AppServerConfig>
   for (const [id, read] of pluginConfigs) {
     try {
       const before = read().plugin; const after = next.get(id)?.().plugin;
-      if (!before || !after || before.revision !== after.revision || before.packageSha256 !== after.packageSha256) revoked.add(id);
+      if (!before || !after || before.revision !== after.revision || before.packageSha256 !== after.packageSha256 || before.directory !== after.directory) revoked.add(id);
     } catch { revoked.add(id); }
   }
   pagePermissionGrants.clearServers(revoked);

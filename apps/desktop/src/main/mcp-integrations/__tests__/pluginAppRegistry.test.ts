@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { getPluginToolUi } from '@cindy/plugin-protocol';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import type { AppServerConfig } from '../../mcp-apps/connection.js';
+import { sharedPluginConnection, type AppServerConfig } from '../../mcp-apps/connection.js';
+import { McpAppsHost, appServerRevision } from '../../mcp-apps/host.js';
 import type { InstalledGhost } from '../../../shared/ghost.js';
 const state = vi.hoisted(() => ({
   owner: 'A',
@@ -31,7 +32,7 @@ vi.mock('../../cindy-brain/ghostContentTree.js', async (importOriginal) => {
     throw new Error('no file may be read');
   } };
 });
-import { resetAppServers } from '../../mcp-apps/runtime.js';
+import { resetAppServers, setMcpAppsHost, readAppServer } from '../../mcp-apps/runtime.js';
 import { pagePermissionGrants } from '../../mcp-apps/pagePermissions.js';
 import { refreshPluginApps, pluginAppServerId } from '../plugin-app-registry.js';
 // Production registration entry, no Node process or network. Existing App host tests
@@ -113,7 +114,7 @@ it('discovers tools with the real SDK without reading HTML during registration o
     await client.close();
   }
 });
-it.each(['owner', 'revision', 'package', 'disabled', 'boundary'] as const)(
+it.each(['owner', 'revision', 'package', 'directory', 'disabled', 'boundary'] as const)(
   'rejects an existing virtual connection after %s changes',
   (kind) => {
     const f = fixture();
@@ -123,6 +124,7 @@ it.each(['owner', 'revision', 'package', 'disabled', 'boundary'] as const)(
     if (kind === 'revision')
       f.setGhost({ ...f.ghost, approval: { state: 'approved', revision: 'two' } });
     if (kind === 'package') f.setFingerprint();
+    if (kind === 'directory') f.setGhost({ ...f.ghost, dir: '/moved/planner' });
     if (kind === 'disabled') f.ghost.enabled = false;
     if (kind === 'boundary') f.unavailable();
     expect(() => old.plugin!.assertCurrent()).toThrow('MCP_APP_SERVER_CHANGED');
@@ -200,5 +202,60 @@ it('reads a 4 MiB plugin page and rejects an oversized resource', async () => {
   } finally {
     await client.close();
     await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+// 4421388596: owner recovery can move an approved instance without changing its
+// revision/hash. Unit through real registry, Host, SDK and disk; existing tests
+// never moved the directory. Old transport/View must retire and new reads use it.
+it('revokes old Views and transports when the approved package moves directories', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'plugin-ui-move-'));
+  const beforeDir = path.join(root, 'before');
+  const afterDir = path.join(root, 'after');
+  const f = fixture();
+  const owner = {};
+  let host: McpAppsHost | undefined;
+  try {
+    await fs.mkdir(beforeDir);
+    await fs.writeFile(path.join(beforeDir, 'form.html'), '<p>Approved page</p>');
+    f.ghost.dir = beforeDir;
+    f.ghost.instanceKey = '_root__planner';
+    state.realFiles = true;
+    f.refresh();
+    const before = readAppServer(pluginAppServerId(f.ghost))!;
+    const connection = sharedPluginConnection(before, owner);
+    const client = await connection.getClient();
+    const tool = (await connection.tools())[0];
+    host = new McpAppsHost({
+      owner: () => owner, config: readAppServer,
+      readCard: async () => ({ version: 1, serverId: before.id,
+        serverRevision: appServerRevision(before), resourceUri: 'ui://form', tool,
+        arguments: {}, result: { content: [] } }),
+      writeCard: async () => {}, authorizeTool: async () => {}, sendMessage: async () => {},
+    });
+    setMcpAppsHost(host);
+    const view = await host.open('renderer:1', 'task', 'card', {});
+    await fs.rename(beforeDir, afterDir);
+    await fs.mkdir(beforeDir);
+    await fs.writeFile(path.join(beforeDir, 'form.html'), '<p>Unrelated installation</p>');
+    f.setGhost({ ...f.ghost, dir: afterDir });
+    await expect(client.readResource({ uri: 'ui://form' })).rejects.toThrow('MCP_APP_SERVER_CHANGED');
+    const revoke = vi.spyOn(host, 'revokePluginServers');
+    f.refresh();
+    await revoke.mock.results[0].value;
+    const after = readAppServer(before.id)!;
+    expect(appServerRevision(after)).not.toBe(appServerRevision(before));
+    expect(connection.isClosed).toBe(true);
+    await expect(host.poll('renderer:1', 'task', view.viewId, 0)).rejects.toThrow();
+    const next = sharedPluginConnection(after, owner);
+    try {
+      expect(next).not.toBe(connection);
+      expect((await (await next.getClient()).readResource({ uri: 'ui://form' })).contents[0])
+        .toMatchObject({ text: '<p>Approved page</p>' });
+    } finally { await next.close(); }
+  } finally {
+    await host?.reset();
+    vi.restoreAllMocks();
+    await fs.rm(root, { recursive: true, force: true });
   }
 });

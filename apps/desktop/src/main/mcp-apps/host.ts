@@ -164,7 +164,7 @@ const transientRevisionKey = randomBytes(32).toString('hex');
 export function appServerRevision(config: AppServerConfig, key = transientRevisionKey): string {
   return createHmac('sha256', key)
     .update('cindy:mcp-app-server-revision:v1\0')
-    .update(JSON.stringify(config.plugin ? [config.id, config.transport, config.plugin.instance, config.plugin.revision, config.plugin.packageSha256, config.url] : [config.id, config.url, config.transport, config.headers]))
+    .update(JSON.stringify(config.plugin ? [config.id, config.transport, config.plugin.instance, config.plugin.revision, config.plugin.packageSha256, config.plugin.directory, config.url] : [config.id, config.url, config.transport, config.headers]))
     .digest('hex');
 }
 

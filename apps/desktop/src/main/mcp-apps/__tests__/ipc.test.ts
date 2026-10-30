@@ -402,7 +402,7 @@ it('preserves the local-files limitation across Desktop and phone remote entry p
             file: 'ui.html'
         }], tools: { open: { resourceUri: "ui://page" } } };
   const config: import('../connection.js').AppServerConfig = { id: 'remote-files', url: '', transport: 'in-process', plugin: {
-    instance: 'remote-files', revision: 'approved', packageSha256: 'hash', title: 'Files', trust: 'unverified', domains: [], assertCurrent() {},
+    instance: 'remote-files', revision: 'approved', packageSha256: 'hash', directory: '/fixture', title: 'Files', trust: 'unverified', domains: [], assertCurrent() {},
     createTransport: () => createPluginAppTransport({ instance: 'remote-files', revision: 'approved', tools, ui, assertCurrent() {}, readHtml: () => '<p>Standard page</p>', call: async () => ({ content: [] }) }),
   } };
   const actual = new RealHost({ owner: () => state.owner!, config: () => config,
@@ -455,7 +455,7 @@ describe('plugin page ghost_call approval policy', () => {
   const tool = { name: 'save', inputSchema: { type: 'object' as const } };
   function bind(ghostId = 'notes', namespace?: string | null) {
     vi.mocked(readAppServer).mockReturnValue({ id: source.serverId, url: '', transport: 'in-process', plugin: {
-      ghostId, ...(namespace !== undefined ? { namespace } : {}), instance: '_root__' + ghostId, revision: 'approved', packageSha256: 'hash', title: 'Page',
+      ghostId, ...(namespace !== undefined ? { namespace } : {}), instance: '_root__' + ghostId, revision: 'approved', packageSha256: 'hash', directory: '/fixture', title: 'Page',
       trust: 'unverified', domains: [], assertCurrent() {}, createTransport() { throw new Error('unused'); },
     } });
   }

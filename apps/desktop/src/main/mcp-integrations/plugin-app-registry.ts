@@ -1,6 +1,7 @@
 import { getPluginToolUi } from '@cindy/plugin-protocol';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
+import path from 'node:path';
 import { activeOwnerScopeKey } from '../appSessionState.js';
 import { pluginUiDomains } from '@cindy/plugin-protocol';
 import { hasGhostUiPermission, type InstalledGhost } from '../../shared/ghost.js';
@@ -42,6 +43,7 @@ export function refreshPluginApps(
       continue;
     const instance = installedGhostStoragePart(ghost),
       revision = ghost.approval.revision;
+    const directory = path.resolve(ghost.dir);
     const packageSha256 = deps.evidence(instance)?.packageSha256;
     if (!packageSha256) continue;
     const owner = activeOwnerScopeKey();
@@ -54,6 +56,7 @@ export function refreshPluginApps(
         !hasGhostUiPermission(latest) ||
         latest.approval.state !== 'approved' ||
         latest.approval.revision !== revision ||
+        path.resolve(latest.dir) !== directory ||
         deps.evidence(instance)?.packageSha256 !== packageSha256
       )
         throw new Error('MCP_APP_SERVER_CHANGED');
@@ -68,6 +71,7 @@ export function refreshPluginApps(
         instance,
         revision,
         packageSha256,
+        directory,
         title: ghost.manifest.name,
         trust: ghost.trust?.level ?? 'unverified',
         domains: pluginUiDomains(ghost.manifest),
@@ -82,12 +86,12 @@ export function refreshPluginApps(
             assertCurrent,
             readHtml: (html) => {
               assertCurrent();
-              const file = resolveGhostContentPathSync(ghost.dir, html, {
+              const file = resolveGhostContentPathSync(directory, html, {
                 expect: 'file',
                 label: 'plugin App HTML',
               });
               const bytes = readBoundedFileNoFollowSync(file, MCP_APPS_MAX_BYTES, {
-                containWithin: realpathSync(ghost.dir),
+                containWithin: realpathSync(directory),
               });
               if (!bytes) throw new Error('MCP_APP_RESOURCE_UNAVAILABLE');
               return bytes.toString('utf8');
