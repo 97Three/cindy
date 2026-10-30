@@ -17294,6 +17294,18 @@
     "compression": "For condensing lengthy content."
   },
   "routines": {
+    "deliveryLabel": "Final delivery",
+    "deliveryDirect": "Show directly in companion chat",
+    "deliveryProcess": "Ask companion to process and reply",
+    "deliveryIm": "Send through a messaging bot",
+    "deliveryNone": "Keep in the execution task only",
+    "deliveryHint": "Direct delivery uses no extra model call. Quiet checks still suppress idle results.",
+    "deliveryRecipient": "Recipient",
+    "deliveryUnavailable": "Destination unavailable",
+    "deliveryNoRecipients": "Connect a messaging bot and chat with it, then reopen these settings.",
+    "deliveryFailed": "Completed, delivery failed",
+    "deliveryFailedHint": "The result is saved. Check the delivery settings; do not rerun the work just to resend it.",
+    "deliveryDelivered": "Result delivered",
     "onEvent": "Event: {{source}} · {{event}}",
     "triggerDetails": "View triggers ({{count}}; any can start a run)",
     "noTriggers": "No triggers set",
