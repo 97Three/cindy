@@ -170,10 +170,12 @@ describe('Chat Server group open latency (simulated 100ms per request)', () => {
     const source = { ...message, id: '50000000-0000-4000-8000-000000000002', seq: '2', threadRootId: message.id,
       content: [{ type: 'text', text: 'Authorized topic reply' }] };
     let posted = { ...message, id: '50000000-0000-4000-8000-000000000003', seq: '58' };
+    let sourceUnavailable = false;
     fixture.handle.mockImplementation((route, method, body) => {
       if (route.endsWith('/snapshot')) return { body: { room: room(rooms[0]), members: [], messages: [source, message], reads: [], cursor: '57' } };
       if (route.startsWith('/changes?')) return { body: { cursor: '57', changes: [] } };
-      if (route.endsWith(`/messages/${source.id}`)) return { body: source };
+      if (route.endsWith(`/messages/${source.id}`)) return sourceUnavailable
+        ? { status: 404, body: { error: { code: 'MESSAGE_NOT_FOUND' } } } : { body: source };
       if (route.endsWith(`/messages/${posted.id}`)) return { body: posted };
       if (route.endsWith('/messages') && method === 'POST') { posted = { ...posted, content: body.content }; return { body: { id: posted.id } }; }
       return response(route);
@@ -195,10 +197,17 @@ describe('Chat Server group open latency (simulated 100ms per request)', () => {
     const expired = await timed(() => service.chatServer!.shareToMain({ groupId: rooms[0], messageId: source.id }));
     expect(expired.value.ok).toBe(true); expect(expired.ms).toBeLessThanOrEqual(200);
     expect(expired.routes.some(route => route.endsWith(`/messages/${source.id}`))).toBe(true);
+    // Ready precedes replay: old cached text may have become invisible while disconnected.
+    sourceUnavailable = true;
     await connected();
+    const revoked = await timed(() => service.chatServer!.shareToMain({ groupId: rooms[0], messageId: source.id }));
+    expect(revoked.value).toMatchObject({ ok: false, errorCode: 'SHARE_UNAVAILABLE' });
+    expect(revoked.routes.some(route => route.endsWith(`/messages/${source.id}`))).toBe(true);
+    expect(revoked.routes).not.toContain(`/conversations/${rooms[0]}/messages`);
+    sourceUnavailable = false;
     const live = await timed(() => service.chatServer!.shareToMain({ groupId: rooms[0], messageId: source.id }));
-    expect(live.value.ok).toBe(true); expect(live.ms).toBeLessThanOrEqual(100);
-    expect(live.routes.some(route => route.endsWith(`/messages/${source.id}`))).toBe(false);
+    expect(live.value.ok).toBe(true); expect(live.ms).toBeLessThanOrEqual(200);
+    expect(live.routes.some(route => route.endsWith(`/messages/${source.id}`))).toBe(true);
   });
 
   // Unit: the production topic entry used to bypass persisted history on every open.

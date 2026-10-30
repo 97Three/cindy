@@ -3028,13 +3028,13 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     shareToMain: input => result(async () => {
       const i = z.object({ groupId: id, messageId: id }).strict().parse(input);
       const room = await groupRoom(i.groupId);
-      // A live room already has the server-authorized source on screen. Reuse
-      // that projection, or the same 30-second verified HTTP cache used for display.
-      // Expired/missing sources still get a visibility-checked read.
+      // Reuse only the same bounded, verified message cache used for display.
+      // A socket's ready frame precedes catch-up; reconnect clears freshness so
+      // that window (and expired/missing sources) still gets an authorized read.
       const known = history()?.committedSnapshot<Snapshot>(room);
       const membersRead = known ? Promise.resolve(known.members) : api<Member[]>(`/conversations/${room}/members`);
       membersRead.catch(() => undefined);
-      const reusable = hasLiveSubscription(room) || history()?.hasFreshMessages(room);
+      const reusable = history()?.hasFreshMessages(room);
       const liveSource = reusable ? known?.messages.find(message => message.id === i.messageId) : undefined;
       const source = liveSource ?? await readMessage(room, i.messageId);
       if (!source || !isShareableThreadReply(source)) throw new Error('SHARE_UNAVAILABLE');
