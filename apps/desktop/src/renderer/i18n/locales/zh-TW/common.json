@@ -5712,14 +5712,15 @@
           "showDetails": "查看詳情",
           "check": {
             "checking": "正在檢查伺服器…",
+            "checkingHint": "正在連線伺服器，確認系統、連接埠和現有服務。",
+            "idle": "選擇伺服器後，會先檢查它能否部署。",
             "ready": "可以部署",
             "blocked": "無法自動部署",
             "recheck": "重新檢查",
             "direct": "80 和 443 連接埠沒有被使用，中繼會直接使用它們。",
             "nginx": "會接入伺服器上現有的 Nginx，並保留原有網站。",
             "mine": "伺服器上已有這台電腦部署的中繼，會原地更新，已加入的裝置不受影響。",
-            "other": "伺服器上已有不是這台電腦部署的中繼，繼續部署會清除它，已加入它的裝置需要重新加入。",
-            "cleanup": "會先清理 {{server}} 上沒完成的部署。"
+            "other": "伺服器上已有不是這台電腦部署的中繼，繼續部署會清除它，已加入它的裝置需要重新加入。"
           },
           "running": {
             "deploy": "正在部署到伺服器…",
@@ -5727,7 +5728,7 @@
             "uninstall": "正在從伺服器移除…"
           },
           "done": {
-            "deploy": "部署完成，這台電腦已改用伺服器上的中繼。用「新增裝置」讓手機和其他電腦加入。",
+            "deploy": "部署完成。在「連線路線」裡切換到它之後，就可以新增裝置。",
             "upgrade": "伺服器上的中繼已升級到 {{version}}。",
             "uninstall": "已從伺服器移除中繼"
           },
@@ -5751,7 +5752,6 @@
             "nginx-rollback": "部署未完成，正在還原原本的 Nginx 設定…"
           },
           "steps": {
-            "cleanup": "清理原伺服器 {{server}}",
             "connect": "連線伺服器",
             "check": "檢查伺服器",
             "runtime": "安裝執行環境",
@@ -5786,6 +5786,10 @@
           "deployingStep": "{{step}}…",
           "viewProgress": "查看進度",
           "resume": "繼續部署",
+          "rename": "改名",
+          "renameHint": "只改這台電腦上顯示的名稱，伺服器和已加入的裝置看到的名稱不變。",
+          "renameSave": "儲存",
+          "renameCancel": "取消",
           "statusChecking": "正在檢查…",
           "statusOnline": "線上",
           "statusOffline": "連不上",
@@ -5800,14 +5804,15 @@
             "label": "部署步驟",
             "form": "選擇伺服器",
             "deploy": "部署",
-            "done": "新增裝置"
+            "done": "完成"
           },
           "running": "正在部署到 {{server}}…",
           "backgroundHint": "關閉視窗不會中斷部署",
           "background": "在背景繼續",
           "doneTitle": "「{{name}}」已部署完成",
-          "doneHint": "這台電腦已改用它。用手機掃描，或把連結傳給另一台電腦加入。",
-          "doneLater": "之後也可以在「連線路線」裡新增裝置",
+          "doneHint": "這台電腦還在用原來的路線。點「使用這條路線」改用它，之後再新增手機和其他電腦。",
+          "doneLater": "之後也可以在「連線路線」裡切換",
+          "use": "使用這條路線",
           "finish": "完成"
         },
         "manage": {
@@ -10233,6 +10238,72 @@
       "threadClosed": "本輪夥伴對話已結束 · 僅供查看"
     },
     "groupChat": {
+      "mask": {
+        "toolAccess": "工具權限",
+        "catchup": {
+          "title": "@ 我的訊息",
+          "me": "我",
+          "markAll": "全部標為已讀",
+          "empty": "沒有未讀的 @ 訊息",
+          "thread": "話題",
+          "main": "群聊",
+          "answered": "已代答"
+        },
+        "title": "AI 代答模式",
+        "settings": "AI 代答設定",
+        "companion": "我的夥伴",
+        "choose": "選擇一位夥伴",
+        "enabled": "自動代答",
+        "triggerLabel": "觸發方式",
+        "resumeAfter": "離開多久後恢復",
+        "start": "開始時間",
+        "end": "結束時間",
+        "startManual": "現在開啟",
+        "stop": "停止代答",
+        "todos": "整理與我有關的待辦",
+        "digestLabel": "彙總給我",
+        "saving": "正在儲存…",
+        "saveError": "未能儲存，仍按原設定代答。請重試。",
+        "retry": "重試",
+        "loading": "正在載入你的設定…",
+        "takeover": "我來回覆",
+        "resume": "恢復代答",
+        "status": {
+          "enabled": "已啟用",
+          "paused": "已讓位",
+          "off": "未開啟",
+          "offline": "已離線",
+          "waiting": "待觸發",
+          "unbound": "未連結"
+        },
+        "detail": {
+          "paused": "你已接回這段交流",
+          "off": "自動代答已關閉",
+          "offline": "代答已暫停 · 電腦離線",
+          "waiting": "等待手動開啟",
+          "unbound": "尚未選擇夥伴",
+          "enabled": "夥伴正在為你待答"
+        },
+        "trigger": {
+          "always": "永久觸發",
+          "manual": "手動指定觸發",
+          "scheduled": "定時觸發"
+        },
+        "digest": {
+          "daily": "每日彙總",
+          "manual": "手動彙整"
+        },
+        "minutes": "{{count}} 分鐘",
+        "presence": "你正在參與 · 離開 {{minutes}} 分鐘後恢復",
+        "scheduledWait": "等待 {{time}} 開始",
+        "attribution": "{{name}} 為 {{owner}} 回覆",
+        "digestNow": "立即整理",
+        "digestWorking": "整理中…",
+        "digestSent": "已傳送至夥伴私聊",
+        "digestFailed": "整理失敗，請重試",
+        "digestEmpty": "暫無新的待整理內容",
+        "joinSetup": "入群後設定 AI 代答模式"
+      },
       "migrationPending": "部分舊記錄尚未上傳完成，將自動重試。目前群聊可繼續使用。",
       "memberSeparator": "、",
       "ownerOf": "{{name}} 的主人",

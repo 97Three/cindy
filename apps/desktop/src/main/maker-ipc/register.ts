@@ -13863,6 +13863,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   // Bot group chat is local to this Desktop in phase 1; device-link does not route these channels.
   const botGroupNotReady = { ok: false as const, errorCode: 'HOST_NOT_READY' as const, message: '伙伴群聊服务尚未就绪' };
   // Narrow chat operations; credentials and transport stay in main.
+  ipcMain.handle(MAKER_INVOKE.CHAT_SERVER_MASK, async (event, input) => {
+    assertTrustedAppRendererEvent(event);
+    return botGroupChatServiceHolder?.chatServer?.mask?.(input) ?? { ok: false, errorCode: 'HOST_NOT_READY' };
+  });
+  ipcMain.handle(MAKER_INVOKE.CHAT_SERVER_MENTIONS, async (event, input) => {
+    assertTrustedAppRendererEvent(event);
+    return botGroupChatServiceHolder?.chatServer?.mentions?.(input) ?? { ok: false, errorCode: 'HOST_NOT_READY' };
+  });
   ipcMain.handle(MAKER_INVOKE.CHAT_SERVER_STATUS, async (event, input) => {
     assertTrustedAppRendererEvent(event);
     const chat = botGroupChatServiceHolder?.chatServer;
