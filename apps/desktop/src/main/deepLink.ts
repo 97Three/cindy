@@ -46,6 +46,7 @@ import { app, BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import { parseProviderShareInvitationIntent, parseSharedTaskInvitationIntent } from '@cindy/device-link';
 import { createLogger } from './logger';
+import { cancelPendingWindowHide } from './mainWindowCloseBehavior';
 import { isValidGhostId } from '../shared/ghost';
 import { registerWindowsDeepLinkName } from './deepLinkWindowsRegistration';
 import {
@@ -421,6 +422,7 @@ export function handleIncomingShareFile(filePath: string, source: string): void 
 export function focusMainWindow(platform: NodeJS.Platform = process.platform): boolean {
   const win = mainWindowRef;
   if (!win || win.isDestroyed()) return false;
+  cancelPendingWindowHide(win);
   if (!win.isVisible()) win.show();
   if (win.isMinimized()) win.restore();
   if (platform === 'win32') {

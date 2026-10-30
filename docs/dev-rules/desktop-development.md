@@ -293,9 +293,13 @@ Linux 主窗口创建时注册 Electron Tray，提供显示主窗口、打开日
 实现见 `main/linuxTrayLifecycle.ts` 与 `bootstrap-electron.ts`，回归见
 `main/__tests__/linuxTrayLifecycle.test.ts`。
 
-图标创建成功不代表桌面面板一定显示它，因此关闭主窗口仍保留 Linux 原有的
-「最小化／退出」选择，不自动隐藏到托盘，也不迁移用户已有偏好。无托盘宿主或初始化失败
-不阻止主窗口使用。托盘实际显示、激活、菜单与退出须在 Linux 桌面验证；macOS 上的
+关闭主窗口仍保留 Linux 原有的「最小化／退出」选择，不迁移用户已有偏好。
+Hyprland（包括 Omarchy）没有原生最小化能力，因此主窗口的「最小化」及关闭时的
+「最小化」选择统一隐藏到 Linux 托盘；其他桌面与副窗口仍使用原生最小化。
+策略与回归见 `main/mainWindowCloseBehavior.ts`、`main/__tests__/mainWindowCloseBehavior.test.ts`。
+托盘初始化失败时提示并保留窗口。图标创建成功不代表桌面面板一定显示它；自定义 Hyprland
+配置未启用托盘宿主时，可再次打开同一安装、同一配置的 Cindy，经已有 single-instance
+入口恢复窗口。托盘实际显示、激活、菜单与退出须在 Linux 桌面验证；macOS 上的
 单测不能替代 Omarchy/Hyprland、GNOME 或 KDE 的实机验收。
 
 ## Windows 窗口恢复实验
