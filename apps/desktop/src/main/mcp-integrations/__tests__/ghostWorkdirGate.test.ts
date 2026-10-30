@@ -28,6 +28,7 @@ import { t } from '../../i18n';
 import { Session } from '@cindy/maker-core';
 import { resolveGhostFsSessionSnapshot } from '../../maker-ipc/ghostFsSessionSnapshot';
 import { createIpcError } from '../../../shared/ipc-errors';
+import { installedGhostStoragePart } from '../../../shared/pluginIdentity';
 import type { CindyGhostsHostDeps } from '../ghost';
 import type { GhostInstallConsentPrompt } from '../../cindy-brain/ghostInstallConsent';
 import type { InstalledGhost, GhostSetupAssessment } from '../../../shared/ghost';
@@ -274,7 +275,7 @@ vi.mock('../../plugin-contributions/prepared.js', () => ({
   getPreparedContribution: (...args: unknown[]) => communityPreparedMock(...args),
 }));
 
-const { authorizeDesktopSessionPath, getCindyGhostsMcpDeps, getGhostRosterPrompt } = await import('../ghost');
+const { authorizeDesktopSessionPath, getCindyGhostsMcpDeps, getGhostRosterPrompt, setPageControlGhostProvider } = await import('../ghost');
 const { createCindyGhostsMcpServer, handleGhostList, handleGhostInfo, handleGhostCall, handleGhostManual } = await import('cindy-tools');
 const { setGhostDisabledForWorkdir, listDisabledGhostIdsForWorkdir, isGhostDisabledForWorkdir } =
   await import('../../cindy-brain/ghostWorkdirPrefs');
@@ -3829,5 +3830,48 @@ describe('plugin page audience and shared tool execution', () => {
     setGhostDisabledForWorkdir(WORKDIR, grant.instance, true);
     expect(await call()).toMatchObject({ ok: false, errorCode: 'GHOST_DISABLED_IN_WORKDIR' });
     expect(dispatchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('「我的浏览器」取代插件自有页面工具', () => {
+  function pageControlGhost(): unknown {
+    return chipGhost('my-browser', ['tool'], {
+      tools: [
+        { name: 'browser_read', description: 'read' },
+        { name: 'browser_act', description: 'act' },
+        { name: 'browser_policy', description: 'policy' },
+      ],
+      manual: { items: [{ dir: 'manual/browser', name: 'browser', description: 'browser manual' }] },
+      browserExtension: {
+        protocol: 'cindy-browser-extension/3',
+        extensionIds: ['a'.repeat(32)],
+        pageControl: true,
+        pageControlReplaces: { tools: ['browser_read', 'browser_act'], manual: ['browser'] },
+      },
+    });
+  }
+  afterEach(() => setPageControlGhostProvider(() => null));
+
+  it('宿主经该插件提供页面控制时,只隐藏被取代的工具与手册;调用被引导到 browser 工具', async () => {
+    listMock.mockReturnValue([pageControlGhost()]);
+    setPageControlGhostProvider(() => installedGhostStoragePart(pageControlGhost() as InstalledGhost));
+    const deps = makeDeps();
+    const [ghost] = await deps.listAwakeGhosts();
+    expect(ghost.tools.map((tool) => tool.name)).toEqual(['browser_policy']);
+    expect(ghost.manual ?? []).toEqual([]);
+    const refused = await deps.callGhostTool({ ghostId: 'my-browser', tool: 'browser_read', args: {} });
+    expect(refused).toMatchObject({ ok: false, errorCode: 'TOOL_NOT_FOUND', message: expect.stringContaining('user-browser') });
+    await expect(deps.readGhostManual({ ghostId: 'my-browser', path: 'browser/MANUAL.md' })).resolves.toMatchObject({
+      ok: false,
+      message: expect.stringContaining('browser 工具'),
+    });
+    expect(dispatchMock).not.toHaveBeenCalled();
+  });
+
+  it('桥接未运行(没有页面控制)时插件工具照常可见', async () => {
+    listMock.mockReturnValue([pageControlGhost()]);
+    const [ghost] = await makeDeps().listAwakeGhosts();
+    expect(ghost.tools.map((tool) => tool.name)).toEqual(['browser_read', 'browser_act', 'browser_policy']);
+    expect(ghost.manual?.map((item) => item.name)).toEqual(['browser']);
   });
 });
