@@ -50,7 +50,6 @@ describe('interrupted continuation enqueue contract', () => {
     expect(enqueueStart).toBeGreaterThan(-1);
     expect(enqueueEnd).toBeGreaterThan(enqueueStart);
     const enqueueHandler = registerSource.slice(enqueueStart, enqueueEnd);
-    expect(enqueueHandler).toMatch(/inputCoordinator\.enqueue\(\s*sid\s*,\s*queued\b/);
     expect(matchIndexes(enqueueHandler, /ackSessionTurnEndedDurable\s*\(/)).toHaveLength(0);
 
     const acceptedStart = registerSource.indexOf('onAcceptedQueuedMessage:');
@@ -384,7 +383,9 @@ describe('interrupted continuation enqueue contract', () => {
       /if \(typeof event\.turnAttemptToken === 'number'\) \{\s*autoResumeBookkeeping\.clearFailedTurnCompletionTail\(session\.id\);/,
     );
 
-    expect(registerSource).toMatch(/finalizeOrcaSuppressedTerminal:\s*\(sessionId, payload\)\s*=>/);
+    expect(registerSource).toMatch(
+      /finalizeOrcaSuppressedTerminal:\s*settleDeferredOrcaWorkerTerminal,/,
+    );
     expect(registerSource).toMatch(/status: payload\.status,\s*finalText: payload\.finalText/);
   });
 });

@@ -115,6 +115,7 @@ interface PendingSetupInteraction {
   ) => Promise<void> | void;
   onInlineSubmit?: (submit: GhostSetupInlineSubmit) => Promise<void> | void;
   onConnectionCommitted?: (actionId: string) => void;
+  isTargetCurrent?: () => boolean;
 }
 
 export class GhostSetupInteractionBridge {
@@ -128,6 +129,7 @@ export class GhostSetupInteractionBridge {
     onCommand: PendingSetupInteraction['onCommand'],
     onInlineSubmit?: PendingSetupInteraction['onInlineSubmit'],
     onConnectionCommitted?: PendingSetupInteraction['onConnectionCommitted'],
+    isTargetCurrent?: PendingSetupInteraction['isTargetCurrent'],
   ): void {
     if (this.pending.has(snapshot.requestId)) {
       throw new Error(`plugin setup interaction already exists: ${snapshot.requestId}`);
@@ -139,6 +141,7 @@ export class GhostSetupInteractionBridge {
       onCommand,
       ...(onInlineSubmit ? { onInlineSubmit } : {}),
       ...(onConnectionCommitted ? { onConnectionCommitted } : {}),
+      ...(isTargetCurrent ? { isTargetCurrent } : {}),
     });
     try {
       this.broadcastSnapshot(sessionId, snapshot);
@@ -186,7 +189,7 @@ export class GhostSetupInteractionBridge {
    */
   submitInline(requestId: string, rawSubmit: unknown): boolean {
     const entry = this.pending.get(requestId);
-    if (!entry || entry.completed) return false;
+    if (!entry || entry.completed || entry.isTargetCurrent?.() === false) return false;
     const submit = parseGhostSetupInlineSubmit(rawSubmit);
     if (!submit || !entry.onInlineSubmit) {
       this.deps.logger?.warn('plugin setup interaction received invalid inline submission', {
@@ -207,7 +210,8 @@ export class GhostSetupInteractionBridge {
   connectionCommitted(requestId: string, actionId: string, expectedRevision: number): boolean {
     const entry = this.pending.get(requestId);
     if (!entry || entry.completed || entry.snapshot.terminal ||
-        entry.snapshot.revision !== expectedRevision || !entry.onConnectionCommitted) return false;
+        entry.snapshot.revision !== expectedRevision || !entry.onConnectionCommitted ||
+        entry.isTargetCurrent?.() === false) return false;
     const step = entry.snapshot.steps.find(step => step.action?.id === actionId &&
       step.action.kind === 'manage_connection' && (step.phase === 'pending' || step.phase === 'failed'));
     if (!step) return false;
@@ -293,7 +297,8 @@ export class GhostSetupInteractionBridge {
   }> {
     return Array.from(this.pending.values())
       .filter(
-        (entry) => !entry.completed && (sessionId === undefined || entry.sessionId === sessionId),
+        (entry) => !entry.completed && entry.isTargetCurrent?.() !== false &&
+          (sessionId === undefined || entry.sessionId === sessionId),
       )
       .map((entry) => ({ sessionId: entry.sessionId, request: entry.snapshot }));
   }
@@ -425,7 +430,7 @@ function isDesktopOnlyConfirmationRequest(request: unknown): boolean {
   if (!request || typeof request !== 'object' || Array.isArray(request)) return false;
   const kind = (request as { kind?: unknown }).kind;
   return (
-    kind === 'issue_confirm' || kind === 'rename_sessions_confirm' || kind === 'ghost_grant_confirm'
+    kind === 'mcp_setup' || kind === 'issue_confirm' || kind === 'rename_sessions_confirm' || kind === 'ghost_grant_confirm'
   );
 }
 
@@ -439,7 +444,7 @@ function projectDesktopOnlyConfirmation(request: Record<string, unknown>): Recor
   // Preserve only the known kind so mobile can render its existing read-only
   // guidance. Drafts, file paths, previews, identities, and the real id stay
   // on the controlled Desktop.
-  return { kind: request.kind, requestId: projectDesktopOnlyConfirmationRequestId(requestId) };
+  return { kind: request.kind === 'mcp_setup' ? 'ghost_grant_confirm' : request.kind, requestId: projectDesktopOnlyConfirmationRequestId(requestId) };
 }
 
 /**
