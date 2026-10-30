@@ -45,7 +45,8 @@ export function modelInterfacesError(value: Record<string, unknown>): string | n
     if (ids.has(profile.id)) return 'duplicate interface profile';
     ids.set(profile.id, profile);
   }
-  const rules = value.recommendedAgents ?? [];
+  // Only an absent field defaults to empty; an explicit null must fail the array contract.
+  const rules = value.recommendedAgents === undefined ? [] : value.recommendedAgents;
   if (!Array.isArray(rules) || rules.length > 4096) return 'recommendedAgents must be an array';
   const ruleKeys = new Set<string>();
   for (const rule of rules) {

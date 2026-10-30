@@ -1265,5 +1265,6 @@ describe('V6 interface contract', () => {
     }
     expect(parseModelRegistry({ ...value, recommendedAgents: [value.recommendedAgents[2], value.recommendedAgents[2]] }).ok).toBe(false);
     expect(parseModelRegistry({ ...value, schemaVersion: 5, recommendedAgents: value.recommendedAgents } as unknown as ModelRegistry).ok).toBe(false);
+    expect(parseModelRegistry({ ...value, recommendedAgents: null } as unknown as ModelRegistry).ok).toBe(false);
   });
 });
