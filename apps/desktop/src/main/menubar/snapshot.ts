@@ -224,9 +224,11 @@ interface WindowState {
 
 interface SubscriptionState {
   windows: WindowState[];
-  /** The window the account is shown by: the weekly one, else the tightest (scoped windows excluded). */
+  /** The window the tube and headline read: the weekly one, else the tightest (scoped windows excluded). */
   limit: WindowState | null;
   remaining: number | null;
+  /** The tightest window that actually limits the account; the detail page reports on it. */
+  tightest: WindowState | null;
 }
 
 function windowState(window: MenubarWindowInput, nowMs: number): WindowState {
@@ -263,11 +265,14 @@ function subscriptionState(source: MenubarSubscriptionInput, nowMs: number): Sub
   const windows = source.windows.map((window) => windowState(window, nowMs));
   const limits = windows.filter((state) => state.window.kind !== 'scoped');
   const weekly = limits.filter((state) => state.window.kind === 'week');
-  const limit = (weekly.length > 0 ? weekly : limits).reduce<WindowState | null>(
-    (tightest, state) => (!tightest || state.remaining < tightest.remaining ? state : tightest),
-    null,
-  );
-  return { windows, limit, remaining: limit ? limit.remaining : null };
+  const tightestOf = (candidates: WindowState[]) =>
+    candidates.reduce<WindowState | null>(
+      (tightest, state) => (!tightest || state.remaining < tightest.remaining ? state : tightest),
+      null,
+    );
+  const tightest = tightestOf(limits);
+  const limit = tightestOf(weekly.length > 0 ? weekly : limits);
+  return { windows, limit, remaining: limit ? limit.remaining : null, tightest };
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -821,7 +826,8 @@ class Builder {
 
   private subscriptionDetail(source: MenubarSubscriptionInput): MenubarDetail {
     const state = this.state(source);
-    const limit = state.limit;
+    // The detail page is about what actually limits the account, not the tube's weekly view.
+    const limit = state.tightest;
     const handle = this.handle(source);
     const resets = source.resetCredits?.count ?? 0;
     // An account on another computer runs there; this computer cannot start a task on it directly.
@@ -831,7 +837,7 @@ class Builder {
     let action: MenubarDetailAction = source.device
       ? { kind: 'open-app' }
       : { kind: 'new-task', providerId: source.providerId };
-    if (!limit || state.remaining === null) {
+    if (!limit) {
       return {
         id: source.id,
         logoSvg: source.logoSvg,
@@ -851,7 +857,7 @@ class Builder {
         action,
       };
     }
-    const remaining = state.remaining;
+    const remaining = limit.remaining;
     const level = levelOf(remaining);
     const colors = FAMILY_COLORS[source.family];
     const multi = state.windows.length > 1;
