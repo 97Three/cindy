@@ -1674,7 +1674,9 @@
     }
   },
   "settings": {
-    "newChatDefaults": { "title": "新しいタスクのデフォルト権限" },
+    "newChatDefaults": {
+      "title": "新しいタスクのデフォルト権限"
+    },
     "imConnection": {
       "reconnect": "再接続",
       "savedNote": "連携情報は保存されています。そのまま再接続できます。",
@@ -18592,6 +18594,23 @@
     "groupHint": "オフにすると、このグループ経由のすべてのタスクは通常速度になります。Ultrafast も対象です。",
     "pending": "一部のコンピューターが設定を確認していません。接続を維持し、この設定に対応していないグループ内のコンピューターを更新してください。",
     "saveFailed": "設定は保存された可能性がありますが、一部の実行中タスクが通常速度への切り替えを確認していません。接続を確認して再試行してください。"
+  },
+  "usageCost": {
+    "title": "費用の内訳",
+    "conversation": "チャット",
+    "additional": "追加費用",
+    "unknownModel": "モデル未記録",
+    "estimate": "推定価値",
+    "charged": "従量料金",
+    "loading": "内訳を読み込み中…",
+    "unavailable": "この記録の内訳は取得できません。",
+    "explanation": "モデルと経路別に集計します。サブスクリプションの価値は推定であり、追加請求ではありません。記録済みの費用のみを含み、過去の内訳は不完全な場合があります。",
+    "source": {
+      "subscription": "サブスクリプション",
+      "cindy-ai": "Cindy AI",
+      "provider": "API プロバイダー",
+      "unknown": "経路未記録"
+    }
   },
   "performanceTrace": {
     "title": "パフォーマンスの記録",
