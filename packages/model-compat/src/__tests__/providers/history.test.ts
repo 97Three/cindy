@@ -71,6 +71,25 @@ describe('Responses tool history normalization', () => {
     ]);
   });
 
+  it('keeps custom tool calls paired with their custom outputs', () => {
+    const body = {
+      input: [
+        { type: 'custom_tool_call', call_id: 'call_custom', name: 'apply_patch', input: 'one' },
+        { type: 'custom_tool_call_output', call_id: 'call_custom', output: 'first' },
+        { type: 'custom_tool_call', call_id: 'call_custom', name: 'apply_patch', input: 'two' },
+        { type: 'custom_tool_call_output', call_id: 'call_custom', output: 'second' },
+      ],
+    };
+
+    const normalized = normalizeRepeatedResponseToolCallIds(body);
+
+    expect(normalized?.input).toEqual([
+      body.input[0], body.input[1],
+      { ...body.input[2], call_id: 'call_custom__cindy_dup_2' },
+      { ...body.input[3], call_id: 'call_custom__cindy_dup_2' },
+    ]);
+  });
+
   it('provides a byte-body repair for the exact 400 recovery path', () => {
     const repaired = normalizeRepeatedResponseToolCallIdsFromBody(Buffer.from(JSON.stringify({
       input: [
