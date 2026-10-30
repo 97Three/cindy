@@ -6820,7 +6820,7 @@ describe('DeviceLinkClient', () => {
     h.client.stop();
   });
 
-  it('waitUntilOnline preserves backoff; explicit foreground retry can still reconnect', async () => {
+  it('waitUntilOnline:离线请求有界等待 —— un-park 退避立即重连,上线后 resolve', async () => {
     // 退避基数 10s:断线后会 park 一个长计时器,模拟"掉线/重连窗口"。
     const h = makeHarness({ timing: { reconnectBaseMs: 10_000, reconnectMaxMs: 30_000 } });
     h.client.start();
@@ -6832,10 +6832,7 @@ describe('DeviceLinkClient', () => {
     expect(h.sockets.length).toBe(1); // 退避还没到,park 住,没新建连接
 
     const p = h.client.waitUntilOnline(1_000);
-    await tick();
-    expect(h.sockets.length).toBe(1); // A query must not reset DNS/network backoff.
-    h.client.connectNow('user-retry');
-    await tick();
+    await tick(); // waitUntilOnline 内 connectNow un-park,立刻发起重连
     expect(h.sockets.length).toBe(2);
     h.current().ack();
     await expect(p).resolves.toBeUndefined(); // 上线后放行,而不是干等 10s 退避
@@ -7762,65 +7759,40 @@ describe('DeviceLinkClient', () => {
   });
 });
 
-// Oct 30: concurrent UI reads piled up during a shared relay outage. Unit tests
-// exercise the real client send boundary; existing admission tests only capped
-// concurrency, not duplicate reads, invalidation, or shared-vs-peer attribution.
+// Unit regression for PR #7975: invoke must isolate cancellation between identical
+// queued listings. Prior coverage cancelled only a joining consumer, not the first.
+// Minimal input: fill admission, enqueue two identical reads, cancel either one.
 describe('remote recovery regression', () => {
-  it('joins concurrent safe listings while preserving consumer cancellation and write freshness', async () => {
-    const h = makeHarness({ timing: { pingIntervalMs: 60_000, requestTimeoutMs: 5000 } });
-    try {
-      h.client.start(); await tick(); h.current().ack();
-      const payload = { channel: 'local-db:sessions:list', args: [] };
-      let cancelled = false;
-      const a = h.client.invoke('a', payload);
-      const b = h.client.invoke('a', payload);
-      const c = h.client.invoke('a', payload, undefined, { preSend: () => {
-        if (cancelled) throw new Error('cancelled consumer');
-      } }).catch(error => error);
-      expect(h.current().sent.filter(e => e.kind === 'invoke')).toHaveLength(1);
-      cancelled = true;
-      const original = h.current().sent.at(-1)!;
-      // A write fences subsequent listings even while the original is in flight.
-      const write = h.client.invoke('a', { channel: 'maker:send', args: [] });
-      const fresh = h.client.invoke('a', payload);
-      const other = h.client.invoke('b', payload);
-      expect(h.current().sent.filter(e => e.kind === 'invoke')).toHaveLength(4);
-      for (const e of h.current().sent.filter(e => e.kind === 'invoke'))
-        h.current().push({ v: PROTOCOL_VERSION, kind: 'invoke-result', id: e.id, src: e.dst,
-          payload: { ok: true, result: [e.id === original.id ? 'old' : 'new'] } });
-      const [ar, br] = await Promise.all([a, b]);
-      expect(ar).toEqual(br); expect(ar).not.toBe(br);
-      expect(ar.ok && ar.result).not.toBe(br.ok && br.result);
-      expect(await c).toMatchObject({ message: 'cancelled consumer' });
-      expect(await fresh).toEqual({ ok: true, result: ['new'] });
-      await Promise.all([write, other]);
-    } finally { h.client.stop(); }
-  });
-
-  it('does not join reads across write completion, push invalidation or explicit refresh', async () => {
+  it.each([0, 1])('keeps identical queued listings independent when consumer %i cancels', async (cancelIndex) => {
+    vi.useFakeTimers();
     const h = makeHarness({ timing: { pingIntervalMs: 60_000 } });
     const pending: Promise<unknown>[] = [];
     try {
-      h.client.start(); await tick(); h.current().ack();
-      const listing = { channel: 'local-db:sessions:list', args: [] };
+      h.client.start(); await vi.advanceTimersByTimeAsync(0); h.current().ack();
       const sent = () => h.current().sent.filter(e => e.kind === 'invoke');
       const reply = (e: Envelope) => h.current().push({ v: PROTOCOL_VERSION, kind: 'invoke-result',
-        id: e.id, src: e.dst, payload: { ok: true, result: e.id } });
-      const write = h.client.invoke('a', { channel: 'maker:send', args: [] });
-      pending.push(write, h.client.invoke('a', listing));
-      reply(sent()[0]); await write;
-      pending.push(h.client.invoke('a', listing));
-      expect(sent()).toHaveLength(3); // A read begun during the write is not fresh after it.
-      h.current().push({ v: PROTOCOL_VERSION, kind: 'push', src: 'a',
-        payload: { channel: 'local-db:sessions:changed', payload: {} } });
-      pending.push(h.client.invoke('a', listing));
-      expect(sent()).toHaveLength(4);
-      pending.push(h.client.invoke('a', { channel: listing.channel, args: [null, null, { fresh: true }] }));
-      pending.push(h.client.invoke('a', listing));
-      expect(sent()).toHaveLength(6);
-      for (const e of sent().slice(1)) reply(e);
+        id: e.id, src: e.dst, payload: { ok: true, result: 'ok' } });
+      for (let i = 0; i < 12; i++) pending.push(h.client.invoke('a', {
+        channel: 'local-db:sessions:list', args: [{ request: i }],
+      }).catch(error => error));
+      expect(sent()).toHaveLength(12);
+      const cancelled = [false, false];
+      const reads = cancelled.map((_, i) => h.client.invoke('a', {
+        channel: 'local-db:sessions:list', args: [],
+      }, undefined, { preSend: () => {
+        if (cancelled[i]) throw new Error('cancelled consumer');
+      } }).catch(error => error));
+      pending.push(...reads);
+      expect(sent()).toHaveLength(12);
+      cancelled[cancelIndex] = true;
+      sent().forEach(reply);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sent()).toHaveLength(13); // Only the valid caller reaches the wire.
+      reply(sent().at(-1)!);
+      expect(await reads[cancelIndex]).toMatchObject({ message: 'cancelled consumer' });
+      expect(await reads[1 - cancelIndex]).toEqual({ ok: true, result: 'ok' });
       await Promise.all(pending);
-    } finally { h.client.stop(); await Promise.allSettled(pending); }
+    } finally { h.client.stop(); await Promise.allSettled(pending); vi.useRealTimers(); }
   });
 
   it('probes the shared relay once, pauses background work, and keeps healthy peers connected', async () => {
@@ -8237,10 +8209,10 @@ describe('DeviceLinkClient relay 拥塞断连(close 1013)', () => {
     h.client.stop();
   });
 
-  it('非拥塞断线的普通等待保留退避，显式用户重试可立即重连', async () => {
+  it('非拥塞断线的 waitUntilOnline un-park 行为不变:立即打断退避重连', async () => {
     const h = makeHarness({
       timing: {
-        // 普通等待不得将 DNS/网络错误的退避清零。
+        // 普通退避拉大:不 un-park 的话测试窗口内不会自然重连
         reconnectBaseMs: 60_000,
         reconnectMaxMs: 60_000,
         pingIntervalMs: 60_000,
@@ -8253,9 +8225,6 @@ describe('DeviceLinkClient relay 拥塞断连(close 1013)', () => {
 
     h.current().emit('close', 1006, 'heartbeat lost');
     const wait = h.client.waitUntilOnline(2_000);
-    await tick();
-    expect(h.sockets.length).toBe(socketsBefore);
-    h.client.connectNow('user-retry');
     await tick();
     expect(h.sockets.length).toBe(socketsBefore + 1);
     h.current().ack();
@@ -8429,11 +8398,11 @@ describe('定时重发的单趟预算(TRANSPORT_RETRY_PASS_BUDGET)', () => {
     await expect(call()).resolves.toEqual({ ok: true, result: rows });
     expect(handled).toHaveLength(3);
 
-    // Distinct caller budgets cannot coalesce: the thirteenth waits for admission. A completed
+    // Cold-cache burst: the thirteenth call waits for admission. A completed
     // earlier result must supply its validator before that queued call is sent.
-    const burst = Array.from({ length: 13 }, (_, i) => controller.invoke('desktop', {
+    const burst = Array.from({ length: 13 }, () => controller.invoke('desktop', {
       channel: 'local-db:sessions:list', args: [{ filter: 'archived' }],
-    }, 1_000 + i));
+    }, 1_000));
     await relay.settle();
     expect(await Promise.all(burst)).toEqual(Array.from({ length: 13 }, () => ({ ok: true, result: rows })));
     expect((handled.at(-1)!.payload as InvokePayload).transfer?.ifNoneMatch).toEqual(expect.any(String));
@@ -10771,7 +10740,7 @@ describe('confirmed duplicate-open gap repair', () => {
       await open(phone); await open(healthy);
       // Twelve requests are sent; two remain locally queued and must be cancelled on reconnect.
       for (let i = 0; i < 12; i++) relay.dropNext((sender, env) => sender === 'desktop' && env.dst === 'phone' && env.kind === 'invoke-result');
-      const old = Promise.all(Array.from({ length: 14 }, (_, i) => phone.invoke('desktop', { channel: 'maker:provider:list', args: [{ request: i }] }, 60000).catch(e => e)));
+      const old = Promise.all(Array.from({ length: 14 }, () => phone.invoke('desktop', { channel: 'maker:provider:list', args: [] }, 60000).catch(e => e)));
       await pump(); await vi.advanceTimersByTimeAsync(1000);
       phone.restartConnection('phone-only-reconnect');
       await vi.advanceTimersByTimeAsync(1); await pump(); await open(phone);

@@ -1,4 +1,4 @@
-import { isPeerResetRetryableInvoke, bypassInvokeScheduling, resolveInvokePriority, canCoalesceRemoteListing } from './invokePolicy.js';
+import { isPeerResetRetryableInvoke, bypassInvokeScheduling, resolveInvokePriority } from './invokePolicy.js';
 import { InvokeScheduler } from './invokeScheduler.js';
 import { SessionMessageReuse } from './sessionMessageReuse.js';
 import {
@@ -786,8 +786,6 @@ interface ReceiveStreamState {
 // ─── 客户端实现 ───────────────────────────────────────────────────────────────
 
 export class DeviceLinkClient {
-  /** Only concurrent listing reads, never a result cache or a write retry. */
-  private readonly listingReads = new Map<string, Promise<InvokeResultPayload>>();
   private readonly invokeScheduler = new InvokeScheduler((id) => {
     const peer = this.peerTransport.get(id);
     return (this.ws?.bufferedAmount ?? 0) > SOCKET_DATA_LOW_WATER_BYTES
@@ -1145,8 +1143,8 @@ export class DeviceLinkClient {
    * 有界等待连接就绪。online 立即 resolve;否则订阅状态变化,在 timeoutMs 内
    * 等到 online 就 resolve,超时 / stopped 则 reject(NOT_CONNECTED)。
    *
-   * 普通请求只等待既有重连，不清零 DNS/网络错误的指数退避。显式用户重试或
-   * 前台恢复仍可调用 connectNow；网络变化由 notifyNetworkChanged 处理。
+   * Desktop/Mobile 请求等待时可打断普通退避，促成一次立即重连；
+   * 已在途的握手和 relay 1013 拥塞冷却仍保留。
    * 已 stopped 时不自动拉起连接
    * (start/stop 仍由宿主生命周期掌管),直接快速失败让上层感知。
    */
@@ -1155,6 +1153,9 @@ export class DeviceLinkClient {
     if (this.stopped) {
       return Promise.reject(new DeviceLinkError('NOT_CONNECTED', 'client stopped'));
     }
+    // Only un-park a pending retry; concurrent waiters keep the in-flight handshake.
+    if (this.reconnectTimer) this.connectNow('wait-until-online');
+
     const timeout = timeoutMs ?? this.timing.requestTimeoutMs;
     return new Promise<void>((resolve, reject) => {
       let off: (() => void) | null = null;
@@ -1604,7 +1605,6 @@ export class DeviceLinkClient {
     reason: LinkCloseReason,
     direction: 'outbound' | 'inbound' = 'outbound',
   ): void {
-    this.listingReads.clear();
     // 本地永久关闭必须同步撤销已排期的 transport-timeout 重试通知:否则迟到
     // 的回调会在链路已关闭后补发瞬时重置帧,诱使对端重开用户已关掉的控制方向。
     this.cancelTimeoutCloseNotify(dst);
@@ -1674,42 +1674,6 @@ export class DeviceLinkClient {
 
   /** 控制端:远程 invoke,等待 invoke-result */
   async invoke(
-    dst: string,
-    payload: InvokePayload,
-    timeoutMs?: number,
-    options?: { preSend?: () => void; background?: boolean },
-  ): Promise<InvokeResultPayload> {
-    const priority = resolveInvokePriority(payload.channel, options?.background);
-    const coalescible = canCoalesceRemoteListing(payload);
-    // Fresh reads and writes invalidate joining old reads. A push does the same
-    // below. Use the existing conservative freshness policy, not retry safety.
-    if (!coalescible) this.listingReads.clear();
-    let key: string | undefined;
-    if (coalescible) {
-      const serialized = JSON.stringify([dst, payload, timeoutMs, priority]);
-      if (serialized.length <= 16_384) key = serialized;
-    }
-    const existing = key && this.listingReads.get(key);
-    if (existing) {
-      options?.preSend?.();
-      const result = await existing;
-      options?.preSend?.(); // Each consumer retains its own cancellation/owner check.
-      return JSON.parse(JSON.stringify(result)) as InvokeResultPayload;
-    }
-    const work = this.invokeUnshared(dst, payload, timeoutMs, options);
-    if (key && this.listingReads.size < 128) this.listingReads.set(key, work);
-    try {
-      const result = await work;
-      if (key) options?.preSend?.();
-      return key ? JSON.parse(JSON.stringify(result)) as InvokeResultPayload : result;
-    } finally {
-      // A read started while a write was in flight can predate its commit too.
-      if (!coalescible) this.listingReads.clear();
-      if (key && this.listingReads.get(key) === work) this.listingReads.delete(key);
-    }
-  }
-
-  private async invokeUnshared(
     dst: string,
     payload: InvokePayload,
     timeoutMs?: number,
@@ -2101,7 +2065,6 @@ export class DeviceLinkClient {
   }
 
   private failAllPending(err: DeviceLinkError): void {
-    this.listingReads.clear();
     this.invokeScheduler.clear(err);
     for (const pending of this.pending.values()) {
       pending.reject(err);
@@ -2110,7 +2073,6 @@ export class DeviceLinkClient {
   }
 
   private failNonReliablePending(err: DeviceLinkError): void {
-    this.listingReads.clear();
     this.invokeScheduler.clear(err);
     for (const [id, pending] of this.pending) {
       if (pending.reliableDst && pending.hasWritten()) continue;
@@ -2604,7 +2566,6 @@ export class DeviceLinkClient {
       return;
     }
     if (validForHeartbeat) {
-      if (env.kind === 'push') this.listingReads.clear();
       this.lastInboundAt = this.monotonicNow();
       if (env.src && ROUTED_KINDS.has(env.kind)) this.lastPeerInboundAt = this.lastInboundAt;
       if (this.networkProbeTimer) {
