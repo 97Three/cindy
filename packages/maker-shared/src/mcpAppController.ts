@@ -171,7 +171,8 @@ export class McpAppController {
           if (!Number.isSafeInteger(event.seq) || event.seq <= this.after) continue;
           this.after = event.seq;
           // Replies already in transit cannot be recalled by the execution Host.
-          if ((event.generation ?? 0) !== this.generation) continue;
+          // Legacy Hosts omit generation and keep their original unfenced behavior.
+          if (event.generation !== undefined && event.generation !== this.generation) continue;
           if (event.openLink) {
             const viewId = this.document.viewId;
             void (async () => {

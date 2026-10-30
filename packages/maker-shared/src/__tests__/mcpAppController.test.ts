@@ -373,10 +373,24 @@ it('ignores an old poll reply reusing the new document initialize ID', async () 
   f.controller.receive({ jsonrpc: '2.0', id: 70, method: 'ui/initialize', params: {} });
   const old = { jsonrpc: '2.0', id: 70, error: { code: -1, message: 'old document' } };
   const current = { jsonrpc: '2.0', id: 70, result: { protocolVersion: '2026-01-26' } };
-  reply([{ seq: 1, message: old }, { seq: 2, generation: 1, message: current }]);
+  reply([{ seq: 1, generation: 0, message: old }, { seq: 2, generation: 1, message: current }]);
   await flush();
   expect(f.error).not.toHaveBeenCalled();
   expect(f.post).not.toHaveBeenCalledWith(old);
+  expect(f.post).toHaveBeenCalledWith(current);
+  await f.controller.close();
+});
+// A new viewer can poll an execution computer released before document generations.
+it('delivers a legacy Host reply to a replacement document', async () => {
+  let reply!: (value: unknown) => void;
+  const f = fixture(vi.fn().mockImplementationOnce(() => new Promise(resolve => { reply = resolve; })).mockImplementation(never));
+  await f.controller.open({});
+  f.controller.sandboxReady();
+  f.controller.receive({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  f.controller.receive({ jsonrpc: '2.0', id: 71, method: 'ui/initialize', params: {} });
+  const current = { jsonrpc: '2.0', id: 71, result: { protocolVersion: '2026-01-26' } };
+  reply([{ seq: 1, message: current }]);
+  await flush();
   expect(f.post).toHaveBeenCalledWith(current);
   await f.controller.close();
 });

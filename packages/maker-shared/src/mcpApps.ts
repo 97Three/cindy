@@ -15,7 +15,7 @@ export function isMcpAppLinkAuthorizationCurrent(value: unknown, elapsedMs: numb
     grant.validForMs <= MCP_APP_LINK_GRANT_MS && elapsedMs >= 0 && elapsedMs < grant.validForMs;
 }
 /** Host-to-controller actions never enter the App's standard JSON-RPC transport. */
-/** Absent generation means the original document (legacy hosts). */
+/** Current Hosts always set generation; absent means a legacy Host without document fencing. */
 export type McpAppHostEvent<T> = { generation?: number } & (
   | { seq: number; message: T; openLink?: never }
   | { seq: number; openLink: { id: string; url: string }; message?: never });
