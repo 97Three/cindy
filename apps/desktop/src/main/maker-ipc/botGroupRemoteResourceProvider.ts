@@ -40,6 +40,7 @@ import {
   BOT_GROUP_MEMBER_LINK_REL,
   BOT_GROUP_REMOTE_COLLECTION_ID,
   BOT_GROUP_REMOTE_RESOURCE_KIND,
+  type ChatMaskAction,
   type BotGroupDetail,
   type BotGroupFailure,
   type BotGroupMessageView,
@@ -227,6 +228,7 @@ export function botGroupRemoteChatData(detail: BotGroupDetail): BotGroupRemoteCh
       .map(([id, share]) => [id, shareWithoutPaths(share)])) } : {}),
     supportsAttachments: true,
     supportsReadReceipts: detail.serverBacked === true,
+    supportsPersonalMask: detail.serverBacked === true,
     supportsMemberRemoval: detail.serverBacked === true,
     supportsSettingsManagement: detail.serverBacked === true,
   };
@@ -438,6 +440,20 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
             ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
           }, { controllerDeviceId: context.controllerDeviceId });
           break;
+        case 'mask':
+        case 'mask-mentions': {
+          if (!visibleGroup.serverBacked || !current.chatServer?.mask || !current.chatServer.mentions)
+            throw new RemoteResourceRegistryError('INVALID_PARAMS', 'UNSUPPORTED_OPERATION');
+          // The ordinary account-scoped API validates the complete input and keeps
+          // the mask owner separate from the group's administrator.
+          const receipt = actionId === 'mask'
+            ? await current.chatServer.mask({ groupId, action: input.action as ChatMaskAction | undefined, operationId: input.operationId as string | undefined })
+            : await current.chatServer.mentions({ groupId, before: input.before as string | undefined,
+              readIds: input.readIds as string[] | undefined, operationId: input.operationId as string | undefined });
+          if (!receipt.ok) throw new RemoteResourceRegistryError('INVALID_PARAMS', receipt.errorCode);
+          ownerService();
+          return { result: receipt, effects: [] };
+        }
         case 'read': {
           if (!visibleGroup.serverBacked || !current.chatServer || typeof input.messageId !== 'string')
             throw new RemoteResourceRegistryError('INVALID_PARAMS', 'INVALID_PARAMS');

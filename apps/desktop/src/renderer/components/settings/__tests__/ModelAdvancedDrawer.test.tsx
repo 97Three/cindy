@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   setLimit: vi.fn(async () => {}),
   reset: vi.fn(async () => {}),
   target: vi.fn(),
+  imageTarget: vi.fn(),
+  imageSet: vi.fn(async () => {}),
   limit: null as number | null,
 }));
 vi.mock('react-i18next', () => ({
@@ -28,6 +30,12 @@ vi.mock('@/hooks/useModelContextLimit', () => ({
       setLimit: mocks.setLimit,
       reset: mocks.reset,
     };
+  },
+}));
+vi.mock('@/hooks/useModelImageInputOverride', () => ({
+  useModelImageInputOverride: (target: unknown) => {
+    mocks.imageTarget(target);
+    return { value: null, mixed: false, loading: false, error: false, setValue: mocks.imageSet };
   },
 }));
 vi.mock('@/state/modelVisibilityPrefs', () => ({
