@@ -15223,7 +15223,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       broadcastSessionCreated(sessionId);
       return sessionId;
     },
-    focusSession: (sessionId) => openMainWindowSession(sessionId),
+    focusSession: (sessionId) => openMainWindowSession(sessionId, { focus: 'if-active' }),
   });
 
   // 排队项会进 pendingQueue projection, 经 Electron IPC 结构化克隆发给 renderer,
