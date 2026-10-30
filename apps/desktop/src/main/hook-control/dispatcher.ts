@@ -53,6 +53,7 @@ import {
   HOOK_FEATURE_TELEGRAM_FINAL_OPS,
   HOOK_FEATURE_TELEGRAM_PROGRESS_OPS,
   HOOK_FEATURE_TURN_DELIVERY,
+  HOOK_FEATURE_X_MEDIA_RELAY,
   HOOK_FEATURE_TURN_REOPEN,
   HOOK_FEATURE_SESSION_RESULT,
   type HookMessage,
@@ -61,6 +62,7 @@ import {
   type InteractionDecisionPayload,
   type TaskAckPayload,
   type TaskAttachment,
+  type XMediaResultPayload,
   type TaskDispatchPayload,
   type TaskRejectReason,
   type TaskSource,
@@ -102,6 +104,7 @@ import { terminalDeliveryExpired } from './requestLedger.js';
 import { composeXPrompt } from './xPrompt.js';
 import type { HookRequestLedger, HookTerminalRecord } from './requestLedger.js';
 import { createBackgroundResults } from './backgroundResults.js';
+import { createXMediaRelay } from './xMediaRelay.js';
 
 /** 会话执行器抽象 —— 生产实现 session-runner.ts(包 maker), 测试注入假的。 */
 export interface HookSessionRunner {
@@ -236,6 +239,8 @@ export interface HookRunRequest {
   origin: { connectionId: string; connectionName: string; externalKey: string };
   /** IM 来源元数据(平台 + thread 上下文); 省略 = 旧 server 不发。 */
   source?: TaskSource;
+  /** server 支持分块转传时提供: 把 X 视频传上去并返回 media id, 失败抛错。 */
+  relayXVideo?: (absPath: string, mimeType: string) => Promise<string>;
   /**
    * 本条消息回复的那条消息, 在展示截短前从 server 原始 source 取出(见 hookReplyTarget)。
    * 只作 Auto 审阅的引用证据, 不进 prompt、不落库。
@@ -293,6 +298,8 @@ export interface HookRunOutcome {
   durationMs: number;
   /** 出站附件(agent 产图/产文件, runner 收集编码; 无则省略), 随 turn.end 回传。 */
   attachments?: TaskAttachment[];
+  /** 已分块转传到 X 的媒体, 随 turn.end 回传。 */
+  xMediaIds?: string[];
 }
 
 /** 为新会话预建独立 worktree 的结果(成功时调用方必须用返回的 sessionId 建会话)。 */
@@ -476,6 +483,7 @@ export interface HookDispatcher {
   handleInteractionDecision(connectionId: string, payload: InteractionDecisionPayload): void;
   /** X server 对普通 turn.end 的持久接管 / 渠道发布状态回执。 */
   handleTurnDelivery(connectionId: string, payload: TurnDeliveryPayload): void;
+  handleXMediaResult(connectionId: string, payload: XMediaResultPayload): void;
   /** Re-open ingress after the next account DB is ready. */
   activateAccount(): void;
   /** Close ingress, abort old-account turns and await their final async boundary. */
@@ -822,6 +830,7 @@ export function createHookDispatcher(deps: HookDispatcherDeps): HookDispatcher {
   }
   /** 每连接当前发送函数(transport 重建后由 onConnected / handleDispatch 刷新)。 */
   const sendFns = new Map<string, (m: HookMessage) => boolean>();
+  const xMediaRelay = createXMediaRelay();
   const recoveryDeliveries = new Map<string, (delivered: boolean) => void>();
   const clearRecoveryDeliveries = (): void => {
     for (const settle of recoveryDeliveries.values()) settle(false);
@@ -933,6 +942,17 @@ export function createHookDispatcher(deps: HookDispatcherDeps): HookDispatcher {
     activeCardPublishers.clear();
     telegramOpRouter.failAll();
   };
+  /** 只有声明分块转传的 X server 才走这条路; 否则继续内联 10 MiB 以内的视频。 */
+  const xVideoRelayOption = (task: { connectionId: string; requestId: string; run: { source?: TaskSource } }) =>
+    task.run.source?.im === 'x' && serverFeatures.get(task.connectionId)?.includes(HOOK_FEATURE_X_MEDIA_RELAY)
+      ? {
+          relayXVideo: (absPath: string, mimeType: string) => xMediaRelay.upload({
+            connectionId: task.connectionId, requestId: task.requestId, absPath, mimeType,
+            send: (message) => sendFns.get(task.connectionId)?.(message) ?? false,
+          }),
+        }
+      : {};
+
   /** 该连接最近一次 welcome 是否同时宣告了 msg-op-v1 与 feature; 能力快照缺席(离线)= undefined。 */
   const telegramOpsNegotiated = (connectionId: string, feature: string): boolean | undefined => {
     const features = serverFeatures.get(connectionId);
@@ -1940,6 +1960,7 @@ export function createHookDispatcher(deps: HookDispatcherDeps): HookDispatcher {
       try {
         outcome = await runner.run({
           ...task.run,
+          ...xVideoRelayOption(task),
           onTurnTerminal: () => { runningEntry.observing = false; },
           onProgress,
           ...(task.run.source?.im === 'telegram' ? {
@@ -2029,6 +2050,7 @@ export function createHookDispatcher(deps: HookDispatcherDeps): HookDispatcher {
       ...(outcome.attachments !== undefined && outcome.attachments.length > 0
         ? { attachments: outcome.attachments }
         : {}),
+      ...(outcome.xMediaIds?.length ? { xMediaIds: outcome.xMediaIds } : {}),
     };
     // Open the final fence before the legacy terminal frame enters any async
     // outbox path. A late progress callback from the observer must never write
@@ -2988,6 +3010,7 @@ export function createHookDispatcher(deps: HookDispatcherDeps): HookDispatcher {
       // 能力快照按连接存, 而连接身份含账号指纹 —— 换账号后旧条目永远不会再被
       // 命中, 但留着会让 supportsReopen 对"同名连接"给出上一个账号的答案。
       serverFeatures.clear();
+      xMediaRelay.failAll();
       // ack 的待补发与可回落表随账号走 —— 换账号后它们指向的连接与消息都不再
       // 属于当前主人, 留着既补不出去也是一份只涨不落的内存。
       ackReactions.reset();
@@ -3208,6 +3231,9 @@ export function createHookDispatcher(deps: HookDispatcherDeps): HookDispatcher {
         `interaction.decision ${payload.interactionId} button=${payload.buttonId} resolved=${resolved}`,
       );
     },
+    handleXMediaResult(connectionId, payload) {
+      if (accountActive) xMediaRelay.handleResult(connectionId, payload);
+    },
     handleTurnDelivery(connectionId, payload) {
       if (!accountActive) return;
       const key = ackKey(connectionId, payload.requestId);
@@ -3271,6 +3297,7 @@ export function createHookDispatcher(deps: HookDispatcherDeps): HookDispatcher {
     },
     onDisconnected(connectionId) {
       sendFns.delete(connectionId);
+      xMediaRelay.failConnection(connectionId);
       // 在等的进度回执不会再来: 立刻按"回执未知"收口(send 下一窗口原 opId 重发)。
       telegramOpRouter.failConnection(connectionId);
       for (const pending of pendingDeliveryTurnEnds.values()) {
@@ -3313,6 +3340,7 @@ export function createHookDispatcher(deps: HookDispatcherDeps): HookDispatcher {
       staleTakeoverReplacements.clear();
       latestPromptBySession.clear();
       serverFeatures.clear();
+      xMediaRelay.failAll();
       sendFns.clear();
       pendingTurnEnds.clear();
       for (const key of [...pendingDeliveryTurnEnds.keys()]) clearPendingDelivery(key);
