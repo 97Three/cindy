@@ -7,6 +7,7 @@
 
 | 场景 | 要保住的行为 | 现有回归入口 |
 | --- | --- | --- |
+| 导入 Codex 历史后继续发送，或 rollout 先于实时回复落库 | 同一回复及过程说明只显示一份；保留记忆引用、阶段及原生消息身份；收起副本后按原账号广播删除，使已打开的桌面、远程桌面与手机同步移除；保留原记录，已回退回复不因 rollout 仍保留正文而再次导入；不同轮次或不同原生消息不因正文相同被吞 | [Codex 导入链路](../../apps/desktop/src/main/__tests__/codexLocalSessions.test.ts) 的 `imports offline history and reconciles`；[两种数据库 Worker](../../apps/desktop/src/main/localDb/client/__tests__/tx.test.ts) 的 `codex import`；[桌面消息处理](../../apps/desktop/src/renderer/__tests__/makerChatStoreTextDeltaBatching.test.ts) 与[手机消息处理](../../apps/mobile/src/__tests__/remoteSessionStore.test.ts) 的 `removes a reconciled Codex import copy`；[实时消息落库](../../apps/desktop/src/main/__tests__/messagePersistBroadcaster.test.ts) 的边界元信息回退 |
 | 新任务创建中继续输入，创建或发送失败后回编辑 | 第一条消息立即出现；后续文字和附件留在草稿；取消、删除和迟到的回复不复活任务 | [newSessionCreation](../../apps/mobile/src/__tests__/newSessionCreation.test.ts)、[真实恢复 hook](../../apps/mobile/src/__tests__/useNewSessionDraftRecovery.test.tsx)、[创建草稿落盘](../../apps/mobile/src/__tests__/newSessionCreationPersistence.test.ts) |
 | 断线时读历史，恢复连接后补齐 | 保留已显示的历史；遗漏 push 只标记需要补读；旧查询不能覆盖新的正文和删除状态 | [remoteSessionStore](../../apps/mobile/src/__tests__/remoteSessionStore.test.ts) 中 `requests history reconciliation after a dropped push without clearing cached messages` 与消息 authority 场景；[durableOutbox](../../apps/mobile/src/__tests__/durableOutbox.test.ts) 验证重复投递和账号归属 |
 | 归档先收起，后台未成功时恢复 | 预览阶段只隐藏列表行，详情元数据与正文保留；结束旧预览不影响新操作，不复活已删除任务 | [remoteSessionStore](../../apps/mobile/src/__tests__/remoteSessionStore.test.ts) 的两个 `archive preview` 场景；覆盖 store 行为，实际错误提示与滑动动画还需页面验收 |

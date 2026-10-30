@@ -863,7 +863,8 @@ function enqueuePersistAssistant(
     clientId,
     role: 'assistant',
     content,
-    agentMeta: agentMeta ?? null,
+    // Add identity only after the caller has resolved model/usage fallbacks.
+    agentMeta: agentMessageId ? { ...agentMeta, agentMessageId } : agentMeta ?? null,
     createdAt,
   });
   notePersistedMessage(sessionId, 'assistant', clientId, content, agentMessageId);

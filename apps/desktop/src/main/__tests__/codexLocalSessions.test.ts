@@ -7,6 +7,15 @@ import path from 'node:path';
 
 const electronMock = vi.hoisted(() => ({ userData: '', region: 'global' as 'global' | 'cn' }));
 const dbMock = vi.hoisted(() => ({ current: null as Database.Database | null }));
+const deletionMock = vi.hoisted(() => ({
+  broadcast: vi.fn(),
+  scope: { ownerScopeKey: 'test-owner', ownerStamp: { dataOwnerId: 'test-user', ownerGeneration: 1 } },
+}));
+
+vi.mock('../localDb/ipc/messages.js', () => ({ broadcastMessageDeleted: deletionMock.broadcast }));
+vi.mock('../device-link/broadcast-tap.js', () => ({
+  captureDataOwnerBroadcastScope: () => deletionMock.scope,
+}));
 
 vi.mock('../../shared/brandRegion.js', () => ({
   get CURRENT_CINDY_REGION() { return electronMock.region; },
@@ -1123,6 +1132,64 @@ describe('Codex local session import', () => {
 });
 
 describe('importExternalCodexMessagesForSession', () => {
+  // #8005, unit integration: use actual rollout files, session discovery/import
+  // and the production SQLite transaction. Earlier cases only covered offline
+  // imports, not live rows followed by citation-enriched rollout copies.
+  it('imports offline history and reconciles continued replies, commentary and late local writes', async () => {
+    const dbPath = createStateDb(externalHome);
+    const rolloutPath = path.join(externalHome, 'sessions', `rollout-2026-05-13-${threadId}.jsonl`);
+    fs.mkdirSync(path.dirname(rolloutPath), { recursive: true });
+    const time = Date.parse('2026-05-13T00:00:01.000Z');
+    const citation = '\n<oai-mem-citation>\n<citation_entries>\nMEMORY.md:1-2[note]\n</citation_entries>\n<rollout_ids>\nsource-id\n</rollout_ids>\n</oai-mem-citation>';
+    const line = (id: string, text: string, offset: number, phase: 'commentary' | 'final_answer') => {
+      const row = JSON.parse(rolloutLine(id, 'assistant', text, new Date(time + offset).toISOString()));
+      row.payload.phase = phase;
+      return JSON.stringify(row) + '\n';
+    };
+    fs.writeFileSync(rolloutPath, rolloutLine('old', 'user', 'Offline question', new Date(time).toISOString()) + '\n'
+      + line('old-answer', 'Offline answer' + citation, 1, 'final_answer'));
+    insertThread(dbPath, threadId, rolloutPath, { updatedAt: 2000 });
+    const scan = await scanExternalCodexSessions();
+    expect(scan.candidates.some((candidate) => candidate.id === threadId)).toBe(true);
+    await importExternalCodexSessions([threadId]);
+    const sid = `codex-${threadId}`;
+    await importExternalCodexMessagesForSession(sid);
+    const db = currentTestDb();
+    const visible = () => db.prepare('SELECT content, agent_meta FROM messages WHERE session_id = ? AND rewind_at IS NULL ORDER BY created_at, rowid').all(sid) as Array<{ content: string; agent_meta: string }>;
+    expect(visible()).toHaveLength(2);
+    expect(JSON.parse(visible()[1]!.content)).toBe('Offline answer' + citation);
+    const live = (id: string, text: string, offset: number, phase: string) => db.prepare(
+      'INSERT INTO messages (id, client_id, session_id, role, content, agent_meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run(id, id, sid, 'assistant', JSON.stringify(text), JSON.stringify({ sdkSessionId: threadId, agentMessageId: `${id}-assistant`, assistantPhase: phase, totalCostUsd: 1 }), time + offset);
+    live('progress', 'Checking files', 1000, 'commentary');
+    live('answer', 'Fixed', 2000, 'final_answer');
+    fs.appendFileSync(rolloutPath, line('progress', 'Checking files', 1100, 'commentary') + line('answer', 'Fixed' + citation, 2100, 'final_answer'));
+    await importExternalCodexMessagesForSession(sid);
+    await importExternalCodexMessagesForSession(sid);
+    expect(visible()).toHaveLength(4);
+    expect(JSON.parse(visible()[2]!.agent_meta)).toMatchObject({ assistantPhase: 'commentary', totalCostUsd: 1 });
+    expect(JSON.parse(visible()[3]!.content)).toBe('Fixed' + citation);
+
+    // Rollout can reach the importer before the live writer finishes. An
+    // unchanged source file must not prevent the later reconciliation.
+    fs.appendFileSync(rolloutPath, line('late', 'Second answer' + citation, 3100, 'final_answer'));
+    await importExternalCodexMessagesForSession(sid);
+    // #8005: the old copy may already be displayed by remote clients. A DB-only
+    // assertion misses the deletion push needed by their additive history merge.
+    const importedCopy = db.prepare('SELECT client_id FROM messages WHERE session_id = ? AND content = ?').get(sid, JSON.stringify('Second answer' + citation)) as { client_id: string };
+    deletionMock.broadcast.mockClear();
+    live('late', 'Second answer', 3000, 'final_answer');
+    await importExternalCodexMessagesForSession(sid);
+    await importExternalCodexMessagesForSession(sid);
+    expect(deletionMock.broadcast).toHaveBeenCalledExactlyOnceWith({
+      sessionId: sid, clientId: importedCopy.client_id, clientIds: [importedCopy.client_id],
+    }, deletionMock.scope);
+    expect(visible()).toHaveLength(5);
+    expect(JSON.parse(visible()[4]!.content)).toBe('Second answer' + citation);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND rewind_at IS NOT NULL').get(sid)).toEqual({ n: 1 });
+    expect(fs.readFileSync(rolloutPath, 'utf8')).toContain('Offline answer' + citation.replace(/\n/g, '\\n'));
+  });
+
   it('skips unchanged rollout files after importing them once', async () => {
     const dbPath = createStateDb(externalHome);
     const rolloutPath = path.join(externalHome, 'sessions', `rollout-2026-05-13-${threadId}.jsonl`);

@@ -54,7 +54,7 @@ it('marks exact failed assistant items, including a live block, without rewritin
     }),
   }), expect.anything());
   expect(createMessage).toHaveBeenCalledWith(sessionId, expect.objectContaining({
-    content: 'Successful opening', agentMeta: null,
+    content: 'Successful opening', agentMeta: { agentMessageId: 'success' },
   }), expect.anything());
   expect(updateMessageContent).not.toHaveBeenCalled();
   expect(broadcastMessageAgentMetaUpdate).toHaveBeenCalledWith(sessionId, first, expect.anything());
@@ -3621,11 +3621,13 @@ describe('onTurnErrorEvent — terminal error 持久化', () => {
     expect(roles).toEqual(['assistant', 'error']);
   });
 
-  it('error 事件自带的 agentMeta 透传给 flush 边界与 error 行(rewind/fork 锚点不丢)', async () => {
+  it.each([undefined, 'native-item'])('error 事件自带的 agentMeta 透传给 flush 边界与 error 行(rewind/fork 锚点不丢, item=%s)', async (agentMessageId) => {
     // 失败轮只有 error 边界携带 SDK uuid 的场景:在飞 assistant 无自带 meta,
     // 会话级兜底也为空 —— 若不透传,assistant 行以 null meta 落库(greptile P1)。
     const boundaryMeta = { uuid: 'uuid-err-boundary', sdkSessionId: 'sdk-1' };
-    onAssistantTextEvent(SESSION, { text: '写到一半…', isFinal: false }, null);
+    // #8005: retaining a native item ID must not suppress the boundary's SDK
+    // metadata fallback. The prior no-ID fixture could not catch that loss.
+    onAssistantTextEvent(SESSION, { text: '写到一半…', isFinal: false, agentMessageId }, null);
     onTurnErrorEvent(SESSION, { message: 'turn 崩了' }, boundaryMeta as never);
 
     await flushWrites();
@@ -3634,7 +3636,7 @@ describe('onTurnErrorEvent — terminal error 持久化', () => {
       (c) => c[1] as { role: string; agentMeta?: unknown },
     );
     expect(bodies[0].role).toBe('assistant');
-    expect(bodies[0].agentMeta).toMatchObject({ uuid: 'uuid-err-boundary' });
+    expect(bodies[0].agentMeta).toEqual({ ...boundaryMeta, ...(agentMessageId ? { agentMessageId } : {}) });
     expect(bodies[1].role).toBe('error');
     expect(bodies[1].agentMeta).toMatchObject({ uuid: 'uuid-err-boundary' });
   });

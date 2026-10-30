@@ -14,7 +14,7 @@ import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import { promises as fsp } from 'node:fs';
 import { createReadStream } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -34,6 +34,8 @@ import {
 } from '@cindy/maker-core';
 
 import { getCurrentDbClientUserId, getDbClient } from '../localDb/client/current.js';
+import { captureDataOwnerBroadcastScope } from '../device-link/broadcast-tap.js';
+import { broadcastMessageDeleted } from '../localDb/ipc/messages.js';
 import { createBetterSqliteDatabase } from '../localDb/betterSqliteFactory.js';
 import { createLogger } from '../logger.js';
 import { normalizeWorkingDirForStorage } from '../../shared/workingDir.js';
@@ -336,6 +338,7 @@ interface ExternalImportFileCacheEntry {
   path: string;
   mtimeMs: number;
   size: number;
+  localFingerprint: string;
 }
 
 type ExternalImportFileStat = Pick<ExternalImportFileCacheEntry, 'mtimeMs' | 'size'>;
@@ -3972,10 +3975,13 @@ export async function classifyCodexHistoryOversized(
 
 /**
  * 为外部 Codex thread 创建的本地会话按需导入可读消息。
- * 源 rollout 文件未变化时直接短路；文件变化后按行号 upsert，刷新已导入行并追加新行。
+ * rollout 与本地正文均未变化时短路；否则按行号导入，并协调实时消息及存量导入副本。
  */
 export async function importExternalCodexMessagesForSession(sessionId: string): Promise<void> {
-  const session = await getDbClient().queryOne<{
+  const db = getDbClient();
+  const cacheScope = getCurrentDbClientUserId();
+  const ownerScope = captureDataOwnerBroadcastScope();
+  const session = await db.queryOne<{
     id: string;
     agentKind: string;
     sdkSessionId: string | null;
@@ -3991,11 +3997,21 @@ export async function importExternalCodexMessagesForSession(sessionId: string): 
   if (!session.id.startsWith(LOCAL_SESSION_ID_PREFIX)) return;
 
   const importClientIdPrefix = `codex-import:${session.sdkSessionId}:`;
-  const cacheScope = getCurrentDbClientUserId();
+  // A rollout can be imported before the live write commits. File stat alone
+  // must not make that duplicate permanent. Hash only local text rows, so
+  // unrelated tasks/tools do not invalidate this session's file cache. Capture
+  // before import: a concurrent write or citation enrichment forces a recheck.
+  const localRows = await db.query(`
+    SELECT id, role, content, agent_meta, created_at, rewind_at
+    FROM messages WHERE session_id = ? AND role IN ('user', 'assistant')
+      AND client_id NOT LIKE ? ORDER BY rowid
+  `, [sessionId, `${importClientIdPrefix}%`]);
+  const localFingerprint = createHash('sha256').update(JSON.stringify(localRows)).digest('hex');
   const cachedImportFile = codexMessageImportFileCache.get(sessionId);
   if (cacheScope && cachedImportFile?.scope === cacheScope) {
     const cachedStat = await statImportFile(cachedImportFile.path);
-    if (cachedStat && isCachedImportFileUnchanged(cachedImportFile, cachedStat)) return;
+    if (cachedStat && isCachedImportFileUnchanged(cachedImportFile, cachedStat)
+      && cachedImportFile.localFingerprint === localFingerprint) return;
     codexMessageImportFileCache.delete(sessionId);
   } else if (cachedImportFile) {
     codexMessageImportFileCache.delete(sessionId);
@@ -4014,11 +4030,11 @@ export async function importExternalCodexMessagesForSession(sessionId: string): 
   const imported = await readCodexRolloutMessages(rolloutPath, session.id);
   if (imported.length === 0) {
     if (cacheScope) {
-      codexMessageImportFileCache.set(sessionId, { scope: cacheScope, path: rolloutPath, ...rolloutStat });
+      codexMessageImportFileCache.set(sessionId, { scope: cacheScope, path: rolloutPath, ...rolloutStat, localFingerprint });
     }
     return;
   }
-  const { changed } = await getDbClient().tx('codex.importMessages', {
+  const { changed, hiddenClientIds } = await db.tx('codex.importMessages', {
     sessionId,
     importClientIdPrefix,
     sdkSessionId: session.sdkSessionId,
@@ -4029,10 +4045,17 @@ export async function importExternalCodexMessagesForSession(sessionId: string): 
       text: row.text,
       content: row.content,
       createdAt: row.createdAt,
+      sourceCreatedAt: row.sourceCreatedAt,
+      phase: row.phase,
+      agentMessageId: row.agentMessageId,
     })),
   });
+  if (hiddenClientIds?.length) {
+    // Publish only committed removals, with the owner captured before any await.
+    broadcastMessageDeleted({ sessionId, clientId: hiddenClientIds[0]!, clientIds: hiddenClientIds }, ownerScope);
+  }
   if (cacheScope) {
-    codexMessageImportFileCache.set(sessionId, { scope: cacheScope, path: rolloutPath, ...rolloutStat });
+    codexMessageImportFileCache.set(sessionId, { scope: cacheScope, path: rolloutPath, ...rolloutStat, localFingerprint });
   }
   if (changed === 0) return;
   log.info('imported external Codex messages', {
@@ -5439,6 +5462,9 @@ interface ImportedCodexMessage {
   text: string;
   content: unknown;
   createdAt: number;
+  sourceCreatedAt?: number;
+  phase?: 'commentary' | 'final_answer';
+  agentMessageId?: string;
 }
 
 async function readCodexRolloutMessages(
@@ -5490,6 +5516,9 @@ export function parseCodexRolloutMessageLine(
     text,
     content: text,
     createdAt: timestampFromIso(stringValue(obj.timestamp)) + lineNo,
+    sourceCreatedAt: timestampFromIso(stringValue(obj.timestamp)),
+    ...(payload.phase === 'commentary' || payload.phase === 'final_answer' ? { phase: payload.phase } : {}),
+    ...(typeof payload.id === 'string' && payload.id ? { agentMessageId: payload.id } : {}),
   };
 }
 
@@ -5531,6 +5560,9 @@ async function parseCodexRolloutMessageLineForImport(
     text,
     content: role === 'user' ? importedUserContent(text, images) : text,
     createdAt: timestampFromIso(stringValue(obj.timestamp)) + lineNo,
+    sourceCreatedAt: timestampFromIso(stringValue(obj.timestamp)),
+    ...(payload.phase === 'commentary' || payload.phase === 'final_answer' ? { phase: payload.phase } : {}),
+    ...(typeof payload.id === 'string' && payload.id ? { agentMessageId: payload.id } : {}),
   };
 }
 
