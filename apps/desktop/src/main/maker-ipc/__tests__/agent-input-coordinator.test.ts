@@ -89,6 +89,8 @@ const mocks = vi.hoisted(() => {
 describe('task action dispatch authorization', () => {
   // Unit regression through the production coordinator: revocation/restore cannot
   // deliver an automatic message, while the following owner input still runs.
+  // teammate-authority.md「延迟投递只认真实撤权」: the revoked item settles before the
+  // send transaction, so the receiving task gets no user row or failed reply for it.
   it.each(['revoked', 'restored'] as const)('discards %s automatic input without blocking owner input', async mode => {
     const h = createHarness(), sid = 'task-action-target';
     let current = true;
@@ -101,7 +103,7 @@ describe('task action dispatch authorization', () => {
     await h.coordinator.ensureQueueRestored(sid);
     h.setRunning(true);
     const queued = makeItem('automatic', 'Continue');
-    bindTaskActionInput(sid, queued, async () => { if (!current) throw new Error('revoked'); });
+    bindTaskActionInput(sid, queued, async () => { if (!current) throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED'); });
     h.coordinator.enqueue(sid, mode === 'restored' ? JSON.parse(JSON.stringify(queued)) : queued);
     h.coordinator.enqueue(sid, makeItem('owner', 'Owner message'));
     await flush();
@@ -111,9 +113,65 @@ describe('task action dispatch authorization', () => {
     h.coordinator.wakeSession(sid, 'idle');
     await vi.waitFor(() => expect(dispatched).toHaveBeenCalledOnce());
     await flush();
-    expect(h.sendToAgent.mock.calls[1]![3].persistUserMessage?.clientId).toBe('owner');
+    expect(h.sendToAgent).toHaveBeenCalledOnce();
+    expect(h.sendToAgent.mock.calls[0]![3].persistUserMessage?.clientId).toBe('owner');
     expect(h.onDiscardedQueuedMessage).toHaveBeenCalledWith(sid, expect.objectContaining({ clientId: 'automatic' }));
-    expect(h.coordinator.getProjection(sid).pendingQueue).toEqual([]);
+    expect(h.onUndispatchedUserTurn).not.toHaveBeenCalled();
+    expect(h.coordinator.getProjection(sid)).toMatchObject({ error: null, pendingQueue: [] });
+  });
+
+  // Reviews on #7969. A queued task message is judged until its row is persisted: the drain
+  // pre-check, then the send transaction's re-check right before persistence. A proven revocation
+  // leaves the queue without a trace; a check that merely failed (group transport, database not
+  // ready) keeps it as a retryable queue head. Once persisted the message is delivered: a refusal
+  // there could only leave a user row with a failed reply, and a queued task action cannot be
+  // retried (its guard is bound to the original clientId).
+  it.each([
+    { name: 'a failed pre-check', call: 1, error: 'failed', outcome: 'retained' },
+    { name: 'a failed re-check before persistence', call: 2, error: 'failed', outcome: 'retained' },
+    { name: 'a revocation before persistence', call: 2, error: 'revoked', outcome: 'discarded' },
+    { name: 'a revocation after persistence', call: 3, error: 'revoked', outcome: 'delivered' },
+  ] as const)('$name is $outcome', async ({ call, error, outcome }) => {
+    const h = createHarness(), sid = `task-action-judged-${call}-${error}`;
+    const dispatched = vi.fn();
+    h.sendToAgent.mockImplementation(async (_id, _message, _opts, sendOpts) => {
+      await sendOpts[MCP_APP_MESSAGE_GUARD]?.();
+      await sendOpts.persistUserMessage?.onPersisted?.();
+      await sendOpts[MCP_APP_MESSAGE_GUARD]?.();
+      dispatched();
+      return sendSuccess();
+    });
+    await h.coordinator.ensureQueueRestored(sid);
+    h.setRunning(true);
+    let calls = 0;
+    const queued = makeItem('automatic', 'Continue');
+    bindTaskActionInput(sid, queued, async () => {
+      if (++calls !== call) return;
+      throw error === 'revoked'
+        ? new Error('TASK_ACTION_AUTHORIZATION_EXPIRED')
+        : Object.assign(new Error('verification unavailable'), { code: 'GROUP_AUTHORIZATION_UNAVAILABLE' });
+    });
+    h.coordinator.enqueue(sid, queued);
+    await flush();
+    h.setRunning(false);
+    h.coordinator.wakeSession(sid, 'idle');
+    if (outcome === 'delivered') {
+      await vi.waitFor(() => expect(dispatched).toHaveBeenCalledOnce());
+      await flush();
+      expect(calls).toBe(2); // pre-check and the re-check before persistence; none afterwards
+      expect(h.onDiscardedQueuedMessage).not.toHaveBeenCalled();
+    } else if (outcome === 'discarded') {
+      await vi.waitFor(() => expect(h.onDiscardedQueuedMessage).toHaveBeenCalledOnce());
+      expect(dispatched).not.toHaveBeenCalled();
+      expect(h.coordinator.getProjection(sid)).toMatchObject({ error: null, recovery: null, pendingQueue: [] });
+    } else {
+      await vi.waitFor(() => expect(h.coordinator.getProjection(sid).recovery).toEqual({ kind: 'queue-head', clientId: 'automatic' }));
+      expect(dispatched).not.toHaveBeenCalled();
+      expect(h.onDiscardedQueuedMessage).not.toHaveBeenCalled();
+      expect(h.coordinator.getProjection(sid).pendingQueue).toHaveLength(1);
+    }
+    // No outcome may leave a persisted user row with a failed reply behind.
+    expect(h.onUndispatchedUserTurn).not.toHaveBeenCalled();
   });
 });
 
@@ -14608,6 +14666,37 @@ describe('usage-limit wait (ordinary tasks)', () => {
     const projection = h.coordinator.getProjection(sid);
     expect(projection.queuePaused).toBe(true);
     expect(projection.pendingQueue.map(item => item.clientId)).toEqual(['tail-1', 'tail-2']);
+  });
+
+  // Unit regression: missing supplier run after first dispatch has uncertain local tool
+  // effects, even when no output arrived. Never clone the original message on recovery.
+  it.each(['continue', 'stop', 'close', 'delete', 'other-error'] as const)('supplier restart continuation is once-only and respects %s', async action => {
+    const h = createHarness({ providerGroupSwitchCandidate: () => 'unavailable' });
+    const sid = 'supplier-restart';
+    h.setHasAssistantProgressAfter(async () => action === 'other-error');
+    const continues = action === 'continue' || action === 'other-error';
+    h.coordinator.enqueue(sid, makeItem('original', 'send a payment'));
+    await flush();
+    h.setRunning(false);
+    h.coordinator.onTurnEvent(sid, 'error', 'supplier restarted', { reason: action === 'other-error' ? 'remote_agent_lost' : 'remote_agent_restarted' });
+    const candidate = h.onUsageLimitedTurnError.mock.calls.at(-1)?.[3] as number;
+    h.coordinator.onTurnEvent(sid, 'done');
+    const lease = h.coordinator.leaseUsageLimitRecovery(sid, candidate)!;
+    expect(lease).not.toBeNull();
+    const token = h.coordinator.rearmUsageLimitWait(sid, lease, Date.now())!;
+    if (action === 'close') h.coordinator.onSessionClosed(sid);
+    if (action === 'delete') h.coordinator.clearSession(sid);
+    if (action === 'stop') h.coordinator.cancelUsageLimitWait(sid, token);
+    const info = { reason: USAGE_LIMIT_RESET_AUTO_RESUME_REASON, attempt: 1, maxAttempts: 1, sessionTotal: 0, agentReconnect: { computer: '' } };
+    expect(await h.coordinator.continueAfterUsageLimitReset(sid, token, info)).toBe(continues ? 'resumed' : 'superseded');
+    expect(await h.coordinator.continueAfterUsageLimitReset(sid, token, info)).toBe('superseded');
+    await flush();
+    expect(h.sendToAgent).toHaveBeenCalledTimes(continues ? 2 : 1);
+    if (continues) {
+      if (action === 'continue') expect(h.sendToAgent.mock.calls[1][1]).toMatchObject({ content: expect.stringContaining('Some tools may already have executed') });
+      expect(h.sendToAgent.mock.calls[1][3].persistUserMessage).toMatchObject({ autoResume: true, autoResumeInfo: info });
+      expect(h.sendToAgent.mock.calls[1][3].persistUserMessage?.autoResumeInfo?.error).toBe(action === 'other-error' ? 'supplier restarted' : undefined);
+    }
   });
 
   const LIMIT_SIGNALS = { sdkError: 'rate_limit', usageResetAt: 5_000_000 };
