@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { randomUUID } from 'expo-crypto';
 import { parseChatInvitationToken } from '@cindy/device-link';
+import { parseChatInviteLink } from './chatInviteIntent';
 import { useChatClient } from './useChatServer';
 import type { MobileChatInvitePreview } from './chatServerClient';
 
@@ -126,7 +127,7 @@ export function useChatInvite(props: ChatInviteSheetProps) {
   return {
     ...shown, input, manual: props.link === undefined,
     setInput: (value: string) => { if (interactive() && !request.current?.accept) setInput(value); },
-    read: () => { if (!interactive() || request.current || !input.trim()) return; target.current = input; operation.current = null; void run(false); },
+    read: () => { if (!interactive() || request.current || !input.trim()) return; target.current = parseChatInviteLink(input.trim()) ?? input; operation.current = null; void run(false); },
     retry: () => { void run(shown.error === 'uncertain'); },
     accept: () => { void run(true); },
     edit: () => { if (!interactive() || request.current?.accept) return; cancelRequest(); target.current = ''; operation.current = null;

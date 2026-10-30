@@ -62,6 +62,24 @@ it.each([false, true])('manual continuation reads membership without joining (jo
     expect(h.accept).toHaveBeenCalledOnce();
   }
 });
+it.each(['cindycn', 'cindydev'])('previews a pasted %s link through the current client and keeps manual editing', async scheme => {
+  props.link = undefined; props.onTargetChange = vi.fn();
+  await render();
+  await act(async () => model.setInput(` \n${scheme}://chat-invite/${token}\n `));
+  await act(async () => model.read());
+  expect(model.phase).toBe('preview'); expect(model.manual).toBe(true);
+  expect(h.preview).toHaveBeenCalledExactlyOnceWith(token, expect.any(AbortSignal));
+  expect(props.onTargetChange).toHaveBeenCalledExactlyOnceWith(`cindy://chat-invite/${token}`);
+  expect(h.accept).not.toHaveBeenCalled();
+});
+it('rejects a truncated app-scheme invitation before requesting a preview', async () => {
+  props.link = undefined; props.onTargetChange = vi.fn();
+  await render();
+  await act(async () => model.setInput('cindydev://chat-invite/truncated'));
+  await act(async () => model.read());
+  expect(model.error).toBe('format'); expect(h.preview).not.toHaveBeenCalled();
+  expect(props.onTargetChange).not.toHaveBeenCalled(); expect(h.accept).not.toHaveBeenCalled();
+});
 it('re-previews the same target for a new account and discards the previous account result', async () => {
   const old = deferred<typeof preview>(); h.preview.mockReturnValueOnce(old.promise);
   await render(); h.owner = 'two'; await render(); expect(model.preview).toEqual(preview);
