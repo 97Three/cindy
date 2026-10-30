@@ -1,4 +1,4 @@
-import { pluginHasToolUi } from '@cindy/plugin-protocol';
+import { getPluginToolUi, pluginHasToolUi } from '@cindy/plugin-protocol';
 import { findFeatureRetirement } from '../../shared/featureRetirements.js';
 import { FeatureRetirementStore } from './featureRetirementStore.js';
 import fs from 'node:fs';
@@ -3645,6 +3645,17 @@ export class GhostManager {
           reason: `清单声明了 taskView.html,但压缩包内缺少 ${v.manifest.taskView.html}`,
         },
       };
+    }
+    for (const resource of getPluginToolUi(v.manifest)?.resources ?? []) {
+      const entry = zip.file(`${prefix}${resource.file}`);
+      if (!entry || entry.dir || isZipSymbolicLink(entry)) {
+        return {
+          rejection: {
+            code: 'file-invalid',
+            reason: `清单声明了 mcpApps.ui.resources,但压缩包内缺少普通文件 ${resource.file}`,
+          },
+        };
+      }
     }
     let localizedManifest = withGhostResolvedLocale(v.manifest, locale);
     const localeResources: Record<string, GhostManifestLocaleResource> = {};

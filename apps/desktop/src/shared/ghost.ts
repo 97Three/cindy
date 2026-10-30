@@ -7123,6 +7123,10 @@ export type GhostPipePickResult =
         | 'INTERNAL';
       message: string;
       limitBytes?: number;
+      /** 文件批次中已导入的引用；后续失败不撤销这些成功写入。 */
+      files?: Extract<GhostPipePickResult, { ok: true }>['files'];
+      /** 首个失败项，index 为选择顺序的零基下标；之后的项尚未处理。 */
+      failedFile?: { index: number; name: string };
     };
 
 /**

@@ -49,6 +49,9 @@ const picked = await cindy.pick({
 `into:'media'` 只收图片、视频、音频和 glb，单件 50 MiB、插件寄存总额 1 GiB，和
 `deposit_media` 共用账本。`into:'library'` 流式写入本插件 Library，单件上限 8 GiB，
 仍受磁盘保留水位和库的原有规则约束。字节不经过页面或 main.js。
+多选按顺序导入，遇到首个失败就停止：`ok:false` 可带已成功的 `files` 和
+`failedFile:{index,name}`（零基下标）；请保留这些引用，只重试失败项和后续未处理项，
+宿主不会自动删除已成功文件。取消或权限失效仍走原取消流程，不返回旧权限下的引用。
 
 `deposit:true` 可额外签发文件过户票据（包括单文件），交给 `fetch.uploadDir` 使用；
 其 50 MiB 单件、500 MiB 总量和 500 文件限额仍适用。文件模式有持久引用，不要求

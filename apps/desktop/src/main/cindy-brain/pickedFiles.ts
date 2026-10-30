@@ -7,6 +7,7 @@ import { sniffMediaMime, additionalMp3BytesNeeded } from '../cindy-media/sniffMe
 import { supportedMime } from '../cindy-media/blobStore.js';
 import { validateLibraryRelPath, DEFAULT_LIBRARY_LIMITS } from './libraryVault.js';
 
+type Failure = Extract<GhostPipePickResult, { ok: false }>;
 type Success = Extract<GhostPipePickResult, { ok: true }>;
 export interface PickedFilesDeps {
   tempRoot: string;
@@ -34,16 +35,23 @@ export async function importPickedFiles(deps: PickedFilesDeps, ghostId: string, 
   const files: NonNullable<Success['files']> = [];
   const progress = deps.progress?.(ghostId, input.callId);
   let completed = 0;
+  let index = 0;
+  const failure = (error: Failure): Failure => {
+    // Never return old-owner refs after cancellation or an account/install change.
+    input.assertCurrent();
+    return { ...error, files, failedFile: { index, name: path.basename(paths[index]!) } };
+  };
   try {
-    for (const sourcePath of paths) {
+    for (; index < paths.length; index++) {
+      const sourcePath = paths[index]!;
       input.assertCurrent();
       const source = await fs.open(sourcePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
       try {
         const stat = await source.stat();
         input.assertCurrent();
-        if (!stat.isFile()) return { ok: false, errorCode: 'INVALID_REQUEST', message: '只能选择普通文件' };
+        if (!stat.isFile()) return failure({ ok: false, errorCode: 'INVALID_REQUEST', message: '只能选择普通文件' });
         const limit = input.into === 'media' ? GHOST_CINDY_DEPOSIT_MAX_BYTES : DEFAULT_LIBRARY_LIMITS.streamMaxTotalBytes;
-        if (stat.size > limit) return { ok: false, errorCode: 'TOO_LARGE', message: '文件超出导入上限', limitBytes: limit };
+        if (stat.size > limit) return failure({ ok: false, errorCode: 'TOO_LARGE', message: '文件超出导入上限', limitBytes: limit });
         let prefix = Buffer.alloc(Math.min(stat.size, 65536));
         await source.read(prefix, 0, prefix.length, 0);
         const mp3ProbeBytes = additionalMp3BytesNeeded(prefix);
@@ -70,13 +78,13 @@ export async function importPickedFiles(deps: PickedFilesDeps, ghostId: string, 
           const safeName = `file-${randomUUID()}-${name.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(-(nameBudget - 42)).replace(/[.]+$/, '')}`;
           const saved = await deps.importLibrary(ghostId, { path: `${directory}/${safeName}`, source: chunks(), totalBytes: stat.size,
             assertCurrent: input.assertCurrent, onProgress: bytes => progress?.(completed + bytes, undefined, '正在导入文件') });
-          if (!saved.ok) return { ok: false, errorCode: 'INTERNAL', message: saved.message };
+          if (!saved.ok) return failure({ ok: false, errorCode: 'INTERNAL', message: saved.message });
           files.push({ name, size: stat.size, mimeType, ref: saved.ref, sha256: saved.sha256 });
         } else {
-          if (!mediaMime || !supportedMime(mediaMime)) return { ok: false, errorCode: 'UNSUPPORTED', message: '媒体库只收按字节识别的图片、视频、音频或 glb' };
+          if (!mediaMime || !supportedMime(mediaMime)) return failure({ ok: false, errorCode: 'UNSUPPORTED', message: '媒体库只收按字节识别的图片、视频、音频或 glb' });
           const used = await deps.usageBytes(ghostId);
           input.assertCurrent();
-          if (used + stat.size > GHOST_CINDY_DEPOSIT_QUOTA_BYTES) return { ok: false, errorCode: 'TOO_LARGE', message: '插件媒体寄存已达配额', limitBytes: GHOST_CINDY_DEPOSIT_QUOTA_BYTES };
+          if (used + stat.size > GHOST_CINDY_DEPOSIT_QUOTA_BYTES) return failure({ ok: false, errorCode: 'TOO_LARGE', message: '插件媒体寄存已达配额', limitBytes: GHOST_CINDY_DEPOSIT_QUOTA_BYTES });
           const temp = await fs.mkdtemp(path.join(deps.tempRoot, 'cindy-pick-'));
           try {
             const staging = path.join(temp, 'media');
@@ -103,5 +111,7 @@ export async function importPickedFiles(deps: PickedFilesDeps, ghostId: string, 
       } finally { await source.close(); }
     }
     return { ok: true, name: files[0]?.name ?? '', files };
+  } catch {
+    return failure({ ok: false, errorCode: 'INTERNAL', message: '文件导入失败，请检查文件后重试' });
   } finally { progress?.(undefined, undefined, '文件导入结束'); }
 }

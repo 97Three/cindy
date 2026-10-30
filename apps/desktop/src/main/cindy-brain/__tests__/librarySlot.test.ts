@@ -2428,7 +2428,9 @@ describe('GhostLibrarySlot', () => {
     expect(fs.existsSync(path.join(tmp, 'library-staging', GHOST_ID, 'tasks', begin.stagingId, 'blob.bin'))).toBe(true);
   });
 
-  it('staging.release 与并发 delete 互斥:核验结束前正本仍在,release 成功后再删', async () => {
+  // #7924 / 4420767919: host import must share the release lock; existing unit only
+  // covered delete. An overwrite during release must wait until the original is released.
+  it.each(['delete', 'import'] as const)('staging.release 与并发 %s 互斥', async (operation) => {
     const body = 'pixel-bytes';
     const sha = createHash('sha256').update(body).digest('hex');
     const rel = `assets/${sha.slice(0, 2)}/${sha}/blob.png`;
@@ -2472,7 +2474,10 @@ describe('GhostLibrarySlot', () => {
         libraryGeneration: archived.libraryGeneration,
       });
       await started;
-      const deleteP = slot.handleLibraryRequest(GHOST_ID, { op: 'delete', path: rel });
+      const mutation = operation === 'delete'
+        ? slot.handleLibraryRequest(GHOST_ID, { op: 'delete', path: rel })
+        : slot.importStream(GHOST_ID, { path: rel, totalBytes: 11, assertCurrent() {},
+            source: (async function* () { yield Buffer.from('replacement'); })() });
       await new Promise((resolve) => setTimeout(resolve, 30));
       expect(fs.existsSync(canonical)).toBe(true);
       resume();
@@ -2480,9 +2485,9 @@ describe('GhostLibrarySlot', () => {
       expect(released).toEqual({
         ok: true, op: 'staging.release', stagingId: begin.stagingId, released: true,
       });
-      const deleted = await deleteP;
-      expect(deleted).toMatchObject({ ok: true, op: 'delete' });
-      expect(fs.existsSync(canonical)).toBe(false);
+      expect(await mutation).toMatchObject({ ok: true });
+      if (operation === 'delete') expect(fs.existsSync(canonical)).toBe(false);
+      else expect(await fs.promises.readFile(canonical, 'utf8')).toBe('replacement');
       expect(fs.existsSync(path.join(tmp, 'library-staging', GHOST_ID, 'tasks', begin.stagingId, 'blob.bin'))).toBe(false);
     } finally {
       spy.mockRestore();

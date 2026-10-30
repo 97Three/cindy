@@ -600,19 +600,23 @@ export class GhostLibrarySlot {
     const target = this.captureRequestTarget(ghostId);
     const preparing = this.deps.prepareRequest?.(ghostId);
     if (preparing) await preparing;
-    input.assertCurrent();
-    this.assertRequestCurrent(ghostId, target);
-    const session = await this.getOrCreateSession(ghostId, target.ownerScopeKey);
-    const assertCurrent = () => {
+    // Release verifies a canonical copy before deleting staging. Host imports
+    // must not overwrite that copy between its final hash and deletion.
+    return this.runGhostExclusive(ghostId, async () => {
       input.assertCurrent();
-      this.assertRequestCurrent(ghostId, target, session);
-    };
-    assertCurrent();
-    const result = await session.vault.importStream({ ...input, assertCurrent });
-    assertCurrent();
-    if (!result.ok) return result;
-    return { ...result, ref: `library:${result.path}`,
-      libraryGeneration: session.generation, libraryIdentity: session.identity };
+      this.assertRequestCurrent(ghostId, target);
+      const session = await this.getOrCreateSession(ghostId, target.ownerScopeKey, target);
+      const assertCurrent = () => {
+        input.assertCurrent();
+        this.assertRequestCurrent(ghostId, target, session);
+      };
+      assertCurrent();
+      const result = await session.vault.importStream({ ...input, assertCurrent });
+      assertCurrent();
+      if (!result.ok) return result;
+      return { ...result, ref: `library:${result.path}`,
+        libraryGeneration: session.generation, libraryIdentity: session.identity };
+    });
   }
 
   /** Stale custom resolution after the user parent vanished or was replaced must not open/mkdir. */

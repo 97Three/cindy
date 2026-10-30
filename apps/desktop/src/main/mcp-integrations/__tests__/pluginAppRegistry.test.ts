@@ -1,4 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { getPluginToolUi } from '@cindy/plugin-protocol';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { AppServerConfig } from '../../mcp-apps/connection.js';
@@ -7,6 +10,7 @@ const state = vi.hoisted(() => ({
   owner: 'A',
   configs: new Map<string, () => AppServerConfig>(),
   reads: 0,
+  realFiles: false,
 }));
 vi.mock('../../appSessionState.js', () => ({ activeOwnerScopeKey: () => state.owner }));
 vi.mock('../../mcp-apps/runtime.js', async (importOriginal) => {
@@ -19,12 +23,14 @@ vi.mock('../../mcp-apps/runtime.js', async (importOriginal) => {
     },
   };
 });
-vi.mock('../../cindy-brain/ghostContentTree.js', () => ({
-  resolveGhostContentPathSync: () => {
+vi.mock('../../cindy-brain/ghostContentTree.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../cindy-brain/ghostContentTree.js')>();
+  return { resolveGhostContentPathSync: (...args: Parameters<typeof actual.resolveGhostContentPathSync>) => {
     state.reads++;
+    if (state.realFiles) return actual.resolveGhostContentPathSync(...args);
     throw new Error('no file may be read');
-  },
-}));
+  } };
+});
 import { resetAppServers } from '../../mcp-apps/runtime.js';
 import { pagePermissionGrants } from '../../mcp-apps/pagePermissions.js';
 import { refreshPluginApps, pluginAppServerId } from '../plugin-app-registry.js';
@@ -36,6 +42,7 @@ afterEach(() => {
   state.owner = 'A';
   state.configs.clear();
   state.reads = 0;
+  state.realFiles = false;
 });
 function fixture() {
   let ghost: InstalledGhost = {
@@ -173,3 +180,25 @@ it.each(['revision', 'resource-package', 'approval', 'instance', 'owner'] as con
     expect(pagePermissionGrants.has('A', grant)).toBe(false);
   },
 );
+
+// #7924 / 4420763923: real SDK resources/read + disk file must honor the App host's
+// 4 MiB contract. Prior tests never read HTML. Unit; 4 MiB is valid, +1 byte is not.
+it('reads a 4 MiB plugin page and rejects an oversized resource', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'plugin-ui-resource-'));
+  const client = new Client({ name: 'host', version: '1' });
+  try {
+    const f = fixture();
+    f.ghost.dir = dir;
+    state.realFiles = true;
+    const html = 'x'.repeat(4 * 1024 * 1024);
+    await fs.writeFile(path.join(dir, 'form.html'), html);
+    f.refresh();
+    await client.connect(state.configs.get(pluginAppServerId(f.ghost))!().plugin!.createTransport());
+    expect((await client.readResource({ uri: 'ui://form' })).contents[0]).toMatchObject({ text: html });
+    await fs.appendFile(path.join(dir, 'form.html'), 'x');
+    await expect(client.readResource({ uri: 'ui://form' })).rejects.toThrow('MCP_APP_RESOURCE_UNAVAILABLE');
+  } finally {
+    await client.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

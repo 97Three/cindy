@@ -70,3 +70,42 @@ it('uses the shared bounded MP3 probe for a picked audio file with embedded artw
   deps.deposit = async (_id, staged, mime) => { expect(mime).toBe('audio/mpeg'); expect(await fs.readFile(staged)).toEqual(bytes); return { url: 'cindy-media://blobs/audio.mp3' }; };
   expect(await importPickedFiles(deps, 'plugin', [file], { into: 'media', assertCurrent() {} })).toMatchObject({ ok: true, files: [{ mimeType: 'audio/mpeg' }] });
 });
+
+// #7924 / 4420767928: importer must return committed refs when a later selection
+// fails. Single-file cases missed this. Unit: a valid first file then unsupported
+// media / failed Library write / missing source; no automatic deletion of user data.
+it.each(['media', 'library', 'missing'] as const)('returns partial refs on %s failure', async (kind) => {
+  const { root, deps } = await fixture();
+  const first = path.join(root, 'first.png');
+  const second = path.join(root, 'second.txt');
+  await fs.writeFile(first, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (kind !== 'missing') await fs.writeFile(second, 'text');
+  const importLibrary = deps.importLibrary;
+  let calls = 0;
+  if (kind === 'library') deps.importLibrary = async (...args) => ++calls === 2
+    ? { ok: false, message: 'write failed' } : importLibrary(...args);
+  const result = await importPickedFiles(deps, 'plugin', [first, second], {
+    into: kind === 'media' ? 'media' : 'library', assertCurrent() {},
+  });
+  expect(result).toMatchObject({ ok: false, files: [{ name: 'first.png', ref: expect.any(String) }],
+    failedFile: { index: 1, name: 'second.txt' } });
+  if (result.ok) throw new Error('expected partial failure');
+  expect(result.files).toHaveLength(1);
+  expect(JSON.stringify(result)).not.toContain(root);
+  if (kind !== 'media') expect(await fs.readFile(path.join(root, 'library', result.files![0].ref!.slice(8))))
+    .toEqual(await fs.readFile(first));
+});
+
+// Partial-error refs must never escape an invalidated owner/install, even after a
+// successful deposit. Unit through the same importer with a revoking host assertion.
+it('does not return partial refs after the owner or selection becomes invalid', async () => {
+  const { root, deps } = await fixture();
+  const file = path.join(root, 'first.png');
+  await fs.writeFile(file, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const deposit = deps.deposit;
+  let current = true;
+  deps.deposit = async (...args) => { const result = await deposit(...args); current = false; return result; };
+  await expect(importPickedFiles(deps, 'plugin', [file], { into: 'media',
+    assertCurrent() { if (!current) throw new Error('FILE_SELECTION_CANCELLED'); },
+  })).rejects.toThrow('FILE_SELECTION_CANCELLED');
+});

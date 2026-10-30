@@ -7,6 +7,7 @@ import { hasGhostUiPermission, type InstalledGhost } from '../../shared/ghost.js
 import { deliveryNamespaceFields, installedGhostStoragePart } from '../../shared/pluginIdentity.js';
 import { resolveGhostContentPathSync } from '../cindy-brain/ghostContentTree.js';
 import { readBoundedFileNoFollowSync } from '../utils/readBoundedFile.js';
+import { MCP_APPS_MAX_BYTES } from '../mcp-apps/protocol.js';
 import { createPluginAppTransport } from '../mcp-apps/pluginServer.js';
 import type { PluginPageCall } from '../mcp-apps/pluginPageCall.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -85,7 +86,7 @@ export function refreshPluginApps(
                 expect: 'file',
                 label: 'plugin App HTML',
               });
-              const bytes = readBoundedFileNoFollowSync(file, 2 * 1024 * 1024, {
+              const bytes = readBoundedFileNoFollowSync(file, MCP_APPS_MAX_BYTES, {
                 containWithin: realpathSync(ghost.dir),
               });
               if (!bytes) throw new Error('MCP_APP_RESOURCE_UNAVAILABLE');
