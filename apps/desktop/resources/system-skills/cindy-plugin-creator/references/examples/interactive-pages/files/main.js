@@ -10,6 +10,15 @@ function link(uri,name,mimeType){return {type:'resource_link',uri,name,mimeType}
 function response(r,request){return {request,status:r.status??null,errorCode:r.ok===false?clean(r.errorCode||r.message):undefined,body:clean(r.body),truncated:!!r.truncated||String(r.body??'').length>2048};}
 function safeFile(f){return {name:f.name,size:f.size,mimeType:f.mimeType,ref:f.ref};}
 async function net(m,args){return cindy.fetch({...args,callId:m.callId});}
+// 动态内容。不需要可以删。默认模拟可信后端，不联网、不需要凭证。
+// 接真实后端时把此函数换成 cindy.fetch（带 callId，检查 ok/status 后解析 body），
+// 并在 ghost.json 的 network 中声明域名和凭证，见手册 §4.7。
+// HTML 等同于插件自身代码：只接可信来源；外部文本交给页面 textContent，不能拼进 HTML。
+async function mockDynamicBackend(intent,callId){
+ if(intent==='overview')return {html:'<h4>今日概览</h4><p>还有一项待完成，可以切换明细查看。</p>',data:{view:'overview',completed:2,total:3}};
+ if(intent==='details')return {html:'<h4>待办明细</h4><ul><li>整理资料 · 已完成</li><li>核对数据 · 已完成</li><li>生成摘要 · 待完成</li></ul>',data:{view:'details',completed:2,total:3}};
+ throw new Error('请选择概览或明细');
+}
 cindy.onHostMessage(async m=>{
  if(m.type!=='tool-call')return;
  const a=m.args||{};let out;
@@ -17,6 +26,7 @@ cindy.onHostMessage(async m=>{
   // 基础。不需要可以删。
   if(m.tool==='open_showcase')out=output({ready:true,title:form.title,hint:'按钮的结果只在页面展示。'});
   else if(m.tool==='save_form'){form={title:String(a.title||'').slice(0,160),saved:form.saved+1};out=output(form);}
+  else if(m.tool==='dynamic_content'){const r=await mockDynamicBackend(a.intent,m.callId);out={content:[{type:'text',text:'内容已更新'}],structuredContent:r.data,_meta:{html:r.html}};}
   else if(m.tool==='model_only')out=output({modelOnly:true});
   // 文件。不需要可以删。
   else if(m.tool==='file_action'){

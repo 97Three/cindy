@@ -248,6 +248,21 @@ try {
         stage='author visibility result';
         await wait(()=>inner().executeJavaScript("document.querySelector('#denied pre').textContent.includes('MCP_APP_TOOL_NOT_VISIBLE')"));
         assert.equal(await inner().executeJavaScript('typeof window.cindy'),'undefined');
+        // Integration: fixed template -> real page tools/call -> shipped main.js -> private HTML
+        // plus structured data. Existing form coverage cannot detect a missing dynamic renderer.
+        // Minimal input: overview then details; each must replace the visible content without networking.
+        stage='author dynamic content';
+        await inner().executeJavaScript("document.querySelector('#dynamic .buttons button:first-child').click()");
+        await wait(()=>inner().executeJavaScript("document.querySelector('#fragment h4')?.textContent==='今日概览'"));
+        assert.equal(await inner().executeJavaScript("document.querySelector('#dynamic-data').textContent"),'已完成 2 / 3 项');
+        await inner().executeJavaScript("document.querySelector('#dynamic .buttons button:last-child').click()");
+        await wait(()=>inner().executeJavaScript("document.querySelector('#fragment h4')?.textContent==='待办明细'"));
+        assert.equal(await inner().executeJavaScript("document.querySelectorAll('#fragment li').length"),3);
+        assert.equal(await inner().executeJavaScript("document.querySelector('#fragment').textContent.includes('还有一项待完成')"),false);
+        assert.equal(await inner().executeJavaScript("JSON.parse(document.querySelector('#dynamic pre').textContent).response.view"),'details');
+        assert.equal(turns,0,'dynamic content must not send a model message');
+        console.log('AUTHOR_DYNAMIC_CONTENT=passed (real page -> tools/call -> main.js; overview/details, private HTML and structured data, no model message)');
+
         // Regression: the shipped page sent seq=0, which the real Library rejects.
         // PR #7924: a 200-character Chinese filename also used to exceed the 64-character segment limit.
         // Drag through the DOM, dispatcher, shipped main.js and actual LibraryVault.

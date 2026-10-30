@@ -56,6 +56,26 @@
       }
     },
     {
+      "name": "dynamic_content",
+      "description": "按意图返回动态内容，仅页面可用；默认本机模拟后端",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "intent": {
+            "type": "string",
+            "enum": [
+              "overview",
+              "details"
+            ]
+          }
+        },
+        "required": [
+          "intent"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "file_action",
       "description": "文件选择与分片导入",
       "parameters": {
@@ -229,6 +249,11 @@
         "model_only": {
           "visibility": [
             "model"
+          ]
+        },
+        "dynamic_content": {
+          "visibility": [
+            "app"
           ]
         }
       }

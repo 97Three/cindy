@@ -365,6 +365,43 @@ ResourceLink。宿主弹系统另存为框、净化文件名；不代页面下�
 
 联网和凭证都由 main.js 通过 `cindy.fetch` 发出，凭证由宿主注入，规则见 [§4.7](plugin-network.md)。
 
+### 动态内容：模板固定，内容走工具结果
+
+页面模板是包内静态 HTML，不能运行时生成或改写来供片。要按意图显示不同页面，由工具
+返回内容，固定模板负责渲染；同一模板可按数据切换概览、明细等视图。
+
+页面不能携带凭证。页面自己的 `fetch` 和 `<img>` 访问外部地址时，origin 必须分别列在
+CSP 的 `connectDomains` / `resourceDomains`，目标域名还须在 `network.hosts` 范围内；
+**宿主不会为这些页面请求注入凭证**，需要宿主托管凭证的鉴权接口会失败。
+带身份的请求走「页面 `tools/call` → app-only 工具 → main.js `cindy.fetch`」，
+域名、凭证声明与宿主注入按 [§4.7](plugin-network.md)，不把密钥交给页面。
+
+页面专用内容（如 HTML 片段）放工具结果根 `_meta`，业务数据放 `structuredContent`。
+若同一工具也向模型开放，模型调用得到的根 `_meta` 会被剥掉；app-only 工具本身不向模型开放。
+下面省略已有的工具消息分发和 RPC 连接，完整可运行版本见能力全集的「动态内容」卡片：
+
+```js
+// main.js：只返回来自可信后端的片段；真实请求用 cindy.fetch，见 §4.7。
+const result = {
+  content: [{ type: 'text', text: '内容已更新' }],
+  structuredContent: { completed: 2, total: 3 },
+  _meta: { html: '<h4>今日概览</h4><p>还有一项待完成。</p>' }
+};
+// 页面：app 为已连接的 MCP Apps SDK 实例。
+const r = await app.callServerTool({ name: 'dynamic_content', arguments: { intent: 'overview' } });
+document.querySelector('#fragment').innerHTML = r._meta.html;
+document.querySelector('#data').textContent = JSON.stringify(r.structuredContent);
+```
+
+`innerHTML` 插入的 `<script>` 不执行，但这不等于片段安全：页面 CSP 允许内联脚本，
+模板主动创建并插入的脚本、片段里的内联事件仍可执行。后端 HTML 应当作插件自身代码，
+只渲染可信来源；不可信数据一律用 `textContent`，不要拼进 HTML。
+
+鉴权图片也由 main.js 代取：`cindy.fetch({ url, as: 'media', callId: msg.callId })`，
+凭证照常注入。检查 `ok`、HTTP 状态和 `media` 后，用 `media.url` 返回标准
+`resource_link`（`uri: r.media.url`，`mimeType` 填实际图片类型）；页面取该资源的
+`_meta['cindy/file'].url` 赋给 `img.src`。这沿用上节的本卡只读文件授权链，无需把图片转成 data URI。
+
 ### 安装、升级和多端
 
 声明 `mcpApps.ui` 的包要求 `minCindyVersion >= 0.1.122-beta`，beta.1 和稳定版均满足。
@@ -413,17 +450,20 @@ ResourceLink。宿主弹系统另存为框、净化文件名；不代页面下�
 
 复制 [files 目录](examples/interactive-pages/files/ghost.json) 的 ghost.json、main.js、settings.html、
 settings.js 和 ui/page.html，即可用 ghost_forge_pack 打包。页面与最小脚手架共用宿主主题变量、
-基础排版和圆角；四组按钮各有状态、耗时、可展开和复制的结果区，窄屏单列，宽屏两列。
+基础排版和圆角；四组按钮（含动态内容卡片）各有状态、耗时、可展开和复制的结果区，窄屏单列，宽屏两列。
 每块都标了“不需要可以删”：删功能时也删对应工具、页面按钮与未使用的权限声明。
 
 | 分组 | 可直接参考的能力 |
 | --- | --- |
-| 基础 | 表单回写、全屏、主题变量、ui/message、update-model-context、model-only 拒绝、长任务进度 |
+| 基础 | 动态内容（固定模板、HTML 片段与业务数据分离）、表单回写、全屏、主题变量、ui/message、update-model-context、model-only 拒绝、长任务进度 |
 | 文件 | 系统选图/视频/附件、拖放粘贴分片、本卡只读预览、下载到 Library、saveAs、ui/download-file、处理后上传、发图给 AI |
 | 宿主 | 工作目录写入确认、kv、非敏感设置、upload.hashes、uploadDir、经模型展示旧卡片 |
 | 联网 | user 凭证请求、401 对照和返回结果展示；只显示状态码与前 2 KiB 响应，不显示请求头或令牌 |
 
-先将 `api.example.com` 换成自己的后端，并同时修改 main.js、
+动态内容卡片默认在 main.js 模拟后端，不联网、不需要配置凭证，安装后即可切换概览和明细。
+需要接入真实后端时，将 `mockDynamicBackend` 换成 `cindy.fetch`，域名与凭证按 §4.7 声明。
+
+使用联网卡片前，先将 `api.example.com` 换成自己的后端，并同时修改 main.js、
 network.hosts 和 inject.hosts。user 来源的凭证按精确域名注入，页面不直接联网、不读取凭证。
 示例不带本机测试服务、假凭证或故障切换开关。后端需提供：
 
