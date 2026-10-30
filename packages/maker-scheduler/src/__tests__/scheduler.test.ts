@@ -782,6 +782,16 @@ describe('Scheduler', () => {
     expect((await h.storage.get(sch.id))?.status).toBe('paused');
   });
 
+  it('accepts an approval snapshot after the device-link JSON round trip', async () => {
+    const sch = await h.scheduler.create({ ...baseInput });
+    await h.scheduler.pause(sch.id);
+    const approved = await h.storage.get(sch.id);
+    if (!approved) throw new Error('missing schedule');
+    const roundTripped = JSON.parse(JSON.stringify(approved)) as Schedule;
+    const resumed = await h.scheduler.resume(sch.id, roundTripped);
+    expect(resumed.status).toBe('active');
+  });
+
   it('runner exception marks run failed but schedule stays active', async () => {
     const local = makeHarness({
       runnerImpl: async () => {

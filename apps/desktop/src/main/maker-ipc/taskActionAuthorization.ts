@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import type { ToolCallAuthorizer } from '@cindy/mcps';
-import type { Schedule } from '@cindy/maker-scheduler';
+import type { Schedule, ScheduleMutationGuard } from '@cindy/maker-scheduler';
 import type { AgentInputQueuedMessage } from '../../shared/agentInputQueue.js';
 
 type Call = Parameters<ToolCallAuthorizer>[0];
@@ -67,7 +67,7 @@ export interface TaskActionScope {
   principal?: TaskActionPrincipal;
   routine?: { botId: string; id: string; revision: number };
   /** Complete persisted schedule captured for an approved command/resume action. */
-  scheduleGuard?: Schedule;
+  scheduleGuard?: ScheduleMutationGuard;
   /** Existing, explicitly confirmed delegation; never inferred from creator/follower. */
   delegated: boolean;
   /** Rechecked at mutation/delivery; includes account, target and delegation revocation. */
@@ -83,7 +83,7 @@ interface ActionContext {
   fingerprint: string;
   principal?: TaskActionPrincipal;
   routine?: TaskActionScope['routine'];
-  scheduleGuard?: Schedule;
+  scheduleGuard?: ScheduleMutationGuard;
   assertCurrent(): Promise<void>;
   assertCurrentSync?(): void;
   assertDeliveryCurrent(): Promise<void>;
@@ -122,7 +122,7 @@ export type TaskActionScheduleDefinition = Pick<Schedule,
   'id' | 'name' | 'prompt' | 'persistentSession' | 'useWorktree' | 'executionMode' | 'scriptConfig' | 'preRunHook' | 'workingDir' | 'targetSessionId'> & {
   hookInstallation?: { workingDir?: string; fallbackDir: string };
   preRunWorkingDir?: string;
-  mutationGuard?: Schedule;
+  mutationGuard?: ScheduleMutationGuard;
 };
 export interface TaskActionConfirmation {
   server: string;
@@ -312,7 +312,7 @@ export function taskActionRoutineRevision(botId: string, id?: string): number | 
 }
 
 /** Host-only schedule snapshot for the scheduler mutation guard. */
-export function taskActionScheduleGuard(): Schedule | undefined {
+export function taskActionScheduleGuard(): ScheduleMutationGuard | undefined {
   return actionContext.getStore()?.scheduleGuard;
 }
 

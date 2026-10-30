@@ -309,10 +309,11 @@ function desktopFixture(kind: 'private' | 'group' | 'automatic' = 'group') {
   const routines = new Map<string, { enabled: boolean; revision: number; prompt?: string; preRunCommand?: string }>();
   const schedules = new Map<string, TaskActionScheduleDefinition>();
   const workDirs = new Map([['companion', '/companion']]);
+  const getScheduleDefinition = vi.fn(async (id: string) => structuredClone(schedules.get(id) ?? null));
   const authorize = createDesktopTaskActionAuthorizer({
     input: () => ({ ...activeInput }), confirm, getSession,
     capturePermissionRequest,
-    getScheduleDefinition: async id => structuredClone(schedules.get(id) ?? null),
+    getScheduleDefinition,
     getSessionWorkDir: async id => workDirs.get(id),
     captureRoutine: async (_botId, id, forExecution) => {
       const row = routines.get(id);
@@ -328,7 +329,7 @@ function desktopFixture(kind: 'private' | 'group' | 'automatic' = 'group') {
     },
   });
   return { authorize, confirm, activeInput, caller, rows, runtime, getSession,
-    permissionRequest, capturePermissionRequest, routines, schedules, workDirs };
+    permissionRequest, capturePermissionRequest, routines, schedules, workDirs, getScheduleDefinition };
 }
 const ownerWrites = [
   ['cindy_helper', 'start_session_task'],
@@ -1040,6 +1041,18 @@ describe('teammate turn principal', () => {
     const metadataEdit = { sessionId: 'companion', server: 'cindy_scheduler' as const,
       tool: 'schedule_update', args: { id: definition.id, device: 'remote-mac', name: 'Renamed' } };
     expect(await withToolCallAuthority(h.authorize, metadataEdit, effect)).toBe('started');
+    expect(h.confirm).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the remote schedule definition cannot be read', async () => {
+    const h = desktopFixture('automatic');
+    live(h);
+    h.getScheduleDefinition.mockRejectedValueOnce(new Error('SCHEDULE_DEFINITION_UNAVAILABLE'));
+    const effect = vi.fn(async () => 'started');
+    const request = { sessionId: 'companion', server: 'cindy_scheduler' as const,
+      tool: 'schedule_run_now', args: { id: 'remote-agent', device: 'remote-mac' } };
+    expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, effect))).toContain('CAPABILITY_NOT_AVAILABLE');
+    expect(effect).not.toHaveBeenCalled();
     expect(h.confirm).not.toHaveBeenCalled();
   });
 

@@ -36,14 +36,17 @@ function nextIntervalFire(baseMs: number, intervalMs: number, now: number): numb
 }
 
 function stableJson(value: unknown): string {
+  if (value === undefined) return 'null';
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
   const record = value as Record<string, unknown>;
-  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`;
+  return `{${Object.keys(record).filter((key) => record[key] !== undefined).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`;
 }
 
 function assertScheduleMutationGuard(expected: ScheduleMutationGuard | undefined, current: Schedule): void {
-  if (expected && stableJson(expected) !== stableJson(current)) {
+  if (!expected) return;
+  const { effectiveWorkingDir: _effectiveWorkingDir, ...expectedSchedule } = expected;
+  if (stableJson(expectedSchedule) !== stableJson(current)) {
     throw new Error('Schedule changed; refresh before executing the approved action');
   }
 }
@@ -1137,6 +1140,8 @@ export class Scheduler extends EventEmitter {
         firedAt,
         deferToCaller: options?.deferToCaller,
         canDispatch: options?.canDispatch,
+        ...(options?.expectedSchedule?.effectiveWorkingDir
+          ? { expectedPreRunWorkingDir: options.expectedSchedule.effectiveWorkingDir } : {}),
         signal: controller.signal,
         onSessionBound: this.buildOnSessionBound(schedule.id, runId),
         onPreRunHookCompleted: this.buildOnPreRunHookCompleted(runId),
