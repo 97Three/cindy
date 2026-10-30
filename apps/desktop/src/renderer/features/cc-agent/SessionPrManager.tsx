@@ -33,6 +33,14 @@ import type { Session } from '@/lib/ccAgent.types';
 
 // Matches main/git-context/prStatusService.ts MAX_BATCH; it is not exported.
 const PR_STATUS_BATCH_SIZE = 10;
+const PR_MANAGER_STATUS_LIMIT = 20;
+
+function statusCandidates(rows: SessionPrRef[]): SessionPrRef[] {
+  return rows
+    .filter((row) => row.removedAt == null)
+    .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)))
+    .slice(0, PR_MANAGER_STATUS_LIMIT);
+}
 
 /** Edits associations on their owning host; GitHub itself is never mutated. */
 export function SessionPrManager({
@@ -101,8 +109,8 @@ export function SessionPrManager({
     for (const id of requestedStatusIds.current.keys()) {
       if (!activeIds.has(id)) requestedStatusIds.current.delete(id);
     }
-    const pending = result.filter(
-      (row) => activeIds.has(row.id) && !requestedStatusIds.current.has(row.id),
+    const pending = statusCandidates(result).filter(
+      (row) => !requestedStatusIds.current.has(row.id),
     );
     if (pending.length === 0) return;
     setStatuses((previous) => {
@@ -230,6 +238,7 @@ export function SessionPrManager({
   };
 
   const active = rows?.filter((r) => r.removedAt == null) ?? [];
+  const statusCandidateIds = new Set(statusCandidates(active).map((row) => row.id));
   const removed = rows?.filter((r) => r.removedAt != null) ?? [];
   const pinned = active.filter((r) => r.pinned).length;
   const reorder = (ids: string[], focusId?: string) => {
@@ -238,7 +247,7 @@ export function SessionPrManager({
     void run({ action: 'reorder', ids });
   };
   const renderRow = (ref: SessionPrRef, removed = false) => {
-    const status = removed ? undefined : statuses.get(prStatusKey(ref));
+    const status = statusCandidateIds.has(ref.id) ? statuses.get(prStatusKey(ref)) : undefined;
     const kind = status?.ok ? status.status : null;
     const Icon = kind ? PR_STATUS_ICON[kind] : GitPullRequest;
     const title = status?.ok ? status.title.trim() : '';

@@ -707,6 +707,53 @@ describe('SessionPrManager', () => {
     },
   );
 
+  // Unit regression for PR #8092: management must bound GitHub status work to
+  // the first 20 displayed active rows. The 12-row batching case misses the cap;
+  // 21 rows is the minimum overflow, with 25 covering the requested two batches.
+  it('limits status queries to 20 displayed rows and leaves overflow links usable', async () => {
+    const f = fixture(undefined, 25);
+    await f.open();
+    expect(f.statuses.mock.calls.map(([queries]) => queries.map((q) => q.prNumber))).toEqual([
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      [11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+    ]);
+    expect(screen.getByRole('link', { name: 'Title 20' })).toBeTruthy();
+    for (const number of [21, 22, 23, 24, 25]) {
+      expect(screen.getByRole('link', { name: `repo #${number}` })).toBeTruthy();
+      expect(screen.queryByText(`Title ${number}`)).toBeNull();
+    }
+    await act(async () => {
+      fireEvent.click(screen.getByRole('link', { name: 'repo #21' }));
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'ccAgent.gitContext.pr.manage.restore',
+          hidden: true,
+        }),
+      );
+    });
+    expect(f.openExternal).toHaveBeenLastCalledWith('https://github.com/octo/repo/pull/21');
+    expect(f.statuses).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('link', { name: 'repo #26' })).toBeTruthy();
+
+    const list = managerMocks.sortables.find((item) =>
+      item.element.querySelector('[data-sortable-id="manager-26"]'),
+    )!;
+    await act(async () => {
+      const moved = list.element.lastElementChild as HTMLElement;
+      list.element.prepend(moved);
+      (list.options.onEnd as (event: unknown) => void)({
+        item: moved,
+        from: list.element,
+        oldIndex: 24,
+        newIndex: 0,
+      });
+    });
+    expect(f.statuses.mock.calls[2][0].map((q) => q.prNumber)).toEqual([26]);
+    expect(screen.getByRole('link', { name: 'Title 26' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'repo #20' })).toBeTruthy();
+    expect(screen.queryByText('Title 20')).toBeNull();
+  });
+
   it('continues with the next batch after a silent status failure', async () => {
     const f = fixture(undefined, 12);
     f.statuses.mockRejectedValueOnce(new Error('offline'));
