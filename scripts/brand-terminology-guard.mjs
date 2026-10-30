@@ -78,6 +78,7 @@ function fail(message) {
 
 const listed = spawnSync('git', ['ls-files', '-z'], {
   encoding: 'buffer',
+  maxBuffer: 64 * 1024 * 1024,
 });
 
 if (listed.status !== 0) {
