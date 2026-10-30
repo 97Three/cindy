@@ -4068,6 +4068,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         | { type: 'provider-import'; importId: string }
         | { type: 'plugin'; pluginId: string }
         | { type: 'local-plugin-share'; snapshotId: string }
+        | { type: 'installed-plugin'; ghostId?: string }
         | { type: 'shared-task-join'; invitation: string; server: string }
         | { type: 'provider-share-join'; link: string }
         | { type: 'chat-invite'; token: string }
@@ -4085,6 +4086,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         importId?: unknown;
         pluginId?: unknown;
         snapshotId?: unknown;
+        ghostId?: unknown;
         invitation?: unknown;
         token?: unknown;
         server?: unknown;
@@ -4117,6 +4119,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
         callback({ type: 'plugin', pluginId: p.pluginId });
       } else if (p.type === 'local-plugin-share' && isLocalPluginSnapshotId(p.snapshotId)) {
         callback({ type: 'local-plugin-share', snapshotId: p.snapshotId });
+      } else if (p.type === 'installed-plugin' && (p.ghostId === undefined || (typeof p.ghostId === 'string' && /^[a-z0-9][a-z0-9-]{0,31}$/.test(p.ghostId)))) {
+        // A plugin's own id (same rule as isValidGhostId in shared/ghost), not a market resource id.
+        // The bare list link carries none. Main validated it already; a malformed id drops the payload.
+        callback({ type: 'installed-plugin', ...(typeof p.ghostId === 'string' ? { ghostId: p.ghostId } : {}) });
       } else if (p.type === 'chat-message' && typeof p.groupId === 'string' && typeof p.messageId === 'string'
         && [p.groupId, p.messageId, ...(p.threadRootId === undefined ? [] : [p.threadRootId])].every(value => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value))) {
         callback({ type: 'chat-message', groupId: p.groupId, messageId: p.messageId,
@@ -4185,7 +4191,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     | { type: 'share-import'; filePath: string }
     | { type: 'provider-import'; importId: string }
     | { type: 'plugin'; pluginId: string }
-        | { type: 'local-plugin-share'; snapshotId: string }
+    | { type: 'local-plugin-share'; snapshotId: string }
+    | { type: 'installed-plugin'; ghostId?: string }
     | { type: 'shared-task-join'; invitation: string; server: string }
     | { type: 'provider-share-join'; link: string }
     | { type: 'chat-invite'; token: string }
@@ -6309,13 +6316,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   browserBackend: {
     /** Read current active kind + system default + override flag. */
     getState: (): Promise<{
-      active: 'external' | 'rsb-webview';
-      systemDefault: 'external' | 'rsb-webview';
+      active: 'external' | 'rsb-webview' | 'user-browser';
+      systemDefault: 'external' | 'rsb-webview' | 'user-browser';
       isOverride: boolean;
       useRealProfile: boolean;
     }> => ipcRenderer.invoke('browser-backend:get-state'),
     /** Swap the active backend AND persist as user override. */
-    setKind: (kind: 'external' | 'rsb-webview'): Promise<unknown> =>
+    setKind: (kind: 'external' | 'rsb-webview' | 'user-browser'): Promise<unknown> =>
       ipcRenderer.invoke('browser-backend:set-kind', { kind }),
     /** Clear user override → follow current system default. */
     reset: (): Promise<unknown> => ipcRenderer.invoke('browser-backend:reset'),
@@ -6331,6 +6338,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     /** Open-only FDA probe. Returns `{ readable }` — never paths or cookie bytes. */
     probeSourceRead: (): Promise<{ readable: boolean }> =>
       ipcRenderer.invoke('browser-backend:probe-source-read'),
+    /** Open the official Cindy extension's store page in the user's own browser. */
+    openExtensionStore: (): Promise<
+      import('../shared/browserBackend').BrowserExtensionStoreOpenResult
+    > => ipcRenderer.invoke('browser-backend:open-extension-store'),
   },
 
   // electronAPI.codex.* 已退役 —— auth / agent status / usage 全部走 electronAPI.maker.*(agentKind),
@@ -6853,6 +6864,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       target: import('../shared/modelPriceOverride').ModelPriceOverrideTarget,
     ): Promise<import('../shared/modelPriceOverride').ModelPriceOverrideView> =>
       ipcRenderer.invoke('maker:model-price-override:reset', target),
+    /** Local image-input capability; null removes the user override. */
+    getModelImageInputOverride: (
+      target: import('../shared/modelImageInputOverride').ModelImageInputTarget,
+    ): Promise<import('../shared/modelImageInputOverride').ModelImageInputView> =>
+      ipcRenderer.invoke('maker:model-image-input:get', target),
+    setModelImageInputOverride: (
+      target: import('../shared/modelImageInputOverride').ModelImageInputTarget,
+      value: boolean | null,
+      owner: import('../shared/modelImageInputOverride').ModelImageInputOwner,
+    ): Promise<import('../shared/modelImageInputOverride').ModelImageInputView> =>
+      ipcRenderer.invoke('maker:model-image-input:set', target, value, owner),
     /**
      * 单模型上下文上限 override(设置 → 模型 → 高级设置)。窗口是自动压缩比例的分母,
      * 调小它让压缩按用户设的长度提前触发。target 与价格 override 同形。
