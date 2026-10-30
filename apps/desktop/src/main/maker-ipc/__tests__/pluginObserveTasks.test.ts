@@ -10,12 +10,16 @@ const mocks = vi.hoisted(() => ({
   workdirs: [] as Array<{ path: string; exists: boolean }>,
   phases: new Map<string, { phase: string; attention: boolean }>(),
   onRead: null as null | (() => void),
+  batchReaders: [] as string[][],
 }));
 vi.mock('../../localDb/ipc/recentWorkdirs.js', () => ({ listRecentWorkdirs: async () => mocks.workdirs }));
 vi.mock('../sessionActivityProjection.js', () => ({
-  readCanonicalSessionActivity: async (id: string) => {
-    mocks.onRead?.();
-    return mocks.phases.get(id) ?? { phase: 'idle', attention: false };
+  createCanonicalSessionActivityBatchReader: (persisted: Map<string, unknown>) => {
+    mocks.batchReaders.push([...persisted.keys()].sort());
+    return async (id: string) => {
+      mocks.onRead?.();
+      return mocks.phases.get(id) ?? { phase: 'idle', attention: false };
+    };
   },
 }));
 
@@ -32,15 +36,19 @@ beforeEach(() => {
       workspace_kind TEXT NOT NULL DEFAULT 'project', status TEXT NOT NULL DEFAULT 'active',
       agent_kind TEXT NOT NULL DEFAULT 'cc', source TEXT NOT NULL DEFAULT 'desktop', orca_role TEXT,
       remote_host_id TEXT, agent_device_id TEXT, hidden_at INTEGER,
+      active_turn_started_at INTEGER, last_turn_ended_at INTEGER, cleared_at INTEGER,
       last_activity_at INTEGER, user_send_at INTEGER, updated_at INTEGER NOT NULL
     );
     CREATE TABLE bot_session_links (id TEXT PRIMARY KEY, session_id TEXT NOT NULL);
+    CREATE TABLE orca_teams (id TEXT PRIMARY KEY, lead_session_id TEXT NOT NULL, status TEXT NOT NULL);
+    CREATE TABLE orca_workers (id TEXT PRIMARY KEY, team_id TEXT NOT NULL, session_id TEXT NOT NULL, execution_device_id TEXT);
   `);
   client = { drizzle: drizzle(db, { schema }) } as unknown as DbClient;
   setCurrentDbClient(client, 'test-user');
   mocks.workdirs = [{ path: '/repo', exists: true }, { path: '/gone', exists: false }];
   mocks.phases.clear();
   mocks.onRead = null;
+  mocks.batchReaders = [];
 });
 afterEach(() => {
   clearCurrentDbClient();
@@ -76,6 +84,24 @@ it('lists only visible local tasks of the registered project, as metadata in act
     { id: 'recent', title: 'title recent', agentKind: 'cc', archived: false, status: 'running', lastActivityAt: 30 },
     { id: 'archived', title: 'title archived', agentKind: 'cc', archived: true, status: 'idle', lastActivityAt: 20 },
   ]);
+});
+
+// unit: sidebar parity for Orca leads (orcaLeadWorkerAttention.ts) — a lead must not look idle while its worker waits or failed.
+it('lifts local worker error and awaiting onto the lead with one batched activity read', async () => {
+  for (const id of ['lead-wait', 'lead-error', 'lead-remote', 'lead-done']) insert(id, '/repo', 1, "orca_role = 'lead'");
+  for (const id of ['w-wait', 'w-error', 'w-remote', 'w-old']) insert(id, '/repo', 1, "orca_role = 'worker'");
+  db.exec(`
+    INSERT INTO orca_teams VALUES ('t1', 'lead-wait', 'active'), ('t2', 'lead-error', 'active'), ('t3', 'lead-remote', 'active'), ('t4', 'lead-done', 'completed');
+    INSERT INTO orca_workers VALUES ('1', 't1', 'w-wait', NULL), ('2', 't2', 'w-error', NULL), ('3', 't3', 'w-remote', 'other-pc'), ('4', 't4', 'w-old', NULL);
+  `);
+  mocks.phases.set('lead-error', { phase: 'running', attention: false });
+  for (const id of ['w-wait', 'w-remote', 'w-old']) mocks.phases.set(id, { phase: 'needs-interaction', attention: true });
+  mocks.phases.set('w-error', { phase: 'error', attention: true });
+
+  const status = new Map((await listPluginObserveTasks('/repo')).map((task) => [task.id, task.status]));
+
+  expect(Object.fromEntries(status)).toEqual({ 'lead-wait': 'awaiting', 'lead-error': 'error', 'lead-remote': 'idle', 'lead-done': 'idle' });
+  expect(mocks.batchReaders).toEqual([['lead-done', 'lead-error', 'lead-remote', 'lead-wait', 'w-error', 'w-wait']]);
 });
 
 it('rejects unregistered or missing projects and opens only listable tasks', async () => {

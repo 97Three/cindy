@@ -10211,15 +10211,16 @@ export function registerGhostIpc(): void {
     }
   });
 
-  ipcMain.handle('ghosts:request-task-approval', async (event, id: unknown) => {
+  ipcMain.handle('ghosts:request-task-approval', async (event, id: unknown, capability: unknown) => {
     assertTrustedAppRendererEvent(event);
     if (typeof id !== 'string' || !id.trim()) throwIpcError('INVALID_PARAMS', 'id must be a non-empty string');
+    if (capability !== undefined && capability !== 'observe') throwIpcError('INVALID_PARAMS', 'capability must be observe when provided');
     requireGhostAvailableForActiveSession(id);
     const isCurrent = () => {
       try { assertTrustedAppRendererEvent(event); return !event.sender.isDestroyed(); } catch { return false; }
     };
     const granted = await requestPluginTaskApproval(id, isCurrent, facts =>
-      createWindowGhostInstallConsentPrompt(event.sender)({ purpose: 'task-capability', initiator: 'user', origin: 'local-file', facts }), true);
+      createWindowGhostInstallConsentPrompt(event.sender)({ purpose: 'task-capability', initiator: 'user', origin: 'local-file', facts }), true, capability === 'observe' ? 'observe' : 'tasks');
     if (granted) broadcastGhostsChanged(getGhostManager().list());
     return { granted };
   });
