@@ -6,7 +6,7 @@ const frame=document.createElement('iframe');
 frame.setAttribute('sandbox','allow-scripts allow-same-origin');
 frame.setAttribute('allow',"camera 'none'; microphone 'none'; geolocation 'none'; clipboard-write 'none'");
 frame.style.cssText='border:0;width:100%;height:100%;display:block';
-let after=0,stopped=false,generation=0,initialized=false,initializationTimer;
+let after=0,stopped=false,generation=0,initialized=false,initializationTimer,handshakeDelivery;
 const state=(message,fromHost=false)=>{
  // App notifications cannot assert Host-owned context such as display mode.
  if(['ui/notifications/initialized','ui/notifications/size-changed','ui/notifications/sandbox-escape'].includes(message.method)||(fromHost&&message.method==='ui/notifications/host-context-changed'))
@@ -30,7 +30,16 @@ window.addEventListener('message',event=>{
  }
  if(message.method==='ui/notifications/initialized'){initialized=true;clearTimeout(initializationTimer);}
  state(message);
- void invoke({op:'message',message}).catch(fail);
+ const current=generation;
+ const handshake=message.method==='ui/initialize'||message.method==='ui/notifications/initialized';
+ const send=async()=>{if(stopped||!handshake&&generation!==current)return;await invoke({op:'message',message});};
+ // Await handshake receipts, not long-running tool calls, before the next document.
+ const delivery=handshakeDelivery?handshakeDelivery.then(send):send();
+ if(handshake){
+  handshakeDelivery=delivery;
+  void delivery.then(()=>{if(handshakeDelivery===delivery)handshakeDelivery=undefined;},()=>{});
+ }
+ void delivery.catch(fail);
 });
 window.addEventListener('keydown',event=>{
  if(event.key==='Escape'&&!event.isComposing&&!event.repeat&&!event.ctrlKey&&!event.altKey&&!event.metaKey&&!event.shiftKey)
@@ -42,7 +51,7 @@ async function poll(){
   for(const event of events){
    if(!Number.isSafeInteger(event.seq)||event.seq<=after)continue;
    after=event.seq;
-   if((event.generation??0)!==generation)continue;
+   if(event.generation!==undefined&&event.generation!==generation)continue;
    if(event.openLink){
     let success=false;
     try{await invoke({op:'open-link',linkId:event.openLink.id,url:event.openLink.url});success=true;}catch{}

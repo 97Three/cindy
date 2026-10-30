@@ -424,3 +424,81 @@ it('ignores a cleared document timer that runs after a new initialization starts
   expect(f.error).not.toHaveBeenCalled();
   await f.controller.close();
 });
+
+// Codex 4429338500: a delayed initialized delivery must precede the next initialize.
+// Unit: exercise Controller.receive/poll with a reordered transport; prior fixtures
+// acknowledged every message immediately and could not catch this lost response.
+it('orders replacement handshakes without waiting for a pending tool call', async () => {
+  let acknowledge!: () => void;
+  let reply!: (value: unknown) => void;
+  let hostInitialized = false;
+  const f = fixture(vi.fn().mockImplementationOnce(() => new Promise(resolve => { reply = resolve; })).mockImplementation(never));
+  const invoke = f.invoke.getMockImplementation()!;
+  const current = { jsonrpc: '2.0', id: 72, result: { protocolVersion: '2026-01-26' } };
+  f.invoke.mockImplementation(async (session, input) => {
+    const message = input.message as AppRpc | undefined;
+    if (message?.method === 'tools/call') return never();
+    if (message?.method === 'ui/notifications/initialized')
+      return new Promise<void>(resolve => { acknowledge = () => { hostInitialized = true; resolve(); }; });
+    if (message?.method === 'ui/initialize') {
+      reply([{ seq: 1, generation: hostInitialized ? 1 : 0, message: current }]);
+      return {};
+    }
+    return invoke(session, input);
+  });
+  await f.controller.open({});
+  f.controller.sandboxReady();
+  f.controller.receive({ jsonrpc: '2.0', id: 50, method: 'tools/call' });
+  f.controller.receive({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  f.controller.receive({ jsonrpc: '2.0', id: 51, method: 'tools/call' });
+  f.controller.receive({ jsonrpc: '2.0', id: 72, method: 'ui/initialize' });
+  acknowledge();
+  await flush();
+  expect(f.post).toHaveBeenCalledWith(current);
+  expect(f.error).not.toHaveBeenCalled();
+  expect(f.invoke.mock.calls.some(([, input]) => (input.message as AppRpc)?.id === 51)).toBe(false);
+  await f.controller.close();
+});
+
+// A rejected handshake must stop its queued followers and report/close just once;
+// Vitest also rejects any unhandled promise rejection from those followers.
+it('closes once when a handshake and its queued deliveries reject', async () => {
+  let reject!: (error: Error) => void;
+  const f = fixture();
+  const invoke = f.invoke.getMockImplementation()!;
+  f.invoke.mockImplementation(async (session, input) =>
+    input.op === 'message' ? new Promise((_resolve, fail) => { reject = fail; }) : invoke(session, input));
+  await f.controller.open({});
+  f.controller.receive({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  f.controller.receive({ jsonrpc: '2.0', id: 73, method: 'ui/initialize' });
+  f.controller.receive({ jsonrpc: '2.0', id: 74, method: 'tools/call' });
+  reject(new Error('delivery failed'));
+  await flush();
+  expect(f.error).toHaveBeenCalledTimes(1);
+  expect(f.error).toHaveBeenCalledWith(expect.objectContaining({ message: 'delivery failed' }));
+  expect(f.invoke.mock.calls.filter(([, input]) => input.op === 'message')).toHaveLength(1);
+  expect(f.invoke.mock.calls.filter(([, input]) => input.op === 'teardown')).toHaveLength(1);
+  await f.controller.close();
+});
+
+// 4429356002: authorizing a link can straddle replacement in the same View.
+// Unit: real Controller entry, deferred Host authorization, observable open/result.
+it('discards a link authorization that arrives after document replacement', async () => {
+  let authorize!: (value: unknown) => void;
+  const poll = vi.fn().mockResolvedValueOnce([{
+    seq: 1, generation: 0, openLink: { id: 'old-link', url: 'https://example.org/' },
+  }]).mockImplementation(never);
+  const f = fixture(poll);
+  const invoke = f.invoke.getMockImplementation()!;
+  f.invoke.mockImplementation(async (session, input) => input.op === 'authorize-link'
+    ? new Promise(resolve => { authorize = resolve; }) : invoke(session, input));
+  await f.controller.open({});
+  await flush();
+  f.controller.receive({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  f.controller.receive({ jsonrpc: '2.0', id: 76, method: 'ui/initialize' });
+  authorize({ authorized: true, validForMs: 30_000 });
+  await flush();
+  expect(f.link).not.toHaveBeenCalled();
+  expect(f.invoke.mock.calls.some(([, input]) => input.op === 'link-result')).toBe(false);
+  await f.controller.close();
+});
