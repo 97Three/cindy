@@ -254,7 +254,7 @@ export function useChatServerGroup(groupId: string, enabled: boolean, threadRoot
   const view = (next: ChatPage, self: string, actors: ChatActor[]) => ({ ...chatGroupView(next, self, actors), ...api.client.lifecycleCapabilities() });
   const hydrate = async (previous: NonNullable<typeof page.current>) => {
     const enriched = await api.client.hydrateThreads(groupId, previous.page);
-    if (!valid() || page.current !== previous) return;
+    if (!valid() || page.current !== previous || olderPending.current) return;
     page.current = { ...previous, page: enriched };
     setState(old => ({ ...old, value: { kind: 'ready', group: view(enriched, previous.self, previous.actors) } }));
     void cacheChatMessages(groupId, { version: 1, page: enriched, self: previous.self, actors: previous.actors });

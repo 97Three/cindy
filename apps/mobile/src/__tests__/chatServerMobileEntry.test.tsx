@@ -127,6 +127,44 @@ it('does not show one account\'s saved group to another account', async () => {
   expect(chat.state.kind).toBe('loading');
 });
 afterEach(() => { act(() => root?.unmount()); root = undefined; vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+// #7847 review: real hook/client pagination must survive a concurrent summary read.
+// Existing root-loss tests never completed hydration between starting and finishing an older page (unit).
+it('keeps an older page when thread summary hydration finishes while it is loading', async () => {
+  const initial = Array.from({ length: 100 }, (_, index) => ({
+    id: `00000000-0000-4000-8000-${String(300 - index).padStart(12, '0')}`, seq: String(300 - index),
+    authorId: self, author: { kind: 'human', name: 'Me' }, content: [{ type: 'text', text: `Message ${index}` }],
+    createdAt: '2026-10-09', deleted: false, threadRootId: null, ...(index === 0 ? { replyCount: 2 } : {}),
+  }));
+  const older = { ...initial[0], id: '00000000-0000-4000-8000-000000000200', seq: '200', content: [{ type: 'text', text: 'Older page arrived' }] };
+  let finishPreview!: (rows: unknown[]) => void;
+  let finishOlder!: (rows: unknown[]) => void;
+  const preview = new Promise<unknown[]>(resolve => { finishPreview = resolve; });
+  const previousPage = new Promise<unknown[]>(resolve => { finishOlder = resolve; });
+  const original = h.auth.apiFetch.getMockImplementation()!;
+  h.auth.apiFetch.mockImplementation((path, options) => {
+    if (path.endsWith('/snapshot')) return Promise.resolve({ room, members: [], messages: initial, cursor: '300' });
+    if (path.startsWith('/v1/changes?')) return Promise.resolve({ head: '300', cursor: '300', changes: [], hasMore: false });
+    if (path.includes('/messages?') && path.includes('threadRootId=')) return preview;
+    if (path.includes('/messages?') && path.includes('before=')) return previousPage;
+    if (path.includes('/messages?')) return Promise.resolve(initial);
+    return original(path, options);
+  });
+  showChat = true; await render();
+  expect(chat.state.kind).toBe('ready');
+  let loading!: Promise<void>;
+  await act(async () => { loading = chat.loadOlder!(); });
+  expect(chat.loadingOlder).toBe(true);
+  await act(async () => { finishPreview([{ ...initial[0], id: '00000000-0000-4000-8000-000000000301', seq: '301', threadRootId: initial[0].id }]); });
+  await act(async () => { finishOlder([older]); await loading; });
+  expect(chat.state).toMatchObject({ kind: 'ready', group: { hasMoreBefore: false } });
+  if (chat.state.kind !== 'ready') throw new Error('Expected paged group');
+  expect(chat.state.group.messages.some(message => message.content === 'Older page arrived')).toBe(true);
+  expect(chat.state.group.messages.find(message => message.id === initial[0].id)?.threadPreview?.replies)
+    .toEqual(expect.arrayContaining([expect.objectContaining({ id: '00000000-0000-4000-8000-000000000301' })]));
+  expect(chat.loadingOlder).toBe(false);
+});
+
 it('shows safe execution failures through the direct phone entry and removes them after retry', async () => {
   const original = h.auth.apiFetch.getMockImplementation()!;
   let status = 'failed';
