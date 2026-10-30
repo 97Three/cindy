@@ -64,6 +64,20 @@ tail 也能画来写),DELETE 清除。红线:收单即交,不许把 key 落进 /
 BroadcastChannel、日志或任何自存路径(review 必查)。凭证只会注入到它
 `inject.hosts` 声明的域名请求,重定向出域也不会跟着走。用户没填时 cindy.fetch
 返回结构化错误,把 message 原样告诉用户即可(里面带了去哪填的指引)。
+**可选的凭证校验**：普通 user secret 可声明 check：
+`{ url, bodyFormat, validPath, validValue, expiresAtPath?, expiresAtFormat? }`。
+url 必须是 HTTPS 默认端口且命中该凭证的 inject.hosts 与 network.hosts；bodyFormat
+为 JSON 对象模板，恰含一个字符串内的 {value}。validPath 为响应 JSON 点路径，
+validValue 为非空短字符串或布尔；有效期格式为 iso（默认）、unix-ms 或 unix-seconds。
+GET /secrets 仅对支持的声明返回 checkSupported:true。设置页可 POST
+`/secrets/<key>/check`，body 为 `{value}`，候选值只在 Host 此次请求内存中存在。
+Host 复用声明的 exchange 与 inject 完成两段请求，不保存候选、不共享换得的 token 缓存，
+不跟随重定向；只回 `{valid:boolean,expiresAt?:ISO日期}`，不回原响应或凭证。
+这是校验而非保存；PUT 的结果与 check 的结果必须分别呈现。旧 Host 缺 checkSupported
+时继续支持保存，明确说明未校验，不得退回 BC 发送凭证。服务端错误只回受控错误码。
+例：`check:{url:"https://api.example.com/check",bodyFormat:'{"apiKey":"{value}"}',
+validPath:"status",validValue:"active",expiresAtPath:"expiresAtMs",expiresAtFormat:"unix-ms"}`。
+
 无论走 Setup 卡还是 settingsHtml，入库成功时主机会自动弹一条「凭证已保存」的系统提示(带你的身份头,
 文案跟随用户语言;无需声明 notify)——设置页里画个就地的轻反馈即可,
 不用自己想办法做全局提示。
@@ -206,6 +220,9 @@ identity.displayTemplate 时,`/oauth` 回查与连接结果里 account.label 给
   经 broker exchange 透传服务端),不吃 PKCE 的服务商显式 `"pkce": false`;
   设置页的 `/oauth/<key>/client` 自填通道返回 405(settingsHtml 不要再画
   client 输入区)。
+  `"tokenBroker": "feishu"` 的企业应用由服务端按企业配置:主机每次连接开始时向服务端
+  取企业当前的 App ID 与一次性授权事务,不用清单里的 `clientId`(可省略;旧版主机
+  仍按清单 `clientId` 连接)。
 - `brokerBounce`:双地址弹跳回调(随 tokenBroker,资格与 tokenBroker 相同)。部分
   服务商后台只收 https redirect、不收 http loopback——声明后报给服务商的
   redirect_uri 是「broker 服务的 https 弹跳路由」(主机用 broker 基地址 + `path`

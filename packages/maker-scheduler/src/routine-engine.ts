@@ -27,7 +27,10 @@ export interface RoutineRun {
   finishedAt?: number;
   error?: string;
   scheduleRunId?: string;
+  sessionId?: string;
   resultText?: string;
+  /** Execution remains successful when only delivery fails; never rerun work to resend it. */
+  delivery?: { status: 'delivered' | 'failed' | 'suppressed'; error?: string };
 }
 
 /** One account-owned snapshot; the host commits each transition atomically. */
@@ -95,8 +98,10 @@ export interface RoutineEngineDeps {
     canDispatch: () => boolean,
   ): Promise<{
     scheduleRunId?: string;
+    sessionId?: string;
     error?: string;
     resultText?: string;
+    delivery?: RoutineRun['delivery'];
     deferred?: boolean;
     skipped?: boolean;
     /** Host-owned execution cap reached; persist disabling with this run's result. */
@@ -145,7 +150,7 @@ export class RoutineEngine {
       ) {
         throw new Error("Unsupported routine storage");
       }
-      for (const routine of saved.routines) parseRoutineInput(routine);
+      saved.routines = saved.routines.map(routine => ({ ...routine, ...parseRoutineInput(routine) }));
       this.state = saved;
     }
     this.state.receipts = compactRoutineReceipts(this.state.receipts, this.deps.now());
@@ -306,14 +311,21 @@ export class RoutineEngine {
         // A newly created, unclassified reminder must retain delivery.
         ...(!existing && parsed.silentWhenIdle === undefined ? { silentWhenIdle: false } : {}),
         // Host realign of a built-in rule keeps the owner's latest pause choice.
-        ...(options.builtin && existing ? { enabled: existing.enabled } : {}),
+        ...(options.builtin && existing ? {
+          enabled: existing.enabled,
+          modelOverride: existing.modelOverride,
+          sessionMode: existing.sessionMode,
+          delivery: existing.delivery,
+        } : {}),
       });
       if (id && !existing && !creationId && !options.builtin) throw new Error("Routine not found");
       if ((creationId || options.builtin) && state.routines.some(row => row.id === id && row.botId !== botId)) throw new Error("Routine creation ID already used");
-      // Host-owned rules: callers other than ensureBuiltin may only pause/resume them.
+      // Host-owned instructions and triggers stay fixed; callers may pause or choose the execution model.
       if (existing?.builtin && !options.builtin &&
-        JSON.stringify(parseRoutineInput({ ...existing, enabled: input.enabled })) !== JSON.stringify(input))
-        throw new Error(`${BUILTIN_ROUTINE_ERROR}: built-in routines can only be paused or resumed`);
+        JSON.stringify(parseRoutineInput({ ...existing, enabled: input.enabled,
+          ...(existing.builtin !== 'nightly-learning' ? { modelOverride: input.modelOverride } : {}),
+          sessionMode: input.sessionMode })) !== JSON.stringify(input))
+        throw new Error(`${BUILTIN_ROUTINE_ERROR}: built-in instructions and triggers cannot be edited`);
       const builtin = options.builtin ?? existing?.builtin;
       const builtinVersion = options.builtinVersion ?? existing?.builtinVersion;
       if (creationId && existing && JSON.stringify(parseRoutineInput(existing)) !== JSON.stringify(input)) throw new Error("Routine already created; refresh before editing");

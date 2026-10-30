@@ -2,6 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { RemoteSerializedAttachment } from '@/session/types';
 import type { MobileLocalAttachmentUploadCandidate } from '@/session/mobileLocalAttachmentUpload';
 import { useComposerImageExpansion } from '@/session/useComposerImageExpansion';
 import {
@@ -74,8 +75,9 @@ beforeEach(() => {
 });
 afterEach(() => act(() => root.unmount()));
 
-function mount(scopeKey: string) {
+function mount(scopeKey: string, upload?: UseMobileLocalAttachmentsOptions['upload']) {
   const options: UseMobileLocalAttachmentsOptions = {
+    upload,
     attachmentScopeKey: scopeKey,
     getAccessToken: async () => 'token',
     getAttachmentCount: () => 0,
@@ -248,6 +250,19 @@ describe('useMobileLocalAttachments abandonment on scope change', () => {
     expect(runtime.uploads).toHaveLength(0);
   });
 
+  it('uses a supplied direct transport while retaining the same picker queue and delivery', async () => {
+    const attachment = { id: 'server-media', name: 'report.pdf', path: '', ext: 'pdf', size: 1000,
+      category: 'file' as const, mimeType: 'application/pdf' };
+    const upload = vi.fn(async () => attachment);
+    const harness = mount('direct-group', upload);
+    act(() => harness.first.enqueueUploads([{ kind: 'file', uri: 'file:///picked', name: 'report.pdf', size: 1000,
+      mimeType: 'application/pdf' }], { token: 'token' }));
+    await act(async () => { await flush(); });
+    expect(upload).toHaveBeenCalledWith(expect.objectContaining({ name: 'report.pdf', size: 1000 }),
+      'file:///picked', expect.objectContaining({ token: 'token', signal: expect.any(AbortSignal) }));
+    expect(runtime.uploads).toHaveLength(0);
+    expect(harness.options.onUploaded).toHaveBeenCalledWith(attachment, expect.any(Object), expect.any(String));
+  });
   it('abandons a candidate enqueued from a stale scope without starting an upload', async () => {
     const harness = mount('session-a');
     act(() => harness.first.discardAllPendingUploadsForScopeChange());
@@ -286,4 +301,40 @@ describe('useMobileLocalAttachments abandonment on scope change', () => {
     expect(runtime.discarded).toHaveLength(1);
     expect(abandoned).toHaveBeenCalledTimes(1);
   });
+});
+
+it('restores share source order when concurrent uploads complete in reverse order', async () => {
+  const harness = mount('session-a');
+  let attachments: RemoteSerializedAttachment[] = [];
+  vi.mocked(harness.options.onUploaded).mockImplementation(attachment => {
+    attachments = harness.latest().insertUploadedAttachment(attachments, attachment);
+  });
+  act(() => harness.first.enqueueUploads(['first.pdf', 'second.pdf'].map((name, index) => ({
+    kind: 'file', uri: `file:///share/${name}`, name, size: 1000,
+    incomingShareOrder: { batchId: 'batch', index },
+  })), { token: 'token' }));
+  await act(async () => { await flush(); });
+  expect(runtime.uploads).toHaveLength(2);
+  await act(async () => { runtime.uploads[1].resolve(); await flush(); });
+  expect(attachments.map(item => item.name)).toEqual(['second.pdf']);
+  await act(async () => { runtime.uploads[0].resolve(); await harness.latest().waitForPendingUploads(); });
+  expect(attachments.map(item => item.name)).toEqual(['first.pdf', 'second.pdf']);
+});
+
+it('cleans a shared file only after staging takes ownership, retaining failed originals for retry', async () => {
+  const harness = mount('session-a');
+  const cleanup = vi.fn(async () => {
+    expect(harness.latest().getUploadedSource('att-report.pdf')?.uri).toBe('file:///stage/att-report.pdf');
+    expect(harness.options.onUploaded).toHaveBeenCalledOnce();
+  });
+  act(() => harness.first.enqueueUploads([{
+    kind: 'file', uri: 'file:///share/report.pdf', name: 'report.pdf', size: 1000, cleanupLocalUris: cleanup,
+  }], { token: Promise.resolve(null) }));
+  await act(async () => { await harness.latest().waitForPendingUploads(); });
+  expect(cleanup).not.toHaveBeenCalled();
+  const localId = harness.latest().pendingUploads[0].localId;
+  act(() => harness.latest().retryPendingUpload(localId));
+  await act(async () => { await flush(); });
+  await act(async () => { runtime.uploads[0].resolve(); await harness.latest().waitForPendingUploads(); });
+  expect(cleanup).toHaveBeenCalledExactlyOnceWith(['file:///share/report.pdf']);
 });

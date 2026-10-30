@@ -1,7 +1,8 @@
-import type { RoutineState, Schedule, ScheduleRun } from '@cindy/maker-scheduler';
+import type { RoutineState, RoutineRun, Schedule, ScheduleRun } from '@cindy/maker-scheduler';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const mock = vi.hoisted(() => ({
   scope: 'owner-a',
+  followUpEvents: vi.fn<(botId: string, events: RoutineRun['events']) => RoutineRun['events'] | null>((_id, events) => events),
   boundaryPending: false,
   schedulerReady: true,
   dbReady: true,
@@ -10,6 +11,10 @@ const mock = vi.hoisted(() => ({
   load: vi.fn<() => Promise<RoutineState | null>>(async () => null),
   profiles: [] as Array<{ id: string; status: string }>,
   save: vi.fn<(state: RoutineState) => Promise<void>>(async () => {}),
+  ensureRoutineSession: vi.fn(async ({ routineId }: { routineId: string }) => ({ ok: true as const, sessionId: `lane-${routineId}`, created: false })),
+  closeRoutineSession: vi.fn(async () => {}),
+  deliverResult: vi.fn(async (_input: { assertCurrent(): void }) => {}),
+  deleteRoutineSession: vi.fn(async () => {}),
   getBot: vi.fn(async () => ({ status: 'active', canonicalSessionId: 'canonical-task' })),
   storage: {
     get: vi.fn<(id: string) => Promise<Schedule | null>>(async () => null),
@@ -20,11 +25,15 @@ const mock = vi.hoisted(() => ({
     ]),
   },
   scheduler: {
-    runNow: vi.fn(async (): Promise<{ runId: string; deferred?: boolean }> => ({ runId: 'execution' })),
+    runNow: vi.fn(async (): Promise<{ runId: string; deferred?: boolean; silenced?: boolean }> => ({ runId: 'execution' })),
     pause: vi.fn(async () => ({}) as Schedule),
     delete: vi.fn(async () => {}),
   },
 }));
+vi.mock('../../bot-autonomy/hub.js', () => ({ currentFollowUpEvents: async (botId: string, input: RoutineRun['events']) => {
+  const events = mock.followUpEvents(botId, input);
+  return events === null ? null : { events, canDispatch: () => mock.followUpEvents(botId, input)?.length === events.length };
+} }));
 vi.mock('../../appSessionState.js', () => ({
   activeOwnerScopeKey: () => mock.scope,
   getActiveAppSession: () => ({ dataOwnerId: mock.scope }),
@@ -55,30 +64,37 @@ vi.mock('../store.js', () => ({
     save = mock.save;
   },
 }));
-import { configureRoutineHost, getRoutineEngine, routineTools, stopRoutines, updateBotRoutineLifecycle } from '../service.js';
+import { configureRoutineHost, getRoutineEngine, readRoutineLaneModel, routineTools, stopRoutines, updateBotRoutineLifecycle } from '../service.js';
 import { handleRoutineRequest } from '../../cindy-brain/routineSlot.js';
 import type { InstalledGhost } from '../../../shared/ghost.js';
 import { companionHomes } from '../../companion-cloud/homes.js';
+import { admitTaskAction, assertTaskActionCurrent, hasTaskActionAuthorization } from '../../maker-ipc/taskActionAuthorization.js';
 beforeEach(() => { mock.readProfiles.mockImplementation(async () => mock.profiles); });
 beforeEach(() => configureRoutineHost({
-  getBot: mock.getBot,
+  getBot: mock.getBot, ensureRoutineSession: mock.ensureRoutineSession,
+  closeRoutineSession: mock.closeRoutineSession,
+  deliverResult: mock.deliverResult,
+  deleteRoutineSession: mock.deleteRoutineSession,
   getScheduler: () => mock.schedulerReady ? mock.scheduler : null,
   getScheduleStorage: () => mock.storage,
 }));
 afterEach(async () => {
   await stopRoutines();
   vi.clearAllMocks();
+  mock.followUpEvents.mockImplementation((_id, events) => events);
   mock.scope = 'owner-a';
   mock.boundaryPending = false;
   mock.schedulerReady = true;
   mock.dbReady = true;
   mock.dbOwner = null;
   mock.load.mockResolvedValue(null);
+  mock.deliverResult.mockResolvedValue(undefined);
+  mock.scheduler.runNow.mockResolvedValue({ runId: 'execution' });
   mock.storage.get.mockResolvedValue(null);
   mock.profiles = [];
   vi.useRealTimers();
 });
-it('dispatches into the current canonical task through the existing silent runner', async () => {
+it('dispatches into the routine lane and records its task for inspection', async () => {
   const routine = await routineTools.save('bot', {
     name: 'Review',
     prompt: 'Check the PR',
@@ -93,13 +109,130 @@ it('dispatches into the current canonical task through the existing silent runne
   expect(mock.storage.insert).toHaveBeenCalledWith(
     expect.objectContaining({
       source: 'bot',
-      targetSessionId: 'canonical-task',
+      targetSessionId: `lane-${routine.id}`,
       manual: true,
       silentWhenIdle: true,
       prompt: expect.stringContaining('Check the PR'),
     }),
   );
-  expect((await routineTools.history('bot', routine.id))[0].resultText).toBe('Reviewed PR');
+  expect((await routineTools.history('bot', routine.id))[0]).toMatchObject({ resultText: 'Reviewed PR', sessionId: `lane-${routine.id}` });
+  // persistent 专线承载上下文，永不自动删（只归档）。
+  expect(mock.deleteRoutineSession).not.toHaveBeenCalled();
+  expect(mock.ensureRoutineSession).toHaveBeenCalledWith(expect.objectContaining({ botId: 'bot', routineId: routine.id }));
+});
+
+it('rebinds a stored canonical backing schedule to its independent lane before running', async () => {
+  const routine = await routineTools.save('bot', { name: 'Legacy review', prompt: 'Keep original instructions', enabled: true,
+    triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }] });
+  mock.storage.get.mockResolvedValueOnce({
+    id: `routine-${routine.id}`, name: 'Legacy review', prompt: 'Keep original instructions',
+    source: 'bot', kind: 'cron', cronExpr: '* * * * *', timezone: 'UTC',
+    recurring: true, manual: true, agentKind: 'pi', workspaceKind: 'dialogue', useWorktree: false,
+    targetSessionId: 'canonical-task', notify: { desktop: false, feishu: false },
+    status: 'active', createdAt: 123, updatedAt: 123,
+  });
+  await routineTools.runNow('bot', routine.id);
+  await vi.waitFor(async () => expect((await routineTools.history('bot', routine.id))[0]?.status).toBe('success'));
+  expect(mock.storage.update).toHaveBeenCalledWith(`routine-${routine.id}`, expect.objectContaining({
+    targetSessionId: `lane-${routine.id}`, createdAt: 123, prompt: expect.stringContaining('Keep original instructions'),
+  }));
+});
+
+it('creates and closes an isolated lane for each fresh routine trigger', async () => {
+  const routine = await routineTools.save('bot', {
+    name: 'Fresh review', prompt: 'Check only this trigger', enabled: true,
+    sessionMode: 'fresh', triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }],
+    modelOverride: { agentKind: 'codex', model: 'budget', providerId: 'subscription' },
+  });
+  await routineTools.runNow('bot', routine.id);
+  await vi.waitFor(async () => expect((await routineTools.history('bot', routine.id))[0].status).toBe('success'));
+  expect(mock.ensureRoutineSession).toHaveBeenCalledWith(expect.objectContaining({
+    routineId: expect.stringMatching(new RegExp(`^${routine.id}:`)),
+  }));
+  expect(mock.closeRoutineSession).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^lane-${routine.id}:`)));
+  // 真实跑过的 fresh 任务保留：自动化文件夹和「查看任务」要能回放完整过程。
+  expect(mock.deleteRoutineSession).not.toHaveBeenCalled();
+  expect((await routineTools.history('bot', routine.id))[0].sessionId)
+    .toMatch(new RegExp(`^lane-${routine.id}:`));
+  // The per-trigger lane must still send with the routine's own model, not the companion's.
+  const laneRoutineId = mock.ensureRoutineSession.mock.calls[0][0].routineId;
+  expect(await readRoutineLaneModel('bot', `routine:${laneRoutineId}`)).toMatchObject({ agentKind: 'codex', model: 'budget' });
+});
+
+it('deletes a fresh lane skipped by its pre-run hook instead of leaving an empty shell', async () => {
+  const routine = await routineTools.save('bot', {
+    name: 'Fresh review', prompt: 'Check only this trigger', enabled: true,
+    sessionMode: 'fresh', triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }],
+  });
+  // pre-run hook exit 2：本轮没有任何模型轮次，任务永远不会有过程内容。
+  mock.storage.listRuns.mockResolvedValueOnce([
+    { id: 'execution', scheduleId: 'backing', firedAt: 1, status: 'skipped', resultText: 'pre-run hook exit 2 — 4780ms' },
+  ]);
+  await routineTools.runNow('bot', routine.id);
+  await vi.waitFor(async () => expect(mock.deleteRoutineSession).toHaveBeenCalled());
+  expect(mock.deleteRoutineSession).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^lane-${routine.id}:`)));
+  expect(mock.closeRoutineSession).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^lane-${routine.id}:`)));
+  // 空壳已回收，历史不挂「查看任务」死链，结果文字照常保留。
+  const run = (await routineTools.history('bot', routine.id))[0];
+  expect(run.sessionId).toBeUndefined();
+  expect(run.resultText).toBe('pre-run hook exit 2 — 4780ms');
+});
+
+it('keeps a persistent lane and its history entry when the pre-run hook skips', async () => {
+  const routine = await routineTools.save('bot', {
+    name: 'Review', prompt: 'Check the PR', enabled: true,
+    triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }],
+  });
+  // persistent 被 hook 跳过：任务保留，历史入口照常（不随 fresh 的空壳回收省略 sessionId）。
+  mock.storage.listRuns.mockResolvedValueOnce([
+    { id: 'execution', scheduleId: 'backing', firedAt: 1, status: 'skipped', resultText: 'pre-run hook exit 2 — 4780ms' },
+  ]);
+  await routineTools.runNow('bot', routine.id);
+  await vi.waitFor(async () => expect((await routineTools.history('bot', routine.id))[0].status).toBe('skipped'));
+  expect(mock.deleteRoutineSession).not.toHaveBeenCalled();
+  expect((await routineTools.history('bot', routine.id))[0].sessionId).toBe(`lane-${routine.id}`);
+});
+
+it('deletes a fresh lane when the backing storage write fails', async () => {
+  const routine = await routineTools.save('bot', {
+    name: 'Fresh review', prompt: 'Check only this trigger', enabled: true,
+    sessionMode: 'fresh', triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }],
+  });
+  // backing 写入失败：本轮不可能派发给模型，空壳任务仍必须被关掉并删掉。
+  mock.storage.get.mockRejectedValueOnce(new Error('storage unavailable'));
+  await routineTools.runNow('bot', routine.id);
+  await vi.waitFor(async () => expect(mock.deleteRoutineSession).toHaveBeenCalled());
+  expect(mock.deleteRoutineSession).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^lane-${routine.id}:`)));
+  expect(mock.closeRoutineSession).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^lane-${routine.id}:`)));
+});
+
+it('deletes a fresh lane deferred before dispatch', async () => {
+  const input = {
+    name: 'Fresh review', prompt: 'Check only this trigger', enabled: true,
+    sessionMode: 'fresh' as const, triggers: [{ id: 'tick', kind: 'interval' as const, intervalMs: 60000 }],
+  };
+  const routine = await routineTools.save('bot', input);
+  // 触发途中改了这条例行任务：这轮不会真跑，fresh 的空壳任务同样不能留下。
+  mock.ensureRoutineSession.mockImplementationOnce(async ({ routineId }: { routineId: string }) => {
+    await routineTools.save('bot', { ...input, prompt: 'Edited mid-flight' }, routine.id);
+    return { ok: true as const, sessionId: `lane-${routineId}`, created: false };
+  });
+  await routineTools.runNow('bot', routine.id);
+  await vi.waitFor(async () => expect(mock.deleteRoutineSession).toHaveBeenCalled());
+  expect(mock.deleteRoutineSession).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^lane-${routine.id}:`)));
+});
+
+it('turns the teammate\'s weekday todo check on and off as one built-in routine', async () => {
+  // 近况里的「每天帮我查一次」：打开建内置例行任务，关掉只暂停，再打开复用同一条，不重复建。
+  expect(await routineTools.todoCheckEnabled('bot')).toBe(false);
+  expect(await routineTools.setTodoCheck('bot', true)).toBe(true);
+  const [routine] = await routineTools.list('bot');
+  expect(routine).toMatchObject({ builtin: 'todo-check', enabled: true, silentWhenIdle: true,
+    triggers: [{ kind: 'cron', expression: '0 9 * * 1-5' }] });
+  expect(await routineTools.setTodoCheck('bot', false)).toBe(false);
+  expect(await routineTools.todoCheckEnabled('bot')).toBe(false);
+  expect(await routineTools.setTodoCheck('bot', true)).toBe(true);
+  expect((await routineTools.list('bot')).map(row => [row.id, row.enabled])).toEqual([[routine.id, true]]);
 });
 
 it('skips a demoted teammate\'s routine while its home is another computer, keeping the rule', async () => {
@@ -147,7 +280,7 @@ it.skipIf(process.platform === 'win32')('rejects saving a pre-run hook command w
 it('blocks enabling and manual runs until imported handover is ready while retaining disabled edits', async () => {
   let ready = false;
   configureRoutineHost({
-    getBot: mock.getBot, getScheduler: () => mock.scheduler, getScheduleStorage: () => mock.storage,
+    getBot: mock.getBot, ensureRoutineSession: mock.ensureRoutineSession, getScheduler: () => mock.scheduler, getScheduleStorage: () => mock.storage,
     assertImportedAutomationReady: async (_root, _botId, id) => { if (id === 'imported-routine-id' && !ready) throw new Error('AUTOMATION_HANDOVER_REQUIRED'); },
   });
   const input = { name: 'Imported', prompt: 'Read data', enabled: false, triggers: [{ id: 'tick', kind: 'interval' as const, intervalMs: 60000 }] };
@@ -168,7 +301,7 @@ it('blocks enabling and manual runs until imported handover is ready while retai
 it('uses the revision committed by an explicit handover retry when saving or manually running a routine', async () => {
   const engine = await getRoutineEngine();
   configureRoutineHost({
-    getBot: mock.getBot, getScheduler: () => mock.scheduler, getScheduleStorage: () => mock.storage,
+    getBot: mock.getBot, ensureRoutineSession: mock.ensureRoutineSession, getScheduler: () => mock.scheduler, getScheduleStorage: () => mock.storage,
     assertImportedAutomationReady: async (_root, botId, id) => {
       const current = engine.list(botId).find(routine => routine.id === id);
       if (!current || current.enabled) return;
@@ -185,7 +318,7 @@ it('uses the revision committed by an explicit handover retry when saving or man
 
 it('defers a queued imported run during an unacknowledged handover without dispatching', async () => {
   configureRoutineHost({
-    getBot: mock.getBot, getScheduler: () => mock.scheduler, getScheduleStorage: () => mock.storage,
+    getBot: mock.getBot, ensureRoutineSession: mock.ensureRoutineSession, getScheduler: () => mock.scheduler, getScheduleStorage: () => mock.storage,
     prepareImportedAutomation: async (_root, _routine, runId) => ({ runId, prompt: '', deferred: true }),
   });
   const routine = await routineTools.save('bot', { name: 'Imported', prompt: 'Read data', enabled: true, triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }] });
@@ -198,7 +331,7 @@ it('defers a queued imported run during an unacknowledged handover without dispa
 it.each(['direct', 'model'] as const)('disables an exhausted imported %s routine after recording its final success', async mode => {
   const finish = vi.fn(async () => true);
   configureRoutineHost({
-    getBot: mock.getBot, getScheduler: () => mock.scheduler, getScheduleStorage: () => mock.storage,
+    getBot: mock.getBot, ensureRoutineSession: mock.ensureRoutineSession, getScheduler: () => mock.scheduler, getScheduleStorage: () => mock.storage,
     prepareImportedAutomation: async (_root, _routine, runId) => ({ runId, prompt: 'Imported', ...(mode === 'direct' ? { direct: 'Report' } : {}) }),
     finishImportedAutomation: finish,
   });
@@ -214,7 +347,7 @@ it.each(['direct', 'model'] as const)('disables an exhausted imported %s routine
 it('disables a previously exhausted import without dispatching, while ordinary monitor skips stay enabled', async () => {
   let exhausted = false;
   configureRoutineHost({
-    getBot: mock.getBot, getScheduler: () => mock.scheduler, getScheduleStorage: () => mock.storage,
+    getBot: mock.getBot, ensureRoutineSession: mock.ensureRoutineSession, getScheduler: () => mock.scheduler, getScheduleStorage: () => mock.storage,
     prepareImportedAutomation: async (_root, _routine, runId) => ({ runId, prompt: '', skipped: true, exhausted }),
   });
   const routine = await routineTools.save('bot', { name: 'Limited', prompt: 'Report', enabled: true, triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }] });
@@ -301,6 +434,106 @@ it('keeps a busy batch queued for 30 seconds and then executes it once', async (
   const history = await routineTools.history('bot', routine.id);
   expect(history).toHaveLength(1);
   expect(history[0]).toMatchObject({ id: pending.id, status: 'success', resultText: 'Reviewed PR' });
+});
+
+// #7044 / unit: publish through the real engine under an admitted tool's ALS,
+// then revoke that turn before dispatch. Existing busy-batch coverage has no
+// ambient credential, so it cannot catch failure before the busy check.
+it('defers a completion event under an expired tool context and retries the same batch once', async () => {
+  vi.useFakeTimers();
+  const engine = await getRoutineEngine();
+  engine.registerSource({ id: 'host:sessions', name: 'Sessions', status: 'listening',
+    events: [{ type: 'finished', name: 'Finished', fields: [] }] });
+  const routine = await routineTools.save('bot', {
+    name: 'Read-only watcher', prompt: 'Read the execution history', enabled: true,
+    triggers: [{ id: 'done', kind: 'event', sourceId: 'host:sessions', eventType: 'finished', filters: [] }],
+  });
+  const event = { id: 'completed-task', type: 'finished', subject: 'other-task', occurredAt: Date.now(), data: {} };
+  let current = true;
+  const admission = await admitTaskAction({ server: 'cindy_helper', tool: 'start_session_task', sessionId: 'parent', args: {} }, {
+    key: 'parent-turn', ownerInput: true, delegated: false,
+    assertCurrent: async () => { if (!current) throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED'); },
+  });
+  if (!admission.ok || !admission.run) throw new Error('Missing tool admission');
+  mock.scheduler.runNow.mockImplementationOnce(async () => {
+    // Exercise the queued Host delivery guard without loading the Electron dispatch graph.
+    await assertTaskActionCurrent();
+    return { runId: 'busy', deferred: true };
+  });
+  await admission.run(async () => {
+    current = false;
+    await engine.publish('host:sessions', event);
+    await vi.advanceTimersByTimeAsync(0);
+    const pending = (await routineTools.history('bot', routine.id))[0];
+    expect(pending.error).toBeUndefined();
+    expect(pending).toMatchObject({ status: 'queued', events: [{ sourceId: 'host:sessions', event }] });
+    expect(mock.scheduler.runNow).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(mock.scheduler.runNow).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await routineTools.history('bot', routine.id)).toEqual([
+      expect.objectContaining({ id: pending.id, status: 'success', events: pending.events, resultText: 'Reviewed PR' }),
+    ]);
+    await engine.publish('host:sessions', event);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mock.scheduler.runNow).toHaveBeenCalledTimes(2);
+    // Isolation is local to execution; it must not revive the caller's grant.
+    await expect(assertTaskActionCurrent()).rejects.toThrow('TASK_ACTION_AUTHORIZATION_EXPIRED');
+  });
+});
+
+// #7044 / unit: even a still-valid caller grant must not become authority for
+// independent manual, timer or plugin-event runs (including later async work).
+it.each(['manual', 'interval', 'event'] as const)('isolates a %s routine from a valid caller grant', async (trigger) => {
+  vi.useFakeTimers();
+  const engine = await getRoutineEngine();
+  engine.registerSource({ id: 'plugin:mail', name: 'Mail', status: 'listening',
+    events: [{ type: 'mail', name: 'Mail', fields: [] }] });
+  const routine = await routineTools.save('bot', {
+    name: 'Watch', prompt: 'Read history', enabled: true,
+    triggers: trigger === 'event'
+      ? [{ id: 'mail', kind: 'event', sourceId: 'plugin:mail', eventType: 'mail', filters: [] }]
+      : [{ id: 'tick', kind: 'interval', intervalMs: 60_000 }],
+  });
+  const admission = await admitTaskAction({ server: 'cindy_helper', tool: 'start_session_task', sessionId: 'parent', args: {} }, {
+    key: 'parent-turn', ownerInput: true, delegated: false, assertCurrent: async () => {},
+  });
+  if (!admission.ok || !admission.run) throw new Error('Missing tool admission');
+  const observed: boolean[] = [];
+  mock.scheduler.runNow.mockImplementationOnce(async () => {
+    await Promise.resolve();
+    observed.push(hasTaskActionAuthorization());
+    return { runId: 'execution' };
+  });
+  await admission.run(async () => {
+    if (trigger === 'manual') await routineTools.runNow('bot', routine.id);
+    else if (trigger === 'event') await engine.publish('plugin:mail', { id: 'mail-1', type: 'mail', occurredAt: Date.now(), data: {} });
+    else { vi.setSystemTime(Date.now() + 60_000); await engine.tick(); }
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await routineTools.history('bot', routine.id))[0]).toMatchObject({ status: 'success' });
+    expect(observed).toEqual([false]);
+    expect(hasTaskActionAuthorization('parent')).toBe(true);
+  });
+});
+
+// #7044 / unit: isolation is not a blanket authorization-error retry. A failure
+// returned by the independent execution may follow side effects and stays final.
+it('keeps an independent execution failure visible without replaying its batch', async () => {
+  vi.useFakeTimers();
+  const routine = await routineTools.save('bot', {
+    name: 'Watch', prompt: 'Read history', enabled: true,
+    triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60_000 }],
+  });
+  mock.storage.listRuns.mockResolvedValueOnce([
+    { id: 'execution', scheduleId: 'backing', firedAt: 1, status: 'failed', errorMsg: 'TASK_ACTION_AUTHORIZATION_EXPIRED' },
+  ]);
+  await routineTools.runNow('bot', routine.id);
+  await vi.advanceTimersByTimeAsync(0);
+  expect((await routineTools.history('bot', routine.id))[0]).toMatchObject({
+    status: 'failed', error: 'TASK_ACTION_AUTHORIZATION_EXPIRED',
+  });
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(mock.scheduler.runNow).toHaveBeenCalledOnce();
 });
 
 it('keeps attacker-controlled event strings on one escaped JSON line inside the data boundary', async () => {
@@ -623,14 +856,14 @@ it('passes the saved reminder choice and check into the shared runner and return
   });
   await routineTools.runNow('bot', routine.id);
   await vi.waitFor(async () => expect((await routineTools.history('bot', routine.id))[0].status).toBe('skipped'));
-  expect(mock.storage.insert).toHaveBeenCalledWith(expect.objectContaining({ targetSessionId: 'canonical-task', silentWhenIdle: false, preRunHook }));
+  expect(mock.storage.insert).toHaveBeenCalledWith(expect.objectContaining({ targetSessionId: `lane-${routine.id}`, silentWhenIdle: false, preRunHook }));
 });
 
 it('persists all imported paused routines before tool-policy setup and never dispatches them', async () => {
   const { indexAutomationDependencies, normalizeAutomation } = await import('../../bot-import/sourceAutomations.js');
   const dependencies = indexAutomationDependencies([]);
   const guard = vi.fn(async () => { throw new Error('SOURCE_TOOL_POLICY_NEEDS_MAPPING'); });
-  configureRoutineHost({ getBot: mock.getBot, getScheduler: () => mock.scheduler, getScheduleStorage: () => mock.storage, assertImportedAutomationReady: guard });
+  configureRoutineHost({ getBot: mock.getBot, ensureRoutineSession: mock.ensureRoutineSession, getScheduler: () => mock.scheduler, getScheduleStorage: () => mock.storage, assertImportedAutomationReady: guard });
   for (let index = 0; index < 11; index++) {
     const item = normalizeAutomation({ agentId: 'source', kind: 'openclaw', name: 'Source', root: '/fixture', workspace: '/fixture', configFile: '/fixture/openclaw.json' }, {
       id: `report-${index}`, name: `Report ${index}`, enabled: false,
@@ -647,4 +880,65 @@ it('persists all imported paused routines before tool-policy setup and never dis
   expect(routines.every(routine => !routine.enabled)).toBe(true);
   expect(mock.scheduler.runNow).not.toHaveBeenCalled();
   await expect(routineTools.runNow('bot', routines[0].id)).rejects.toThrow('SOURCE_TOOL_POLICY_NEEDS_MAPPING');
+});
+
+// Regression: persisted queued batches survive app upgrades and settings changes.
+it('skips revoked follow-up batches and still dispatches authorized delegated events', async () => {
+  const engine = await getRoutineEngine();
+  const source = { id: 'host:sessions', name: 'Sessions', status: 'listening' as const,
+    events: [{ type: 'errored', name: 'Error', fields: [] }] };
+  engine.registerSource(source);
+  const routine = await engine.ensureBuiltin('bot', 'follow-up', {
+    name: 'Follow up', prompt: 'Follow', enabled: true,
+    triggers: [{ id: 'error', kind: 'event', sourceId: 'host:sessions', eventType: 'errored', filters: [] }],
+  }, 'builtin-follow-up-bot');
+  if (!routine) throw new Error('Follow-up routine was not created');
+  mock.followUpEvents.mockReturnValue([]);
+  await engine.publish('host:sessions', { id: 'old', type: 'errored', subject: 'revoked', occurredAt: Date.now(), data: { title: 'PRIVATE_OLD_SUMMARY' } });
+  await vi.waitFor(async () => expect((await routineTools.history('bot', routine.id))[0]?.status).toBe('skipped'));
+  expect(mock.scheduler.runNow).not.toHaveBeenCalled();
+  expect(mock.storage.insert).not.toHaveBeenCalled();
+
+  mock.followUpEvents.mockImplementation((_id, events) => events.filter(({ event }) => event.subject === 'delegated'));
+  await engine.publish('host:sessions', { id: 'authorized', type: 'errored', subject: 'delegated', occurredAt: Date.now(), data: { title: 'Assigned work' } });
+  await vi.waitFor(() => expect(mock.scheduler.runNow).toHaveBeenCalledOnce());
+  expect(mock.storage.insert.mock.calls[0][0].prompt).toContain('Assigned work');
+  expect(mock.storage.insert.mock.calls[0][0].prompt).not.toContain('PRIVATE_OLD_SUMMARY');
+});
+
+// #6440 / unit: one completion can match both built-in and explicitly configured
+// follow-up. A receipt-owned batch must skip only the former, before model work.
+it('preserves user routines while skipping receipt-owned built-in completion', async () => {
+  const engine = await getRoutineEngine();
+  engine.registerSource({ id: 'host:sessions', name: 'Sessions', status: 'listening',
+    events: [{ type: 'finished', name: 'Finished', fields: [] }] });
+  const input = { name: 'Completion', prompt: 'Handle result', enabled: true,
+    triggers: [{ id: 'done', kind: 'event' as const, sourceId: 'host:sessions', eventType: 'finished', filters: [] }] };
+  const builtin = await engine.ensureBuiltin('bot', 'follow-up', input, 'builtin-follow-up-bot');
+  const custom = await routineTools.save('bot', input);
+  if (!builtin) throw new Error('Follow-up routine was not created');
+  mock.followUpEvents.mockReturnValue([]);
+  await engine.publish('host:sessions', { id: 'done', type: 'finished', subject: 'delegated', occurredAt: Date.now(), data: {} });
+  await vi.waitFor(async () => {
+    expect((await routineTools.history('bot', builtin.id))[0]?.status).toBe('skipped');
+    expect((await routineTools.history('bot', custom.id))[0]?.status).toBe('success');
+  });
+  expect(mock.scheduler.runNow).toHaveBeenCalledOnce();
+});
+
+// Regression: a completed routine was visible only in its execution lane, never in the initiating chat.
+it.each(['delivered', 'failed', 'suppressed'] as const)('keeps execution success and records %s result delivery', async (status) => {
+  const routine = await routineTools.save('bot', { name: 'Daily report', prompt: 'Summarize only', enabled: true,
+    silentWhenIdle: status === 'suppressed', sessionMode: 'fresh',
+    triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }] });
+  if (status === 'failed') mock.deliverResult.mockRejectedValueOnce(new Error('Destination offline'));
+  if (status === 'suppressed') mock.scheduler.runNow.mockResolvedValueOnce({ runId: 'execution', silenced: true });
+  await routineTools.runNow('bot', routine.id);
+  await vi.waitFor(async () => expect((await routineTools.history('bot', routine.id))[0]?.status).toBe('success'));
+  const [run] = await routineTools.history('bot', routine.id);
+  expect(run).toMatchObject({ resultText: 'Reviewed PR', delivery: { status } });
+  expect(mock.scheduler.runNow).toHaveBeenCalledTimes(1);
+  if (status === 'suppressed') expect(mock.deliverResult).not.toHaveBeenCalled();
+  else expect(mock.deliverResult).toHaveBeenCalledWith(expect.objectContaining({ targetSessionId: 'canonical-task',
+    text: 'Reviewed PR', routine: expect.objectContaining({ id: routine.id }) }));
 });

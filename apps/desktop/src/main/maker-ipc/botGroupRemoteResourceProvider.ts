@@ -1,3 +1,4 @@
+import { teammateGroupActivity } from '@cindy/maker-shared/teammate-status';
 /**
  * Bot group chat for controllers (phones) through the Remote Resource protocol
  * (docs/product-rules/bot-group-chat.md §8, docs/dev-rules/remote-and-mobile-adaptation.md).
@@ -39,6 +40,7 @@ import {
   BOT_GROUP_MEMBER_LINK_REL,
   BOT_GROUP_REMOTE_COLLECTION_ID,
   BOT_GROUP_REMOTE_RESOURCE_KIND,
+  type ChatMaskAction,
   type BotGroupDetail,
   type BotGroupFailure,
   type BotGroupMessageView,
@@ -48,7 +50,7 @@ import {
   type BotGroupThreadShareView,
 } from '../../shared/botGroupChat.js';
 import type { BotGroupChatService } from './botGroupChatService.js';
-import { projectBotGroupExecutionFailures } from '@cindy/maker-shared/botGroupPresentation';
+import { botGroupActivityAt, projectBotGroupExecutionFailures } from '@cindy/maker-shared/botGroupPresentation';
 
 const FALLBACK_MESSAGES = 20;
 const FALLBACK_MESSAGE_CHARS = 280;
@@ -172,9 +174,10 @@ export function botGroupRemoteItem(group: BotGroupSummary): RemoteCollectionItem
     ref: groupRef(group.id),
     display: {
       title: group.name,
+      teammateActivity: teammateGroupActivity(group),
       subtitle: group.members.map((member) => member.name).join('、'),
       ...(preview ? { preview } : {}),
-      timestamp: group.lastMessage?.createdAt ?? group.updatedAt,
+      timestamp: botGroupActivityAt(group),
       lastReplyAt: group.lastReplyAt,
       ...(busy ? { generation: { phase: 'processing', startedAt: null } } : {}),
     },
@@ -187,6 +190,7 @@ export function botGroupRemoteItem(group: BotGroupSummary): RemoteCollectionItem
       label: member.name,
     })),
     revision: JSON.stringify([
+      teammateGroupActivity(group).phase,
       group.updatedAt,
       group.name,
       group.members.map((member) => [member.botId, member.name, member.status]),
@@ -223,6 +227,8 @@ export function botGroupRemoteChatData(detail: BotGroupDetail): BotGroupRemoteCh
     ...(detail.threadShareUpdates ? { threadShareUpdates: Object.fromEntries(Object.entries(detail.threadShareUpdates)
       .map(([id, share]) => [id, shareWithoutPaths(share)])) } : {}),
     supportsAttachments: true,
+    supportsReadReceipts: detail.serverBacked === true,
+    supportsPersonalMask: detail.serverBacked === true,
     supportsMemberRemoval: detail.serverBacked === true,
     supportsSettingsManagement: detail.serverBacked === true,
   };
@@ -319,7 +325,7 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
       const scope = captureDataOwnerBroadcastScope();
       const result = await requireService().listGroups();
       if (!result.ok) refuse(result);
-      const groups = await visibleGroups(result.groups);
+      const groups = await visibleGroups(result.groups.filter(group => !group.archived));
       if (!isDataOwnerBroadcastScopeCurrent(scope)) throw new RemoteResourceRegistryError('NOT_FOUND', 'Account changed');
       const query = request.query?.trim().toLocaleLowerCase() ?? '';
       const matched = query
@@ -430,9 +436,31 @@ export function registerBotGroupRemoteResourceProvider(service: () => BotGroupCh
             mentions: input.mentions,
             clientId: input.clientId,
             division: input.division === true,
+            ...(input.quote !== undefined ? { quote: input.quote } : {}),
             ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
           }, { controllerDeviceId: context.controllerDeviceId });
           break;
+        case 'mask':
+        case 'mask-mentions': {
+          if (!visibleGroup.serverBacked || !current.chatServer?.mask || !current.chatServer.mentions)
+            throw new RemoteResourceRegistryError('INVALID_PARAMS', 'UNSUPPORTED_OPERATION');
+          // The ordinary account-scoped API validates the complete input and keeps
+          // the mask owner separate from the group's administrator.
+          const receipt = actionId === 'mask'
+            ? await current.chatServer.mask({ groupId, action: input.action as ChatMaskAction | undefined, operationId: input.operationId as string | undefined })
+            : await current.chatServer.mentions({ groupId, before: input.before as string | undefined,
+              readIds: input.readIds as string[] | undefined, operationId: input.operationId as string | undefined });
+          if (!receipt.ok) throw new RemoteResourceRegistryError('INVALID_PARAMS', receipt.errorCode);
+          ownerService();
+          return { result: receipt, effects: [] };
+        }
+        case 'read': {
+          if (!visibleGroup.serverBacked || !current.chatServer || typeof input.messageId !== 'string')
+            throw new RemoteResourceRegistryError('INVALID_PARAMS', 'INVALID_PARAMS');
+          const receipt = await current.chatServer.manage({ groupId, action: { type: 'read', messageId: input.messageId } });
+          if (!receipt.ok) refuse(chatGroupFailure(new Error(receipt.errorCode)));
+          return { effects: [] };
+        }
         case 'continue':
           result = await current.continueRound(groupId);
           break;

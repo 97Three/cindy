@@ -35,6 +35,7 @@ import {
   isCameraUnavailableOnSimulator,
   type MobileLocalAttachmentUploadCandidate,
   type MobileLocalAttachmentUploadController,
+  type MobileLocalAttachmentUploadDeps,
   type PendingLocalAttachmentUpload,
 } from '@/session/mobileLocalAttachmentUpload';
 import {
@@ -55,6 +56,8 @@ import {
 import type { RemoteSerializedAttachment } from '@/session/types';
 
 export interface UseMobileLocalAttachmentsOptions {
+  /** Fixed for this composer's lifetime; defaults to the existing computer upload. */
+  upload?: MobileLocalAttachmentUploadDeps['upload'];
   /**
    * composer 附件作用域。已建任务页传 sessionId；作用域换代后，旧 picker / 粘贴 /
    * 标注异步入口与上传完成结果不得写入新作用域。省略时保持旧的单作用域行为。
@@ -94,6 +97,7 @@ async function deleteLocalUris(uris: readonly string[]): Promise<void> {
 
 export interface UseMobileLocalAttachmentsResult {
   beginOutboxAttachmentHandoff: () => Promise<ReturnType<MobileLocalAttachmentUploadController['beginHandoff']>>;
+  insertUploadedAttachment: (current: RemoteSerializedAttachment[], attachment: RemoteSerializedAttachment) => RemoteSerializedAttachment[];
   getUploadedSource: (id: string) => MobileLocalAttachmentUploadCandidate | undefined;
   /** Resolve a tray upload to its delivered attachment without retaining temporary URIs. */
   getUploadedAttachmentId: (localId: string) => string | undefined;
@@ -287,7 +291,7 @@ export function useMobileLocalAttachments(
       if (candidate.kind === 'image') assertMobileImageSize(size);
       else assertMobileDocumentSize(size);
     },
-    upload: (candidate, fileUri, opts) => uploadMobileAttachmentFromFile(candidate, fileUri, { ...opts, sharedTaskId: candidate.sharedTaskId, deviceId: candidate.deviceId }),
+    upload: options.upload ?? ((candidate, fileUri, opts) => uploadMobileAttachmentFromFile(candidate, fileUri, { ...opts, sharedTaskId: candidate.sharedTaskId, deviceId: candidate.deviceId })),
     discard: (attachment, token) => discardMobileUploadedAttachment(attachment, {
       getToken: () => token === undefined ? optionsRef.current.getAccessToken() : Promise.resolve(token),
     }),
@@ -339,13 +343,10 @@ export function useMobileLocalAttachments(
         onAbandoned: undefined, onConsumed: undefined,
       });
       optionsRef.current.onUploaded(attachment, deliveredCandidate, localId);
-      if (candidate.cleanupLocalUris) {
-        // 只有持久缩略图已经接管 composer / sent-message 预览后才删源文件；
-        // 注册失败时保留到页面卸载，不能让已上传附件立刻变成坏图。
-        if (deliveredCandidate.uri !== candidate.uri) {
-          // 附件已交给 composer/outbox，清理失败不能再把成功翻成上传失败。
-          void candidate.cleanupLocalUris(localUris).catch(() => undefined);
-        }
+      if (candidate.cleanupLocalUris && (candidate.kind === 'file' || deliveredCandidate.uri !== candidate.uri)) {
+        // Staging owns retry/send bytes. Images additionally require a replacement
+        // preview before deleting their source; ordinary files have no URI preview.
+        void candidate.cleanupLocalUris(localUris).catch(() => undefined);
       }
     },
     onFailed: (err, localId, candidate) => {
@@ -630,6 +631,18 @@ export function useMobileLocalAttachments(
           if (!(error instanceof Error) || error.message !== 'ATTACHMENT_DELIVERING') throw error;
         }
       }
+    },
+    insertUploadedAttachment: (current, attachment) => {
+      const order = uploadedSourcesRef.current.get(attachment.id)?.incomingShareOrder;
+      if (!order) return [...current, attachment];
+      let position = current.length;
+      for (let i = 0; i < current.length; i++) {
+        const other = uploadedSourcesRef.current.get(current[i].id)?.incomingShareOrder;
+        if (other?.batchId !== order.batchId) continue;
+        position = i + 1;
+        if (other.index > order.index) { position = i; break; }
+      }
+      return [...current.slice(0, position), attachment, ...current.slice(position)];
     },
     getUploadedSource: (id) => uploadedSourcesRef.current.get(id),
     getUploadedAttachmentId: (localId) => [...uploadedSourcesRef.current].find(([, source]) => source.localId === localId)?.[0],

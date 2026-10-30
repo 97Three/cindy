@@ -29,6 +29,7 @@ export * from './messageSearch.js';
 export * from './messageWindow.js';
 export * from './mobileHome.js';
 export * from './payloadSummary.js';
+export * from './projectAliasSync.js';
 export * from './projectOrderSync.js';
 export * from './pathText.js';
 export * from './permissionMode.js';
@@ -67,3 +68,5 @@ export * from './taskTags';
 export * from './workingStatus.js';
 export * from './runningTokenRateHistory.js';
 export * from './userBubbleAppearance.js';
+
+export type { BotDmThreadSummary } from './botDmThread.js';

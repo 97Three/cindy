@@ -31,10 +31,10 @@ import {
 } from '../../shared/menubarQuota.js';
 
 export type MenubarHarness = 'claude-code' | 'codex' | 'pi';
-export type MenubarFamily = 'claude' | 'codex' | 'grok';
+export type MenubarFamily = 'claude' | 'codex' | 'grok' | 'kimi';
 
 export interface MenubarWindowInput {
-  kind: 'session' | 'week' | 'scoped';
+  kind: 'session' | 'week' | 'scoped' | 'period';
   /** Model name for scoped windows ("Fable"). */
   label?: string | null;
   /** 0...100 used. */
@@ -117,6 +117,8 @@ export interface MenubarQuotaPeriod {
   resetsAtMs: number | null;
   /** Spent today (UTC day) across every client; null when the gateway did not say. */
   todaySpend: number | null;
+  /** Undefined preserves the legacy gateway's daily display. */
+  dailyLimitEnabled?: boolean;
 }
 
 export interface MenubarPaygInput {
@@ -199,11 +201,12 @@ const MIN_PACE_ELAPSED = 0.03;
 const ROOMY_CELL_LIMIT = 4;
 /** Settings' soft daily limit for a period quota: period total / 30 × 4.5 (a display hint, not a cap). */
 const DAILY_SOFT_LIMIT_FACTOR = 4.5;
-const FAMILY_ORDER: Record<MenubarFamily, number> = { claude: 0, codex: 1, grok: 2 };
+const FAMILY_ORDER: Record<MenubarFamily, number> = { claude: 0, codex: 1, grok: 2, kimi: 3 };
 const FAMILY_COLORS: Record<MenubarFamily, MenubarColor[]> = {
   claude: ['claude', 'claude2', 'claude3'],
   codex: ['codex'],
   grok: ['fill'],
+  kimi: ['fill'],
 };
 const HARNESS_ORDER: MenubarHarness[] = ['claude-code', 'codex', 'pi'];
 
@@ -241,7 +244,7 @@ function windowState(window: MenubarWindowInput, nowMs: number): WindowState {
     pace: null,
     etaMs: null,
   };
-  if (elapsed >= MIN_PACE_ELAPSED && remaining > 0) {
+  if (window.windowMinutes > 0 && elapsed >= MIN_PACE_ELAPSED && remaining > 0) {
     state.pace = used - state.expected;
     if (used > 0) {
       const etaMs = remaining / (used / (elapsed * span));
@@ -420,6 +423,7 @@ class Builder {
   }
 
   private windowLabel(window: MenubarWindowInput): string {
+    if (window.kind === 'period') return this.t(window.label === 'limit_month_code' ? 'window.kimiMonthCode' : 'window.kimiMonthTotal');
     if (window.kind === 'session') return this.t('window.session', { hours: Math.round(window.windowMinutes / 60) });
     if (window.kind === 'scoped') return this.t('window.scoped', { model: window.label ?? '' });
     return this.t('window.week');
@@ -712,7 +716,7 @@ class Builder {
             : this.t('fact.cindyModels'),
         },
       );
-      if (quota.todaySpend !== null) {
+      if (quota.dailyLimitEnabled !== false && quota.todaySpend !== null) {
         const suggested = source.fullAmount ? (source.fullAmount / 30) * DAILY_SOFT_LIMIT_FACTOR : null;
         facts.push({
           label: this.t('fact.todaySpent'),

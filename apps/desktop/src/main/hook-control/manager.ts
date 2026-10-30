@@ -15,6 +15,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { HOOK_STATUS_REACTIONS } from './statusReactions.js';
 
 import {
   HOOK_FEATURE_GROUP_RELAY,
@@ -37,6 +38,7 @@ import {
   HOOK_FEATURE_TELEGRAM_FINAL_OPS,
   HOOK_FEATURE_TELEGRAM_PROGRESS_OPS,
   HOOK_FEATURE_TURN_DELIVERY,
+  HOOK_FEATURE_X_MEDIA_RELAY,
   makeBindRevoke,
   makeBindStart,
   makeHello,
@@ -1251,6 +1253,7 @@ export function createHookControlManager(deps: HookControlManagerDeps): HookCont
         lane.binding === null ? null : { ...lane.binding, actions: [...lane.binding.actions] },
       // store 侧已保证读出来的别名仍然有效(目录删掉即归零), 这里直投。
       defaultWorkspace: defaultWorkspaceOf(store.get(), lane.config.provider),
+      ...(lane.config.provider === 'x' ? { companionBotId: store.get().xCompanionBotId ?? null } : {}),
     };
   }
 
@@ -1866,6 +1869,9 @@ export function createHookControlManager(deps: HookControlManagerDeps): HookCont
       // 每条连接只声明其服务会实际使用的能力，避免把 provider-neutral wire 误投
       // 到 Slack 服务，也保持老 Slack hello 的兼容面最小。
       features: [...features],
+      ...(provider === undefined || provider === 'telegram'
+        ? { statusReactions: HOOK_STATUS_REACTIONS[provider ?? 'slack'] }
+        : {}),
       ...(includeLifecycleAnnouncement
         ? { lifecycleAnnouncement: lifecycleAnnouncementEnabled() }
         : {}),
@@ -2460,6 +2466,14 @@ export function createHookControlManager(deps: HookControlManagerDeps): HookCont
           send(makeQueryResponse(response));
         }),
       );
+      return;
+    }
+    if (msg.type === 'x.media.result') {
+      if (expectedProvider !== 'x' || lane?.serverFeatures.includes(HOOK_FEATURE_X_MEDIA_RELAY) !== true) {
+        log.warn('x.media.result ignored without negotiated X media relay capability');
+        return;
+      }
+      dispatcher?.handleXMediaResult(dispatchId('x'), msg.payload);
       return;
     }
     if (msg.type === 'turn.delivery') {

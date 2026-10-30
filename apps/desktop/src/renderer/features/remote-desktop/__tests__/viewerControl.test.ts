@@ -244,6 +244,7 @@ const syncOn = async (clipboardSync: RemoteDesktopViewerApi['clipboardSync']) =>
       clipboardSync,
       preferences: async () => ({
         audio: true,
+        idleTimeoutMinutes: 5,
         privacyScreen: false,
         hostMute: false,
         clipboardSync: true,
@@ -346,6 +347,7 @@ it('a display switch that drops and regains control without a reconnect drops th
       clipboardSync,
       preferences: async () => ({
         audio: true,
+        idleTimeoutMinutes: 5,
         privacyScreen: false,
         hostMute: false,
         clipboardSync: true,
@@ -695,6 +697,21 @@ it('requests window content sized for the actual desktop plus toolbar', async ()
   const resize = vi.spyOn(api, 'resize');
   controller.actualSize();
   expect(runtime.receive).toHaveBeenCalledWith({ type: 'actualSize' });
+  expect(resize).toHaveBeenCalledWith(1, 1280, 780);
+});
+
+it('sizes the actual-size window without the fullscreen system inset on the toolbar', async () => {
+  // A revealed fullscreen toolbar is 60px of controls plus a 42px menu bar/titlebar inset.
+  const toolbar = {
+    style: { getPropertyValue: () => '42px' },
+    getBoundingClientRect: () => ({ height: 102 }),
+  };
+  const { api } = await fixture(undefined, false, {
+    root: { parentElement: { querySelector: () => toolbar } } as never,
+  });
+  present();
+  const resize = vi.spyOn(api, 'resize');
+  controller.actualSize();
   expect(resize).toHaveBeenCalledWith(1, 1280, 780);
 });
 

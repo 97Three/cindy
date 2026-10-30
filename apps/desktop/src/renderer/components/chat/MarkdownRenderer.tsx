@@ -66,6 +66,7 @@ import {
   MODEL_EXT_RE,
   normalizeMarkdownImageSrc,
   resolveLocalPath,
+  resolveLocalPathSmart,
   resolveLocalPathSmartCached,
   peekResolveLocalPathSmart,
   toLocalFileUrl,
@@ -117,6 +118,7 @@ import { SessionHandoffCard } from './SessionHandoffCard';
 import { SessionLinkChip } from './SessionLinkChip';
 import { ProjectLinkChip } from './ProjectLinkChip';
 import { ImageLightbox } from './ImageLightbox';
+import { splitQuestionReferences } from '@cindy/maker-shared/interaction';
 import { useImageClipboard } from './useImageClipboard';
 import { ImageHoverPreview } from './ImageHoverPreview';
 import { ImageMissingPlaceholder } from './ImageMissingPlaceholder';
@@ -1119,6 +1121,7 @@ function ResolvedLocalLink({
   anchorProps,
   children,
   sessionId,
+  showFileIcon = true,
 }: {
   resolvedAbsPath: string;
   localKind: MarkdownLocalKind;
@@ -1130,6 +1133,7 @@ function ResolvedLocalLink({
   children: ReactNode;
   /** 当前会话 id;就位时 html 文件左键弹"打开方式"菜单(同 FileTargetChip)。 */
   sessionId?: string;
+  showFileIcon?: boolean;
 }) {
   const { t } = useTranslation();
   // 同 FileTargetChip:html + 有会话上下文时左键按偏好直开,「查看源文件」
@@ -1167,7 +1171,7 @@ function ResolvedLocalLink({
         onContextMenu={ctxMenu.onContextMenu}
         {...anchorProps}
       >
-        {localKind !== 'directory' && nodeToText(children).trim() && (
+        {showFileIcon && localKind !== 'directory' && nodeToText(children).trim() && (
           <FileTypeIcon name={resolvedAbsPath} size={14} className="mr-1 inline-block align-[-0.125em]" />
         )}
         {children}
@@ -1434,6 +1438,41 @@ async function activateResolvedLocalTarget(
   });
 }
 
+/** Evidence in a question uses the same verified targets and previews as messages. */
+export function QuestionReferenceText({ text, onPreviewOpenChange }: { text: string; onPreviewOpenChange?: (open: boolean) => void }) {
+  const ctx = useChatSessionFile();
+  const [image, setImage] = useState<string | null>(null);
+  const [file, setFile] = useState<{ path: string; name: string; line?: number } | null>(null);
+  const [model, setModel] = useState<string | null>(null);
+  const previewOpen = !!(image || file || model);
+  useEffect(() => {
+    onPreviewOpenChange?.(previewOpen);
+    return () => onPreviewOpenChange?.(false);
+  }, [previewOpen, onPreviewOpenChange]);
+  return <>
+    {splitQuestionReferences(text).map((part, index) => part.href ? (
+      <MarkdownTargetLink
+        key={index}
+        href={part.href}
+        workingDir={ctx.workingDir}
+        sessionId={ctx.sessionId}
+        remoteMediaOrigin={toRemoteMediaOrigin(ctx.origin, ctx.workingDir)}
+        isStreaming={false}
+        allowPrivilegedLinks
+        fromBarePath
+        showFileIcon={false}
+        anchorProps={{}}
+        setLightboxSrc={setImage}
+        setTextLightboxFile={setFile}
+        setModelLightboxPath={setModel}
+      >{part.text}</MarkdownTargetLink>
+    ) : part.text)}
+    {image && <ImageLightbox src={image} onClose={() => setImage(null)} />}
+    {file && <TextLightbox filePath={file.path} fileName={file.name} initialLine={file.line} onClose={() => setFile(null)} />}
+    {model && <ModelLightbox source={{ kind: 'local', absPath: model }} onClose={() => setModel(null)} />}
+  </>;
+}
+
 function MarkdownTargetLink({
   href,
   children,
@@ -1448,6 +1487,7 @@ function MarkdownTargetLink({
   fromBarePath,
   remoteMediaOrigin,
   sessionId,
+  showFileIcon,
 }: {
   href?: string;
   children: ReactNode;
@@ -1465,6 +1505,8 @@ function MarkdownTargetLink({
    * shouldRenderCodeReferenceLabel 的调用点与 DESIGN.md §14.5。
    */
   fromBarePath?: boolean;
+  /** Plain question text preserves its layout when a file becomes clickable. */
+  showFileIcon?: boolean;
   /** 远程会话媒体来源:把 xdt-audio:// 等链接改写到 cindy-remote-media://;本地 undefined。 */
   remoteMediaOrigin?: RemoteMediaOrigin;
   /** 当前会话 id;就位时外链 / html 文件左键弹"打开方式"菜单。 */
@@ -1481,7 +1523,7 @@ function MarkdownTargetLink({
     return allowPrivilegedLinks ? target : stripPrivilegedMarkdownTarget(target);
   }, [href, localFileRefs, allowPrivilegedLinks]);
   const target = useResolvedMarkdownTarget(initialTarget, workingDir, isStreaming);
-  const openInlineTarget = () => {
+  const openInlineTarget = async () => {
     if (target.kind === 'anchor') {
       if (!target.id) return;
       const element = document.getElementById(target.id);
@@ -1489,6 +1531,48 @@ function MarkdownTargetLink({
       else toast.error(t('chat.markdownRenderer.anchorNotFound'));
     } else if (target.kind === 'local-image-url') {
       setLightboxSrc(rewriteToRemoteMediaOrigin(target.href, remoteMediaOrigin));
+    } else if (target.kind === 'local-candidate' && !fromBarePath) {
+      // An authored link keeps its destination even after the file moves. Retry
+      // resolution on click instead of trusting a cached "not found" result.
+      try {
+        let result: SmartResolveResult;
+        if (isRemoteFileOrigin(fileCtx.origin)) {
+          const absPath = resolveLocalPath(target.href, workingDir);
+          const { verdict } = await window.electronAPI.fileBrowser.chatStat({
+            origin: fileCtx.origin,
+            workdir: workingDir,
+            absPath,
+          });
+          if (verdict === 'nonfile') {
+            toast.error(t('chat.markdownRenderer.fileUnavailable'));
+            return;
+          }
+          // Unknown may mean offline: the existing preview can still serve a
+          // cached copy or explain the connection failure. Never open locally.
+          result = { status: 'unique', absPath, kind: verdict === 'directory' ? 'directory' : 'file' };
+        } else {
+          result = await resolveLocalPathSmart(target.href, workingDir, { refresh: true });
+        }
+        if (result.status === 'multiple') {
+          toast.error(t('chat.markdownRenderer.duplicateFiles', { count: result.candidates.length }));
+          return;
+        }
+        const resolved = resolvedLocalFromResult(target, result);
+        if (!resolved) {
+          toast.error(t('chat.markdownRenderer.fileUnavailable'));
+          return;
+        }
+        if (resolved.localKind !== 'directory' && isHtmlFilePath(resolved.absPath) && sidebarTargetSessionId) {
+          await openHtmlFileByPreference(sidebarTargetSessionId, resolved.absPath, t, fileCtx);
+        } else {
+          await activateResolvedLocalTarget(
+            resolved, { ...fileCtx, sidebarTargetSessionId },
+            setLightboxSrc, setTextLightboxFile, setModelLightboxPath,
+          );
+        }
+      } catch {
+        toast.error(t('chat.markdownRenderer.openLinkFailed'));
+      }
     }
   };
   const inlineMenu = useLinkContextMenu(href ?? '', [{
@@ -1509,11 +1593,8 @@ function MarkdownTargetLink({
   //   - resolved-local (path uniquely resolves to an existing file) → chip if
   //     the label reads as a file reference, underlined link if the label is
   //     freeform prose.
-  //   - local-candidate (not yet resolved, OR resolved to multiple, OR not
-  //     found) and code-reference (directory / unsupported scheme) → plain
-  //     <span>. We don't reserve a chip slot for paths that may never become
-  //     clickable; instead the chip only appears as a one-shot "lit up"
-  //     upgrade once unique resolution lands after streaming.
+  //   - unresolved authored links remain underlined and resolve again on click.
+  //   - automatically detected paths still require a verified target.
   if (target.kind === 'resolved-local') {
     const openResolvedTarget = () =>
       activateResolvedLocalTarget(
@@ -1538,6 +1619,7 @@ function MarkdownTargetLink({
           onOpen={openResolvedTarget}
           anchorProps={anchorProps}
           sessionId={sessionId}
+          showFileIcon={showFileIcon}
         >
           {children}
         </ResolvedLocalLink>
@@ -1558,13 +1640,11 @@ function MarkdownTargetLink({
     );
   }
 
-  if (target.kind === 'code-reference' || target.kind === 'local-candidate') {
+  if (target.kind === 'code-reference' || (target.kind === 'local-candidate' && fromBarePath)) {
     return <span>{children}</span>;
   }
 
-  // Remaining: external / anchor / local-image-url — none of these flow
-  // through the streaming → resolution transition, so the underlined-link
-  // visual is stable from first paint. No jitter risk here.
+  // Explicit local candidates retain the same open/copy-link menu as links.
   return (
     <>
     <a
@@ -1997,7 +2077,11 @@ export const MarkdownRenderer = memo(function MarkdownRenderer(props: MarkdownRe
     if (node.kind === 'video' && youtubeVideo(raw)) return <VideoSitePreview src={raw} title={richString(node, 'alt', 'YouTube')} />;
     const normalized = raw.startsWith('xdt-audio://') && props.allowPrivilegedLinks !== false ? raw : normalizeMarkdownImageSrc(raw, props.workingDir, props.allowPrivilegedLinks !== false);
     if (!normalized) return null;
-    const src = rewriteToRemoteMediaOrigin(normalized, props.currentSessionId ? toRemoteMediaOrigin(sessionFileCtx.origin, sessionFileCtx.workingDir) : undefined);
+    // Local audio has its own extension-checked protocol; xdt-file serves
+    // images/documents/video and rejects MP3. Preserve the encoded path and
+    // select the handler before wrapping the URL for a remote source device.
+    const playable = node.kind === 'audio' ? normalized.replace(/^xdt-file:/, 'xdt-audio:') : normalized;
+    const src = rewriteToRemoteMediaOrigin(playable, props.currentSessionId ? toRemoteMediaOrigin(sessionFileCtx.origin, sessionFileCtx.workingDir) : undefined);
     return node.kind === 'audio' ? <InlineXdtAudioPlayer src={src} /> : <ChatVideoView src={src} filename={richString(node, 'alt', 'video')} variant="tool-output" sessionId={props.currentSessionId} />;
   };
   const parts = useMemo(() => props.renderRichAnswers ? splitRichAnswer(source) : [], [source, props.renderRichAnswers]);

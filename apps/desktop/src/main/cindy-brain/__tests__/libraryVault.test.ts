@@ -136,10 +136,25 @@ describe('LibraryVault', () => {
       const parent = path.join(tmpRoot, 'picked-owner');
       const custom = path.join(parent, 'test-ghost');
       await fs.promises.mkdir(parent, { recursive: true });
-      const previous = makeVault({ rootDir: () => custom, locationKind: 'custom', ghostId: 'other-plugin' });
+      // Seed the persisted tree without a native helper: this unit tests the
+      // vault's owner comparison, not cold PowerShell startup (15s under CI load).
+      // Real held-fd init/open coverage remains in the custom-tree tests below.
+      const previous = makeVault({ rootDir: () => custom, ghostId: 'other-plugin' });
       expect(await previous.open()).toMatchObject({ ok: true, state: 'ready' });
-      const current = makeVault({ rootDir: () => custom, locationKind: 'custom' });
+      const metaFile = path.join(custom, '.cindy-library', 'meta.json');
+      const persistedMeta = await fs.promises.readFile(metaFile, 'utf8');
+      const keepFile = path.join(custom, 'keep.txt');
+      await fs.promises.writeFile(keepFile, 'private');
+      const openExistingCustom = vi.fn(async () => ({
+        ok: true as const,
+        meta: JSON.parse(await fs.promises.readFile(metaFile, 'utf8')),
+        usage: null,
+      }));
+      const current = makeVault({ rootDir: () => custom, locationKind: 'custom', openExistingCustom });
       expect(await current.open()).toMatchObject({ ok: true, state: 'unavailable', reason: 'binding-moved' });
+      expect(openExistingCustom).toHaveBeenCalledOnce();
+      expect(await fs.promises.readFile(metaFile, 'utf8')).toBe(persistedMeta);
+      expect(await fs.promises.readFile(keepFile, 'utf8')).toBe('private');
     });
 
     it('open 建骨架并写 meta;重复 open 幂等', async () => {
@@ -161,13 +176,24 @@ describe('LibraryVault', () => {
       const parent = path.join(tmpRoot, 'picked-no-init');
       const custom = path.join(parent, 'mivo-canvas');
       await fs.promises.mkdir(parent, { recursive: true });
+      // Unit contract: LibraryVault.open must not recreate an initialized custom
+      // library after existing-open reports MISSING. Under CI load the native
+      // PowerShell helper can hit its 15s timeout instead (CI #7829). Inject
+      // its result here; adjacent custom-tree cases retain real helper coverage.
+      const openExistingCustom = vi.fn(async () => ({ ok: false as const, code: 'MISSING' as const }));
+      const initCustomTree = vi.fn(async () => ({ ok: false as const, code: 'UNSUPPORTED' as const }));
       const vault = makeVault({
         rootDir: () => custom,
         locationKind: 'custom',
         allowCustomInit: false,
+        openExistingCustom,
+        initCustomTree,
       });
       const missing = await vault.open();
       expect(missing).toMatchObject({ ok: true, state: 'unavailable', reason: 'disk-missing' });
+      expect(openExistingCustom).toHaveBeenCalledOnce();
+      expect(initCustomTree).not.toHaveBeenCalled();
+      expect(fs.existsSync(custom)).toBe(false);
       expect(fs.existsSync(path.join(custom, '.cindy-library', 'meta.json'))).toBe(false);
     });
 

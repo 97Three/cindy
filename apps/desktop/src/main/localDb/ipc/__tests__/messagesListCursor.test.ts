@@ -6,7 +6,7 @@ import { messages, sessions } from '../../schema';
 import * as taskImages from '../../../cindy-media/taskImageDelivery';
 import * as currentDb from '../../client/current';
 import { runDeviceLinkInvokeContext } from '../../../device-link/invoke-context';
-import { MAX_HISTORY_SCAN_ROWS } from '../historyViewReader';
+import { MAX_HISTORY_SCAN_ROWS, type HistoryPageShape } from '../historyViewReader';
 import { historyViewLeaves, type HistoryViewPage, type HistoryDetailPage, type HistoryMessageSource } from '@cindy/maker-shared/message-window';
 import type { DbClient } from '../../client/DbClient';
 import { captureMediaUserTurn, refreshMediaUserTurnCost } from '../../../usage/mediaTurnCost';
@@ -106,6 +106,7 @@ function createDb(): Database.Database {
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
       cleared_at INTEGER,
+      source TEXT NOT NULL DEFAULT 'desktop',
       parent_session_id TEXT,
       status TEXT NOT NULL DEFAULT 'active',
       created_at INTEGER NOT NULL DEFAULT 0,
@@ -188,11 +189,23 @@ describe('local-db:messages:list cursor', () => {
       parent ? JSON.stringify({ parentUuid: parent, model: 'actual-child-model' }) : null, Number(id));
     add('0', 'user', 'Visible question');
     add('1', 'tool_use', { toolName: 'Agent', toolUseId: 'agent', input: { description: 'Inspect' } });
-    for (let n = 2; n < 103; n++) add(String(n), 'thinking', { text: 'hidden '.repeat(1000), durationMs: 10 }, 'agent');
+    const unchangedByteTail = 'q'.repeat(200);
+    for (let n = 2; n < 103; n++) add(String(n), 'thinking', {
+      text: n === 2 ? `ab${unchangedByteTail}` : 'hidden '.repeat(1000), durationMs: 10,
+    }, 'agent');
     add('103', 'assistant', 'Visible answer');
     registerMessageIpc();
-    const invoke = (channel: string, ...args: unknown[]) => runDeviceLinkInvokeContext({ controllerDeviceId: 'd', channel }, () => h.handlers.get(channel)!({}, 's1', ...args));
-    const page = await invoke('local-db:messages:view', { lazyDetails: true }) as HistoryViewPage<HistoryMessageSource>;
+    const shapes: HistoryPageShape[] = [];
+    const historyView = {
+      disable() {}, setExpanded() {},
+      update(_keys: readonly string[], latest?: { shape?: HistoryPageShape }) {
+        if (latest?.shape) shapes.push(latest.shape);
+      },
+    };
+    const invoke = (channel: string, ...args: unknown[]) => runDeviceLinkInvokeContext({
+      controllerDeviceId: 'd', channel, historyView,
+    }, () => h.handlers.get(channel)!({}, 's1', ...args));
+    const page = await invoke('local-db:messages:view', { lazyDetails: true, workLines: true }) as HistoryViewPage<HistoryMessageSource>;
     expect(page.hasMore).toBe(false);
     expect(JSON.stringify(page)).not.toContain('hidden ');
     expect(JSON.stringify(page)).toContain('Visible answer');
@@ -203,9 +216,14 @@ describe('local-db:messages:list cursor', () => {
     expect(detail.messages.length).toBeGreaterThan(0);
     expect(detail.messages.every((row) => (row.agentMeta as { parentUuid?: string })?.parentUuid === 'agent')).toBe(true);
     expect(JSON.stringify(detail)).toContain('hidden ');
-    expect(await invoke('local-db:messages:view', { lazyDetails: true })).toEqual(page);
-    sqlite.prepare('UPDATE messages SET content = ? WHERE id = ?').run(JSON.stringify({ text: 'edited '.repeat(1000), durationMs: 10 }), '2');
-    expect(await invoke('local-db:messages:view', { lazyDetails: true })).not.toEqual(page);
+    expect(await invoke('local-db:messages:view', { lazyDetails: true, workLines: true })).toEqual(page);
+    expect(shapes.at(-1)?.fingerprints).toEqual(shapes.at(-2)?.fingerprints);
+    // Same UTF-8 byte length and unchanged last 96 bytes, but a different character
+    // count ("ab" → "é"): the production UPDATE → outline entry must invalidate.
+    sqlite.prepare('UPDATE messages SET content = ? WHERE id = ?')
+      .run(JSON.stringify({ text: `é${unchangedByteTail}`, durationMs: 10 }), '2');
+    expect(await invoke('local-db:messages:view', { lazyDetails: true, workLines: true })).not.toEqual(page);
+    expect(shapes.at(-1)?.fingerprints).not.toEqual(shapes.at(-2)?.fingerprints);
   });
   it('keeps a command larger than the scan budget folded without losing its trailing artifact or full details', async () => {
     const sqlite = createDb();
@@ -313,6 +331,23 @@ describe('local-db:messages:list cursor', () => {
       const rows=await listMessagesForAgentHandoff('s1',null,undefined,'authorization');
       expect(rows).toHaveLength(109);expect(rows[0]?.clientId).toBe('human-20');expect(rows.at(-1)?.clientId).toBe('human-128');
       expect(await listMessagesForAgentHandoff('s1',100,undefined,'authorization')).toHaveLength(100);
+    } finally { sqlite.close(); }
+  });
+
+  // Side-chat fork boundary: inherited history remains readable but cannot authorize new actions.
+  // This real SQLite fixture covers the query predicate missing from ordinary history tests (unit).
+  it('keeps inherited context out of side-chat authorization, including late answers to old cards', async () => {
+    const sqlite = createDb();
+    try {
+      sqlite.prepare("INSERT INTO sessions (id, source, created_at) VALUES ('s1', 'side-chat', 100)").run();
+      insertCostMessage(sqlite, { id: 'parent-grant', role: 'user', createdAt: 10 });
+      insertCostMessage(sqlite, { id: 'parent-card', role: 'ask_user', createdAt: 20,
+        agentMeta: { autoReviewUserText: { text: 'Deploy now', acceptedAt: 150 } } });
+      insertCostMessage(sqlite, { id: 'side-question', role: 'user', createdAt: 100 });
+      expect((await listMessagesForAgentHandoff('s1', null)).map(row => row.clientId))
+        .toEqual(['parent-grant', 'parent-card', 'side-question']);
+      expect((await listMessagesForAgentHandoff('s1', null, undefined, 'authorization')).map(row => row.clientId))
+        .toEqual(['side-question']);
     } finally { sqlite.close(); }
   });
 

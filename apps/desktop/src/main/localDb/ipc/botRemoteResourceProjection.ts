@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type {
   RemoteCollectionItem,
   RemoteLocalizedText,
@@ -12,6 +14,8 @@ import { isManagedBotAvatarUrl } from '../../../shared/botAvatarValue.js';
 
 export const TEAMMATES_REMOTE_COLLECTION_ID = 'teammates';
 export const BOT_REMOTE_RESOURCE_KIND = 'bot';
+/** Link to an open task this teammate looks after; controllers draw the follow mark from it. */
+export const BOT_FOLLOWING_LINK_REL = 'following';
 
 export const TEAMMATES_TITLE: RemoteLocalizedText = {
   fallback: 'Teammates',
@@ -91,7 +95,14 @@ function sourceRevision(source: BotRemoteResourceSource): string {
     source.activityAt,
     source.canonicalSessionId ?? '',
     source.needsAttention ? 1 : 0,
+    followingDigest(source.followingSessionIds ?? []),
   ].join(':');
+}
+
+/** Short stand-in for the followed task list, so revisions stay small however many tasks. */
+function followingDigest(sessionIds: readonly string[]): string {
+  if (!sessionIds.length) return '';
+  return createHash('sha256').update(sessionIds.join('\n')).digest('hex').slice(0, 16);
 }
 
 export function botRemoteCollectionItemFromSource(
@@ -105,6 +116,8 @@ export function botRemoteCollectionItemFromSource(
     ref: resourceRef(source.id),
     display: {
       title: source.name,
+      teammateActivity: { phase: source.needsAttention ? 'error'
+        : source.lastMessageRole === 'assistant' && source.lastMessageAt === source.lastReplyAt ? 'completed' : 'idle' },
       lastReplyAt: source.lastReplyAt ?? 0,
       ...(source.description ? { subtitle: source.description } : {}),
       ...(source.lastMessagePreview ? { preview: source.lastMessagePreview } : {}),
@@ -126,12 +139,15 @@ export function botRemoteCollectionItemFromSource(
         ? { badges: [{ accessibilityLabel: ATTENTION_COPY, tone: 'warning' as const }] }
         : {}),
     },
-    links: source.canonicalSessionId
-      ? [{
-          rel: 'conversation',
-          target: { kind: 'session', sessionId: source.canonicalSessionId },
-        }]
-      : [],
+    links: [
+      ...(source.canonicalSessionId
+        ? [{ rel: 'conversation', target: { kind: 'session' as const, sessionId: source.canonicalSessionId } }]
+        : []),
+      ...(source.followingSessionIds ?? []).map((sessionId) => ({
+        rel: BOT_FOLLOWING_LINK_REL,
+        target: { kind: 'session' as const, sessionId },
+      })),
+    ],
     revision: sourceRevision(source),
   };
 }

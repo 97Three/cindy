@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { parseToolResultCompactionMarker } from '@cindy/maker-shared/tool-result-compaction';
 
 import { SESSION_SOURCES } from '../../../../shared/sessionSource.js';
 import { buildDbWorkerBundle } from '../../__tests__/dbWorkerTestUtils.js';
@@ -67,7 +68,9 @@ CREATE TABLE sessions (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL DEFAULT 'New Maker',
   working_dir TEXT,
+  project_dir TEXT,
   model TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
+  scheduled_model_baseline TEXT,
   provider_id TEXT,
   agent_device_id TEXT,
   effort TEXT NOT NULL DEFAULT 'high',
@@ -89,6 +92,8 @@ CREATE TABLE sessions (
   agent_kind TEXT NOT NULL DEFAULT 'cc',
   orca_role TEXT,
   source TEXT NOT NULL DEFAULT 'desktop',
+  extra_dirs TEXT NOT NULL DEFAULT '[]',
+  writable_dirs TEXT NOT NULL DEFAULT '[]',
   im_bot_context_id TEXT,
   im_user_id TEXT,
   im_default_route TEXT,
@@ -248,6 +253,7 @@ interface TestSessionRow {
   codexHistoryHasProductPrompt: boolean | null;
   parentSessionId: string | null;
   forkedAtMessageId: string | null;
+  agentDeviceId?: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -367,7 +373,7 @@ describe('db worker tx handlers', () => {
   );
 
   it.each([false, true])(
-    'compacts every tool result without parsing content or resolving its source (inline=%s)',
+    'compacts every tool result without resolving its source (inline=%s)',
     async (useInlineWorker) => {
       await withClient(async (client) => {
         await seedSession(client, 's1');
@@ -447,6 +453,7 @@ describe('db worker tx handlers', () => {
             version: 1,
             originalBytes: Buffer.byteLength(originalContent),
             compactedAt: 500,
+            ...(['structured', 'media'].includes(id) ? { diagnostics: { ok: true } } : {}),
           });
         }
         expect(JSON.parse(rows.find((row) => row.id === 'small')!.content)).toEqual({
@@ -489,6 +496,59 @@ describe('db worker tx handlers', () => {
       }, { useInlineWorker });
     },
   );
+
+  // CU-008 / BU-010: real importer -> cap -> SQLite -> archive -> shared reader. Previous tests only
+  // checked released bytes; long unknown actions lost even their explicit status.
+  // DB tier, file and inline workers; no user profile, network or GUI fixtures.
+  it.each([false, true])('retains bounded diagnostics across truncation and archive (inline=%s)', async useInlineWorker => {
+    await withClient(async client => {
+      await seedSession(client, 'diagnostics');
+      const cases = [
+        { id: 'unknown', text: JSON.stringify({ ok: true, tool: 'click',
+          data: { effect: 'unverifiable', delivery: { mode: 'background' }, text: 'PRIVATE'.repeat(4000) },
+          outcome: { status: 'unknown' }, observation: { ok: true, image: 'PRIVATE' } }),
+          expected: { ok: true, outcome: 'unknown', effect: 'unverifiable', deliveryMode: 'background', observationOk: true } },
+        // #7985: a postcondition accompanies the action, not a standalone verify_state result.
+        { id: 'postcheck', text: JSON.stringify({ ok: false, tool: 'type_text',
+          errorCode: 'POSTCONDITION_NOT_SATISFIED', data: { effect: 'unverifiable', text: 'PRIVATE'.repeat(2000) },
+          outcome: { status: 'failed' }, postcheck: { ok: true, tool: 'verify_state',
+            data: { status: 'unsatisfied', message: 'PRIVATE' } } }),
+          expected: { ok: false, errorCode: 'POSTCONDITION_NOT_SATISFIED', outcome: 'failed',
+            effect: 'unverifiable', verificationStatus: 'unsatisfied' } },
+        { id: 'yielded', text: JSON.stringify({ ok: false, tool: 'type_text', errorCode: 'DESKTOP_INPUT_YIELDED',
+          data: { outcome_unknown: true, message: 'PRIVATE'.repeat(2000) } }),
+          expected: { ok: false, errorCode: 'DESKTOP_INPUT_YIELDED', outcomeUnknown: true } },
+        { id: 'browser-card', text: JSON.stringify({ ok: true, body: 'PRIVATE'.repeat(2000),
+          xdt_card_id: 'test-card', afterSnapshot: { ok: false, errorCode: 'ACT_INVALID_REQUEST', message: 'PRIVATE' } }),
+          expected: { ok: true, afterSnapshotOk: false, afterSnapshotErrorCode: 'ACT_INVALID_REQUEST' } },
+        { id: 'mcp', text: JSON.stringify({ isError: true, content: [{ type: 'text',
+          text: JSON.stringify({ ok: false, errorCode: 'BROWSER_RUNTIME_ACTION_FAILED', message: 'PRIVATE' }) }] }),
+          expected: { ok: false, isError: true, errorCode: 'BROWSER_RUNTIME_ACTION_FAILED' } },
+        { id: 'refused', text: '<tool_use_error>' + JSON.stringify({ ok: false, errorCode: 'STALE_SNAPSHOT',
+          data: { message: 'PRIVATE' } }) + '</tool_use_error>', expected: { ok: false, isError: true, errorCode: 'STALE_SNAPSHOT' } },
+        { id: 'success', text: JSON.stringify({ ok: true }), expected: { ok: true } },
+        { id: 'plain', text: 'PRIVATE session has ended', expected: undefined },
+        { id: 'secret-code', text: JSON.stringify({ ok: false, errorCode: 'PRIVATE_KEY_VALUE', password: 'PRIVATE' }), expected: { ok: false } },
+      ];
+      await client.tx('claude.importMessages', { sessionId: 'diagnostics',
+        importClientIdPrefix: 'diagnostics:', sdkSessionId: 'sdk-diagnostics',
+        rows: cases.map((item, index) => ({ lineNo: index, partIndex: 0, role: 'tool_result',
+          content: item.text, toolUseId: item.id, agentMeta: null, createdAt: index + 1 })) });
+      await client.exec("UPDATE sessions SET status='archived' WHERE id='diagnostics'");
+      await client.tx('toolResults.compactSession', { sessionId: 'diagnostics', now: 500 });
+      const rows = await client.query<{ id: string; content: string }>("SELECT tool_use_id AS id,content FROM messages WHERE session_id='diagnostics'");
+      for (const item of cases) {
+        const stored = rows.find(row => row.id === item.id)!.content;
+        expect(parseToolResultCompactionMarker(stored)).toMatchObject({ type: 'tool_result_compacted', version: 1 });
+        expect((parseToolResultCompactionMarker(stored) as { diagnostics?: unknown })?.diagnostics).toEqual(item.expected);
+        expect(stored).not.toContain('PRIVATE');
+        expect(Buffer.byteLength(stored)).toBeLessThan(512);
+      }
+      await expect(client.tx('toolResults.compactSession', { sessionId: 'diagnostics', now: 600 }))
+        .resolves.toEqual({ compactedRows: 0, originalBytes: 0 });
+      expect(await client.query("SELECT tool_use_id AS id,content FROM messages WHERE session_id='diagnostics'")).toEqual(rows);
+    }, { useInlineWorker });
+  });
 
   it.each([false, true])(
     'compacts SSH sessions and every local source while skipping restored sessions (inline=%s)',
@@ -562,6 +622,119 @@ describe('db worker tx handlers', () => {
       }, { useInlineWorker });
     },
   );
+
+  // #8005: the real transaction must reconcile citation-only differences and
+  // existing import copies, without swallowing separate replies. Existing file
+  // citation tests did not cover memory tails, phase or already imported rows.
+  // Unit tier: both production worker transports, isolated SQLite files.
+  it.each([false, true])('codex import reconciles memory citations and existing copies (inline=%s)', async (useInlineWorker) => {
+    await withClient(async (client) => {
+      await seedSession(client, 's1');
+      const citation = '\n<oai-mem-citation>\n<citation_entries>\nMEMORY.md:1-2[note]\n</citation_entries>\n</oai-mem-citation>';
+      const insert = 'INSERT INTO messages (id, client_id, session_id, role, content, agent_meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)';
+      await client.exec(insert, ['local-1', 'local-1', 's1', 'assistant', JSON.stringify('Done.'), JSON.stringify({ assistantPhase: 'final_answer', totalCostUsd: 2 }), 1000]);
+      await client.exec(insert, ['old-copy', 'codex-import:1', 's1', 'assistant', JSON.stringify('Done.' + citation), '{}', 301001]);
+      const args = {
+        sessionId: 's1', importClientIdPrefix: 'codex-import:', sdkSessionId: 'thread-1', model: 'gpt-5',
+        rows: [{ lineNo: 1, role: 'assistant' as const, text: 'Done.' + citation, content: 'Done.' + citation, createdAt: 301001, sourceCreatedAt: 1001, phase: 'final_answer' as const }],
+      };
+      await expect(client.tx('codex.importMessages', args)).resolves.toMatchObject({ hiddenClientIds: ['codex-import:1'], updatedLocalIds: ['local-1'] });
+      await expect(client.query('SELECT id FROM messages WHERE rewind_at IS NULL ORDER BY created_at')).resolves.toEqual([{ id: 'local-1' }]);
+      const local = await client.queryOne<{ content: string; agent_meta: string }>('SELECT content, agent_meta FROM messages WHERE id = ?', ['local-1']);
+      expect(JSON.parse(local!.content)).toBe('Done.' + citation);
+      expect(JSON.parse(local!.agent_meta)).toMatchObject({ assistantPhase: 'final_answer', totalCostUsd: 2 });
+      await expect(client.queryOne('SELECT content FROM messages WHERE id = ?', ['old-copy'])).resolves.toEqual({ content: JSON.stringify('Done.' + citation) });
+      await expect(client.tx('codex.importMessages', args)).resolves.toEqual({ changed: 0 });
+    }, { useInlineWorker });
+  });
+
+  it.each([false, true])('codex import keeps distinct phases, prose and repeated native items (inline=%s)', async (useInlineWorker) => {
+    await withClient(async (client) => {
+      await seedSession(client, 's1');
+      await client.exec('INSERT INTO messages (id, client_id, session_id, role, content, agent_meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        ['local', 'local', 's1', 'assistant', JSON.stringify('Same'), JSON.stringify({ assistantPhase: 'commentary', agentMessageId: 'item-a', sdkSessionId: 'thread-1' }), 1000]);
+      await client.tx('codex.importMessages', {
+        sessionId: 's1', importClientIdPrefix: 'codex-import:', sdkSessionId: 'thread-1', model: 'gpt-5',
+        rows: [
+          { lineNo: 1, role: 'assistant', text: 'Same', content: 'Same', createdAt: 1001, phase: 'final_answer' },
+          { lineNo: 2, role: 'assistant', text: 'Same', content: 'Same', createdAt: 1002, phase: 'commentary', agentMessageId: 'item-b' },
+          { lineNo: 3, role: 'assistant', text: 'Same\n<oai-mem-citation>example</oai-mem-citation>\nExtra conclusion', content: 'Same\n<oai-mem-citation>example</oai-mem-citation>\nExtra conclusion', createdAt: 1003 },
+        ],
+      });
+      await expect(client.query('SELECT id FROM messages WHERE rewind_at IS NULL')).resolves.toHaveLength(4);
+      await seedSession(client, 's2');
+      await client.exec('INSERT INTO messages (id, client_id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        ['prior', 'prior', 's2', 'assistant', JSON.stringify('Same'), 1000]);
+      await client.tx('codex.importMessages', {
+        sessionId: 's2', importClientIdPrefix: 'codex-import:', sdkSessionId: 'thread-2', model: 'gpt-5',
+        rows: [
+          { lineNo: 1, role: 'user', text: 'Next question', content: 'Next question', createdAt: 2000 },
+          { lineNo: 2, role: 'assistant', text: 'Same', content: 'Same', createdAt: 2100 },
+        ],
+      });
+      await expect(client.query('SELECT id FROM messages WHERE session_id = ?', ['s2'])).resolves.toHaveLength(3);
+      // Background reconciliation supplies assistant candidates only. The
+      // persisted imported user turn must still prevent matching an old reply.
+      await expect(client.tx('codex.importMessages', {
+        sessionId: 's2', importClientIdPrefix: 'codex-import:', sdkSessionId: 'thread-2', model: 'gpt-5',
+        rows: [{ lineNo: 2, role: 'assistant', text: 'Same', content: 'Same', createdAt: 2100 }],
+      })).resolves.toEqual({ changed: 0 });
+    }, { useInlineWorker });
+  });
+
+  // #8005 review: valid nested fence examples/inline backticks must not prevent
+  // matching a terminal citation, while an unclosed code block remains prose.
+  it.each([false, true])('codex import recognizes actual Markdown fences around examples (inline=%s)', async (useInlineWorker) => {
+    await withClient(async (client) => {
+      await seedSession(client, 'fences');
+      const citation = '\n<oai-mem-citation><citation_entries>MEMORY.md:1[note]</citation_entries></oai-mem-citation>';
+      const cases = [
+        { body: 'Example:\n````markdown\n```\n````\nDone.', dedupe: true },
+        { body: 'Use ``` as the delimiter.', dedupe: true },
+        { body: 'Example:\n~~~~\n~~~\n~~~~\nDone.', dedupe: true },
+        { body: 'Example:\n````\n```', dedupe: false },
+        { body: 'Example:\n```\n~~~', dedupe: false },
+      ];
+      for (const [index, { body, dedupe }] of cases.entries()) {
+        await client.exec('INSERT INTO messages (id, client_id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+          [`local-${index}`, `local-${index}`, 'fences', 'assistant', JSON.stringify(body), 1000 + index]);
+        await client.tx('codex.importMessages', {
+          sessionId: 'fences', importClientIdPrefix: 'codex-import:', sdkSessionId: 'thread', model: 'gpt-5',
+          rows: [{ lineNo: index, role: 'assistant', text: body + citation, content: body + citation, createdAt: 1000 + index }],
+        });
+        await expect(client.queryOne('SELECT content FROM messages WHERE client_id = ?', [`codex-import:${index}`]))
+          .resolves.toEqual(dedupe ? undefined : { content: JSON.stringify(body + citation) });
+      }
+    }, { useInlineWorker });
+  });
+
+  it.each([false, true])('codex import uses native identity across delays and consumes legacy matches once (inline=%s)', async (useInlineWorker) => {
+    await withClient(async (client) => {
+      await seedSession(client, 's1');
+      const insert = 'INSERT INTO messages (id, client_id, session_id, role, content, agent_meta, created_at, rewind_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+      await client.exec(insert, ['native', 'native', 's1', 'assistant', JSON.stringify('Long reply'), JSON.stringify({ agentMessageId: 'native-item' }), 1000, null]);
+      await client.exec(insert, ['other-thread', 'other-thread', 's1', 'assistant', JSON.stringify('Other thread'), JSON.stringify({ sdkSessionId: 'different-thread', agentMessageId: 'same-id' }), 1000, null]);
+      await client.exec(insert, ['legacy', 'legacy', 's1', 'assistant', JSON.stringify('Repeated'), null, 1000, null]);
+      await client.exec(insert, ['rewound', 'rewound', 's1', 'assistant', JSON.stringify('Rewound'), null, 1000, 2000]);
+      const args = {
+        sessionId: 's1', importClientIdPrefix: 'codex-import:', sdkSessionId: 'thread-1', model: 'gpt-5',
+        rows: [
+          { lineNo: 1, role: 'assistant' as const, text: 'Long reply', content: 'Long reply', createdAt: 601000, agentMessageId: 'native-item' },
+          { lineNo: 2, role: 'assistant' as const, text: 'Repeated', content: 'Repeated', createdAt: 1001 },
+          { lineNo: 3, role: 'assistant' as const, text: 'Repeated', content: 'Repeated', createdAt: 1002 },
+          { lineNo: 4, role: 'assistant' as const, text: 'Rewound', content: 'Rewound', createdAt: 1003 },
+          { lineNo: 5, role: 'assistant' as const, text: 'Other thread', content: 'Other thread', createdAt: 601000, agentMessageId: 'same-id' },
+        ],
+      };
+      await client.tx('codex.importMessages', args);
+      await expect(client.query('SELECT client_id FROM messages WHERE client_id LIKE ? ORDER BY client_id', ['codex-import:%']))
+        .resolves.toEqual([{ client_id: 'codex-import:3' }, { client_id: 'codex-import:5' }]);
+      // A retained rollout must not resurrect a local reply removed by rewind.
+      await expect(client.queryOne('SELECT content, rewind_at FROM messages WHERE id = ?', ['rewound']))
+        .resolves.toEqual({ content: JSON.stringify('Rewound'), rewind_at: 2000 });
+      await expect(client.tx('codex.importMessages', args)).resolves.toEqual({ changed: 0 });
+    }, { useInlineWorker });
+  });
 
   it('codex.importMessages skips likely local duplicates and upserts imported rows', async () => {
     await withClient(async (client) => {
@@ -1266,6 +1439,43 @@ describe('db worker tx handlers', () => {
     },
   );
 
+  // Claude 首条消息 / 前面轮次都被停掉时没有续接点：软删、清原生会话 id 与交接标记
+  // 必须同一事务落地，否则下次发送会续接仍含被撤回消息的旧原生会话。
+  it.each([false, true])(
+    'rewind.commit clears the native session and stores the handoff marker when restarting (inline=%s)',
+    async (useInlineWorker) => {
+      await withClient(async (client) => {
+        await seedSession(client, 's1');
+        await client.exec('UPDATE sessions SET sdk_session_id = ?, list_message_count = 2 WHERE id = ?', ['sdk-old', 's1']);
+        await client.exec(
+          'INSERT INTO messages (id, client_id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)',
+          ['m1', 'c1', 's1', 'user', 'stopped', 100, 'm2', 'c2', 's1', 'user', 'target', 200],
+        );
+        const markerContent = JSON.stringify({ handoff: 'kept history', consumed: false, reason: 'message-rewind' });
+
+        await client.tx('rewind.commit', {
+          sessionId: 's1',
+          targetCreatedAt: 200,
+          targetMessageId: 'm2',
+          targetClientId: 'c2',
+          nativeContextReset: { markerId: 'mk', markerClientId: 'context-rebuild:mk', markerContent },
+          now: 999,
+        });
+
+        await expect(
+          client.query('SELECT id, role, content, created_at, rewind_at FROM messages ORDER BY created_at, id'),
+        ).resolves.toEqual([
+          { id: 'm1', role: 'user', content: 'stopped', created_at: 100, rewind_at: null },
+          { id: 'm2', role: 'user', content: 'target', created_at: 200, rewind_at: 999 },
+          { id: 'mk', role: 'context_rebuild', content: markerContent, created_at: 999, rewind_at: 999 },
+        ]);
+        await expect(
+          client.queryOne('SELECT sdk_session_id, list_message_count FROM sessions WHERE id = ?', ['s1']),
+        ).resolves.toEqual({ sdk_session_id: null, list_message_count: null });
+      }, { useInlineWorker });
+    },
+  );
+
   it.each([false, true])(
     'rewind.commit remaps surviving native fork anchors to the replacement thread (inline=%s)',
     async (useInlineWorker) => {
@@ -1948,6 +2158,70 @@ describe('db worker tx handlers', () => {
     },
   );
 
+  it.each([false, true])(
+    'sessions.setTerminalStatus archives listed teammate lanes but not private Bot chats (inline=%s)',
+    async (useInlineWorker) => {
+      await withClient(
+        async (client) => {
+          await client.exec(
+            'CREATE TABLE IF NOT EXISTS bot_session_links (id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, session_id TEXT NOT NULL, role TEXT NOT NULL, route_key TEXT, created_at INTEGER NOT NULL, archived_at INTEGER)',
+          );
+          for (const [id, role] of [['routine-lane', 'routine'], ['bot-chat', 'canonical']] as const) {
+            await seedSession(client, id, { source: 'bot' });
+            await client.exec(
+              'INSERT INTO bot_session_links (id, bot_id, session_id, role, created_at) VALUES (?, ?, ?, ?, ?)',
+              [`link-${id}`, 'bot-1', id, role, Date.now()],
+            );
+          }
+          await expect(client.tx('sessions.setTerminalStatus', { sessionId: 'routine-lane', status: 'archived' }))
+            .resolves.toEqual(expect.objectContaining({ sessionId: 'routine-lane', status: 'archived' }));
+          await expect(client.tx('sessions.setTerminalStatus', { sessionId: 'bot-chat', status: 'archived' }))
+            .rejects.toThrow('Bot sessions must use Bot lifecycle');
+          await expect(client.query('SELECT id, status FROM sessions ORDER BY id')).resolves.toEqual([
+            { id: 'bot-chat', status: 'active' }, { id: 'routine-lane', status: 'archived' },
+          ]);
+        },
+        { useInlineWorker },
+      );
+    },
+  );
+
+  // DB tier, #6529: terminal-status writes must delete hidden children in the
+  // same commit. Existing closure-fence coverage only seeded a single task.
+  // A child UPDATE failure must preserve the parent and all child statuses.
+  it.each([false, true])('deletes side chats atomically with their parent (inline=%s)', async useInlineWorker => {
+    await withClient(async client => {
+      await seedSession(client, 'parent');
+      await seedSession(client, 'active-child', { source: 'side-chat', parentSessionId: 'parent' });
+      await seedSession(client, 'archived-child', { source: 'side-chat', parentSessionId: 'parent', status: 'archived' });
+      await seedSession(client, 'ordinary-fork', { parentSessionId: 'parent' });
+      await client.exec(`INSERT INTO shared_task_events (shared_task_id, session_id, revision, kind, terminal, recorded_at)
+        VALUES ('parent-share', 'parent', 1, 'authority', 0, 1), ('child-share', 'active-child', 1, 'authority', 0, 1)`);
+      await client.exec(`CREATE TRIGGER fail_child_delete BEFORE UPDATE OF status ON sessions
+        WHEN OLD.id = 'archived-child' AND NEW.status = 'deleted'
+        BEGIN SELECT RAISE(ABORT, 'child write failed'); END`);
+      await expect(client.tx('sessions.setTerminalStatus', { sessionId: 'parent', status: 'deleted' })).rejects.toThrow('child write failed');
+      await expect(client.query('SELECT id, status FROM sessions ORDER BY id')).resolves.toEqual([
+        { id: 'active-child', status: 'active' }, { id: 'archived-child', status: 'archived' },
+        { id: 'ordinary-fork', status: 'active' }, { id: 'parent', status: 'active' },
+      ]);
+      await expect(client.query("SELECT session_id FROM shared_task_events WHERE kind = 'local-close'")).resolves.toEqual([]);
+      await client.exec('DROP TRIGGER fail_child_delete');
+      await client.tx('sessions.setTerminalStatus', { sessionId: 'parent', status: 'archived' });
+      await expect(client.query('SELECT status FROM sessions WHERE id = ?', ['active-child'])).resolves.toEqual([{ status: 'active' }]);
+      const result = await client.tx('sessions.setTerminalStatus', { sessionId: 'parent', status: 'deleted' });
+      expect(result).toMatchObject({ deletedSideChats: expect.arrayContaining([
+        expect.objectContaining({ sessionId: 'active-child' }), expect.objectContaining({ sessionId: 'archived-child' }),
+      ]) });
+      await expect(client.query('SELECT id, status FROM sessions ORDER BY id')).resolves.toEqual([
+        { id: 'active-child', status: 'deleted' }, { id: 'archived-child', status: 'deleted' },
+        { id: 'ordinary-fork', status: 'active' }, { id: 'parent', status: 'deleted' },
+      ]);
+      await expect(client.query("SELECT session_id FROM shared_task_events WHERE kind = 'local-close' ORDER BY session_id"))
+        .resolves.toEqual([{ session_id: 'active-child' }, { session_id: 'parent' }]);
+    }, { useInlineWorker });
+  });
+
   it('rewind.commit follows transcript parent links and preserves the prior assistant when timestamps are inverted', async () => {
     await withClient(async (client) => {
       await seedSession(client, 's1');
@@ -2058,6 +2332,7 @@ describe('db worker tx handlers', () => {
   it.each([false, true])('fork.session persists runtime provenance and remaps messages (inline=%s)', async (useInlineWorker) => {
     await withClient(async (client) => {
       await seedSession(client, 'src');
+      await client.exec('UPDATE sessions SET project_dir = ? WHERE id = ?', ['/selected-project', 'src']);
       await client.exec(
         'INSERT INTO messages (id, client_id, session_id, role, content, agent_meta, agent_kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?)',
         [
@@ -2093,6 +2368,7 @@ describe('db worker tx handlers', () => {
           parentSessionId: 'src',
           forkedAtMessageId: 'c2',
           providerId: 'xd',
+          agentDeviceId: 'provider-computer',
           contextWindow: 100000,
           contextWindowRuntime: 100000,
         }),
@@ -2107,14 +2383,16 @@ describe('db worker tx handlers', () => {
       expect(result).toEqual({ messageCount: 1 });
       await expect(
         client.queryOne(
-          'SELECT working_dir, parent_session_id, forked_at_message_id, provider_id, context_window, context_window_runtime FROM sessions WHERE id = ?',
+          'SELECT project_dir, working_dir, parent_session_id, forked_at_message_id, provider_id, agent_device_id, context_window, context_window_runtime FROM sessions WHERE id = ?',
           ['forked'],
         ),
       ).resolves.toEqual({
         working_dir: 'D:/repo/project',
+        project_dir: '/selected-project',
         parent_session_id: 'src',
         forked_at_message_id: 'c2',
         provider_id: 'xd',
+        agent_device_id: 'provider-computer',
         context_window: 100000,
         context_window_runtime: 100000,
       });
@@ -2137,13 +2415,51 @@ describe('db worker tx handlers', () => {
     }, { useInlineWorker });
   });
 
-  it.each([false, true])('fork.session recovery marker is atomic with the child (inline=%s)', async (useInlineWorker) => {
+  // Real worker persistence: a source marker in orchestration alone would silently become desktop.
+  // Cover both shipped transports and parent archival/deletion during native fork preparation (DB tier).
+  it.each([false, true])('persists side-chat identity and directory grants atomically (inline=%s)', async useInlineWorker => {
+    await withClient(async client => {
+      await seedSession(client, 'src');
+      await client.exec('UPDATE sessions SET extra_dirs = ?, writable_dirs = ? WHERE id = ?', ['["/reference"]', '["/output"]', 'src']);
+      // DB tier, #6529: copied future history must remain hidden while a live
+      // message is visible immediately. Identity-only coverage had an empty prefix.
+      await client.exec(`INSERT INTO messages (id, client_id, session_id, role, content, created_at)
+        VALUES ('old-user', 'old-user', 'src', 'user', 'question', 1000),
+          ('old-reply', 'old-reply', 'src', 'assistant', 'answer', 1100)`);
+      const args = { sourceSessionId: 'src', sourceClearedAt: null, targetCreatedAt: 1200,
+        newSession: sessionRow('side', { source: 'side-chat', parentSessionId: 'src', createdAt: 200 }),
+        uuidMap: [], newMessageIds: [{ id: 'copied-user', clientId: 'copied-user' }, { id: 'copied-reply', clientId: 'copied-reply' }] };
+      await client.tx('fork.session', args);
+      expect(await client.queryOne('SELECT source, parent_session_id, extra_dirs, writable_dirs FROM sessions WHERE id = ?', ['side']))
+        .toEqual({ source: 'side-chat', parent_session_id: 'src', extra_dirs: '["/reference"]', writable_dirs: '["/output"]' });
+      await client.exec(`INSERT INTO messages (id, client_id, session_id, role, content, created_at)
+        VALUES ('live-user', 'live-user', 'side', 'user', 'follow up', 200)`);
+      expect(await client.query('SELECT id FROM messages WHERE session_id = ? AND created_at >= ? ORDER BY created_at', ['side', 200]))
+        .toEqual([{ id: 'live-user' }]);
+      expect(await client.query('SELECT created_at FROM messages WHERE session_id = ? ORDER BY created_at', ['side']))
+        .toEqual([{ created_at: 99 }, { created_at: 199 }, { created_at: 200 }]);
+      expect(await client.query('SELECT created_at FROM messages WHERE session_id = ? ORDER BY created_at', ['src']))
+        .toEqual([{ created_at: 1000 }, { created_at: 1100 }]);
+      for (const status of ['archived', 'deleted']) {
+        await client.exec('UPDATE sessions SET status = ? WHERE id = ?', [status, 'src']);
+        await expect(client.tx('fork.session', { ...args, newSession: { ...args.newSession, id: 'orphan' } }))
+          .rejects.toThrow('Source task changed');
+        expect(await client.queryOne('SELECT id FROM sessions WHERE id = ?', ['orphan'])).toBeUndefined();
+      }
+    }, { useInlineWorker });
+  });
+
+  // DB tier, #6529: recovery must stay after inherited future history and before
+  // live messages, while ordinary forks retain their original timestamps.
+  it.each([[false, false], [true, false], [false, true], [true, true]])(
+    'fork.session recovery marker is atomic with the child (inline=%s, sideChat=%s)', async (useInlineWorker, sideChat) => {
     await withClient(async (client) => {
       await seedSession(client, 'src');
       await client.exec('INSERT INTO messages (id, client_id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)', ['m1', 'c1', 'src', 'user', 'keep my history', 100]);
       const args = {
         sourceSessionId: 'src', targetCreatedAt: 200,
-        newSession: sessionRow('forked', { sdkSessionId: null, parentSessionId: 'src' }),
+        newSession: sessionRow('forked', { sdkSessionId: null, parentSessionId: 'src',
+          ...(sideChat ? { source: 'side-chat', createdAt: 50 } : {}) }),
         uuidMap: [], newMessageIds: [{ id: 'copy1', clientId: 'copy-client1' }],
         recoveryMarker: { id: 'm1', clientId: 'handoff', createdAt: 300,
           sourceMessagesDigest: computeForkSourceMessagesDigest([{ client_id: 'c1', role: 'user', content: 'keep my history', tool_use_id: null, agent_meta: null, agent_kind: null, created_at: 100 }]),
@@ -2155,10 +2471,14 @@ describe('db worker tx handlers', () => {
       args.recoveryMarker.id = 'recovery';
       await client.tx('fork.session', args);
       expect(await client.queryOne('SELECT sdk_session_id FROM sessions WHERE id = ?', ['forked'])).toEqual({ sdk_session_id: null });
-      expect(await client.queryOne('SELECT role, rewind_at FROM messages WHERE id = ?', ['recovery'])).toEqual({ role: 'context_rebuild', rewind_at: 300 });
-      expect(await client.queryOne('SELECT content FROM messages WHERE id = ?', ['copy1'])).toEqual({ content: 'keep my history' });
+      expect(await client.queryOne('SELECT role, created_at, rewind_at FROM messages WHERE id = ?', ['recovery']))
+        .toEqual({ role: 'context_rebuild', created_at: sideChat ? 50 : 300, rewind_at: sideChat ? 50 : 300 });
+      expect(await client.queryOne('SELECT content, created_at FROM messages WHERE id = ?', ['copy1']))
+        .toEqual({ content: 'keep my history', created_at: sideChat ? 49 : 100 });
       const card = await client.queryOne<{ agent_meta: string }>('SELECT agent_meta FROM messages WHERE id = ?', ['recovery:card']);
       expect(JSON.parse(card!.agent_meta)).toEqual({ contextRebuild: { reason: 'native-session-recovery', handoff: 'keep my history' } });
+      expect(await client.queryOne('SELECT created_at FROM messages WHERE id = ?', ['recovery:card']))
+        .toEqual({ created_at: sideChat ? 50 : 300 });
       expect(await client.queryOne('SELECT content FROM messages WHERE id = ?', ['m1'])).toEqual({ content: 'keep my history' });
     }, { useInlineWorker });
   });

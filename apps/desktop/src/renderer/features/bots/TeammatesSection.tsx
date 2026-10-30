@@ -1,3 +1,7 @@
+import { teammateSelectionStyle } from './teammateSelection';
+import { aggregateTeammateStatus, TEAMMATE_AVATAR } from '@cindy/maker-shared/teammate-status';
+import { TeammateStatusDot } from './TeammateStatusDot';
+import { localTeammateStatus, remoteTeammateStatus, groupTeammateStatus } from './teammateRosterStatus';
 import { BotGenerationLabel } from './BotGenerationLabel';
 import { botRosterLabel } from '../../../shared/botCreation';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react';
@@ -14,13 +18,14 @@ import {
   Settings,
   Trash2,
 } from 'lucide-react';
-import { matchPath, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { Tip } from '@/components/ui/tooltip';
 import { SectionCollapse } from '@/features/cc-agent/sidebar/SectionCollapse';
+import { useCollapsibleShowAll } from '@/features/cc-agent/sidebar/hooks/useCollapsibleShowAll';
 import { useConfirmDialog } from '@/components/ui/confirm-dialog-provider';
 import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts/dataOwnerGeneration';
 import type { BotGroupSummary } from '../../../shared/botGroupChat';
@@ -42,12 +47,11 @@ import { CindyDeviceRow } from './CindyDeviceRow';
 import { cindyDeviceKey, cindyDeviceOptions, isCindyDeviceBot } from './cindyDeviceRoster';
 import { BotAvatar } from './BotAvatar';
 import { BotCreateMenu } from './BotCreateMenu';
-import { useBotMarketEntryHint } from './botMarketEntryHint';
 import { BotDeleteDialog } from './BotDeleteDialog';
 import { BotGroupSidebarRow } from './BotGroupSidebarRow';
 import { BotGroupSidebarAvatar } from './BotGroupAvatars';
 import { refreshBotGroups, useBotGroupList } from './botGroupStore';
-import { BOT_GROUP_SETTINGS_PARAM } from './botGroupPresentation';
+import { BOT_GROUP_SETTINGS_PARAM, botGroupActivityAt } from './botGroupPresentation';
 import { chatErrorKey } from './chatError';
 import { subscribeBotReadState, getBotLastReadAtMap, isBotGroupUnread } from './botReadState';
 import { withoutBotHiddenLanes } from './botGroupLane';
@@ -90,8 +94,9 @@ const HEADER_HOVER_ACTION_CLASS = cn(
 const HEADER_ICON_BUTTON_CLASS =
   'flex h-5 w-5 shrink-0 items-center justify-center rounded-lg text-[var(--sidebar-list-muted)] transition-colors hover:text-[var(--sidebar-nav-text)]';
 
-/** 收起态头像行:28px 头像 + 8px 间距。 */
-const AVATAR_SLOT_PX = 36;
+/** 收起态头像行:48px 头像 + 8px 间距。 */
+const AVATAR_SLOT_PX = TEAMMATE_AVATAR.strip + TEAMMATE_AVATAR.gap;
+const CHAT_PREVIEW_LIMIT = 5;
 
 /**
  * 收起态只占一行:按内容宽度算出能放几个头像(含末尾「+N」),伙伴再多也不换行。
@@ -123,16 +128,25 @@ export function TeammatesSection() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { dataOwnerId } = useAuth();
-  const marketHint = useBotMarketEntryHint(dataOwnerId);
-  const { botId, deviceId, groupId } = useParams();
-  // The registered sidebar slot can sit outside the group's route context.
+  // The sidebar lives in the shell, outside the child route's params context.
+  const remoteRoute = matchPath('/bots/remote/:deviceId/:botId', pathname);
+  const localRoute = [
+    '/bots/:botId',
+    '/bots/:botId/session/:sessionId',
+    '/bots/:botId/history/:sessionId',
+    '/bots/:botId/direct/:threadId',
+  ].map(pattern => matchPath(pattern, pathname)).find(Boolean);
+  const botId = remoteRoute?.params.botId ?? localRoute?.params.botId;
+  const deviceId = remoteRoute?.params.deviceId;
   const selectedGroupId = matchPath('/bots/groups/:groupId', pathname)?.params.groupId;
   const [collapsed, setCollapsed] = useState(() => readTeammatesSectionCollapsed(dataOwnerId));
+  const [showAllChats, setShowAllChats] = useCollapsibleShowAll(collapsed);
   const avatarRowRef = useRef<HTMLDivElement>(null);
   const avatarCapacity = useAvatarRowCapacity(avatarRowRef, collapsed);
   useEffect(() => {
     setCollapsed(readTeammatesSectionCollapsed(dataOwnerId));
-  }, [dataOwnerId]);
+    setShowAllChats(false);
+  }, [dataOwnerId, setShowAllChats]);
   const toggleCollapsed = () => {
     const next = !collapsed;
     setCollapsed(next);
@@ -235,6 +249,10 @@ export function TeammatesSection() {
   // A cloud companion is one row wherever it runs; only per-computer Cindys still merge into one entry.
   const cindyOptions = cindyDeviceOptions(withoutCloudCompanions(bots, cloud), withoutCloudCompanions(remoteBots, cloud),
     devices ?? [], unreadByBotId, t('bots.devicePicker.local'));
+  const statusForBot = (bot: BotProfile | (typeof remoteBots)[number]) => 'deviceId' in bot
+    ? remoteTeammateStatus(bot, isRemoteBotUnread(bot), isCloudCompanionRemote(cloud, bot))
+    : localTeammateStatus(bot, islandActivity, (unreadByBotId[bot.id] ?? 0) > 0);
+  const cindyStatus = aggregateTeammateStatus(cindyOptions.map(option => statusForBot(option.bot)));
   const hasMultipleCindys = cindyOptions.length > 1;
   const routeCindy = cindyOptions.find(option => option.key === cindyDeviceKey({ id: botId ?? '', deviceId }));
   // Follow the open Cindy chat; otherwise the local-first roster is the default.
@@ -322,10 +340,21 @@ export function TeammatesSection() {
       pinned: 'pinnedAt' in bot && Boolean(bot.pinnedAt),
       activityAt: 'activityAt' in bot ? bot.activityAt : bot.lastMessageAt ?? bot.createdAt })),
     ...visibleGroups.map(group => ({ kind: 'group' as const, group, pinned: false,
-      activityAt: group.lastMessage?.createdAt ?? group.updatedAt })),
+      activityAt: botGroupActivityAt(group) })),
     ...(showCindy && currentCindy ? [{ kind: 'cindy' as const, pinned: cindyOptions.some(option => 'pinnedAt' in option.bot && Boolean(option.bot.pinnedAt)),
       activityAt: Math.max(...cindyOptions.map(option => 'activityAt' in option.bot ? option.bot.activityAt : option.bot.lastMessageAt ?? option.bot.createdAt)) }] : []),
   ].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.activityAt - a.activityAt);
+
+  // Keep the open chat in the five-row preview without growing the section.
+  const selectedChat = visibleChats.find(entry => entry.kind === 'group'
+    ? entry.group.id === selectedGroupId
+    : entry.kind === 'cindy' ? Boolean(routeCindy)
+      : entry.bot.id === botId && ('deviceId' in entry.bot ? entry.bot.deviceId === deviceId : !deviceId));
+  const previewChats = visibleChats.slice(0, CHAT_PREVIEW_LIMIT);
+  if (selectedChat && !previewChats.includes(selectedChat)) {
+    previewChats[CHAT_PREVIEW_LIMIT - 1] = selectedChat;
+  }
+  const displayedChats = showAllChats ? visibleChats : previewChats;
 
   useEffect(() => {
     if (roster.visible.length + remoteBots.length + groups.length === 0) return;
@@ -423,7 +452,7 @@ export function TeammatesSection() {
 
   const renderGroupRow = (group: BotGroupSummary) => (
     <BotGroupSidebarRow key={'group:' + group.id} group={group} bots={bots}
-      islandActivity={islandActivity} now={now} selected={group.id === groupId}
+      islandActivity={islandActivity} now={now} selected={group.id === selectedGroupId}
       onOpenGroup={id => navigate('/bots/groups/' + encodeURIComponent(id))}
       onContextMenu={event => {
         event.preventDefault(); event.stopPropagation();
@@ -460,7 +489,7 @@ export function TeammatesSection() {
   };
 
   return (
-    <div ref={sidebarRef} className="flex w-full flex-col gap-0.5" data-sidebar-section="teammates">
+    <div ref={sidebarRef} style={teammateSelectionStyle} className="flex w-full flex-col gap-0.5" data-sidebar-section="teammates">
       {/* 段头与置顶 / 全部任务段头同款:高 24,左 24 / 右 12;动作悬停浮现。 */}
       <div className="group/sidebar-header flex h-6 items-center justify-between pr-3 pl-6">
         <div className="flex min-w-0 items-center gap-1">
@@ -480,10 +509,9 @@ export function TeammatesSection() {
             </Tip>
           </div>
         </div>
-        {/* 发现伙伴入口没看过时「+」常驻可见(带蓝点),其余动作仍只在悬停时浮现。 */}
-        <div className={cn('flex items-center gap-0.5', !marketHint.unseen && HEADER_HOVER_ACTION_CLASS)}>
+        <div className={cn('flex items-center gap-0.5', HEADER_HOVER_ACTION_CLASS)}>
           {roster.showHiddenSection && !collapsed ? (
-            <span className={cn('flex', marketHint.unseen && HEADER_HOVER_ACTION_CLASS)}>
+            <span className="flex">
               <button
                 type="button"
                 onClick={() => setShowHidden((value) => !value)}
@@ -494,7 +522,7 @@ export function TeammatesSection() {
               </button>
             </span>
           ) : null}
-          <BotCreateMenu variant="header" entryHint={marketHint} />
+          <BotCreateMenu variant="header" />
         </div>
       </div>
 
@@ -508,14 +536,16 @@ export function TeammatesSection() {
                   : 'deviceId' in entry.bot ? remoteBotKey(entry.bot) : entry.bot.id;
               const name = entry.kind === 'group' ? entry.group.name
                 : entry.kind === 'cindy' ? currentCindy?.bot.name ?? '' : entry.bot.name;
-              const selected = entry.kind === 'group' ? entry.group.id === groupId
+              const selected = entry.kind === 'group' ? entry.group.id === selectedGroupId
                 : entry.kind === 'cindy' ? Boolean(routeCindy)
                   : 'deviceId' in entry.bot ? entry.bot.id === botId && entry.bot.deviceId === deviceId
                     : !deviceId && entry.bot.id === botId;
               const unread = entry.kind === 'group' ? isBotGroupUnread(entry.group)
                 : entry.kind === 'cindy' ? cindyOptions.some(option => option.unread)
                   : 'deviceId' in entry.bot ? isRemoteBotUnread(entry.bot) : (unreadByBotId[entry.bot.id] ?? 0) > 0;
-              return { entry, key, name, selected, unread };
+              const status = entry.kind === 'group' ? groupTeammateStatus(entry.group, bots, islandActivity, unread)
+                : entry.kind === 'cindy' ? cindyStatus : statusForBot(entry.bot);
+              return { entry, key, name, selected, unread, status };
             });
             const overflow = entries.length > avatarCapacity;
             let shown = overflow ? entries.slice(0, Math.max(0, avatarCapacity - 1)) : entries;
@@ -527,26 +557,24 @@ export function TeammatesSection() {
             const hidden = entries.filter((item) => !shown.includes(item));
             return (
               <>
-                {shown.map(({ entry, key, name, selected, unread }) => (
-                  <Tip key={key} text={name} side="bottom">
+                {shown.map(({ entry, key, name, selected, unread, status }) => (
+                  <Tip key={key} text={status === 'idle' ? name : `${name} · ${t(`bots.avatarStatus.${status}`)}`} side="bottom">
                     <button
                       type="button"
                       onClick={() => openChat(entry)}
-                      aria-label={unread && !selected ? `${name} · ${t('bots.list.unread', { count: 1 })}` : name}
+                      aria-label={status === 'idle' ? name : `${name} · ${t(`bots.avatarStatus.${status}`)}`}
                       aria-current={selected ? 'page' : undefined}
                       className={cn(
-                        'relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                        selected && 'ring-2 ring-[var(--sidebar-nav-text)] ring-offset-2 ring-offset-sidebar',
+                        'relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                        selected && 'ring-1 ring-[var(--text-tertiary)] ring-offset-2 ring-offset-sidebar',
                       )}
                     >
                       {entry.kind === 'group' ? (
                         <BotGroupSidebarAvatar members={entry.group.members} compact />
                       ) : (entry.kind === 'cindy' ? currentCindy?.bot : entry.bot) ? (
-                        <BotAvatar bot={(entry.kind === 'cindy' ? currentCindy?.bot : entry.bot)!} size="sm" />
+                        <BotAvatar bot={(entry.kind === 'cindy' ? currentCindy?.bot : entry.bot)!} size="strip" />
                       ) : null}
-                      {unread && !selected ? (
-                        <span aria-hidden className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border-2 border-sidebar bg-[var(--bot-unread-bg)]" />
-                      ) : null}
+                      <TeammateStatusDot status={status} />
                     </button>
                   </Tip>
                 ))}
@@ -554,14 +582,12 @@ export function TeammatesSection() {
                   <Tip text={t('bots.list.sectionExpand')} side="bottom">
                     <button
                       type="button"
-                      onClick={toggleCollapsed}
+                      onClick={() => { toggleCollapsed(); setShowAllChats(true); }}
                       aria-label={`${t('bots.list.sectionExpand')} · +${hidden.length}`}
-                      className="relative flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full bg-[var(--surface-chip)] px-1.5 text-11 font-medium tabular-nums text-[var(--sidebar-nav-text)] outline-none hover:bg-sidebar-item-hover focus-visible:ring-2 focus-visible:ring-ring"
+                      className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[var(--surface-chip)] px-1.5 text-11 font-medium tabular-nums text-[var(--sidebar-nav-text)] outline-none hover:bg-sidebar-item-hover focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       +{hidden.length}
-                      {hidden.some((item) => item.unread) ? (
-                        <span aria-hidden className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border-2 border-sidebar bg-[var(--bot-unread-bg)]" />
-                      ) : null}
+                      <TeammateStatusDot status={aggregateTeammateStatus(hidden.map(item => item.status))} />
                     </button>
                   </Tip>
                 ) : null}
@@ -583,7 +609,7 @@ export function TeammatesSection() {
           </div>
         ) : (
           <div className="flex flex-col gap-1">
-            {visibleChats.map(entry => {
+            {displayedChats.map(entry => {
               if (entry.kind === 'group') return renderGroupRow(entry.group);
               if (entry.kind === 'cindy') {
                 if (!currentCindy) return null;
@@ -592,12 +618,12 @@ export function TeammatesSection() {
                 const selected = Boolean(routeCindy);
                 const activity = local ? botRunningActivity(local) : undefined;
                 const subtitle = local ? botListSubtitle(local) : null;
-                const subtitleText = activity ? <BotGenerationLabel sessionId={activity.sessionId} phase={activity.workingPhase} startedAt={activity.startedAtMs} />
+                const subtitleText = cindyStatus === 'awaiting' ? t('bots.avatarStatus.awaiting') : activity ? <BotGenerationLabel sessionId={activity.sessionId} phase={activity.workingPhase} startedAt={activity.startedAtMs} />
                   : 'deviceId' in bot && bot.online && bot.generation ? <BotGenerationLabel sessionId={bot.sessionId ?? undefined} {...bot.generation} remote={{ deviceId: bot.deviceId, botId: bot.id }} />
                   : subtitle ? subtitle.kind === 'placeholder' ? t('bots.list.startChat') : subtitle.text
                     : 'preview' in bot ? bot.preview || bot.description || t('bots.list.startChat') : '';
                 return <CindyDeviceRow key="cindy-devices" current={currentCindy} options={cindyOptions}
-                  selected={selected} typing={Boolean(activity || ('deviceId' in bot && bot.online && bot.generation))} subtitle={subtitleText}
+                  status={cindyStatus} selected={selected} typing={Boolean(activity || ('deviceId' in bot && bot.online && bot.generation))} subtitle={subtitleText}
                   timestamp={formatBotListTimestamp(local
                     ? botListTimestampAt({ lastMessageAt: local.lastMessageAt, working: Boolean(activity) }, now)
                     : 'activityAt' in bot ? bot.activityAt : 0, now, t)}
@@ -624,15 +650,14 @@ export function TeammatesSection() {
                   <button key={remoteBotKey(bot)} type="button" aria-current={selected ? 'page' : undefined}
                     onClick={() => navigate(`/bots/remote/${encodeURIComponent(bot.deviceId)}/${encodeURIComponent(bot.id)}`)}
                     className={cn('flex w-full min-w-0 items-center gap-2.5 rounded-xl px-2.5 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring', selected ? 'bg-sidebar-item-active text-sidebar-item-active-foreground' : 'text-[var(--sidebar-nav-text)] hover:bg-sidebar-item-hover')}>
-                    <span className="relative shrink-0"><BotAvatar bot={bot} size="md" /><BotConnectionStatus online={bot.online} connectionKnown={bot.connectionKnown} deviceName={deviceName} quiet={isCloudCompanionRemote(cloud, bot)} /></span>
+                    <span className="relative shrink-0"><BotAvatar bot={bot} size="row" /><TeammateStatusDot status={statusForBot(bot)} /></span>
                     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                       <span className="flex min-w-0 items-baseline gap-2">
                         <span className="min-w-0 truncate text-14 leading-5">{bot.name}</span>
                         <BotConnectionStatus inline online={bot.online} connectionKnown={bot.connectionKnown} deviceName={deviceName} quiet={isCloudCompanionRemote(cloud, bot)} className={selected ? 'opacity-70' : 'text-[var(--sidebar-list-muted)]'} />
                       </span>
-                      <span className={cn('truncate text-12 leading-4', selected ? 'opacity-70' : 'text-[var(--sidebar-list-muted)]')}>{bot.online && bot.generation ? <BotGenerationLabel sessionId={bot.sessionId ?? undefined} {...bot.generation} remote={{ deviceId: bot.deviceId, botId: bot.id }} /> : bot.preview || bot.description || t('bots.list.startChat')}</span>
+                      <span className={cn('truncate text-12 leading-4', selected ? 'opacity-70' : 'text-[var(--sidebar-list-muted)]')}>{statusForBot(bot) === 'awaiting' ? t('bots.avatarStatus.awaiting') : bot.online && bot.generation ? <BotGenerationLabel sessionId={bot.sessionId ?? undefined} {...bot.generation} remote={{ deviceId: bot.deviceId, botId: bot.id }} /> : bot.preview || bot.description || t('bots.list.startChat')}</span>
                     </span>
-                    {!selected && isRemoteBotUnread(bot) ? <span aria-label={t('bots.list.unread', { count: 1 })} className="size-[7px] shrink-0 rounded-full bg-[var(--bot-unread-bg)]" /> : null}
                     <span className={cn('min-w-10 shrink-0 self-start whitespace-nowrap pt-0.5 text-right text-11 tabular-nums', selected ? 'opacity-70' : 'text-[var(--sidebar-list-muted)]')}>{formatBotListTimestamp(bot.activityAt, now, t)}</span>
                   </button>
                 );
@@ -645,7 +670,7 @@ export function TeammatesSection() {
               // 结束就落回最新消息预览，不留痕。
               const activity = botRunningActivity(bot);
               const typing = Boolean(activity);
-              const subtitleText = typing
+              const subtitleText = statusForBot(bot) === 'awaiting' ? t('bots.avatarStatus.awaiting') : typing
                 ? <BotGenerationLabel sessionId={activity?.sessionId} phase={activity?.workingPhase} startedAt={activity?.startedAtMs} />
                 : subtitle.kind === 'placeholder'
                   ? t('bots.list.startChat')
@@ -698,7 +723,7 @@ export function TeammatesSection() {
                     className="flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-2.5 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                   >
                     {/* Keep the existing avatar size alongside identity and message preview. */}
-                    <span className="relative shrink-0"><BotAvatar bot={bot} size="md" /><BotConnectionStatus /></span>
+                    <span className="relative shrink-0"><BotAvatar bot={bot} size="row" /><TeammateStatusDot status={statusForBot(bot)} /></span>
                     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                       <span className="flex items-baseline gap-2">
                         {bot.pinnedAt ? (
@@ -720,13 +745,7 @@ export function TeammatesSection() {
                         {!typing && <BotConnectionStatus inline className={selected ? 'opacity-70' : 'text-[var(--sidebar-list-muted)]'} />}
                         {/* 权限模式仍不在聊天列表挂警告；这里仅显示 Hermes 风格、
                             已持久化且需要用户处理的运行失败。 */}
-                        {bot.needsAttention ? (
-                          <AlertTriangle
-                            size={13}
-                            className="shrink-0 text-[var(--warning-fg)]"
-                            aria-label={t('bots.list.needsAttention')}
-                          />
-                        ) : null}
+
                       </span>
                       <span className="flex min-w-0 items-center gap-2">
                         {/* 未读只强调名字与数字，预览保持次级，避免整行同时争抢注意力。 */}
@@ -766,6 +785,20 @@ export function TeammatesSection() {
                 </div>
               );
             })}
+            {visibleChats.length > CHAT_PREVIEW_LIMIT ? (
+              <button
+                type="button"
+                aria-expanded={showAllChats}
+                onClick={() => setShowAllChats(value => !value)}
+                className={cn(
+                  'flex h-6 w-full items-center justify-center rounded-full px-2 text-xs font-normal',
+                  'text-[var(--cmd-palette-item-meta)] transition-colors hover:bg-sidebar-item-hover hover:text-foreground',
+                  'focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--focus-ring)]',
+                )}
+              >
+                {showAllChats ? t('bots.list.showLess') : t('ccAgent.sidebar.showAllSessions', { count: visibleChats.length })}
+              </button>
+            ) : null}
             {roster.showHiddenSection ? (
               <div className="mt-3 border-t border-[var(--border-default)] pt-3">
                 <button

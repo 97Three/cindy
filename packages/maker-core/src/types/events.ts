@@ -398,7 +398,8 @@ export type InteractionDecision =
       dismissed?: boolean;
     };
 
-export type InteractionResolver = (req: InteractionRequest) => Promise<InteractionDecision>;
+/** signal 仅在本进程传递，不进入请求载荷或跨端协议。 */
+export type InteractionResolver = (req: InteractionRequest, signal?: AbortSignal) => Promise<InteractionDecision>;
 
 /**
  * pending interaction 被自动 resolve 时, agent emit 此事件让 UI 关闭对话框。
@@ -425,6 +426,11 @@ export interface InteractionDismissedEvent {
  * 注: isRunning / status text 不属于 usage, 由 translator 在 emit status event 时单独拼。
  */
 export interface UsageSnapshot {
+  /** Optional, runtime-cumulative provider receipts; older hosts can ignore this field. */
+  requestUsage?: {
+    epoch: string;
+    models: Array<{ model?: string; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreateTokens?: number }>;
+  };
   tokenUsage: number;
   contextTokens: number;
   contextWindow: number;
@@ -511,6 +517,9 @@ export interface RewindCommitOptions {
    * (首条消息,或 /clear、上下文重建、切换引擎新开线程后的第一轮)。此时没有可作
    * fork 边界的 turn,rollback 不可用时 Codex 改为按当前配置新开一条空线程替换。
    * 只在没有 lastTurnId / forkAtTimestampMs 时生效。
+   *
+   * Claude:目标之前没有可续接的 assistant 时由宿主传入,只回滚文件、不设续接点;
+   * 宿主随后关闭会话并清掉原生会话 id,下次发送开全新原生会话。
    */
   rewindsToNativeThreadStart?: boolean;
 }
@@ -524,6 +533,8 @@ export interface RewindCommitResult {
 }
 
 export interface ForkSdkSessionOptions {
+  /** Host-resolved shared-provider storage. Never accepted directly from a remote caller. */
+  hostedGuestHome?: string;
   /** 源 session 的 SDK sessionId (从 sessions.sdk_session_id 取)。 */
   sourceSdkSessionId: string;
   /**

@@ -23,6 +23,7 @@
  */
 
 import path from 'node:path';
+import { installNativeTrackpad } from './nativeTrackpad';
 
 import { app, session, type BrowserWindow, type Session, type WebContents } from 'electron';
 import { CURRENT_APP_ID } from '../shared/brandRegion';
@@ -664,9 +665,15 @@ function isRoutablePopupUrl(url: string): boolean {
  * hostContents 过时 —— 旧 renderer 的 Shell 已退订,fanOut 不缓冲,消息发过去
  * 就是丢弃。发送时刻动态解析当前 host 才能落到活着的订阅者。
  */
-let popupHostResolver: (() => WebContents | null) | null = null;
+let popupHostResolver: ((capturedHost: WebContents) => WebContents | null) | null = null;
 
-export function setRsbPopupHostResolver(resolver: (() => WebContents | null) | null): void {
+/**
+ * 解析函数收到捕获时的 hostContents:弹出到独立窗口的页签,其 guest 就挂在那扇窗口的 renderer
+ * 上,popup 必须回到同一个 renderer(原生 popup surface 的 owner 校验也认它),解析函数据此放行。
+ */
+export function setRsbPopupHostResolver(
+  resolver: ((capturedHost: WebContents) => WebContents | null) | null,
+): void {
   popupHostResolver = resolver;
 }
 
@@ -679,7 +686,7 @@ function sendBrowserPopup(
   let current: WebContents | null = null;
   if (popupHostResolver) {
     try {
-      current = popupHostResolver();
+      current = popupHostResolver(hostContents);
     } catch {
       current = null;
     }
@@ -769,6 +776,7 @@ export function installBrowserGuestHandlers(
   hostContents: WebContents,
   guestContents: WebContents,
 ): void {
+  installNativeTrackpad(hostContents, guestContents);
   guestContents.setWindowOpenHandler((details) => {
     if (!isRoutablePopupUrl(details.url) && !isInitialBlankPopupUrl(details.url)) {
       return { action: 'deny' };
@@ -821,7 +829,7 @@ export function installBrowserGuestHandlers(
     event.preventDefault();
     let target: WebContents | null = null;
     try {
-      target = popupHostResolver?.() ?? null;
+      target = popupHostResolver?.(hostContents) ?? null;
     } catch {
       target = null;
     }
@@ -1054,6 +1062,10 @@ export function installWebviewHardener(): void {
         // 崩溃豁免登记(lifecycle 的全局 render-process-gone 守卫据此放行,
         // 面板错误接管态负责用户侧收尾)。
         registerGhostWebContents(guestContents.id);
+        installNativeTrackpad(contents, guestContents, () => {
+          if (!isGhostGuestOwnerActive(authorized.owner)) return false;
+          return authorized.isCurrent();
+        });
         // 意识面板零弹窗、零跳转:window.open 全拒,导航锁死在自己协议同源内。
         // 两个声明式例外(都是拦下导航、主机代办,面板侧依旧零桥):
         //   - /preview/ 预览链接 → 主窗口弹 lightbox(cindy-brain/previewGate.ts);

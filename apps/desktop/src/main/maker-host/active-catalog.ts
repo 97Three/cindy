@@ -1,3 +1,4 @@
+import { effectiveGatewayModelCost } from '../../shared/modelPriceQuote.js';
 import type { ModelDisplayPricing } from '@cindy/model-providers';
 import {
   projectProviderMediaModels,
@@ -530,41 +531,6 @@ export function isXdCodexAnthropicBridgeModel(modelId: string): boolean {
   // 剥到目录身份再查，否则投影特例不命中、误走 Responses 面。
   const normalized = stripCodexGatewayWirePrefix(modelId.replace(/\[1m\]$/, ''));
   return xdCodexAnthropicBridgeModelIds.has(normalized);
-}
-
-function nonNegativeFiniteOrUndefined(value: number | undefined): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
-}
-
-function effectiveGatewayModelCost(model: XdGatewayModelInfo): CatalogModel['cost'] | undefined {
-  const input = model.inputCostPerToken;
-  const output = model.outputCostPerToken;
-  if (
-    typeof input !== 'number' ||
-    !Number.isFinite(input) ||
-    input < 0 ||
-    typeof output !== 'number' ||
-    !Number.isFinite(output) ||
-    output < 0
-  ) {
-    return undefined;
-  }
-  const discount =
-    typeof model.costDiscount === 'number' &&
-    Number.isFinite(model.costDiscount) &&
-    model.costDiscount > 0 &&
-    model.costDiscount <= 1
-      ? model.costDiscount
-      : 0;
-  const multiplier = 1 - discount;
-  const cacheRead = nonNegativeFiniteOrUndefined(model.cacheReadInputTokenCost);
-  const cacheWrite = nonNegativeFiniteOrUndefined(model.cacheCreationInputTokenCost);
-  return {
-    input: input * 1_000_000 * multiplier,
-    output: output * 1_000_000 * multiplier,
-    ...(cacheRead !== undefined ? { cacheRead: cacheRead * 1_000_000 * multiplier } : {}),
-    ...(cacheWrite !== undefined ? { cacheWrite: cacheWrite * 1_000_000 * multiplier } : {}),
-  };
 }
 
 /** base + custom + discovered augment 的合并缓存;null = 待重算(惰性)。 */
@@ -1910,10 +1876,11 @@ function computeMerged(): Catalog {
         const metadataProviderId = providerCatalogId(provider);
         const rootId = metadataProviderId === 'openai'
           ? model.id.replace(/^chatgpt\//, '') : model.id;
-        const identity = findModelRegistryRoute(
+        const matched = findModelRegistryRoute(
           b.modelRegistry, metadataProviderId, rootId,
           agent === 'pi' ? undefined : agent as RootAgentKind,
-        )?.entry.modelRef ?? findBaseModel(b.modelRegistry, rootId)?.id;
+        );
+        const identity = matched?.entry.modelRef ?? findBaseModel(b.modelRegistry, rootId)?.id;
         // Known public identities take precedence, including other vendors using
         // GPT-like aliases. Only unresolved GPT/Codex/o-series IDs fall back to
         // family names before the next catalog release; protocol alone never
@@ -1927,11 +1894,27 @@ function computeMerged(): Catalog {
               agent as AgentKind, metadataProviderId) ||
             (rootId !== model.id && hasLocalContextWindowOverride(localOverrides,
               provider.id, model.id, agent as AgentKind, metadataProviderId))) return model;
-        return { ...model, contextWindow: 272_000,
+        // Subscription working budgets are server-maintained per-agent defaults,
+        // separate from public model capacity. Other OpenAI connections retain
+        // the daily fallback. Pi follows the subscription Codex budget; route
+        // defaults and baseModels may contain capacity rather than a working budget.
+        const declaredWindow = isOpenAiSubscriptionProvider(provider)
+          ? matched?.entry.perAgent?.[agent === 'pi' ? 'codex' : agent as RootAgentKind]?.contextWindow
+          : undefined;
+        const contextWindow = Math.min(model.contextWindow, declaredWindow ?? 272_000);
+        if (contextWindow === model.contextWindow) return model;
+        return { ...model, contextWindow,
           contextWindowMax: model.contextWindowMax ?? model.contextWindow };
       }),
     ])),
   }));
+  // Ultrafast is a native Codex account capability; bridge aliases cannot inherit it.
+  providers = providers.map(provider => ({ ...provider, models: Object.fromEntries(
+    Object.entries(provider.models).map(([agent, models]) => [agent,
+      agent === 'codex' ? models : models?.map(model => model.supportsUltrafastMode
+        ? { ...model, supportsUltrafastMode: false } : model),
+    ]),
+  ) }));
   return { ...b, modelRegistry, providers };
 }
 

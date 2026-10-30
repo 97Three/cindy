@@ -15,6 +15,7 @@
     "ko": "locales/ko.json"
   },
   "version": "1.0.0",
+  "releaseNotes": "新增图片编辑工具。", // 可选；更新说明要求见 §7.3
   "minCindyVersion": "1.2.3", // 示例；v3 必填:本插件实际依赖的首个 Cindy 正式版本(SemVer)
   "entry": "main.js",          // 电子脑入口(kind 字段已无需填写:插件只有芯片一种形态,缺省即 chip;写了也只认 "chip")
   "launch": "on-demand",       // 可选:电子脑启动模式。on-demand(缺省)=被需要才拉起;resident=唤醒即常驻(详情页会如实标注"常驻运行",绝大多数插件不需要,仅订阅型/需秒响应的场景用)
@@ -32,19 +33,22 @@
   "panel": { "title": "面板标题", "html": "panel.html", "position": "left",
              "minWidth": 240, "defaultFraction": 0.24,
              "systemButtons": { "maximize": false } },
-  // panel.position:面板显示形态。left(缺省)= 停靠主聊天窗左侧;
-  // "tab" = 插件页内的独占面板(用户在插件页点插件卡的「使用」打开,离开
-  // 插件页即关闭;同一时刻至多一个;此形态没有拖缝宽度,声明 minWidth /
-  // defaultFraction 会被拒装,请移除)。right 已退役(右侧是右侧边栏的地盘;
-  // 旧包声明 right 自动并入 left,用户想放右边可自己拖拽换位)。
-  // top/bottom 暂未支持(排期中)
-  // panel.systemButtons(可选,仅停靠形态):标准头系统按钮开关,缺省全开、
-  // 声明 false 逐个关闭。当前一批:maximize(撑满内容区)、detach(在独立
-  // 窗口中打开)、minimize(最小化面板;恢复入口由用户偏好决定为浮动气泡或
-  // 左侧栏)。标题条本体恒由主机绘制、
-  // 关不掉;未知键保留但不生效;position:"tab" 时声明本字段拒装
+  // panel.position:面板显示形态。left(缺省)/ right / top / bottom = 右侧栏常驻面板:
+  // 启用后自动成为聊天区对应边页签组里一个不跟对话的全局页签(切任务保留、可最大化、
+  // 可弹成独立窗口、用户可拖到任何一边或关闭;用户放置过后主机记住用户的位置,
+  // 你的声明只是首次出现时的默认);"tab" = 插件页内的独占面板(用户在插件页点插件卡的
+  // 「使用」打开,离开插件页即关闭;同一时刻至多一个;此形态没有拖缝宽度,声明 minWidth /
+  // defaultFraction 会被拒装,请移除)。minWidth / defaultFraction 仍可声明(兼容),当前
+  // 页签组宿主不消费。
+  // panel.systemButtons(可选):历史字段,保留兼容、当前不生效(右侧栏页签的
+  // 关闭 / 最大化 / 弹出按钮由主机统一提供);position:"tab" 时声明本字段拒装
   // 一级主视图是独立能力，见 §4.20。使用时直接声明：
   // "mainView": { "title": "工作台", "icon": "puzzle", "html": "main-view.html" }
+  // 跟对话的任务页(§4.22):页签存在每个任务自己的右侧栏里,随任务切换
+  // "taskView": { "title": "模拟器", "html": "task.html" }
+  // 可选 "open": "page"(缺省,撑满内容区)/ "sidebar"(作为页签进聊天区某一边,配 "side":
+  // left / right / top / bottom)/ "window"(弹成独立窗口);只是左侧导航入口的默认打开方式,
+  // 用户拖过 / 弹过后以用户的放置为准。可选 "multiple": true 允许同一视图同时开在多处。
   "settingsHtml": "settings.html",  // 可选:设置页「自定义设置区」自绘界面(见 §4.8;声明了用户填的凭证时仍必填,用于长期管理/替换/清除;调用前缺失时主机也会在统一 Setup 卡内联收单,见 §4.7)
   "showTaskPreferences": true,     // 可选:是否显示宿主「模型与任务」卡,缺省/true 显示,false 隐藏;见 §4.8
   "settingsHeight": 360             // 可选:固定高度 px(160–800);缺省 = 随内容自适应(矮内容真收矮,高至 800);内容会动态增减时才声明,避免抖动
@@ -116,6 +120,7 @@ tool name 对齐，协议键、工具名和参数名不翻译：
   },
   "panel": { "title": "Plugin panel" },
   "mainView": { "title": "Workspace" },
+  "taskView": { "title": "Simulator" },
   "network": {
     "secrets": {
       "api_key": { "label": "API key", "hint": "Create one in account settings." }
@@ -138,7 +143,7 @@ tool name 对齐，协议键、工具名和参数名不翻译：
 ```
 
 可翻译字段：`name`、`description`、`whenToUse`、`tools`(工具 description 与参数
-文案)、`panel.title`、`mainView.title`、`network.secrets / connections`、`node.secretBindings`、
+文案)、`panel.title`、`mainView.title`、`taskView.title`、`network.secrets / connections`、`node.secretBindings`、
 `setup` 的 kv 标签；凭证、连接、Node 凭证和 kv 项按稳定 key 对齐(提供某个 key 的
 条目时 label 必填,hint 可选)。工具参数 schema 中已有的 `title / description` 用
 JSON Pointer 对齐（如 `/properties/query`；根节点用空字符串 `""`），参数名、类型、
@@ -152,18 +157,23 @@ node secretBindings key、setup kv key——都不能使用 `__proto__`、`const
 `prototype`；这些名称是宿主保留键，打包时会直接拒绝。
 
 v3 直接用顶层字段声明插件贡献项与自主 Host 能力，不再有 `slots`。带详单的字段是 `tools`、`cindy`、
-`agent`、`panel`、`mainView`、`card`、`subscribe`、`network`、`node`、`preview`、
-`skill`；布尔能力写成字面量 `true`：`notify`、`badge`、`confirm`、`fs`、
-`library`、`sessionContext`、`pick`、`workspace`。不用的字段直接省略，
+`agent`、`panel`、`mainView`、`taskView`、`card`、`subscribe`、`network`、`node`、`preview`、
+`browserExtension`、`skill`；布尔能力写成字面量 `true`：`notify`、`badge`、`confirm`、`fs`、
+`library`、`deviceSync`、`sessionContext`、`pick`、`workspace`。不用的字段直接省略。
+`deviceSync` 的声明与调用约定见 [§4.10.2 资料同步](plugin-files-and-library.md#4102-同账号电脑间的插件资料同步)。
 邮件插件声明 `mail: true`，调用 Cindy 内置 `cindyMail.register(adapter)`
 （version 1），不生成卡片 HTML、不打包公共流程；纯邮件插件不需要 `card`。
 阅读邮件可声明 `mailReader:{tool,hosts}`，工具接收 `{url}` 并返回 MailMessage，默认只读。
+可选 `participantPhotos:[{email,url}]` 最多 64 项，按小写邮箱精确匹配；照片 URL 仅 HTTPS，
+无凭据、自定义端口。缺照片/权限时省略，不阻断阅读；旧宿主忽略。桌面回退公开头像、
+企业图标和首字；头像不证明身份。正文外图仍需单独点击显示。
 `mail` 只能省略或写字面量 `true`；声明 `mailReader` 时必须同时有 `mail: true`，
 且 `tool` 必须指向本清单 `tools` 中的工具。协议校验与桌面安装校验都会拒绝不完整组合。
 支持打开即已读时增加 `mailReader.markRead:true`，读取工具接受可选 `markRead:true`；
 声明中的 `markRead` 只能省略或为字面量 `true`，`false`、字符串等其它值不合法。
 仅用户主动打开时传入，AI 读取和邻近预加载不传。成功读取后只标记当前邮件，不标记整个会话或草稿。
 Host 派发器会移除普通工具参数中的此标记，仅可信阅读器打开请求可注入；其它明确授权的已读操作工具不受影响。
+用户主动打开链接时，Host 还可注入 `openDraft:true`（普通工具参数不能自行设置）。识别为草稿后，插件解析服务商稳定的草稿 ID，复用已有公共草稿读取/展示流程，并在邮件结果中返回 `draftId`。Host 仅在核实当前任务、插件、邮箱账号与草稿一致后，给客户端返回 `draftCallId`，打开现有编辑器。插件不能自报卡片 ID；后台读取保持只读。旧 Host 不注入此标记，旧插件忽略它，继续支持只读展示。
 标记失败仍返回正文和 `markReadFailed:true`，由 Cindy 显示提示；新增 OAuth scope 不阻断已有授权的操作。
 适配器提供 providerName、draftStorage（server/local）、selectAccount、readDraft、writeDraft。
 通过 present 展示读回草稿，beforeTool 统一 get/send/update/delete，resolveDraft 获取最新位置。
@@ -199,6 +209,9 @@ Host 能力字段。v2 的 `slots` 只用于存量包兼容，新插件不得再
 用普通任务接口(§4.11.3)写 `"agent": { "tasks": true }`;需要把自己创建的任务放到后台
 (不进任务列表、搜索与通知)时再加 `"hiddenTasks": true`,它必须与 `"tasks": true` 同时
 出现,否则拒装;详情页单列一档。
+向项目、已有任务或伙伴投递内容时另声明 `"agent": { "tasks": true, "targets": true }`（§4.11.3）。
+`targets` 是独立权限，安装/更新确认单列，需 Host 显式批准；旧 tasks 批准不授予目标访问。
+新包的 targets 必须是布尔值，targets:true 缺 tasks:true 时拒装。
 
 **node 工作进程详单**(声明 node 时必写,详见 §4.12):
 

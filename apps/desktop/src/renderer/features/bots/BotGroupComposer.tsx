@@ -44,6 +44,7 @@ import { Paperclip, Plus, Users, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { AttachmentRejectionStrip, ThumbnailStrip } from '@/components/new-chat/ComposerAttachments';
+import { ComposerCard, COMPOSER_CONTENT_CLASS } from '@/components/new-chat/ComposerCard';
 import { SendButton } from '@/components/new-chat/SendButton';
 import {
   DropdownMenu,
@@ -65,7 +66,6 @@ import type { AttachedFile } from '@/lib/fileTypes';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import {
-  BOT_GROUP_COMPOSER_CARD,
   BOT_GROUP_COMPOSER_COLUMN,
   BOT_GROUP_COMPOSER_DOCK,
   BOT_GROUP_COMPOSER_FOOTER,
@@ -93,13 +93,14 @@ import {
 } from './botGroupAttachments';
 import { chatErrorKey } from './chatError';
 import {
-  botGroupErrorKey,
   isActiveBotGroupMember,
   isBotGroupDivisionBlocked,
   type BotGroupComposerPlanState,
 } from './botGroupPresentation';
 import { botGroupApi } from './botGroupStore';
 import { botGroupSendSignature, enqueueBotGroupSend, registerBotGroupComposer } from './botGroupOutbox';
+import { GroupMaskIndicator } from './GroupMaskControls';
+import { useGroupMask } from './groupMaskPresentation';
 import { useBotGroupMentionPicker } from './useBotGroupMentionPicker';
 
 /** 话题 replies also accept the Chat Server's own 「everyone」 spellings. */
@@ -164,11 +165,13 @@ const NO_ATTACHMENTS: BotGroupComposerAttachments = {
 export function BotGroupComposer({
   groupId,
   mode = 'group',
+  conversationKind,
   draftKey,
   members,
   running,
   disabled = false,
   planState = null,
+  divisionSteps = false,
   attachments: attachmentState = NO_ATTACHMENTS,
   attachmentScope = '',
   dragOver = false,
@@ -182,6 +185,7 @@ export function BotGroupComposer({
   footerStart,
 }: {
   groupId: string;
+  conversationKind?: 'direct';
   /** `thread`: a 话题's reply box (no 「+」 menu, attachments or quotes). */
   mode?: 'group' | 'thread';
   /** Where the unsent text is kept (the group's attachment scope, or the 话题's own key). */
@@ -192,6 +196,8 @@ export function BotGroupComposer({
   disabled?: boolean;
   /** The group's open plan, for placeholders and the 「安排分工」 gate. */
   planState?: BotGroupComposerPlanState | null;
+  /** Server groups: a 分工 that writes out who does what starts as written; otherwise the organizer arranges it (§7.0). */
+  divisionSteps?: boolean;
   attachments?: BotGroupComposerAttachments;
   /** Scope for writing annotated images before send (see botGroupAttachmentScope). */
   attachmentScope?: string;
@@ -214,6 +220,7 @@ export function BotGroupComposer({
 }) {
   const { t } = useTranslation();
   const thread = mode === 'thread';
+  const groupMask = useGroupMask(groupId);
   const [text, setText] = useState(() => botGroupDraftText(getDraft(draftKey)?.text));
   const [error, setError] = useState('');
   const [stopping, setStopping] = useState(false);
@@ -247,7 +254,7 @@ export function BotGroupComposer({
   attachmentsRef.current = attachmentState.attachments;
   const quoteRef = useRef(quote?.view ?? null);
   quoteRef.current = quote?.view ?? null;
-  const quotedMessageId = quote?.view.messageId ?? null;
+  const quoteView = quote?.view ?? null;
   const focusInputOnMenuCloseRef = useRef(false);
   const sendingRef = useRef(false);
   const stoppingRef = useRef(false);
@@ -273,10 +280,11 @@ export function BotGroupComposer({
   const showStop = !thread && running && trimmed.length === 0 && attachmentCount === 0;
   const divisionBlocked = isBotGroupDivisionBlocked(planState);
 
-  // Picking 引用回复 brings the caret here, ready to type the reply.
+  // Picking 引用回复 brings the caret here, ready to type the reply; picking the same message
+  // again (after clicking elsewhere) does too, since each pick is a new quote.
   useEffect(() => {
-    if (quotedMessageId) textareaRef.current?.focus();
-  }, [quotedMessageId]);
+    if (quoteView) textareaRef.current?.focus();
+  }, [quoteView]);
 
   // Keep the unsent text with the group (or 话题), like a task's composer draft.
   const discardTokenRef = useRef(captureDraftDiscardToken(draftKey));
@@ -311,6 +319,7 @@ export function BotGroupComposer({
    */
   const sendThreadReply = async () => {
     if (!canSend || sendingRef.current || !sendReply) return;
+    groupMask?.participate();
     const previous = attemptRef.current;
     const attempt =
       previous?.mentions && previous.roster && previous.text === trimmed
@@ -387,14 +396,15 @@ export function BotGroupComposer({
     [groupId, thread],
   );
 
-  const send = () => {
+  const send = async () => {
     if (thread) { void sendThreadReply(); return; }
     // A second Enter before the cleared input has rendered must not send the same draft twice.
-    if (!canSend || textRef.current !== text || attachmentsRef.current !== attachmentState.attachments) return;
+    if (!canSend || sendingRef.current || textRef.current !== text || attachmentsRef.current !== attachmentState.attachments) return;
     if (!botGroupApi()) {
       toast.error(t('bots.groupChat.composer.sendFailed'));
       return;
     }
+    groupMask?.participate();
     const files: readonly AttachedFile[] = attachmentState.attachments;
     const mentions = mention.resolve(text);
     const tracked = mention.tracked;
@@ -403,6 +413,7 @@ export function BotGroupComposer({
     const sentQuote = quoteRef.current;
     const fields = {
       groupId,
+      ...(conversationKind ? { conversationKind } : {}),
       text: trimmed,
       mentions,
       ...(division ? { division: true } : {}),
@@ -412,7 +423,8 @@ export function BotGroupComposer({
     const clientId = groupAttemptRef.current?.signature === signature ? groupAttemptRef.current.clientId : crypto.randomUUID();
     // The outbox owns this attempt now; a failure hands it back through `restore`.
     groupAttemptRef.current = null;
-    enqueueBotGroupSend({
+    sendingRef.current = true; setSending(true);
+    try { const saved = enqueueBotGroupSend({
       input: { ...fields, clientId },
       signature,
       draft: text,
@@ -421,6 +433,12 @@ export function BotGroupComposer({
       files,
       attachmentScope,
     });
+      if (botGroupApi()?.botGroupOutbox) await saved;
+      else void saved.catch(() => undefined);
+    } catch {
+      toast.error(t('bots.groupChat.composer.sendFailed'));
+      return;
+    } finally { sendingRef.current = false; setSending(false); }
     // Clear at once like any chat, so the next message can be written while this one
     // goes out. The batch leaves the tray without deleting its files: the message has them.
     textRef.current = '';
@@ -500,11 +518,11 @@ export function BotGroupComposer({
     : !hasMembers
     ? t('bots.groupChat.composer.noMembers')
     : division
-      ? t('bots.groupChat.composer.placeholderDivision')
+      ? t(divisionSteps ? 'bots.groupChat.composer.placeholderDivisionSteps' : 'bots.groupChat.composer.placeholderDivision')
       : planState?.kind === 'proposed'
         ? t('bots.groupChat.composer.placeholderPlanProposed')
         : planState?.kind === 'running' && planState.botName
-          ? t('bots.groupChat.composer.placeholderPlanRunning', { name: planState.botName })
+          ? t(planState.talk ? 'bots.groupChat.composer.placeholderQueueRunning' : 'bots.groupChat.composer.placeholderPlanRunning', { name: planState.botName })
           : planState?.kind === 'waiting' && planState.stepDone && planState.botName
             ? t('bots.groupChat.composer.placeholderPlanWaiting', { name: planState.botName })
             : t('bots.groupChat.composer.placeholder');
@@ -525,7 +543,7 @@ export function BotGroupComposer({
           </div>
         ) : null}
         {mention.list}
-        <div className={BOT_GROUP_COMPOSER_CARD}>
+        <ComposerCard className={cn(COMPOSER_CONTENT_CLASS, 'gap-2')}>
           {dragOver ? (
             <div
               data-testid="bot-group-drop-hint"
@@ -585,8 +603,9 @@ export function BotGroupComposer({
             // The Chat Server caps a 话题 reply; the field enforces it as typing does (a pick obeys it too).
             maxLength={thread ? BOT_GROUP_MESSAGE_MAX_CHARS : undefined}
             {...mention.textareaProps}
+            readOnly={sending}
             placeholder={placeholder}
-            onChange={(event) => mention.onChange(event.target.value)}
+            onChange={(event) => { mention.onChange(event.target.value); groupMask?.participate(); }}
             onPaste={handlePaste}
             onKeyDown={(event) => {
               if (isComposingKey(event)) return;
@@ -664,7 +683,7 @@ export function BotGroupComposer({
                       {t('extraDirs.addFiles')}
                     </span>
                   </DropdownMenuItem>
-                  <DropdownMenuItem
+                  {conversationKind !== 'direct' && <DropdownMenuItem
                     disabled={divisionBlocked}
                     className={cn(MENU_ITEM_CLASS, 'h-auto items-start gap-2.5 py-2')}
                     onSelect={() => {
@@ -681,14 +700,15 @@ export function BotGroupComposer({
                         {t(
                           divisionBlocked
                             ? 'bots.groupChat.composer.divisionBusy'
-                            : 'bots.groupChat.composer.divisionDescription',
+                            : divisionSteps ? 'bots.groupChat.composer.divisionDescriptionSteps' : 'bots.groupChat.composer.divisionDescription',
                         )}
                       </span>
                     </span>
-                  </DropdownMenuItem>
+                  </DropdownMenuItem>}
                 </DropdownMenuContent>
               </DropdownMenu>
               </>)}
+              {conversationKind !== 'direct' && <GroupMaskIndicator groupId={groupId} onTakeOver={() => textareaRef.current?.focus()} />}
               <span className="min-w-0 truncate text-12 text-[var(--text-tertiary)]" aria-live="polite">
                 {hint}
               </span>
@@ -705,7 +725,7 @@ export function BotGroupComposer({
               </Tip>
             </span>
           </div>
-        </div>
+        </ComposerCard>
       </div>
     </div>
   );

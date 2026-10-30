@@ -1,4 +1,7 @@
-import type { BrowserControlRuntime } from '@cindy/browser-control-runtime';
+import type {
+  BrowserControlResult,
+  BrowserControlRuntime,
+} from '@cindy/browser-control-runtime';
 import type { AgentKind } from '@cindy/maker-core';
 
 import type { Recipe, SiteGuide } from './browser/recipe-loader.js';
@@ -103,6 +106,8 @@ export interface FeishuBotSendMessageResult {
 export interface FeishuBotHostSession {
   sessionId?: string;
   sessionInstanceId?: string;
+  /** Trusted host session metadata; preserves an explicit Feishu reply target. */
+  vendorOptions?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -203,7 +208,7 @@ export interface FeishuBotMcpHostDeps {
    * Returns null when no owner has been bound yet — user must DM the bot once
    * first (same precondition as scheduler feishu-completion notifications).
    */
-  getOwnerOpenId(session?: FeishuBotHostSession): string | null;
+  getOwnerOpenId(session?: FeishuBotHostSession): string | null | Promise<string | null>;
   logger?: LiziMcpLogger;
 }
 
@@ -275,6 +280,7 @@ export interface SlackToolBridgeLike {
  * (大结果落盘的钳制根)。
  */
 export interface SlackHookMcpDeps {
+  compressInlineImage?: CompressInlineImageFn;
   withAccountDataAccess?: import('./account-data-access.js').AccountDataAccess;
   getSessionContext?: () => LiziMcpSessionContext;
   getBridge(): SlackToolBridgeLike | null;
@@ -285,6 +291,7 @@ export interface SlackHookMcpDeps {
 
 /** Native routine service; only caller-bound companion tools expose it to agents. */
 export interface RoutineToolService {
+  deliveryTargets?(botId: string): Promise<import('@cindy/maker-scheduler').RoutineDeliveryTarget[]>;
   list(botId: string): Promise<import('@cindy/maker-scheduler').Routine[]>;
   sources(): Promise<import('@cindy/maker-scheduler').RoutineSource[]>;
   save(botId: string, input: import('@cindy/maker-scheduler').RoutineInput, id?: string): Promise<import('@cindy/maker-scheduler').Routine>;
@@ -309,6 +316,8 @@ export interface SchedulerMcpDeps {
   /** Live per-call check (Bot main tasks may change automations only on their owner's own turn). */
   authorizeCall?: import('./tool-call-authority.js').ToolCallAuthorizer;
   getScheduler(): import('@cindy/maker-scheduler').Scheduler;
+  /** Host approval snapshot for the current schedule mutation, if one exists. */
+  getApprovedScheduleGuard?: () => import('@cindy/maker-scheduler').ScheduleMutationGuard | undefined;
   /**
    * 同账号其它电脑上的定时任务(host 注入,desktop 经既有 `maker:schedule:*` 远程控制通道)。
    * 缺省 = host 未接 → 工具的 `device` 只接受 local,其它值返 REMOTE_UNSUPPORTED。
@@ -322,6 +331,11 @@ export interface SchedulerMcpDeps {
    * (同 MemoryMcpDeps.searchSessions 模式)。
    */
   hookScript?: SchedulerHookScriptService;
+  /**
+   * 本机定时任务可选的 Agent 运行位置与各处的模型(与协同 Worker 的 list_available_models
+   * 同一份 host 实现)。agentDeviceId:null = 本机。缺省 = schedule_list_models 不注册。
+   */
+  listModels?: import('./xdt-helper/list_available_models.js').ListAvailableModelsDeps['listAvailableModels'];
   logger?: LiziMcpLogger;
 }
 
@@ -333,6 +347,8 @@ export interface SchedulerHookScriptService {
    * meta.workDir 为准。未注入时回落 schedule.workingDir 旧行为。
    */
   resolveSessionWorkDir?(sessionId: string): Promise<string | undefined>;
+  /** Bound task's current Agent location; remote-only routes cannot generate local hook scripts. */
+  isSessionAgentOnOtherDevice?(sessionId: string): Promise<boolean>;
   /**
    * 把受支持的单脚本相对命令固化为绝对路径。任意 shell 命令保持原样；相对脚本
    * 缺少原 cwd 或文件不存在时必须报错，避免改绑后以 fail-open 静默绕过 hook。
@@ -479,9 +495,24 @@ export interface SshPoolLike {
  *  - 插件启用策略由 host 在 Agent runtime / Codex thread 创建时冻结；这里不得
  *    注入调用时读取设置的门控，否则工具暴露状态与执行权限会在运行中分叉。
  */
+/** 与「设置 → 远程连接」添加表单同一份字段。 */
+export interface SshAddHostInput {
+  id: string;
+  hostname: string;
+  port?: number;
+  user: string;
+  authMethod?: 'agent' | 'key';
+  identityFile?: string;
+  displayName?: string;
+}
+
 export interface SshMcpDeps {
   getPool(): Promise<SshPoolLike>;
   ensureReady(id: string): Promise<void>;
+  /** 设置页同一添加流程：写入本机 SSH 配置并刷新连接池；失败以 `[CODE] message` 抛出。 */
+  addHost(input: SshAddHostInput): Promise<void>;
+  /** 设置页「重新读取 ~/.ssh/config」。读取失败时返回诊断类别，连接池保持上次成功的结果。 */
+  reloadConfig(): Promise<{ diagnostic: string | null; warningCount: number }>;
   /** Host-owned synchronous boundary redactor. It must not retain its inputs. */
   redactSensitiveText(snapshot: SshHostSnapshotLike, text: string): string;
   logger?: LiziMcpLogger;
@@ -629,15 +660,70 @@ export type ControlResult<T extends object = object, E extends string = never> =
  */
 export type ControlWorkerAgent = 'claude-code' | 'codex' | 'pi';
 
+export interface ResolvedBrowserScreenshot {
+  buffer: Buffer;
+  mimeType: 'image/png' | 'image/jpeg';
+}
+
+/** Host-wide automation targets: managed Chrome, sidebar webview, or the user's own browser via extension. */
+export type BrowserBackendKind = 'external' | 'rsb-webview' | 'user-browser';
+
+/** Per-backend capability flags consulted before dispatch; keys mirror the host's status payload. */
+export interface BrowserBackendCapabilities {
+  evaluate?: boolean;
+  screenshot?: boolean;
+  network?: boolean;
+  upload?: boolean;
+  dialog?: boolean;
+  console?: boolean;
+  pdf?: boolean;
+  focus?: boolean;
+  close?: boolean;
+  trustedInput?: boolean;
+  /** Coordinate clicks, drags and viewport resize (synthetic events are enough). */
+  pointer?: boolean;
+  /** Raw protocol commands that recipe adapters drive (needs a debugger attachment). */
+  rawProtocol?: boolean;
+}
+
 /** Browser automation MCP host deps. Core browser execution is injected by host. */
 export interface BrowserMcpDeps {
+  /** Local structural observations only; no URLs, scripts, selectors or input values. */
+  experienceStore?: import('./browser/experience.js').BrowserExperienceStore;
   getRuntime(): BrowserControlRuntime;
+  /**
+   * Resolve the actual host profile before validation, discovery and execution.
+   * undefined keeps the agent's own choice (the user-browser backend picks the
+   * only connected browser, or asks for one when several are connected).
+   */
+  resolveProfile?(profile?: string): string | undefined;
+  /** Existing host lifecycle/backend identities; changes invalidate session evidence. */
+  getBackendScope?(): { lifecycle: object; backend: object };
+  /**
+   * Resolve a successful screenshot runtime result into verified image bytes.
+   * The host owns file-system access so this package never receives a generic
+   * arbitrary-path reader; inline-only hosts may validate and decode in memory.
+   */
+  resolveScreenshot?(
+    result: BrowserControlResult,
+  ): Promise<ResolvedBrowserScreenshot>;
+  /** Shrink the LLM-facing copy to the shared stream-safe byte budget. */
+  compressInlineImage?: CompressInlineImageFn;
   /** Switch the host-wide, persisted automation target; returns the actual mode. */
-  setBackend?(backend: 'external' | 'rsb-webview'): Promise<'external' | 'rsb-webview'>;
+  setBackend?(backend: BrowserBackendKind): Promise<BrowserBackendKind>;
+  /**
+   * Capability flags of the active backend (false = the action/kind must be
+   * refused before dispatch with a clear hint). Absent → everything allowed.
+   */
+  backendCapabilities?(): BrowserBackendCapabilities;
   /** Whether the active backend accepts managed resource downloads. */
   supportsResourceDownloads?(): boolean;
   /** Whether the active backend accepts semantic element queries. */
   supportsSemanticQueries?(): boolean;
+  /** Trusted host-only credential IO; never exposed as a tool or page input. */
+  recipeSecrets?: { read(key: string): string | null; write(key: string, value: string): boolean };
+  /** Creates invocation-local file access using the host's existing upload policy. */
+  recipeFiles?: (sessionId?: string) => Promise<{ read(file: string): Buffer; open(file: string): number }>;
   /**
    * 代输入: true while the target tab still shows a page where the owner just
    * typed a secret. Page-state reads (evaluate, requests, response bodies,

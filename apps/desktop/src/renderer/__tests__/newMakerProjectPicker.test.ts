@@ -167,7 +167,7 @@ describe('Shared create project picker', () => {
       handlerStart,
     );
     const handler = newMakerDraftRouteSource.slice(handlerStart, handlerEnd);
-    const guardAt = handler.indexOf('if (sendInFlightRef.current) return;');
+    const guardAt = handler.indexOf('if (sendInFlightRef.current || directoryRecoveryRef.current?.isSelecting()) return;');
     const selectionAt = handler.indexOf(
       'const selectionSeq = ++modePickerSelectionSeqRef.current;',
     );
@@ -299,12 +299,11 @@ describe('Shared create project picker', () => {
     expect(toggleHandler.indexOf('setWtEnabled(enabled)')).toBeGreaterThan(
       toggleHandler.indexOf("'maker:apply-new-maker-worktree-pref'"),
     );
+    // 镜像与切设备重置共用一个按帧判定的落点(行为见 deviceLinkDraftDefaults.test.ts)。
     expect(newMakerDraftRouteSource).toContain(
-      "if (typeof remotePreference === 'boolean') setWtEnabled(remotePreference);",
+      'const next = resolveDeviceLinkWorktreeEnabled(previous, frame);',
     );
-    expect(newMakerDraftRouteSource).toContain(
-      'if (isDeviceLinkDraft) setWtEnabled(false);',
-    );
+    expect(newMakerDraftRouteSource).toContain('if (next !== null) setWtEnabled(next);');
     expect(newMakerDraftRouteSource).toContain('wt.enabled && wt.baseRepo');
     const sendGuardStart = newMakerDraftRouteSource.indexOf(
       '&& selectedWorktree.confirmedIneligible !== true',
@@ -361,7 +360,7 @@ describe('Shared create project picker', () => {
       'push.deviceId !== target.deviceId',
     );
     // GET 未完成时分支半区独立禁用；checkbox 半区不受 branch 读写状态牵连。
-    expect(newMakerDraftRouteSource).toContain('disabled={wtCreating || sendInFlight}');
+    expect(newMakerDraftRouteSource).toContain('disabled={wtCreating || sendInFlight || directoryRecoverySelecting}');
     expect(newMakerDraftRouteSource).toContain(
       'branchDisabled={wtBranchPreferenceLoading || wtBranchPreferenceSaving}',
     );
@@ -861,13 +860,13 @@ describe('Shared create project picker', () => {
   it('disables and guards workspace switching while a send is in flight', () => {
     // 设备、工作区以及本次创建会消费的 worktree 配置都要冻结。
     expect(
-      (newMakerDraftRouteSource.match(/disabled=\{wtCreating \|\| sendInFlight\}/g) ?? []).length,
+      (newMakerDraftRouteSource.match(/disabled=\{wtCreating \|\| sendInFlight \|\| directoryRecoverySelecting\}/g) ?? []).length,
     ).toBe(3);
     const handler = newMakerDraftRouteSource.slice(
       newMakerDraftRouteSource.indexOf('const handleModePickerSelect = useCallback('),
     );
     expect(handler.slice(0, handler.indexOf('handleWorkingDirChange('))).toContain(
-      'if (sendInFlightRef.current) return;',
+      'if (sendInFlightRef.current || directoryRecoveryRef.current?.isSelecting()) return;',
     );
     for (const marker of [
       'const handleWtEnabledChange = useCallback(',
@@ -877,7 +876,7 @@ describe('Shared create project picker', () => {
         newMakerDraftRouteSource.indexOf(marker),
       );
       expect(worktreeHandler.slice(0, worktreeHandler.indexOf('\n  const ', 1))).toContain(
-        'if (sendInFlightRef.current) return;',
+        'if (sendInFlightRef.current || directoryRecoveryRef.current?.isSelecting()) return;',
       );
     }
   });
@@ -1029,10 +1028,10 @@ describe('Shared create project picker', () => {
     );
     // ref 而非 state:必须即时可读,不能等下一次渲染。
     expect(handler.slice(0, handler.indexOf('patchDraft('))).toContain(
-      'if (sendInFlightRef.current) return;',
+      'if (sendInFlightRef.current || directoryRecoveryRef.current?.isSelecting()) return;',
     );
     // 同时用同步的 state 禁用 pill(ref 变化不触发渲染)。
-    expect(newMakerDraftRouteSource).toContain('disabled={wtCreating || sendInFlight}');
+    expect(newMakerDraftRouteSource).toContain('disabled={wtCreating || sendInFlight || directoryRecoverySelecting}');
     // ref 与 state 必须一起改,所以赋值统一走 helper。
     expect(newMakerDraftRouteSource).toContain('const markSendInFlight = useCallback(');
     expect(newMakerDraftRouteSource).not.toContain('sendInFlightRef.current = true;');
@@ -1434,13 +1433,9 @@ describe('Shared create project picker', () => {
    * fetch):任何一端被改动都会在这里失败,而不是等到用户发不出消息。
    */
   it('does not evict same-device snapshots when only the workspace changes', () => {
-    // 上游事实:evict 会把已挂载的 hook 推进 loading 态。
-    expect(agentCapabilitiesHookSource).toContain(
-      "notifyRemoteCapabilities(deviceId, agentKind, { status: 'loading' });",
-    );
-    expect(deviceProvidersHookSource).toMatch(
-      /notifyDeviceProviders\(deviceId,\s*\{\s*status: 'loading'/,
-    );
+    // 驱逐后挂载中的 loading/清空行为由 agentCapabilitiesDeviceCache、
+    // deviceProvidersRecovery 与 AuthContextInitializeCatch 的生产 hook 用例覆盖。
+    // 这里保留 #807 的跨文件竞态约束：只切项目不能让同设备永久停在 loading。
     // 上游事实:fetch effect 只按 (agentKind, deviceId) 重跑,换项目不会触发它。
     expect(agentCapabilitiesHookSource).toContain('}, [agentKind, deviceId]);');
     expect(deviceProvidersHookSource).toContain('}, [deviceId]);');
@@ -1583,17 +1578,17 @@ describe('Shared create project picker', () => {
     );
     const guard = handler.slice(0, handler.indexOf('markSendInFlight(true);'));
     expect(guard).toContain("throw new Error(t('goal.newGoalDialog.busy'));");
-    expect(guard).not.toContain('if (sendInFlightRef.current) return;');
+    expect(guard).not.toContain('if (sendInFlightRef.current || directoryRecoveryRef.current?.isSelecting()) return;');
     // 抛出必须发生在**上锁之前**,否则 finally 会把仍在跑的那次操作的锁解掉。
     expect(guard.indexOf('throw new Error')).toBeGreaterThan(
-      guard.indexOf('if (sendInFlightRef.current)'),
+      guard.indexOf('if (sendInFlightRef.current || directoryRecoveryRef.current?.isSelecting())'),
     );
     // 发送路径相反:它返回 false 让 ChatInput 保留草稿(那是它的既定契约,不要跟着改成 throw)。
     const send = newMakerDraftRouteSource.slice(
       newMakerDraftRouteSource.indexOf('const handleSend = useCallback('),
     );
     expect(send.slice(0, send.indexOf('if (effectiveCollab.enabled'))).toContain(
-      'if (sendInFlightRef.current) return false;',
+      'if (sendInFlightRef.current || directoryRecoveryRef.current?.isSelecting()) return false;',
     );
   });
 

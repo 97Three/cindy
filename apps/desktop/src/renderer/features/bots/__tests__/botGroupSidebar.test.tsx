@@ -4,7 +4,6 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BotGroupOpenPlanSummary, BotGroupSummary } from '../../../../shared/botGroupChat';
-import { sidebarOwnerStorageKey } from '@/lib/sidebarOwnerStorage';
 import { botGroupReadKey, markBotRead, resetBotReadStateForTests } from '../botReadState';
 
 vi.mock('@/hooks/useProviderOnboarding', () => ({
@@ -149,8 +148,6 @@ async function renderSidebar() {
 }
 
 beforeEach(() => {
-  // These tests are about the menu's own entries; the new-entry hint has its own test file.
-  window.localStorage.setItem(sidebarOwnerStorageKey('sidebar.botMarketEntryHint.v1', 'owner'), 'seen');
   mocks.navigate.mockReset();
   mocks.confirm.mockReset().mockResolvedValue(true);
   mocks.manage.mockReset().mockResolvedValue({ ok: true });
@@ -354,7 +351,7 @@ describe('TeammatesSection group chats', () => {
 
   it('lists groups alongside teammates with an author preview and opens them', async () => {
     mocks.groups = [group(), group({ id: 'g2', name: '读书会', lastMessage: null, updatedAt: 1 })];
-    mocks.params = { groupId: 'g1' };
+    mocks.pathname = '/bots/groups/g1';
     await renderSidebar();
     expect(screen.queryByText('bots.groupChat.sidebar.title')).toBeNull();
     const rows = screen.getAllByRole('button', { current: 'page' });

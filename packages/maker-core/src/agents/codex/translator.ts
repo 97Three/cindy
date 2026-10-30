@@ -48,7 +48,7 @@ import {
   CONTEXT_OVERFLOW_REASON,
   isContextOverflowErrorMessage,
 } from '../shared/context-overflow-error.js';
-import { isRemoteCompactEncryptedContentError } from '../shared/remote-compact-encrypted-error.js';
+import { isRemoteCompactEncryptedContentError, REMOTE_COMPACT_ENCRYPTED_CONTENT_REASON } from '../shared/remote-compact-encrypted-error.js';
 import { commandExecutionDisplayInput, type CommandExecutionDisplayInput } from './command-display.js';
 import { annotateSandboxInitFailure } from './sandbox-init-failure.js';
 import { codexErrorInfoTag } from './app-server/protocol.js';
@@ -93,6 +93,8 @@ export interface CodexRuntimeState {
   generationDurationMs: number;
   /** Model time sampled with the latest accepted output usage. */
   generationOutputDurationMs: number;
+  /** Native-turn output for speed, independent of the billing ledger lifecycle. */
+  generationOutputTokens: number;
   generationTurnId: string | null;
   /** False when a tool boundary is incomplete/out of order; unreliable TPS is omitted. */
   generationTimingReliable: boolean;
@@ -142,6 +144,7 @@ export function newCodexRuntimeState(): CodexRuntimeState {
     generationPendingToolIds: new Set(),
     generationDurationMs: 0,
     generationOutputDurationMs: 0,
+    generationOutputTokens: 0,
     generationTurnId: null,
     generationTimingReliable: true,
     generationHeartbeatAt: null,
@@ -190,13 +193,15 @@ function startCodexGenerationHeartbeat(rt: CodexRuntimeState): void {
 }
 
 /** Reset per-turn model-generation timing; turn wall-clock is tracked separately by the host. */
-export function resetCodexGenerationTiming(rt: CodexRuntimeState): void {
+export function resetCodexGenerationTiming(rt: CodexRuntimeState, preserveSpeed = false): void {
   stopCodexGenerationHeartbeat(rt);
-  rt.tokenSpeed.reset();
+  if (preserveSpeed) rt.tokenSpeed.startSegment();
+  else rt.tokenSpeed.reset();
   rt.generationStartedAt = null;
   rt.generationPendingToolIds.clear();
   rt.generationDurationMs = 0;
   rt.generationOutputDurationMs = 0;
+  rt.generationOutputTokens = 0;
   rt.generationTurnId = null;
   rt.generationTimingReliable = true;
 }
@@ -221,7 +226,7 @@ export function beginCodexGenerationTurn(
   startedAt = Date.now(),
 ): void {
   if (rt.generationTurnId !== turnId) {
-    resetCodexGenerationTiming(rt);
+    resetCodexGenerationTiming(rt, true);
     rt.generationTurnId = turnId;
   }
   if (rt.generationStartedAt === null && rt.generationPendingToolIds.size === 0) {
@@ -592,11 +597,11 @@ export function classifyCodexError(error: {
   const compactClassifyText = additionalDetails ? `${message}\n${additionalDetails}` : message;
   const reason = isCapacityError
     ? UPSTREAM_OVERLOAD_REASON
-    : errorInfoTag === 'contextWindowExceeded' ||
-        isContextOverflowErrorMessage(message) ||
-        isRemoteCompactEncryptedContentError(compactClassifyText)
-      ? CONTEXT_OVERFLOW_REASON
-      : undefined;
+    : isRemoteCompactEncryptedContentError(compactClassifyText)
+      ? REMOTE_COMPACT_ENCRYPTED_CONTENT_REASON
+      : errorInfoTag === 'contextWindowExceeded' || isContextOverflowErrorMessage(message)
+        ? CONTEXT_OVERFLOW_REASON
+        : undefined;
   return {
     message,
     ...(errorStatus !== undefined ? { errorStatus } : {}),
@@ -697,14 +702,8 @@ export function translateErrorNotification(
   // 时 tryTakeOverOverload 返回 null, 落回下面的终止错误路径。
   // 过载分类在函数入口已完成，避免同一判据在两处漂移。
   const overloadReason = isCapacityError ? { reason: UPSTREAM_OVERLOAD_REASON } : {};
-  // 上下文超限同样带稳定 reason key(#1429): 原样重试必然再撞同一个 4xx, renderer 靠
-  // 它隐藏 Retry 并给出压缩 / 新开会话入口。结构化 contextWindowExceeded 优先，
-  // 文案匹配仅兼容旧版 app-server；与 capacity 互斥时 overload 优先 —— 它还驱动
-  // 退避重投接管，语义更具体。
-  const contextOverflowReason =
-    !isCapacityError && classified.reason === CONTEXT_OVERFLOW_REASON
-      ? { reason: CONTEXT_OVERFLOW_REASON }
-      : {};
+  // safeErrorData retains the classifier's distinct overflow/compact reasons.
+  // Both can trigger host rollover, but only overflow proves a token-limit failure.
   if (!params.willRetry && isCapacityError) {
     const progress = ctx.tryTakeOverOverload?.();
     if (progress) {
@@ -749,7 +748,6 @@ export function translateErrorNotification(
     data: {
       ...safeErrorData,
       ...overloadReason,
-      ...contextOverflowReason,
       isTerminal: !params.willRetry,
       willRetry: params.willRetry,
     },

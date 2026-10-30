@@ -1,4 +1,5 @@
 import { materializeToolProcessMedia } from './cindy-media/toolProcessMedia.js';
+import { importExternalCodexMessagesForSession } from './maker-host/codex-local-sessions.js';
 import { withToolProcessMedia, type ProcessMediaRef, type NativeToolMedia } from '@cindy/maker-shared/tool-process-media';
 import { readTaskResultsForReply } from './botTaskReplyResults.js';
 /**
@@ -37,6 +38,8 @@ import { desc, eq } from 'drizzle-orm';
 
 import {
   broadcastMessageRow,
+  broadcastMessageDeleted,
+  discardPersistedAssistantMessage,
   broadcastMessageAgentMetaUpdate,
   createMessage as createDbMessage,
   findVisibleToolUseMessageByAliases,
@@ -767,6 +770,45 @@ function enqueueTurnErrorWrite(
     });
 }
 
+const pendingCodexReconciliation = new Map<string, {
+  ownerScope: OwnerScope;
+  rows: Map<string, number | undefined>;
+}>();
+
+function requestCodexReconciliation(sessionId: string, clientId: string, createdAt: number | undefined, ownerScope: OwnerScope): void {
+  const pending = pendingCodexReconciliation.get(sessionId);
+  if (pending && isOwnerScopeCurrent(pending.ownerScope)) {
+    pending.rows.set(clientId, createdAt);
+    return;
+  }
+  const work = { ownerScope, rows: new Map([[clientId, createdAt]]) };
+  pendingCodexReconciliation.set(sessionId, work);
+  // Background per-session work: unrelated writes and sequence cursor commits
+  // never wait on history reconciliation. Writes during a pass form one batch.
+  void Promise.resolve().then(async () => {
+    try {
+      while (work.rows.size && isOwnerScopeCurrent(ownerScope) && pendingCodexReconciliation.get(sessionId) === work) {
+        const batch = [...work.rows].slice(0, 400);
+        for (const [id] of batch) work.rows.delete(id);
+        const ids = batch.filter(([, at]) => !backgroundTurnPredatesSessionClear(sessionId, at)).map(([id]) => id);
+        if (ids.length) await importExternalCodexMessagesForSession(sessionId, { localWrite: ids });
+      }
+    } finally {
+      if (pendingCodexReconciliation.get(sessionId) === work) pendingCodexReconciliation.delete(sessionId);
+    }
+  }).catch((error) => {
+    log.warn('Codex import reconciliation failed', { sessionId, error: error instanceof Error ? error.message : String(error) });
+  });
+}
+
+function reconcileCalibratedCodexReply(
+  sessionId: string, updated: NonNullable<Awaited<ReturnType<typeof updateDbMessageContent>>>, ownerScope: OwnerScope,
+): void {
+  if (updated.agentKind === 'codex' && sessionId.startsWith('codex-') && isOwnerScopeCurrent(ownerScope)) {
+    requestCodexReconciliation(sessionId, updated.clientId, Date.parse(updated.createdAt), ownerScope);
+  }
+}
+
 /** 在事件入队时冻结 agent_kind，避免 writeChain 延迟执行时读到切换后的可变 Map。 */
 function enqueueVisibleDbMessage(
   label: string,
@@ -778,6 +820,13 @@ function enqueueVisibleDbMessage(
   enqueueWrite(label, async (ownerScope) => {
     const result = await createVisibleDbMessage(sessionId, stamped, ownerScope);
     onPersisted?.();
+    if (stamped.role === 'assistant' && stamped.agentKind === 'codex'
+      && sessionId.startsWith('codex-') && isOwnerScopeCurrent(ownerScope)
+      && !backgroundTurnPredatesSessionClear(sessionId, stamped.createdAt)) {
+      // A list read may have imported this reply before the live write. Repair
+      // it now; an already open local window need not request history again.
+      requestCodexReconciliation(sessionId, stamped.clientId, stamped.createdAt, ownerScope);
+    }
     return result;
   });
 }
@@ -861,7 +910,8 @@ function enqueuePersistAssistant(
     clientId,
     role: 'assistant',
     content,
-    agentMeta: agentMeta ?? null,
+    // Add identity only after the caller has resolved model/usage fallbacks.
+    agentMeta: agentMessageId ? { ...agentMeta, agentMessageId } : agentMeta ?? null,
     createdAt,
   });
   notePersistedMessage(sessionId, 'assistant', clientId, content, agentMessageId);
@@ -1618,7 +1668,9 @@ export function onThinkingEvent(
       role: 'thinking',
       content: { kind: 'thinking', text, durationMs, isRedacted: false, finishedAt },
       agentMeta: meta,
-      createdAt: finishedAt,
+      // 行在此刻才写入,但排序锚点用块的真实起点:按落库时刻排的话,一个跨过最终
+      // 回复的思考块会落到回复之后,渲染层就为它多折出一段「已工作」。
+      createdAt: finishedAt - Math.max(0, durationMs),
     }, releaseSnapshot);
     notePersistedMessage(sessionId, 'thinking', blockId);
   } else if (data.stage === 'redacted') {
@@ -2233,6 +2285,51 @@ function assembleAssistantTextEvent(
       : undefined;
 
   const activeBlock = assistantBlocks.get(sessionId);
+  const linkedPersistId = agentMessageId && turnScope !== 'background'
+    ? assistantItemPersistIds.get(sessionId)?.get(agentMessageId)
+    : undefined;
+  // Codex can finish an item after tool events already flushed its text, or
+  // after a newer item started streaming. Calibrate that exact durable row
+  // before the item-boundary logic can flush the newer stream. Text equality
+  // cannot identify an item: separate messages may legitimately say the same thing.
+  if (isFinal && isFullText && linkedPersistId && activeBlock?.persistId !== linkedPersistId) {
+    const visible = stripInternalWebCitations(rawText);
+    const clearBoundary = clearBoundaryBySession.get(sessionId);
+    const isCurrentBoundary = () => clearBoundaryBySession.get(sessionId) === clearBoundary;
+    enqueueWrite(`assistant_item_final:${sessionId}:${linkedPersistId}`, async (ownerScope) => {
+      if (!isCurrentBoundary()) return;
+      if (!visible) {
+        const discarded = await discardPersistedAssistantMessage(sessionId, linkedPersistId,
+          () => isCurrentBoundary() && isOwnerScopeCurrent(ownerScope));
+        if (discarded && isCurrentBoundary() && isOwnerScopeCurrent(ownerScope)) {
+          broadcastMessageDeleted({ sessionId, clientId: linkedPersistId, clientIds: [linkedPersistId] }, ownerScope);
+        }
+        return;
+      }
+      const updated = await updateDbMessageContent(sessionId, linkedPersistId, visible, undefined, {
+        isCurrent: () => isCurrentBoundary() && isOwnerScopeCurrent(ownerScope),
+      });
+      if (!isCurrentBoundary() || !isOwnerScopeCurrent(ownerScope)) return;
+      if (updated) {
+        broadcastMessageRow(sessionId, updated, ownerScope);
+        reconcileCalibratedCodexReply(sessionId, updated, ownerScope);
+      }
+      if (agentMeta) {
+        const patched = await patchMessageAgentMetaWithResult(sessionId, linkedPersistId, { ...agentMeta });
+        if (patched && isCurrentBoundary()) {
+          await broadcastMessageAgentMetaUpdate(sessionId, linkedPersistId, ownerScope);
+        }
+      }
+    });
+    if (!visible && lastTopLevelAssistantPersistIdBySession.get(sessionId) === linkedPersistId) {
+      lastTopLevelAssistantPersistIdBySession.delete(sessionId);
+    }
+    if (!visible && lastAssistantPersistIdBySession.get(sessionId) === linkedPersistId) {
+      lastAssistantPersistIdBySession.delete(sessionId);
+    }
+    // Preserve the newer stream and its completion/cost target.
+    return linkedPersistId;
+  }
   if (
     activeBlock?.agentMessageId &&
     agentMessageId &&
@@ -2254,20 +2351,23 @@ function assembleAssistantTextEvent(
     ) {
       const contentChanged = visible !== lateFinalCandidate.text;
       if (contentChanged) {
-        const isCandidateCurrent = () =>
-          sealedAssistantLateFinalBySession.get(sessionId) === lateFinalCandidate;
+        const clearBoundary = clearBoundaryBySession.get(sessionId);
+        const isCurrentBoundary = () => clearBoundaryBySession.get(sessionId) === clearBoundary;
         enqueueWrite(
           `assistant_late_final:${sessionId}:${lateFinalCandidate.persistId}`,
           async (ownerScope) => {
-            if (!isCandidateCurrent()) return;
+            if (!isCurrentBoundary()) return;
             const updated = await updateDbMessageContent(
               sessionId,
               lateFinalCandidate.persistId,
               visible,
+              undefined,
+              { isCurrent: () => isCurrentBoundary() && isOwnerScopeCurrent(ownerScope) },
             );
-            if (updated && isCandidateCurrent()) {
+            if (updated && isCurrentBoundary() && isOwnerScopeCurrent(ownerScope)) {
               lateFinalCandidate.text = visible;
               broadcastMessageRow(sessionId, updated, ownerScope);
+              reconcileCalibratedCodexReply(sessionId, updated, ownerScope);
             }
           },
         );
@@ -2327,6 +2427,10 @@ function assembleAssistantTextEvent(
       // delta 未消费 / 流式纠错),此时用全文更新既有行,而不是要求逐字相等后另起
       // 一行(否则仍是"部分文本 + 提问卡 + 完整文本"两行)。
       if (isFullText && boundaryFlushed.text !== visible) {
+        // Eligibility ends at the next block, but an already accepted correction
+        // still owns its durable row. Only clear/account changes invalidate it.
+        const clearBoundary = clearBoundaryBySession.get(sessionId);
+        const isCurrentBoundary = () => clearBoundaryBySession.get(sessionId) === clearBoundary;
         enqueueWrite(
           `boundary_flushed_content:${sessionId}:${boundaryFlushed.persistId}`,
           async (ownerScope) => {
@@ -2334,11 +2438,14 @@ function assembleAssistantTextEvent(
               sessionId,
               boundaryFlushed.persistId,
               visible,
+              undefined,
+              { isCurrent: () => isCurrentBoundary() && isOwnerScopeCurrent(ownerScope) },
             );
-            if (updated) {
+            if (updated && isCurrentBoundary() && isOwnerScopeCurrent(ownerScope)) {
               // 缓存已落库的全文:重复投递同一份快照时不再重复 UPDATE。
               boundaryFlushed.text = visible;
               broadcastMessageRow(sessionId, updated, ownerScope);
+              reconcileCalibratedCodexReply(sessionId, updated, ownerScope);
             }
           },
         );
@@ -2445,7 +2552,15 @@ function flushAssistantBlockInternal(
   if (!block) return undefined;
   assistantBlocks.delete(sessionId);
   const visible = stripInternalWebCitations(block.text);
-  if (!visible) return undefined;
+  if (!visible) {
+    // No row was queued for this block, so a later full snapshot must create
+    // one rather than treating the discarded item as an already durable row.
+    if (block.agentMessageId) {
+      const links = assistantItemPersistIds.get(sessionId);
+      if (links?.get(block.agentMessageId) === block.persistId) links.delete(block.agentMessageId);
+    }
+    return undefined;
+  }
   // 三级兜底,对齐 renderer 老逻辑:本 block 自带 meta → 边界事件 meta(tool_use/done
   // 同属或携带这条 assistant 的 meta)→ 会话最近一次非空 meta(interaction 边界靠这级)。
   const meta = block.agentMeta ?? agentMetaFallback ?? lastAgentMetaBySession.get(sessionId) ?? null;

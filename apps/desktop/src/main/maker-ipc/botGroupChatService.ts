@@ -110,14 +110,35 @@ export interface BotGroupLaneTerminal {
   undispatched?: boolean;
 }
 
+/** Ordinary and recovery-held replies must read their fallback text after queued writes. */
+export async function settleBotGroupLaneTerminal(
+  service: Pick<BotGroupChatService, 'settleLaneTurn'>,
+  terminal: BotGroupLaneTerminal,
+  drainPersistQueue: () => Promise<void>,
+): Promise<boolean> {
+  if (terminal.outcome === 'done' && !terminal.resultText.trim() && terminal.resultMessageClientId) {
+    await drainPersistQueue();
+  }
+  return service.settleLaneTurn(terminal);
+}
+
 export interface BotGroupChatServiceDeps {
-  /** With `plan`, the Bot's 分工 Session for that plan (bot-group-chat.md §7.4). */
+  /** A durable, owner-captured UI projection; tests and hosts without persistence can omit it. */
+  chatHistoryStore?: (endpoint: string, humanActorId: string, readerActorId: string, current: () => boolean) => import('@cindy/maker-shared/chat-history').ChatHistoryStore;
+  /**
+   * With `plan`, the Bot's 分工 Session for that plan (bot-group-chat.md §7.4); with
+   * `threadRootId`, the Bot's own lane for that Thread (§3); with `talkPlanId`, its own
+   * lane for that queue (§7.0).
+   */
   ensureLane: (input: {
     botId: string;
     groupId: string;
     title: string;
     chatAccess?: import('../../shared/botGroupChat.js').ChatLaneAccess;
     plan?: { planId: string; workDir: string; sessionId?: string };
+    threadRootId?: string;
+    talkPlanId?: string;
+    personalDigest?: boolean;
   }) => Promise<LaneResult>;
   /** Same hidden, durable input path as Bot DMs; attachments go with the turn like a task message's. */
   dispatch: (params: {
@@ -165,6 +186,8 @@ export interface BotGroupChatServiceDeps {
   captureOwnerScope?: () => DataOwnerBroadcastScope;
   isOwnerScopeCurrent?: (scope: DataOwnerBroadcastScope) => boolean;
   onChanged?: (payload: BotGroupChangedPayload, ownerScope?: DataOwnerBroadcastScope) => void;
+  onChatMessageNotification?: (payload: import('./chatMessageNotifications.js').ChatMessageNotification, current: () => boolean) => void;
+  onChatGroupAttention?: (groupId: string, input: import('../agent-island/groupChat.js').AgentIslandGroupChatInput | null, current: () => boolean) => void;
   /** Cloud companions (cloud-companions.md); absent keeps the Chat Server per-computer only. */
   companionCloud?: import('../companion-cloud/runtime.js').CompanionCloudHost;
   now?: () => number;
@@ -228,8 +251,8 @@ type TurnOutcome =
   | { kind: 'failed'; notice: BotGroupNoticeCode; failureCode?: BotGroupRuntimeFailureCode }
   | { kind: 'cancelled' };
 
-function unavailableLaneOutcome(errorCode: string): Extract<TurnOutcome, { kind: 'failed' }> {
-  const failureCode = botGroupRuntimeFailureCode({ code: errorCode });
+function unavailableLaneOutcome(errorCode: string, message: string): Extract<TurnOutcome, { kind: 'failed' }> {
+  const failureCode = botGroupRuntimeFailureCode({ code: errorCode, message });
   // Keep the existing unavailable-member notice when preparation has no specific recovery category.
   return { kind: 'failed', notice: 'member-unavailable', ...(failureCode !== 'RUNTIME_ERROR' ? { failureCode } : {}) };
 }
@@ -239,6 +262,7 @@ interface LaneWaiter {
   clientId: string;
   accepted: boolean;
   settle: (outcome: TurnOutcome) => void;
+  refreshPendingInteraction?: () => void;
 }
 
 interface ActiveRound {
@@ -452,7 +476,10 @@ export function resolveGroupMentions(
     });
     if (!match) continue;
     if (!match.botId) all = true;
-    else if (!ordered.includes(match.botId)) ordered.push(match.botId);
+    // Same-named members are indistinguishable in text: address them all, as the composer's parser does.
+    else for (const twin of labels) {
+      if (twin.botId && twin.label.toLocaleLowerCase() === match.label.toLocaleLowerCase() && !ordered.includes(twin.botId)) ordered.push(twin.botId);
+    }
   }
   return { all, botIds: structured.length > 0 ? structured : ordered };
 }
@@ -791,6 +818,8 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
             createdAt: latestSpoken.createdAt,
           }
         : null,
+      ...(speakersOf(group.id).some(speaker => speaker.sessionId && deps.hasPendingInteraction?.(speaker.sessionId))
+        ? { teammateActivity: { phase: 'needs-interaction' } } : {}),
       speakingBotIds: [...new Set(speakersOf(group.id).map((speaker) => speaker.botId))],
       createdAt: group.createdAt,
       updatedAt: group.updatedAt,
@@ -881,25 +910,58 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
   ): Promise<TurnOutcome> =>
     new Promise<TurnOutcome>((resolve) => {
       let timer: ReturnType<typeof setTimeout> | null = null;
+      let remainingMs = timeoutMs;
+      let runningSince: number | null = null;
+      let finished = false;
+      const finish = (outcome: TurnOutcome) => {
+        finished = true;
+        if (timer !== null) clearTimeout(timer);
+        timer = null;
+        waiter.refreshPendingInteraction = undefined;
+        resolve(outcome);
+      };
       const arm = () => {
+        // Elapsed runtime must not depend on wall-clock corrections or DB timestamps.
+        runningSince = performance.now();
         timer = setTimeout(() => {
-          // A turn waiting on the user's approval or answer is not late.
+          timer = null;
+          // Also check the pending source at an already-due timeout boundary.
           if (deps.hasPendingInteraction?.(sessionId)) {
-            arm();
+            refresh();
             return;
           }
           if (waiters.get(sessionId) === waiter) waiters.delete(sessionId);
           interruptedLanes.add(sessionId);
           void deps.abortLane(sessionId).catch(() => undefined);
-          resolve({ kind: 'failed', notice: 'member-timeout', failureCode: 'RUNTIME_TIMEOUT' });
-        }, timeoutMs);
+          finish({ kind: 'failed', notice: 'member-timeout', failureCode: 'RUNTIME_TIMEOUT' });
+        }, remainingMs);
       };
-      arm();
-      void promise.then((outcome) => {
-        if (timer) clearTimeout(timer);
-        resolve(outcome);
-      });
+      const refresh = () => {
+        if (finished) return;
+        if (deps.hasPendingInteraction?.(sessionId)) {
+          if (runningSince === null) return;
+          remainingMs = Math.max(0, remainingMs - (performance.now() - runningSince));
+          runningSince = null;
+          if (timer !== null) clearTimeout(timer);
+          timer = null;
+        } else if (runningSince === null) {
+          arm();
+        }
+      };
+      waiter.refreshPendingInteraction = refresh;
+      refresh();
+      void promise.then(finish);
     });
+
+  /** Router start precedes Desktop pending registration; setup terminal precedes complete(). */
+  const refreshPendingInteraction = (sessionId: string) => {
+    const waiter = waiters.get(sessionId);
+    if (!waiter) return;
+    queueMicrotask(() => {
+      // A late end notification must not resume a replacement turn's budget.
+      if (waiters.get(sessionId) === waiter) waiter.refreshPendingInteraction?.();
+    });
+  };
 
   const runMemberTurn = async (
     group: GroupRow,
@@ -911,7 +973,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
   ): Promise<TurnOutcome> => {
     const lane = await deps.ensureLane({ botId: member.botId, groupId: group.id, title: group.name });
     if (round.cancelled || !scopeIsCurrent(scope)) return { kind: 'cancelled' };
-    if (!lane.ok) return unavailableLaneOutcome(lane.errorCode);
+    if (!lane.ok) return unavailableLaneOutcome(lane.errorCode, lane.message);
     // A lane must never act on a stale, looser permission profile than its Bot now has.
     try {
       await deps.syncLanePermission?.(lane.sessionId, member.botId);
@@ -1488,7 +1550,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
         plan: { planId, workDir, sessionId: ownerSessionId },
       });
       if (!live()) return;
-      if (!lane.ok) return await settle(unavailableLaneOutcome(lane.errorCode));
+      if (!lane.ok) return await settle(unavailableLaneOutcome(lane.errorCode, lane.message));
       active.sessionId = lane.sessionId;
       emit(groupId, 'round', scope);
       try {
@@ -2050,8 +2112,12 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
           parallelFirstCircle: isParallelBroadcast(group, mentions, responders),
           scope,
         });
-        // Naming specific Bots is ordinary chat; everything else goes through 分工 routing (§7.2–7.4),
-        // including 「@所有人」 and groups where only mentioned Bots reply.
+        // Mention-only applies to planning too: ordinary messages must not wake
+        // the organizer. Explicit arrangements and @all remain actionable.
+        if (!division && group.replyMode === 'mentioned' && !mentions.all && !mentions.botIds.length) {
+          return { ok: true, messageId: appended.id } as const;
+        }
+        // Naming specific Bots is ordinary chat; @all may use 分工 routing (§7.2–7.4).
         const direct = mentions.botIds.length > 0;
         if (direct && !division) {
           chatRound();
@@ -2128,7 +2194,8 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     });
   };
 
-  const stopRound = async (groupIdInput: unknown): Promise<BotGroupMutationResult> => {
+  // Local groups have one owner; the stop scope only matters in multi-account server groups.
+  const stopRound = async (groupIdInput: unknown, _scope?: unknown): Promise<BotGroupMutationResult> => {
     const groupId = readId(groupIdInput);
     if (!groupId) return failure('INVALID_PARAMS', 'groupId 无效');
     return serialize(groupId, async () => {
@@ -2176,6 +2243,7 @@ export function createBotGroupChatService(deps: BotGroupChatServiceDeps) {
     retryPlan: (input: unknown) => planAction('retry', input),
     editPlanStep,
     settleLaneTurn,
+    refreshPendingInteraction,
     /** Only a server room has a message channel a teammate can post into outside a turn. */
     postCompanionTaskMessage: async (_input: BotGroupTaskPostInput): Promise<BotGroupTaskPostResult> =>
       ({ ok: false, errorCode: 'GROUP_CHANNEL_UNAVAILABLE', retryable: false }),
@@ -2194,6 +2262,8 @@ export interface BotGroupTaskPostInput {
   card: BotGroupTaskCard;
   /** Delivered files, uploaded as this teammate's attachments; unreadable ones are skipped. */
   files?: Array<{ absolutePath: string }>;
+  /** A task started in a Thread reports back into that Thread. */
+  threadRootId?: string;
 }
 export type BotGroupTaskPostResult =
   | { ok: true; messageId: string }

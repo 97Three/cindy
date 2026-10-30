@@ -1,3 +1,4 @@
+import { readLocalWorkerCreationSelection } from './state/workerCreationPrefs';
 import { useModelFavoritesHost } from './state/useModelFavoritesHost';
 import { getDataOwnerGeneration } from './contexts/dataOwnerGeneration';
 import { RouterProvider } from 'react-router-dom';
@@ -13,6 +14,7 @@ import { WallpaperSettingsProvider } from '@/hooks/useWallpaperSettings';
 import { FontSettingsProvider } from '@/hooks/useFontSettings';
 import { LocaleProvider } from '@/hooks/useLocale';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
+import { PluginReviewUpdatesProvider } from '@/contexts/PluginReviewUpdatesContext';
 import { AppShellCoverProvider, useAppShellCover } from '@/contexts/AppShellCoverContext';
 import { LoginHandoffProvider } from '@/contexts/LoginHandoffContext';
 import { EnvCheckProvider, EnvCheckGuard } from '@/contexts/EnvCheckContext';
@@ -25,7 +27,6 @@ import { LoginBrandStage } from '@/components/login/LoginBrandStage';
 import { StartupLogSupport } from '@/components/log-support/StartupLogSupport';
 import { isSecondaryWindow } from '@/lib/secondaryWindow';
 import { isSidebarWindow } from '@/lib/sidebarWindow';
-import { isGhostPanelWindow } from '@/lib/ghostPanelWindow';
 import { ToastContainer } from '@/components/ui/toast';
 import { LegacyMigrationDialog } from '@/components/auth/LegacyMigrationDialog';
 import { Tooltip } from '@/components/ui/tooltip';
@@ -33,6 +34,8 @@ import { ConfirmDialogProvider } from '@/components/ui/confirm-dialog-provider';
 import { FindInPageBar } from '@/components/find-in-page/FindInPageBar';
 import { ProjectAutomationNotifyBridge } from '@/features/scheduler/components/ProjectAutomationNotifyBridge';
 import { GhostConfirmDialogHost } from '@/cindy-brain/GhostConfirmDialogHost';
+import { PluginModelPickerHost } from '@/cindy-brain/PluginModelPickerHost';
+import { LocalAgentConfirmationHost } from '@/components/LocalAgentConfirmationHost';
 import { ForgeOidcInstallConfirmHost } from '@/cindy-brain/ForgeOidcInstallConfirmHost';
 import { GhostInstallConsentHost } from '@/cindy-brain/GhostInstallConsentHost';
 import { PluginPublisherConfirmHost } from '@/features/plugin/PluginPublisherConfirmHost';
@@ -54,6 +57,7 @@ import {
 } from '@/lib/localCatalogSnapshot';
 import { useResyncAgentIslandSettingsAfterLogin } from '@/hooks/useAgentIslandSettings';
 import {
+  getDraft,
   getDraftForOwnerPreferenceSync,
   applyAppDefaultModelSelection,
   subscribeDraft,
@@ -61,8 +65,12 @@ import {
   setFastModeForModel,
   setWorktreePreference,
   patchVendorPrefs,
+  patchVendorPrefsFromTaskModelSwitch,
   patchVendorPrefsPreservingModelChoice,
 } from '@/state/newMakerDraft';
+import { getCachedProvidersSnapshot } from '@/lib/providersSnapshotStore';
+import { resolveDraftEffectiveProviderId } from '@/lib/draftModelCalibration';
+import { isModelEnabled } from '@/state/modelVisibilityPrefs';
 import {
   snapshotForSeed,
   setProviderModelChoice,
@@ -103,7 +111,17 @@ function LoginHandoffHost({ children }: { children: React.ReactNode }) {
   );
 }
 
+function syncWorkerPrefs() {
+  const owner = getDataOwnerGeneration();
+  window.electronAPI.syncWorkerCreationPrefs({
+    workerPermissionMode: readWorkerCreationPrefs().workerPermissionMode,
+    selection: readLocalWorkerCreationSelection(owner.dataOwnerId),
+    ownerStamp: { dataOwnerId: owner.dataOwnerId, ownerGeneration: owner.generation },
+  });
+}
+
 function syncNewMakerPrefs(appDefaultModelRequestId?: string) {
+  syncWorkerPrefs();
   // 多 renderer 的模块内存彼此独立；跨窗口通知必须从共享持久快照同步，避免旧窗口把
   // 自己的 model / workingDir 等完整旧草稿覆盖进 main 缓存。
   const owner = getDataOwnerGeneration();
@@ -116,7 +134,7 @@ function syncNewMakerPrefs(appDefaultModelRequestId?: string) {
     model: cc.model,
     effort: cc.effort,
     permissionMode: cc.permissionMode,
-    fastMode: draft.fastModeByModel[cc.model] === true,
+    fastMode: (draft.fastModeByModel[cc.model] ?? false),
     // /ctr 新建会话需要与模型配套的供应商路由；缺省会走隐式路由落到官方网关，
     // 用户供应商专有的模型（如 deepseek-v4-pro）会被网关 400 拒绝。
     providerId: cc.providerId ?? null,
@@ -130,11 +148,12 @@ function syncNewMakerPrefs(appDefaultModelRequestId?: string) {
     ...(appDefaultModelRequestId ? { appDefaultModelRequestId } : {}),
     ownerStamp: { dataOwnerId: owner.dataOwnerId, ownerGeneration: owner.generation },
     selectedRoute: {
+      ...(draft.agentDeviceId ? { agentDeviceId: draft.agentDeviceId } : {}),
       harness: draft.vendor === 'cc' || draft.vendor === 'orca' ? 'claude' : draft.vendor,
       providerId: selected.providerId ?? null,
       model: selected.model,
       effort: selected.effort ?? '',
-      fastMode: draft.fastModeByModel[selected.model] === true,
+      fastMode: (draft.fastModeByModel[selected.model] ?? false),
     },
     lastByVendor: {
       cc: {
@@ -245,17 +264,11 @@ export function App() {
 
   useModelFavoritesHost();
 
-  // Worker 创建偏好的真源是 renderer localStorage；main 只缓存权限默认值供
+  // Worker 创建偏好的真源是 renderer localStorage；main 缓存权限与当前账号本机路线供
   // Orca UI / agent tool 的创建路径读取。tool 显式改默认时再经 apply push 回写真源。
   useEffect(() => {
-    const sync = () => {
-      const prefs = readWorkerCreationPrefs();
-      window.electronAPI.syncWorkerCreationPrefs({
-        workerPermissionMode: prefs.workerPermissionMode,
-      });
-    };
-    sync();
-    const unsubscribe = subscribeWorkerCreationPrefs(sync);
+    syncWorkerPrefs();
+    const unsubscribe = subscribeWorkerCreationPrefs(syncWorkerPrefs);
     const offApply = window.electronAPI.onWorkerCreationPrefsApply(({ workerPermissionMode }) => {
       setWorkerPermissionModePreference(workerPermissionMode);
     });
@@ -292,6 +305,7 @@ export function App() {
         fast,
         thinking,
         markModelChoice,
+        taskProviderId,
         appDefaultSelection,
       }) => {
         if (appDefaultSelection) {
@@ -309,7 +323,27 @@ export function App() {
           return;
         }
         const vendor = agentKindToVendor(agent);
-        if (active) {
+        if (active && taskProviderId && markModelChoice !== false) {
+          // 控制端在本机任务里只换了模型:按本机自己的新建默认判断是否写回(同本机换模)。
+          patchVendorPrefsFromTaskModelSwitch(
+            vendor,
+            {
+              model: modelId,
+              providerId: providerId || null,
+              ...(effort !== undefined ? { effort: effort as Effort } : {}),
+            },
+            taskProviderId,
+            (prefs) =>
+              resolveDraftEffectiveProviderId({
+                providers: getCachedProvidersSnapshot()?.providers ?? [],
+                agent,
+                model: prefs.model,
+                providerId: prefs.providerId,
+                chosenByUser: getDraft().modelChosenByVendor[vendor] === true,
+                isModelEnabled,
+              }),
+          );
+        } else if (active) {
           const patch =
             markModelChoice === false ? patchVendorPrefsPreservingModelChoice : patchVendorPrefs;
           const shouldPatchActiveModel = markModelChoice !== false || effort !== undefined;
@@ -411,6 +445,7 @@ export function App() {
             <ConfirmDialogProvider>
               <EnvCheckProvider>
                 <AuthProvider>
+                  <PluginReviewUpdatesProvider>
                   <AppShellCoverProvider>
                     <WorktreeProvider>
                       <PrRefsProvider>
@@ -424,41 +459,34 @@ export function App() {
                             {/* 副窗口(「在新窗口打开」)/ 右侧栏子窗口跳过 splash:env/热更检查
                             由主窗启动时完成,附属窗 EnvCheckProvider 初始即 'passed',
                             不需要也不应再走 splash 流程。 */}
-                            {!isSecondaryWindow() &&
-                              !isSidebarWindow() &&
-                              !isGhostPanelWindow() && <LoginBrandStage />}
-                            {!isSecondaryWindow() &&
-                              !isSidebarWindow() &&
-                              !isGhostPanelWindow() && <SplashScreen />}
+                            {!isSecondaryWindow() && !isSidebarWindow() && <LoginBrandStage />}
+                            {!isSecondaryWindow() && !isSidebarWindow() && <SplashScreen />}
                             <EnvCheckGuard>
                               <MakerBootstrap />
-                              {!isSecondaryWindow() &&
-                                !isSidebarWindow() &&
-                                !isGhostPanelWindow() && <RemoteDesktopHost />}
+                              {!isSecondaryWindow() && !isSidebarWindow() && <RemoteDesktopHost />}
                               <ProjectAutomationNotifyBridge />
                               {/* confirm 槽:插件请主机弹确认框。必须在 ConfirmDialogProvider
                               内(要 useConfirmDialog);main 只投单个窗口,所以每个窗口
                               都挂、谁收到谁弹,不按窗口类型 gate。 */}
                               <GhostConfirmDialogHost />
+                              <PluginModelPickerHost />
+                              <LocalAgentConfirmationHost />
                               <ForgeOidcInstallConfirmHost />
                               <GhostInstallConsentHost />
                               <PluginPublisherConfirmHost />
                               <OwnerScopedRouter />
                             </EnvCheckGuard>
-                            {!isSecondaryWindow() &&
-                              !isSidebarWindow() &&
-                              !isGhostPanelWindow() && <StartupLogSupport />}
+                            {!isSecondaryWindow() && !isSidebarWindow() && <StartupLogSupport />}
                           </LoginHandoffHost>
                           <FindInPageBar />
                           <ToastContainer />
                           {/* 首登轻量数据迁移弹窗:只挂主窗(副窗/侧栏窗不重复弹) */}
-                          {!isSecondaryWindow() && !isSidebarWindow() && !isGhostPanelWindow() && (
-                            <LegacyMigrationDialog />
-                          )}
+                          {!isSecondaryWindow() && !isSidebarWindow() && <LegacyMigrationDialog />}
                         </Tooltip.Provider>
                       </PrRefsProvider>
                     </WorktreeProvider>
                   </AppShellCoverProvider>
+                  </PluginReviewUpdatesProvider>
                 </AuthProvider>
               </EnvCheckProvider>
             </ConfirmDialogProvider>

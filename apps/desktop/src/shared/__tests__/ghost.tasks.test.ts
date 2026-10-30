@@ -104,3 +104,35 @@ describe('background tasks declaration (agent.hiddenTasks)', () => {
     expect(again.ok && again.manifest).toEqual(result.manifest);
   });
 });
+
+// A pre-existing tasks grant must not silently acquire cross-task/companion access.
+it('requires independent target permission and preserves inert historical declarations', () => {
+  const previous = validateGhostManifest({ ...base, agent: { tasks: true } });
+  const next = validateGhostManifest({ ...base, agent: { tasks: true, targets: true } });
+  if (!previous.ok || !next.ok) throw new Error('invalid fixture');
+  expect(diffGhostPermissionItems(previous.manifest, next.manifest).added.map(item => item.key)).toEqual(['agent:targets']);
+  for (const agent of [{ targets: true }, { tasks: true, targets: 'yes' }]) {
+    expect(validateGhostManifest({ ...base, agent }).ok).toBe(false);
+    const installed = validateInstalledGhostManifest({ ...base, agent });
+    if (!installed.ok) throw new Error('historical plugin disabled');
+    expect(installed.manifest.agent).toEqual(agent);
+    expect(ghostPermissionItems(installed.manifest).some(item => item.key === 'agent:targets')).toBe(false);
+    const again = validateNormalizedGhostManifest(ghostManifestToAuthorFormat(installed.manifest));
+    expect(again.ok && again.manifest).toEqual(installed.manifest);
+  }
+});
+
+// unit: old installed unknown fields stay inert and do not disable existing plugins.
+it('requires separate delegation permission and preserves old installed declarations', () => {
+  const previous = validateGhostManifest({ ...base, agent: { tasks: true, targets: true } });
+  const next = validateGhostManifest({ ...base, agent: { tasks: true, targets: true, delegation: true } });
+  if (!previous.ok || !next.ok) throw new Error('invalid fixture');
+  expect(diffGhostPermissionItems(previous.manifest, next.manifest).added.map(item => item.key)).toEqual(['agent:delegation']);
+  for (const agent of [{ delegation: true }, { tasks: true, delegation: true }, { tasks: true, targets: true, delegation: 'yes' }]) {
+    expect(validateGhostManifest({ ...base, agent }).ok).toBe(false);
+    const installed = validateInstalledGhostManifest({ ...base, agent });
+    if (!installed.ok) throw new Error('historical plugin disabled');
+    expect(installed.manifest.agent).toEqual(agent);
+    expect(ghostPermissionItems(installed.manifest).some(item => item.key === 'agent:delegation')).toBe(false);
+  }
+});
