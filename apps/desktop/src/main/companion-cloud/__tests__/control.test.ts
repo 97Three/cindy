@@ -56,6 +56,26 @@ function setup(options: { home: string | null; handler?: ApiHandler; devices?: D
   return { runtime, actors, calls, local, state, files, refresh, publish, onShadowChanged };
 }
 
+describe('private report recovery', () => {
+  it('retries a failed local import into the canonical chat without duplicating the report or marking read', async () => {
+    const report = { id: 'report-1', seq: '1', authorId: 'actor-1', origin: 'bot', createdAt: '2026-10-29T06:00:00Z', content: [{ type: 'text', text: 'A pending confirmation' }] };
+    const t = setup({ home: 'desk', handler: route => {
+      if (route === '/conversations') return { id: ROOM };
+      if (route.includes('/messages?')) return [report];
+      throw new Error(`Unexpected report route: ${route}`);
+    } });
+    vi.mocked(t.local.host.insertHistory).mockRejectedValueOnce(new Error('LOCAL_BUSY'));
+    await expect(t.runtime.receivePrivateReport('bot_mia')).rejects.toThrow('LOCAL_BUSY');
+    expect(await t.runtime.receivePrivateReport('bot_mia')).toBe(true);
+    expect(await t.runtime.receivePrivateReport('bot_mia')).toBe(true);
+    expect(t.local.rows).toHaveLength(1);
+    expect(t.local.host.insertHistory).toHaveBeenLastCalledWith('session-1', expect.objectContaining({ role: 'assistant', text: 'A pending confirmation' }), expect.anything());
+    expect(t.calls.some(call => call.route.endsWith('/read'))).toBe(false);
+    t.actors[0]!.homeDeviceId = 'laptop';
+    expect(await t.runtime.receivePrivateReport('bot_mia')).toBe(false);
+  });
+});
+
 describe('take over', () => {
   it('moves the home with compare-and-set, then builds the local companion', async () => {
     const t = setup({ home: 'laptop' });

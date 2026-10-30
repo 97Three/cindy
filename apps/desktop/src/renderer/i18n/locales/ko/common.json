@@ -10238,6 +10238,72 @@
       "threadClosed": "이번 동료 간 대화가 끝났습니다 · 보기 전용"
     },
     "groupChat": {
+      "mask": {
+        "toolAccess": "도구 권한",
+        "catchup": {
+          "title": "나를 멘션한 메시지",
+          "me": "나",
+          "markAll": "모두 읽음으로 표시",
+          "empty": "읽지 않은 멘션이 없습니다",
+          "thread": "스레드",
+          "main": "그룹 채팅",
+          "answered": "대신 답변함"
+        },
+        "title": "AI 대신 답장 모드",
+        "settings": "AI 대신 답장 설정",
+        "companion": "내 파트너",
+        "choose": "파트너 선택",
+        "enabled": "자동 대신 답장",
+        "triggerLabel": "작동 방식",
+        "resumeAfter": "부재 후 재개",
+        "start": "시작 시간",
+        "end": "종료 시간",
+        "startManual": "지금 시작",
+        "stop": "대신 답장 중지",
+        "todos": "나와 관련된 할 일 정리",
+        "digestLabel": "요약 받기",
+        "saving": "저장 중…",
+        "saveError": "저장하지 못했어요. 기존 설정이 유지됩니다. 다시 시도해 주세요.",
+        "retry": "다시 시도",
+        "loading": "설정 불러오는 중…",
+        "takeover": "직접 답장",
+        "resume": "AI 대신 답장 재개",
+        "status": {
+          "enabled": "활성",
+          "paused": "일시 중지",
+          "off": "꺼짐",
+          "offline": "오프라인",
+          "waiting": "대기 중",
+          "unbound": "미설정"
+        },
+        "detail": {
+          "paused": "이 대화를 직접 이어받았어요",
+          "off": "자동 대신 답장 꺼짐",
+          "offline": "답장 일시 중지 · 컴퓨터 오프라인",
+          "waiting": "수동 시작 대기",
+          "unbound": "파트너 미선택",
+          "enabled": "파트너가 대신 답장할 준비가 됐어요"
+        },
+        "trigger": {
+          "always": "항상 활성화",
+          "manual": "수동 작동",
+          "scheduled": "예약 작동"
+        },
+        "digest": {
+          "daily": "매일",
+          "manual": "수동"
+        },
+        "minutes": "{{count}}분",
+        "presence": "직접 참여 중 · 부재 {{minutes}}분 후 재개",
+        "scheduledWait": "{{time}}에 시작",
+        "attribution": "{{name}}가 {{owner}} 대신 답장했어요",
+        "digestNow": "지금 정리",
+        "digestWorking": "정리 중…",
+        "digestSent": "파트너 채팅으로 보냈어요",
+        "digestFailed": "정리하지 못했어요. 다시 시도하세요.",
+        "digestEmpty": "새로 정리할 내용이 없어요",
+        "joinSetup": "참여 후 AI 대신 답장 설정"
+      },
       "migrationPending": "이전 기록 일부가 아직 업로드되지 않았습니다. 자동으로 다시 시도하며 채팅은 계속 사용할 수 있습니다.",
       "memberSeparator": ", ",
       "ownerOf": "{{name}}의 소유자",

@@ -840,6 +840,8 @@ export const MAKER_INVOKE = {
   BOT_DIRECT_MESSAGE_THREAD_GET: 'maker:bot-direct-message-thread:get',
   /** 伙伴群聊：列表、详情、创建、修改、成员、删除、发言、继续讨论与停止。 */
   CHAT_SERVER_MANAGE: 'maker:chat-server:manage',
+  CHAT_SERVER_MASK: 'maker:chat-server:mask',
+  CHAT_SERVER_MENTIONS: 'maker:chat-server:mentions',
   CHAT_SERVER_OWNEDBOTS: 'maker:chat-server:ownedBots',
   CHAT_SERVER_REFRESHPROFILE: 'maker:chat-server:refreshProfile',
   CHAT_SERVER_STATUS: 'maker:chat-server:status',

@@ -96,6 +96,8 @@ export interface CompanionCloudRuntime {
   /** Move the companion to `targetDeviceId` from any computer: hand over here, ask its home, or take over. */
   switchHome: (botId: string, targetDeviceId: string, options?: CompanionSwitchOptions) => Promise<CompanionCloudActionResult>;
   transcript: (botId: string, before?: string) => Promise<CompanionTranscriptPage>;
+  /** Import a server-delivered private report into the same local companion timeline. */
+  receivePrivateReport: (botId: string) => Promise<boolean>;
   /** The copies of Cindy in the cloud when there is more than one (otherwise empty). */
   cindyCopies: () => Promise<CompanionCindyCopy[]>;
   /** Merge the other copies into `keepBotId`, on its home (here, or asked over device-link). */
@@ -762,6 +764,20 @@ export function startCompanionCloud(input: {
       if (result.ok || result.code === 'HOME_CONFLICT') await input.refresh?.().catch(() => undefined);
       publish();
       return result;
+    },
+
+    async receivePrivateReport(botId) {
+      const actor = actorOf(botId), host = input.host.materializer;
+      if (!actor || !host || !live() || actor.homeDeviceId !== input.selfDeviceId || runtime.isShadowed(botId)) return false;
+      const sessionId = await input.host.canonicalSession(botId);
+      if (!sessionId) throw new Error('COMPANION_TASK_UNAVAILABLE');
+      const roomId = await mirror.ensureRoom(botId,actor.id,actor.name);
+      const inserted = await importCloudHistory({api:input.api,host,sessionId,botActorId:actor.id,roomId,fence,
+        ...(input.media ? {download:input.media.download} : {})});
+      if (inserted > 0) state.update(botId,actor.id,entry => {entry.pendingRebuild=true;});
+      transcripts.delete(roomId);
+      publish();
+      return true;
     },
 
     async transcript(botId, before) {
