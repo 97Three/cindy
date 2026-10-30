@@ -13900,6 +13900,20 @@
       }
     },
     "draft": {
+      "directoryRecovery": {
+        "required": "部分關聯目錄需要重新授權，請依序重新選擇全部 {{count}} 個關聯目錄",
+        "changed": "關聯目錄已變更，請檢查後重新選擇全部 {{count}} 個關聯目錄",
+        "unavailable": "無法存取關聯目錄，請檢查目錄或系統權限，也可返回編輯後移除該目錄",
+        "selecting": "正在重新選擇目錄 {{index}}/{{count}}：{{directory}}",
+        "cancelled": "已取消重新選擇，提示詞與關聯目錄已保留",
+        "mismatch": "所選目錄與原目錄不同，原目錄清單未變更",
+        "failed": "未能完成目錄重新選擇，提示詞與關聯目錄已保留",
+        "ready": "目錄已重新選擇，請再次傳送任務",
+        "readyGoal": "目錄已重新選擇，請再次建立目標",
+        "reselect": "重新選擇目錄",
+        "cancel": "取消重新選擇",
+        "edit": "返回編輯"
+      },
       "createSessionFailed": "建立任務失敗，請重試",
       "piRemoteUnsupported": "Pi 僅在本地執行，無法使用 SSH 遠端主機。請切換到 Claude 或 Codex 來使用該主機。",
       "localWorktreeCleanupPending": "上一次本地 worktree 任務仍待回收，請等待清理完成後再試。",
