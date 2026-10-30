@@ -29,6 +29,8 @@ import type { NormalizedMessage, SourceAdapter } from '../types';
 
 let home: string;
 const project = () => path.join(home, 'work', 'my-app');
+/** Tools name per-project folders by the path with separators (and a Windows drive colon) turned into dashes. */
+const dashedProject = () => project().replace(/^([A-Za-z]):/, '$1').replace(/[\\/]+/g, '-').replace(/^-+/, '');
 
 async function put(rel: string, content: string | unknown[]): Promise<string> {
   const file = path.join(home, rel);
@@ -99,7 +101,7 @@ describe('foreign source adapters', () => {
     await put('.qwen/projects/-work-my-app/subagents/q/agent-1.jsonl', [{ uuid: 'z' }]);
     const { listed, messages } = await readAll(qwenAdapter);
     expect(listed.internalCount).toBe(1);
-    expect(listed.sessions[0]!.cwd).toBe(project());
+    expect(path.resolve(listed.sessions[0]!.cwd!)).toBe(project());
     expect(brief(Object.values(messages)[0]!)).toEqual([
       'user:hello',
       'thinking:{"text":"thinking…","durationMs":0,"isRedacted":false}',
@@ -201,7 +203,7 @@ describe('foreign source adapters', () => {
 
   it.each([
     ['Cursor', cursorAdapter, async () => {
-      const dir = `.cursor/projects/${project().slice(1).replace(/\//g, '-')}/agent-transcripts`;
+      const dir = `.cursor/projects/${dashedProject()}/agent-transcripts`;
       await put(`${dir}/c1/c1.jsonl`, [
         { role: 'user', message: { content: [{ type: 'text', text: '<timestamp>2026-10-30T10:00:00Z</timestamp>\n<user_query>\nfix dark mode\n</user_query>' }] } },
         { role: 'assistant', message: { content: [{ type: 'text', text: 'on it' }, { type: 'tool_use', name: 'Edit', input: { path: 'a' } }] } },
@@ -211,7 +213,7 @@ describe('foreign source adapters', () => {
       await put(`${dir}/c2/c2.jsonl`, [{ type: 'turn_ended', status: 'error' }]);
     }, ['user:fix dark mode', 'assistant:on it', 'tool_use']],
     ['Factory', factoryAdapter, async () => {
-      await put(`.factory/sessions/${project().slice(1).replace(/\//g, '-')}/f1.jsonl`, [
+      await put(`.factory/sessions/${dashedProject()}/f1.jsonl`, [
         { type: 'session_start', id: 'f1', title: 'Nightly export', cwd: project(), version: 2 },
         { type: 'message', id: 'm1', timestamp: '2026-10-30T10:00:00Z', message: { role: 'user', content: 'add nightly export' } },
         { type: 'message', id: 'm2', timestamp: '2026-10-30T10:00:01Z', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }, { type: 'tool_use', id: 't1', name: 'Write', input: {} }] } },
