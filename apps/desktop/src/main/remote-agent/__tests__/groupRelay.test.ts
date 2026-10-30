@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
-import { isProviderSharePeer, providerShareGuestPeer, REMOTE_AGENT_MAX_RUNS_PER_CONTROLLER } from '@cindy/device-link';
+import { isProviderSharePeer, parseRemoteAgentPollResult, parseRemoteAgentStreamItem, providerShareGuestPeer, REMOTE_AGENT_MAX_RUNS_PER_CONTROLLER } from '@cindy/device-link';
 import type { AgentEvent, AgentSessionHandle } from '@cindy/maker-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProviderGroupGuestRelay } from '../../provider-group/guestRelay';
@@ -20,7 +20,8 @@ import type { ProviderGroupRouter } from '../../provider-group/router';
 import { decideProviderGroupFailure } from '../../provider-group/failurePolicy';
 
 import { RemoteAgentPoller } from '../controller/poller';
-import { RemoteAgentRunClient } from '../controller/runClient';
+import { RemoteAgentRemoteError, RemoteAgentRunClient } from '../controller/runClient';
+import { LineSplitter } from '../eventLog';
 import { relayConnId, relayKeyFor, reshareKeyFor, type RelayRunFailure } from '../host/groupRelay';
 import { createGuestProviderRouteBinder } from '../host/providerAccess';
 import { guestProviderRouteForToken } from '../../maker-host/guest-provider-route-store';
@@ -176,6 +177,34 @@ async function waitFor(condition: () => boolean, ms = 3_000): Promise<void> {
   }
 }
 
+// An open ACK precedes native startup and guest-index persistence. In the
+// forget races, a start-failed event must report its cause instead of becoming
+// a started.length timeout. Keep the existing three-second observation budget.
+async function waitForStarted(host: ReturnType<typeof fakeAgentHost>, peer: string, id: string): Promise<void> {
+  const deadline = Date.now() + 3_000;
+  const splitter = new LineSplitter(64 * 1024 * 1024);
+  let cursor = 0;
+  let lastEvent = 'none';
+  while (Date.now() < deadline) {
+    const result = parseRemoteAgentPollResult(await host.handle(peer, {
+      op: 'poll', runs: [{ runId: id, cursor }], waitMs: Math.max(0, deadline - Date.now()),
+    }));
+    const run = result.runs.find(item => item.runId === id);
+    if (!run || run.missing) throw new Error(`Run ${id} disappeared before startup`);
+    cursor = run.cursor;
+    for (const line of splitter.push(Buffer.from(run.data ?? '', 'base64'))) {
+      const item = parseRemoteAgentStreamItem(line);
+      if (!item) continue;
+      lastEvent = item.t;
+      if (item.t === 'start-failed') throw new RemoteAgentRemoteError(item.error);
+      if (item.t === 'started') return;
+      if (item.t === 'closed') throw new Error(`Run ${id} closed before startup: ${item.reason}`);
+    }
+    if (run.done) throw new Error(`Run ${id} ended before startup; last event: ${lastEvent}`);
+  }
+  throw new Error(`Run ${id} did not start within 3000ms; cursor: ${cursor}; last event: ${lastEvent}`);
+}
+
 function readOwnerGuestIndex(): Record<string, { controller: string; forgetPending?: string[]; nativeIds: string[] }> {
   return JSON.parse(fs.readFileSync(path.join(root, 'owner', 'guest-sessions.json'), 'utf8'));
 }
@@ -328,6 +357,25 @@ function switchTokenIn(stream: Awaited<ReturnType<typeof openAsGuest>>['stream']
 }
 
 describe('provider group relay for shared users', () => {
+  // The member owner's deliberate disconnect must survive the intermediary and
+  // must not offer the guest another computer to undo that decision.
+  it('forwards an intentional member disconnect without offering a group switch', async () => {
+    const env = setup({ plans: [{ kind: 'member', ...MEMBER_MINI }] });
+    const guest = await openAsGuest(env, GUEST_A, openPayload(SESSION, { acceptsGroupSwitch: true }));
+    try {
+      await guest.client.call('send', [{ content: 'run' }, {}]);
+      await env.members.mini.abortAll('navigation');
+      await waitFor(() => guest.isClosed());
+      expect(guest.closedReason()).toBe('controller-disconnected');
+      expect(switchTokenIn(guest.stream)).toBeUndefined();
+      expect(env.relay.noteRunFailure).not.toHaveBeenCalled();
+      expect(env.relay.plan).toHaveBeenCalledTimes(1);
+    } finally {
+      await guest.client.close('close', 'navigation');
+      for (const host of [env.owner, ...Object.values(env.members)]) { await host.abortAll(); host.dispose(); }
+    }
+  });
+
   it('does not let a group relay discard external application isolation on an older member', async () => {
     const env = setup({ intercept: async (_device, request, forward) => {
       const result = await forward();
@@ -928,7 +976,9 @@ describe('provider group relay for shared users', () => {
       sessionId, cleanupEpoch, providerId: 'shared-provider', model: 'claude-opus',
       generation: '11111111-1111-4111-8111-111111111111',
     });
-    const open = (sessionId: string) => host.handle(peer, { op: 'open', runId: runId(), agentKind: 'claude-code',
+    const oldRunId = runId();
+    const newRunId = runId();
+    const open = (sessionId: string, id: string) => host.handle(peer, { op: 'open', runId: id, agentKind: 'claude-code',
       payload: { json: openPayload(sessionId, { projectFiles: [{ path: 'AGENTS.md', data: Buffer.from('new task').toString('base64') }] }) } });
     const forget = { op: 'forget', directGuest: { shareId: 'share-race', memberId: 'member-race',
       guestDeviceId: 'guest-pc', forgetId: '22222222-2222-4222-8222-222222222222', cleanupEpoch: 1 } };
@@ -937,15 +987,16 @@ describe('provider group relay for shared users', () => {
       () => { results.push(`${label}:failed`); });
     try {
       await grant('old-task', 1);
-      await open('old-task');
-      await waitFor(() => started.length === 1);
+      await open('old-task', oldRunId);
+      await waitForStarted(host, peer, oldRunId);
+      expect(started).toHaveLength(1);
       const first = capture('F1', host.handle(OWNER_DEVICE, forget));
       await purging;
       const second = host.handle(OWNER_DEVICE, forget);
       const secondResult = capture('F2', second);
       const reopened = second.then(async () => {
         await grant('new-task', 2);
-        await open('new-task');
+        await open('new-task', newRunId);
       }, () => undefined);
       // Give the duplicate real file I/O a short scheduling window. F1 is held
       // by an explicit barrier; no wall-clock timeout releases the deletion.
@@ -960,9 +1011,10 @@ describe('provider group relay for shared users', () => {
         // Failed cleanup must release its queue and dedupe entry for retry.
         await host.handle(OWNER_DEVICE, forget);
         await grant('new-task', 2);
-        await open('new-task');
+        await open('new-task', newRunId);
       }
-      await waitFor(() => started.length === 2);
+      await waitForStarted(host, peer, newRunId);
+      expect(started).toHaveLength(2);
       const session = started[1].input;
       const indexFile = path.join(root, 'direct-forget-race', 'guest-sessions.json');
       await waitFor(() => fs.readFileSync(indexFile, 'utf8').includes(`sdk-direct-forget-race-${session.hostSessionId}`));
@@ -980,6 +1032,73 @@ describe('provider group relay for shared users', () => {
       releasePurge();
       host.dispose();
     }
+  });
+
+  // Unit, #7783 integration: per-task revocation with an authorized sibling
+  // used to return missing, which restart recovery interpreted as a lost process.
+  it('ends a revoked direct task without exposing its buffer or restarting it', async () => {
+    const started: Started[] = [];
+    const sessions = new Set(['revoked', 'sibling']);
+    const peer = providerShareGuestPeer('share-revoke', 'member-revoke', 'guest-pc');
+    const host = fakeAgentHost('direct-revoke', started, {
+      trust: () => 'guest',
+      directGuestExecution: {
+        ownerScope: () => 'account-one', allocate: async () => null, status() {},
+        release: async () => {}, switch: async () => ({}), usage() {}, delegate: async () => false, forget: () => false,
+        sessionAllowed: (_peer, sessionId) => sessions.has(sessionId),
+        sessionDelegated: (_peer, sessionId) => sessions.has(sessionId),
+      },
+    });
+    const ids = [runId(), runId()];
+    try {
+      for (const [index, sessionId] of ['revoked', 'sibling'].entries()) {
+        await host.handle(peer, { op: 'open', runId: ids[index], agentKind: 'claude-code', payload: { json: openPayload(sessionId) } });
+      }
+      await waitFor(() => started.length === 2);
+      sessions.delete('revoked');
+      const result = await host.handle(peer, { op: 'poll', runs: ids.map(id => ({ runId: id, cursor: 0 })), waitMs: 0 }) as {
+        runs: Array<{ runId: string; missing?: boolean; data?: string; done?: boolean }>;
+      };
+      const denied = result.runs.find(run => run.runId === ids[0])!;
+      expect(denied.missing).not.toBe(true);
+      expect(denied.done).toBe(true);
+      expect(Buffer.from(denied.data!, 'base64').toString()).toBe(JSON.stringify({ t: 'closed', reason: 'access-revoked' }) + '\n');
+      const sibling = result.runs.find(run => run.runId === ids[1]);
+      expect(sibling?.missing).not.toBe(true);
+      expect(sibling?.done).not.toBe(true);
+    } finally { host.dispose(); }
+  });
+
+  // Unit: shutdown must publish a busy boundary before waiting for a direct
+  // native startup; disposal must still drain that startup's late writes.
+  it('drains a direct startup after publishing the shutdown boundary', async () => {
+    const started: Started[] = [];
+    let release!: () => void;
+    let entered!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const starting = new Promise<void>(resolve => { entered = resolve; });
+    let shadow = '';
+    const host = fakeAgentHost('direct-shutdown', started, {
+      trust: () => 'guest',
+      beforeStart: async input => { shadow = input.shadowDir; entered(); await barrier; },
+      directGuestExecution: {
+        ownerScope: () => 'account-one', allocate: async () => null, status() {},
+        release: async () => {}, switch: async () => ({}), usage() {}, delegate: async () => false, forget: () => false,
+        sessionAllowed: () => true, sessionDelegated: () => true,
+      },
+    });
+    const id = runId();
+    try {
+      await host.handle(GUEST_A, { op: 'open', runId: id, agentKind: 'claude-code', payload: { json: openPayload('shutdown-task') } });
+      await starting;
+      await host.abortAll('app-quit');
+      const result = await host.handle(GUEST_A, { op: 'poll', runs: [{ runId: id, cursor: 0 }], waitMs: 0 }) as { runs: Array<{ data: string }> };
+      expect(Buffer.from(result.runs[0].data, 'base64').toString()).toContain('"reason":"provider-restarting"');
+      host.dispose();
+      expect(fs.existsSync(shadow)).toBe(true);
+      release();
+      await waitFor(() => !fs.existsSync(shadow));
+    } finally { release(); host.dispose(); }
   });
 
   // Host.handle(open/forget/delegate), unit: forgetting during native startup
@@ -1038,10 +1157,13 @@ describe('provider group relay for shared users', () => {
       } }).then(() => { forgetAcknowledged = true; });
       await revoking;
       const newGrant = grant('new-task', 2);
-      const newOpen = open('new-task');
+      const newRunId = runId();
+      const newOpen = open('new-task', {}, newRunId);
       pending = Promise.all([forget, newGrant, newOpen]);
-      await open('relay-task', { relay: relayKeyFor(peer) });
-      await waitFor(() => started.some((item) => item.input.hostSessionId !== oldSessionId));
+      const relayRunId = runId();
+      await open('relay-task', { relay: relayKeyFor(peer) }, relayRunId);
+      await waitForStarted(host, peer, relayRunId);
+      expect(started.some((item) => item.input.hostSessionId !== oldSessionId)).toBe(true);
       await host.handle(peer, { op: 'poll', runs: [{ runId: oldRunId, cursor: 0 }], waitMs: 0 });
       await host.handle(OWNER_DEVICE, { op: 'delegate', action: 'grant',
         shareId: 'other-share', memberId: 'other-member', guestDeviceId: 'other-pc',
@@ -1053,7 +1175,8 @@ describe('provider group relay for shared users', () => {
       expect(sessions.has('other-task')).toBe(true);
       releaseStart();
       await pending;
-      await waitFor(() => started.length === 3);
+      await waitForStarted(host, peer, newRunId);
+      expect(started).toHaveLength(3);
       const newSession = started.find((item) => item.input.hostSessionId === hostSessionIdFor(peer, 'new-task'))!.input;
       expect(fs.existsSync(newSession.guestHome!)).toBe(true);
       expect(fs.existsSync(path.join(newSession.guestHome!, 'late-native.txt'))).toBe(false);
