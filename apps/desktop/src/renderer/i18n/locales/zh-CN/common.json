@@ -113,7 +113,11 @@
   "taskActionConfirmation": {
     "title": "确认任务操作",
     "once": "请核对下面的目标、动作和完整内容。允许仅对本次操作生效。",
-    "delegation": "请核对独立任务的目标和设置。允许后将启动任务，并可在本次委托结束前发送范围内的消息或停止任务。代答、恢复暂停和切换模型仍需单独确认。"
+    "remove": "这会删除自动化。请核对目标，仅允许这一次。",
+    "permission": "这会代你回答另一个任务的授权请求。请核对操作，仅允许这一次。",
+    "resume": "这会恢复已暂停的执行。请核对目标，仅允许这一次。",
+    "command": "这会在电脑上保存或运行命令，执行时不经过 Agent 的工具审批。请核对命令和工作目录，仅允许这一次。",
+    "authority": "这会创建或改写自动执行的指令，后续执行将沿用这份授权。请核对完整指令，批准仅用于本次保存。"
   },
   "logSupport": {
     "title": "日志与反馈",
@@ -1645,6 +1649,7 @@
     }
   },
   "settings": {
+    "newChatDefaults": { "title": "新任务默认权限" },
     "imConnection": {
       "reconnect": "重新连接",
       "savedNote": "绑定信息已保留，可直接重试连接。",
@@ -3594,7 +3599,7 @@
           "modelsAutoNote": "登录后自动获取可用模型"
         },
         "advanced": {
-          "label": "高级配置（模型 / 请求头）"
+          "label": "高级连接设置"
         },
         "runtimeFill": {
           "action": "填充其他 runtime",
@@ -3751,16 +3756,16 @@
           "defaultEffort": "默认推理强度",
           "defaultEffortHint": "新任务选中该模型时的初始档位，任务内仍可临时调整。",
           "contextLimit": "上下文上限",
-          "contextLimitHint": "用于此模型的所有可用引擎。以整数 K 编辑（1 K = 1,000 tokens）；未编辑时保留精确值。保存后用于后续运行，正在生成的内容不受影响。实际可用长度仍受模型服务限制。",
+          "contextLimitHint": "可直接输入 token 数，或使用 K、M、万，例如 1000000、1M。应用于此模型的所有可用引擎，后续运行生效。实际可用长度仍受模型服务限制。",
           "contextLimitLocalMillionHint": "原生 256K（262,144 tokens），可选扩展至 1M（1,000,000）。服务运行时需在「管理服务」中重启以应用更改；已停止时，下次使用自动生效。长输入会增加内存占用和等待时间。",
-          "contextLimitAria": "上下文上限（千 tokens）",
+          "contextLimitAria": "上下文上限（tokens、K、M 或万）",
           "compaction": {
             "title": "自动压缩",
             "hint": "占用达到所选比例时整理上下文。比例越低，越早压缩；实际时机仍受引擎限制。",
             "default": "{{pct}}%（默认）",
             "timing": "用于此来源下该模型的所有可用引擎。后续运行生效，不中断正在生成的内容。"
           },
-          "contextLimitRoute": "当前 {{tokens}} tokens · 1 K = 1,000 tokens",
+          "contextLimitRoute": "当前 {{tokens}} tokens",
           "contextLimitOverWindow": "已超过上游声明的长度，可能导致请求失败。",
           "restoreDefault": "恢复默认",
           "engines": "引擎支持",
@@ -3787,7 +3792,7 @@
           "close": "关闭",
           "maxOutput": "最大输出",
           "catalogCapabilities": "目录声明的能力",
-          "contextInvalid": "请输入 {{min}}–100,000 K 的整数。",
+          "contextInvalid": "请输入 {{min}}–{{max}} tokens，也支持 K、M、万。",
           "contextWriteFailed": "未保存，请重试。",
           "contextMixed": "已有引擎配置不同；修改或恢复默认将应用到全部引擎。",
           "inputModalities": "输入类型",
@@ -5707,14 +5712,15 @@
           "showDetails": "查看详情",
           "check": {
             "checking": "正在检查服务器…",
+            "checkingHint": "正在连接服务器，确认系统、端口和已有服务。",
+            "idle": "选择服务器后，会先检查它能否部署。",
             "ready": "可以部署",
             "blocked": "不能自动部署",
             "recheck": "重新检查",
             "direct": "80 和 443 端口空闲，中转会直接使用它们。",
             "nginx": "会接入服务器上已有的 Nginx，并保留原有网站。",
             "mine": "服务器上已有这台电脑部署的中转，会原地更新，已加入的设备不受影响。",
-            "other": "服务器上已有不是这台电脑部署的中转，继续部署会清除它，已加入它的设备需要重新加入。",
-            "cleanup": "会先清理 {{server}} 上没完成的部署。"
+            "other": "服务器上已有不是这台电脑部署的中转，继续部署会清除它，已加入它的设备需要重新加入。"
           },
           "running": {
             "deploy": "正在部署到服务器…",
@@ -5722,7 +5728,7 @@
             "uninstall": "正在从服务器移除…"
           },
           "done": {
-            "deploy": "部署完成，这台电脑已改用服务器上的中转。用「添加设备」让手机和其他电脑加入。",
+            "deploy": "部署完成。在「连接线路」里切换到它之后，就可以添加设备。",
             "upgrade": "服务器上的中转已升级到 {{version}}。",
             "uninstall": "已从服务器移除中转"
           },
@@ -5746,7 +5752,6 @@
             "nginx-rollback": "部署未完成，正在恢复原来的 Nginx 配置…"
           },
           "steps": {
-            "cleanup": "清理原服务器 {{server}}",
             "connect": "连接服务器",
             "check": "检查服务器",
             "runtime": "安装运行环境",
@@ -5781,6 +5786,10 @@
           "deployingStep": "{{step}}…",
           "viewProgress": "查看进度",
           "resume": "继续部署",
+          "rename": "改名",
+          "renameHint": "只改这台电脑上显示的名字，服务器和已加入的设备看到的名字不变。",
+          "renameSave": "保存",
+          "renameCancel": "取消",
           "statusChecking": "正在检查…",
           "statusOnline": "在线",
           "statusOffline": "连不上",
@@ -5795,14 +5804,15 @@
             "label": "部署步骤",
             "form": "选择服务器",
             "deploy": "部署",
-            "done": "添加设备"
+            "done": "完成"
           },
           "running": "正在部署到 {{server}}…",
           "backgroundHint": "关掉窗口不会中断部署",
           "background": "在后台继续",
           "doneTitle": "「{{name}}」已部署好",
-          "doneHint": "这台电脑已改用它。用手机扫码，或把链接发给另一台电脑加入。",
-          "doneLater": "之后也可以在「连接线路」里添加设备",
+          "doneHint": "这台电脑还在用原来的线路。点「使用这条线路」改用它，之后再添加手机和其他电脑。",
+          "doneLater": "之后也可以在「连接线路」里切换",
+          "use": "使用这条线路",
           "finish": "完成"
         },
         "manage": {
@@ -9854,6 +9864,13 @@
     }
   },
   "bots": {
+    "avatarStatus": {
+      "awaiting": "待你确认",
+      "error": "需要关注",
+      "running": "正在工作",
+      "done": "已完成",
+      "unread": "未读"
+    },
     "workbench": {
       "ownedMark": "归属 {{names}}",
       "createdMark": "由 {{names}} 创建",
@@ -10566,8 +10583,10 @@
         "reactorsUnavailable_one": "另有 {{count}} 位成员的信息暂不可用",
         "reactorsUnavailable_other": "另有 {{count}} 位成员的信息暂不可用",
         "invite": "邀请加入群聊",
+        "groupCreated": "群聊已创建",
+        "inviteFriends": "邀请朋友加入，一起使用伙伴",
+        "generatingLink": "正在生成邀请链接…",
         "join": "加入群聊",
-        "inviteDescription": "对方接受邀请后会成为群成员，可阅读群聊记录。",
         "revokeLink": "撤销此链接",
         "revokeDescription": "此链接将无法再用于加入群聊。其他邀请链接和已加入的成员不受影响。",
         "revokedLink": "此邀请链接已撤销。",

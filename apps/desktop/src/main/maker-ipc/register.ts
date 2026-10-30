@@ -973,12 +973,13 @@ import {
 } from './orcaInterAgentDispatcher.js';
 import { resolveOrcaImageAttachmentInput } from './orcaImageAttachments.js';
 import { OrcaWorkerPermissionConfirmBridge } from './orcaWorkerPermissionConfirmBridge.js';
-import { assertTaskActionCurrent, captureTaskActionGuard, bindTaskActionInput, hasTaskActionAuthorization, taskActionInputGuard, taskActionPrincipal, settleTaskActionInput, TaskActionAuthorizationError, type TaskActionDeliveryGuard } from './taskActionAuthorization.js';
+import { assertTaskActionCurrent, captureTaskActionGuard, bindTaskActionInput, hasTaskActionAuthorization, taskActionInputGuard, taskActionPrincipal, settleTaskActionInput, TaskActionAuthorizationError, type TaskActionDeliveryGuard, type TaskActionConfirmation } from './taskActionAuthorization.js';
 import {
   getOrcaWorkspaceInfoReadOnly,
   getOrcaWorkerDiagnosticStatusReadOnly,
   readOrcaWorkerOutputReadOnly,
 } from './orcaDiagnostics.js';
+import { readLatestWorkerTurnError } from './orcaTurnErrorQuery.js';
 import { startOrcaTeamWithPermissionGate } from './orcaStartTeamPermissionGate.js';
 import { createWorkerCreationPrefsSyncHandler } from './workerCreationPrefsSyncHandler.js';
 import {
@@ -2892,6 +2893,14 @@ interface OrcaCollabService {
         status: string;
         session_status: string;
         result: string;
+        /** Worker 本轮 turn 的 terminal error 摘要(已脱敏);本轮没失败时为 null。 */
+        turnError: {
+          message: string;
+          reason?: string;
+          sdkError?: string;
+          toolLoop?: string;
+          createdAt: string;
+        } | null;
       }
     | { ok: false; errorCode: string; message: string }
   >;
@@ -3364,14 +3373,58 @@ const taskActionConfirmBridge = new OrcaWorkerPermissionConfirmBridge({
   logger: log,
 });
 
-export async function confirmTaskAction(sessionId: string, tool: string, args: unknown): Promise<boolean> {
-  const result = await taskActionConfirmBridge.request(sessionId, {
-    title: t('taskActionConfirmation.title'),
-    description: t(tool === 'start_session_task' ? 'taskActionConfirmation.delegation' : 'taskActionConfirmation.once'),
-    action: { toolName: `mcp__cindy_helper__${tool}`,
-      input: args as Record<string, unknown>, confirmation: 'task_action' },
+export async function confirmTaskAction(
+  sessionId: string, tool: string, args: unknown, context?: TaskActionConfirmation,
+): Promise<boolean> {
+  const session = getMakerIfReady()?.getSession(sessionId);
+  if (!session) return false;
+  const controller = new AbortController();
+  const unsubscribe = session.onStatusChange(status => {
+    if (status !== 'active') controller.abort();
   });
-  return result.confirmed;
+  const input = structuredClone(context?.details ? { action: args, ...context.details } : args) as Record<string, unknown>;
+  const description = t(context?.risk ? `taskActionConfirmation.${context.risk}` : 'taskActionConfirmation.once');
+  const request: Extract<InteractionRequest, { kind: 'permission' }> = {
+    kind: 'permission', requestId: randomUUID(),
+    title: t('taskActionConfirmation.title'),
+    // Generic tool previews are shortened. The owner must see the complete
+    // command, child request or standing instructions here, including on remote cards.
+    description: context?.risk
+      ? `${description}\n\n${JSON.stringify(input, null, 2)}` : description,
+    toolName: `mcp__${context?.server ?? 'cindy_helper'}__${tool}`,
+    input,
+    metadata: { hostOwnedConfirmation: 'task_action' },
+  };
+  try {
+    // Publish the ordinary waiting/permission lifecycle before awaiting a decision.
+    // Desktop, remote phone and IM resolve the same pending request, never a retry.
+    const result = await session.runHostInteraction(request,
+      () => requestHostInteraction(session, request, controller.signal));
+    return result.kind === 'permission' && result.behavior === 'allow';
+  } finally {
+    unsubscribe();
+  }
+}
+
+/** Snapshot the actual child request after the delegation service checks its owner. */
+export async function captureTaskActionPermissionRequest(sessionId: string, taskId: string) {
+  const task = await botDelegationServiceHolder?.getSessionTask(sessionId, taskId);
+  if (!task?.ok || !task.task.session_id || !task.task.pendingInteraction) return null;
+  const childId = task.task.session_id;
+  const requestId = task.task.pendingInteraction.requestId;
+  const pending = getPendingInteractionsForSession(childId).find(entry => entry.request.requestId === requestId);
+  if (!pending || (pending.request.kind !== 'permission' && pending.request.kind !== 'plan_review')) return null;
+  const request = structuredClone(pending.request);
+  const signature = JSON.stringify(request);
+  const child = getMakerIfReady()?.getSession(childId);
+  return {
+    details: { task: { id: taskId, title: task.task.title }, request },
+    assertCurrent() {
+      const current = getPendingInteractionsForSession(childId).find(entry => entry.request.requestId === requestId);
+      if (getMakerIfReady()?.getSession(childId) !== child || !current || JSON.stringify(current.request) !== signature)
+        throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
+    },
+  };
 }
 
 /**
@@ -8616,6 +8669,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         remoteRuntime?.isRemote(workerSessionId)
           ? remoteRuntime.latestReply(workerSessionId)
           : readLatestWorkerAssistantMessage(workerSessionId),
+      // 远端 Worker:错误行在运行设备上,本机没有可靠的低成本读取路径(需要新增 invoke,
+      // 超出本次范围),故按「无摘要」返回 null,不猜测、不用本机代理行冒充。
+      readLatestTurnError: async (workerSessionId: string) =>
+        remoteRuntime?.isRemote(workerSessionId) ? null : readLatestWorkerTurnError(workerSessionId),
     };
   }
 
@@ -11465,7 +11522,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     withCloseSuppressed: withRehydrateCloseSuppressed,
     pendingSwitches: agentSwitchPending,
-    selectSameAgentModel: async (sessionId, intent, applyNow, assertSelectionCurrent, beforeMutation) => {
+    selectSameAgentModel: async (sessionId, intent, applyNow, assertSelectionCurrent, beforeMutation, pendingSelectionAccess) => {
       const result = await applySessionRuntimeSelection(sessionId, intent.model, intent.providerId, {
         effort: (intent.effort ?? null) as SessionRuntimeProfile['effort'],
         fastMode: intent.fastMode ?? false,
@@ -11475,7 +11532,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         ...(intent.confirmedContextWindow ? { confirmedContextWindow: intent.confirmedContextWindow } : {}),
       }, { source: 'user', sessionLockHeld: true, applyingUserSelectionOnSend: applyNow,
         runtimeSource: intent.runtimeSource, configStaged: intent.configStaged === true,
-        assertSelectionCurrent, beforeMutation });
+        assertSelectionCurrent, beforeMutation, pendingSelectionAccess });
       if (result.contextWindowConfirmationRequired !== undefined) {
         throwIpcError('PRECONDITION_FAILED', 'Model context window changed or was unknown; select the model again to confirm');
       }
@@ -16668,6 +16725,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
 
   type InternalRuntimeSelectionOptions = {
     source: 'user' | SessionRuntimeMutationSource;
+    /** Host-owned pending choice triggered by a guest send; never supplied by IPC. */
+    pendingSelectionAccess?: ReturnType<typeof createSharedTaskSettingGuard>;
     runtimeSource?: 'agent';
     /** 系统配置对齐(IM 渠道默认跟随 / 伙伴模型对齐)登记: 落地时不打「脱离跟随」标记。 */
     configStaged?: boolean;
@@ -22793,7 +22852,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (internalOptions.source !== 'user') return { deferred: false, superseded: true };
       throwIpcError('PRECONDITION_FAILED', 'the agent is still working; change the model after this turn');
     }
-    assertSharedTaskCurrent.admit();
     // 换到上下文更小的模型：与本机任务同一套保护——占用超过目标窗口的安全线时先把对话交接
     // 成摘要、关掉当前会话，下一次发送按新模型重新开始。Orca 发送前重读目标窗口，
     // 只有本机确认的具体窗口仍匹配时才允许重建，冷恢复也经过同一保护。
@@ -22825,7 +22883,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (orcaSelectionOnSend) {
         if (supersededByOwnerBoundary()) return { deferred: false, superseded: true };
         assertRuntimeOwnerCurrent();
-        assertSharedTaskCurrent.admit();
       }
       rebuiltForWindow = prepared === 'rebuilt';
       // Cold Pi verification can attach a runtime; use that handle for setModel.
@@ -22837,6 +22894,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       const rebuild = await live.requiresModelSwitchRebuild?.(model, { providerId: targetProviderId }) ?? false;
       if (internalOptions.beforeMutation) await internalOptions.beforeMutation();
       assertRuntimeOwnerCurrent();
+      // Remote preflight may outlive guest membership. Admit only once the first
+      // mutation starts; a window rebuild admits earlier via assertCanCommit.
+      assertSharedTaskCurrent.admit();
       if (rebuild) {
         await withRehydrateCloseSuppressed(sessionId, () => maker.closeSession(sessionId, 'runtime-refresh'));
       } else {
@@ -22847,6 +22907,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         if (atomicSelection) await live.setFastMode?.(targetFastMode);
       }
     }
+    // A cold runtime can reach persistence without setModel or a window rebuild.
+    assertRuntimeOwnerCurrent();
+    assertSharedTaskCurrent.admit();
     setSessionProvider(sessionId, targetProviderId);
     if (atomicSelection) {
       setSessionEffort(sessionId, targetEffort);
@@ -22968,7 +23031,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     let atomicSelection = selection as
       { effort: SessionRuntimeProfile['effort']; fastMode: boolean | 'ultrafast'; thinking?: boolean } | undefined;
     const runtimeOwnerEpoch = captureSessionRuntimeControlOwnerEpoch();
-    const assertSharedTaskCurrent = captureSharedTaskSettingGuard(sessionId);
+    const assertSharedTaskCurrent = internalOptions.pendingSelectionAccess ?? captureSharedTaskSettingGuard(sessionId);
     const assertRuntimeOwnerCurrent = (): void => {
       assertSharedTaskCurrent();
       internalOptions.assertSelectionCurrent?.();
