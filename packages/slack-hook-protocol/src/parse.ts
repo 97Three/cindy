@@ -29,6 +29,7 @@ import {
   TELEGRAM_REPLY_QUOTE_DM,
   TELEGRAM_REPLY_QUOTE_GROUP,
   TURN_DELIVERY_STATES,
+  X_MEDIA_SEGMENT_MAX_BYTES,
   X_MEDIA_STEPS,
   type XMediaStep,
   TURN_END_STATUSES,
@@ -412,7 +413,19 @@ function validateXMediaAppend(p: Record<string, unknown>): string | null {
   if (!Number.isSafeInteger(p.segmentIndex) || (p.segmentIndex as number) < 0) {
     return 'x.media.append.segmentIndex must be a non-negative safe integer';
   }
-  return isNonEmptyString(p.dataBase64) ? null : 'x.media.append.dataBase64 must be a non-empty string';
+  if (!isNonEmptyString(p.dataBase64)) return 'x.media.append.dataBase64 must be a non-empty string';
+  const encoded = p.dataBase64;
+  if (encoded.length > Math.ceil(X_MEDIA_SEGMENT_MAX_BYTES / 3) * 4) {
+    return 'x.media.append.dataBase64 exceeds the segment byte limit';
+  }
+  const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0;
+  if (encoded.length % 4 !== 0 || /[^A-Za-z0-9+/]/.test(encoded.slice(0, encoded.length - padding))) {
+    return 'x.media.append.dataBase64 must be valid padded base64';
+  }
+  if (encoded.length / 4 * 3 - padding > X_MEDIA_SEGMENT_MAX_BYTES) {
+    return 'x.media.append.dataBase64 exceeds the segment byte limit';
+  }
+  return null;
 }
 
 function validateXMediaResult(p: Record<string, unknown>): string | null {

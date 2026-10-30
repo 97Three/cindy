@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   makeTurnEnd, makeXMediaAbort, makeXMediaAppend, makeXMediaFinalize, makeXMediaInit, makeXMediaResult,
   parseHookMessage, serializeHookMessage,
+  X_MEDIA_SEGMENT_MAX_BYTES,
 } from '../index';
 
 const target = { uploadId: 'up-1', requestId: 'req-1' };
@@ -36,6 +37,8 @@ describe('x.media frames', () => {
     ['init without size', makeXMediaInit({ ...target, mimeType: 'video/mp4', totalBytes: 0 })],
     ['append without bytes', makeXMediaAppend({ ...target, segmentIndex: 0, dataBase64: '' })],
     ['append with a negative segment', makeXMediaAppend({ ...target, segmentIndex: -1, dataBase64: 'YQ==' })],
+    ['append with invalid base64', makeXMediaAppend({ ...target, segmentIndex: 0, dataBase64: '!!!!' })],
+    ['append with malformed padding', makeXMediaAppend({ ...target, segmentIndex: 0, dataBase64: 'YQ=' })],
     ['finalize without a task', makeXMediaFinalize({ uploadId: 'up-1', requestId: '' })],
     ['result with an unknown step', makeXMediaResult({ uploadId: 'up-1', step: 'status' as 'init', segmentIndex: null, mediaId: null, error: null })],
     ['result with a non-numeric id', makeXMediaResult({ uploadId: 'up-1', step: 'finalize', segmentIndex: null, mediaId: 'abc', error: null })],
@@ -43,5 +46,11 @@ describe('x.media frames', () => {
     ['turn.end with too many ids', turnEnd(['1', '2', '3', '4', '5'])],
   ])('rejects %s', (_name, frame) => {
     expect(parsed(frame).ok).toBe(false);
+  });
+
+  // 协议声明单段解码后最多 4 MiB；+1 字节与上限的编码长度相同，不能只按编码长度校验。
+  it.each([X_MEDIA_SEGMENT_MAX_BYTES, X_MEDIA_SEGMENT_MAX_BYTES + 1])('enforces the decoded segment byte limit (%i)', (bytes) => {
+    const frame = makeXMediaAppend({ ...target, segmentIndex: 0, dataBase64: Buffer.alloc(bytes).toString('base64') });
+    expect(parsed(frame).ok).toBe(bytes === X_MEDIA_SEGMENT_MAX_BYTES);
   });
 });
