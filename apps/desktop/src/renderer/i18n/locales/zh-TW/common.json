@@ -3770,7 +3770,7 @@
           "contextLimitOverWindow": "已超過上游宣告的長度，可能導致請求失敗。",
           "restoreDefault": "恢復預設",
           "engines": "引擎支援",
-          "enginesHint": "相容模式需要轉換請求，預設關閉，可依需要開啟。",
+          "enginesHint": "相容模式由 Cindy 在本機轉換請求，預設關閉，可依需要開啟。",
           "engineUnsupported": "不支援",
           "engineNotConfigured": "尚未設定",
           "engineNoFast": "無 Fast",
@@ -3809,10 +3809,10 @@
           "protocol": {
             "reference": "原生協定",
             "compatibility": "相容模式",
-            "compatibilityHint": "相容模式可能出現執行不穩定或功能異常，建議有經驗的使用者使用。",
-            "matching": "原生支援",
+            "compatibilityHint": "由 Cindy 在本機轉換請求格式，可能出現執行不穩定或功能異常，建議有經驗的使用者使用。",
             "unknown": "協定待確認",
-            "automatic": "自動選擇"
+            "automatic": "自動選擇",
+            "upstream": "上游介面"
           },
           "lifecycle": {
             "alpha": "試用版",

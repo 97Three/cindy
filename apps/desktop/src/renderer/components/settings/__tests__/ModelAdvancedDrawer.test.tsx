@@ -101,6 +101,7 @@ function drawer(primary = model, bridgeDefault = primary.defaultEffort, bridgeEf
 function draw(primary = model, bridgeDefault = primary.defaultEffort) {
   return render(drawer(primary, bridgeDefault));
 }
+const AGENT_NAMES = { 'claude-code': 'Claude Code', codex: 'Codex', pi: 'Pi' } as const;
 afterEach(cleanup);
 beforeEach(() => {
   vi.clearAllMocks();
@@ -279,7 +280,8 @@ describe('model advanced editor', () => {
     const primary = source.models.pi![0];
     render(<ModelAdvancedDrawer provider={source} row={{ id: primary.id, name: primary.name, avail: ['pi'], byAgent: { pi: primary } }} open onOpenChange={vi.fn()} pricePresentationOf={() => null} onDisable={vi.fn()} disabled={false} paymentRequired={false} />);
     expect(screen.queryByRole('button', { name: 'Pi · settings.providers.custom.fields.wireProtocol' })).toBeNull();
-    expect(screen.getByText(/Chat Completions/)).toBeTruthy();
+    expect(document.getElementById(screen.getByRole('switch', { name: 'GPT-6 · Pi' }).getAttribute('aria-describedby')!)?.textContent)
+      .toBe('Chat Completions');
   });
 
   it('saves protocol selection to the selected engine and model without writing derived model limits', async () => {
@@ -307,8 +309,9 @@ describe('model advanced editor', () => {
     } finally { Object.defineProperty(window, 'electronAPI', { configurable: true, value: previous }); }
   });
 
-  // V6 selection is a user intent, not a copy of today's resolved route/limits.
-  it.each(['auto', 'moonshot-kimi-code-openai-responses'])('persists Kimi interface %s without locking catalog defaults', async (interfaceId) => {
+  // V6 selection is a user intent, not a copy of today's resolved route/limits. Presets hide the
+  // menu, but a choice saved before keeps its way back to automatic.
+  it.each(['auto', 'moonshot-kimi-code-openai-responses'])('lets a saved Kimi interface choice change to %s without locking catalog defaults', async (interfaceId) => {
     const update = vi.fn(async (...args: unknown[]) => {
       void args;
       return { ok: true };
@@ -515,7 +518,7 @@ describe('model advanced editor', () => {
     expect(screen.queryByText('settings.providers.models.advanced.protocol.reference')).toBeNull();
   });
 
-  it('renders imported OpenRouter Gemini with only Pi enabled, preserving all three supplier interfaces', () => {
+  it('renders imported OpenRouter Gemini with every served engine enabled and no interface menu', () => {
     const preset = BUNDLED_CATALOG.presets!.find(p => p.id === 'openrouter')!;
     const agents = ['claude-code', 'codex', 'pi'] as const;
     const id = 'google/gemini-3.8-flash';
@@ -525,14 +528,14 @@ describe('model advanced editor', () => {
     const byAgent = Object.fromEntries(agents.map(agent => [agent, source.models[agent]![0]]));
     render(<ModelAdvancedDrawer provider={source} row={{ id, name: 'Gemini', avail: [...agents], byAgent }} open
       onOpenChange={vi.fn()} pricePresentationOf={() => null} onDisable={vi.fn()} disabled={false} paymentRequired={false} />);
-    for (const agent of ['Claude Code', 'Codex', 'Pi']) {
+    for (const [agent, api] of [['Claude Code', 'Messages'], ['Codex', 'Responses'], ['Pi', 'Chat Completions']]) {
       const toggle = screen.getByRole('switch', { name: `Gemini · ${agent}` });
-      expect(toggle.getAttribute('aria-checked')).toBe(agent === 'Pi' ? 'true' : 'false');
-      expect(toggle.hasAttribute('data-compatibility')).toBe(agent !== 'Pi');
+      expect(toggle.getAttribute('aria-checked')).toBe('true');
+      expect(toggle.hasAttribute('data-compatibility')).toBe(false);
+      expect(document.getElementById(toggle.getAttribute('aria-describedby')!)?.textContent).toBe(api);
     }
-    expect(screen.getByText(/^Messages/)).toBeTruthy();
-    expect(screen.getByText(/^Responses/)).toBeTruthy();
-    expect(screen.getByText(/^Chat Completions/)).toBeTruthy();
+    expect(screen.getByText('Messages · Responses · Chat Completions')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /settings\.providers\.custom\.fields\.wireProtocol/ })).toBeNull();
     expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('1048576');
   });
 
@@ -551,7 +554,7 @@ describe('model advanced editor', () => {
     expect(mocks.setLimit).toHaveBeenCalledWith(1_000_000);
   });
 
-  it('labels both Google compatibility routes and gives Pi the recommendation', async () => {
+  it('lists Cindy AI Gemini interfaces without compatibility labels and gives Pi the recommendation', () => {
     const primary = {
       ...model,
       id: 'google/gemini-future',
@@ -588,25 +591,31 @@ describe('model advanced editor', () => {
     expect(
       screen.getByText('newChat.modelSelector.unified.recommended').parentElement?.textContent,
     ).toContain('Pi');
-    for (const agent of ['Claude Code', 'Codex']) {
-      const toggle = screen.getByRole('switch', { name: `Gemini · ${agent}` });
-      expect(toggle.getAttribute('data-compatibility')).toBe('true');
-      expect(
-        document.getElementById(toggle.getAttribute('aria-describedby')!)?.textContent,
-      ).toContain('protocol.compatibility');
+    // The gateway serves each engine's own interface; that is not Cindy's local conversion.
+    for (const agent of agents) {
+      expect(screen.getByRole('switch', { name: `Gemini · ${AGENT_NAMES[agent]}` }).hasAttribute('data-compatibility')).toBe(false);
     }
-    expect(
-      screen.getByRole('switch', { name: 'Gemini · Pi' }).hasAttribute('data-compatibility'),
-    ).toBe(false);
-    const notices = screen.getAllByRole('button', {
-      name: 'settings.providers.models.advanced.protocol.compatibility',
-    });
-    expect(notices).toHaveLength(2);
-    fireEvent.click(notices[0]!);
-    expect((await screen.findByRole('tooltip')).textContent).toContain(
-      'protocol.compatibilityHint',
-    );
+    expect(screen.getByText('Messages · Responses · Google Gemini')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'settings.providers.models.advanced.protocol.compatibility' })).toBeNull();
     expect(setModelVisibility).not.toHaveBeenCalled();
+  });
+
+  it('labels only the engine Cindy converts locally and explains it on demand', async () => {
+    const source = { ...buildUserProvider({ id: 'chat-only', name: 'Chat Only', runtimes: {
+      'claude-code': { baseUrl: 'https://supplier.example/v1', wireProtocol: 'openai-chat', models: [{ id: 'chat-model', name: 'Chat Model' }] },
+      pi: { baseUrl: 'https://supplier.example/v1', wireProtocol: 'openai-chat', models: [{ id: 'chat-model', name: 'Chat Model' }] },
+    } }), connected: true } as ProviderView;
+    const byAgent = { 'claude-code': source.models['claude-code']![0], pi: source.models.pi![0] };
+    render(<ModelAdvancedDrawer provider={source} row={{ id: 'chat-model', name: 'Chat Model', avail: ['claude-code', 'pi'], byAgent }} open
+      onOpenChange={vi.fn()} pricePresentationOf={() => null} onDisable={vi.fn()} disabled={false} paymentRequired={false} />);
+    const claude = screen.getByRole('switch', { name: 'Chat Model · Claude Code' });
+    expect(claude.getAttribute('data-compatibility')).toBe('true');
+    expect(document.getElementById(claude.getAttribute('aria-describedby')!)?.textContent).toContain('protocol.compatibility');
+    expect(screen.getByRole('switch', { name: 'Chat Model · Pi' }).hasAttribute('data-compatibility')).toBe(false);
+    const notices = screen.getAllByRole('button', { name: 'settings.providers.models.advanced.protocol.compatibility' });
+    expect(notices).toHaveLength(1);
+    fireEvent.click(notices[0]!);
+    expect((await screen.findByRole('tooltip')).textContent).toContain('protocol.compatibilityHint');
   });
 
   it('preserves an existing precise override, warns above the exact maximum, and resets without rounding writes', () => {
