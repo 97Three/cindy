@@ -5,7 +5,7 @@ import { setVoiceTaskDispatch, setVoiceCallMemoryReader } from '../voice-convers
 import { buildBotMemoryScopeKey, SessionCreationCleanupPendingError } from '@cindy/maker-core';
 import { createOrcaWorkerProjectHandlers } from './orcaWorkerProjectHandlers';
 import { getTeamByWorkerSession } from '../localDb/orcaTeamStore';
-import { readWorkerProjectContext, createWorkerWorktree, rememberWorkerProject, probeWorkerProject, resolveWorkerWorktreeSource, getWorkerOwnedWorktree } from './orcaWorkerProject';
+import { readWorkerProjectContext, createWorkerWorktree, rememberWorkerProject, probeWorkerProject, resolveWorkerWorktreeSourceSelection, getWorkerOwnedWorktree } from './orcaWorkerProject';
 import type { WorkerWorktreeRequest } from '../../shared/orca-worker-project';
 import { captureAgentRequest as captureRequest, ownerChannelInputEvidence, type CapturedAgentRequest } from './forwardedRequest.js';
 import { readChannelToolScope } from '../im/shared/channelToolScope.js';
@@ -743,6 +743,7 @@ import {
   getRemoteNewMakerDefaults,
   getRemoteNewMakerDefaultsByVendor,
   getWorkerDefaultsFromNewMaker,
+  getWorkerCreationSelection,
   getSelectedNewMakerRoute,
   getWorkerPermissionModeFromCreationPrefs,
   type ProviderModelMemorySnapshot,
@@ -2781,9 +2782,11 @@ interface OrcaCollabService {
     | { ok: false; errorCode: string; message: string }
   >;
   createWorker: (params: {
+    /** Host-only marker set at the MCP adapter; never accepted from its schema. */
+    useCreationPrefs?: boolean;
     leadSessionId: string;
     role: string;
-    agent: AgentKind;
+    agent?: AgentKind;
     model?: string;
     providerId?: string;
     effort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
@@ -2800,6 +2803,10 @@ interface OrcaCollabService {
   }) => Promise<
     | {
         ok: true;
+        worktreeSource?: import('../../shared/orca-worker-project').WorkerWorktreeSourceSelection;
+        resolved?: Extract<import('./orcaWorkerCreationService').OrcaWorkerCreationResult, { ok: true }>['resolved'];
+        defaults?: import('./orcaWorkerDefaults').WorkerDefaultsResolution;
+        executionDeviceId?: string;
         workerId: string;
         workerSessionId: string;
         workingDir?: string;
@@ -7003,7 +7010,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   initRenameSessionsConfirm(renameSessionsConfirmBridge);
 
   // Worker 创建偏好与模型默认值同样以 renderer localStorage 为真源。main 只保留
-  // 权限模式镜像，供 Orca UI / MCP 创建路径读取。
+  // 权限与当前账号本机路线镜像，供 Orca UI / MCP 创建路径读取。
   ipcMain.on(
     MAKER_SEND.SYNC_WORKER_CREATION_PREFS,
     createWorkerCreationPrefsSyncHandler({
@@ -7011,6 +7018,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]),
       setWorkerPermissionMode: (workerPermissionMode) =>
         setWorkerCreationPrefsCache({ workerPermissionMode }),
+      getActiveOwner: getActiveDataOwnerPushStamp,
+      isBoundaryPending: isAppSessionBoundaryPending,
+      setSelection: (selection, ownerStamp) => setWorkerCreationPrefsCache({
+        workerPermissionMode: getWorkerPermissionModeFromCreationPrefs(), selection, ownerStamp,
+      }),
     }),
   );
 
@@ -16404,6 +16416,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       };
     },
     getWorkerDefaults: getWorkerDefaultsFromNewMaker,
+    getCreationSelection: () => isAppSessionBoundaryPending() ? null : getWorkerCreationSelection(getActiveDataOwnerPushStamp()),
     getWorkerPermissionMode: getWorkerPermissionModeFromCreationPrefs,
     resolveWorkerWorkingDir: async (dir, lead) => {
       let resolved: string;
@@ -16420,7 +16433,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       );
       return resolved;
     },
-    resolveWorkerWorktreeSource,
+    resolveWorkerWorktreeSource: (directory, source, leadDirectory) =>
+      resolveWorkerWorktreeSourceSelection(directory, source, undefined, leadDirectory),
     getWorkerWorktree: getWorkerOwnedWorktree,
     createWorkerWorktree,
     discardWorkerWorktree,
@@ -17895,6 +17909,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     moveWorkerQueuedMessage: (params) => orcaTeamService.moveWorkerQueuedMessage(params),
     startTeam: ({ leadSessionId, workerPermissionMode }) => startOrcaTeamForCaller(leadSessionId, workerPermissionMode),
     createWorker: async (params) => {
+      params = { ...params, useCreationPrefs: true };
       try {
         await assertLeadCollabProjectEnabled(params.leadSessionId);
         return await orcaLifecycleService.createWorker(params);
