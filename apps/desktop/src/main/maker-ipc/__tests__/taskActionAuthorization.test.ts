@@ -439,7 +439,16 @@ describe('Owner-delegated scheduled task actions', () => {
   // teammate-authority.md「延迟投递只认真实撤权」(2026-10-30): live turn facts still
   // expire the admission, but only real revocation stops a queued message. Before,
   // any of these rollovers between turns dropped every supplement still queued.
-  it.each(['permission', 'plan', 'instance', 'account', 'input'] as const)('invalidates admission after %s changes; delayed delivery stops only on account change', async changed => {
+  // A held app-session boundary alone proves nothing (a same-owner Ghost projection repair holds
+  // it too): the captured database client is the owner identity (review on #7969).
+  it.each([
+    ['permission', 'delivered'],
+    ['plan', 'delivered'],
+    ['instance', 'delivered'],
+    ['input', 'delivered'],
+    ['boundary', 'retryable'],
+    ['owner', 'revoked'],
+  ] as const)('invalidates admission after %s changes; delayed delivery is %s', async (changed, outcome) => {
     const h = scheduledFixture();
     const queued = input();
     const guard = await withToolCallAuthority(h.authorize, scheduledSend(), async () => {
@@ -452,12 +461,13 @@ describe('Owner-delegated scheduled task actions', () => {
     if (changed === 'permission') h.runtime.stablePermissionModeState.generation++;
     if (changed === 'plan') h.runtime.stablePlanModeState.generation++;
     if (changed === 'instance') h.getSession.mockReturnValue({ ...h.runtime });
-    if (changed === 'account') hostFacts.boundaryPending.mockReturnValue(true);
+    if (changed === 'boundary') hostFacts.boundaryPending.mockReturnValue(true);
+    if (changed === 'owner') hostFacts.getDb.mockReturnValue({});
     if (changed === 'input') h.activeInput.boundary = 'replacement-runtime';
     expect(() => guard()).toThrow('AUTHORIZATION_EXPIRED');
-    const delivery = expect(taskActionInputGuard('target', queued)!());
-    if (changed === 'account') await delivery.rejects.toThrow('AUTHORIZATION_EXPIRED');
-    else await delivery.resolves.toBeUndefined();
+    const rejection = await taskActionInputGuard('target', queued)!().then(() => null, (error: unknown) => ({ error }));
+    if (outcome === 'delivered') expect(rejection).toBeNull();
+    else expect(rejection && isTaskActionRevoked(rejection.error)).toBe(outcome === 'revoked');
   });
 
   // Review on #7969: /clear moves the coordinator's boundary before cleared_at is persisted,

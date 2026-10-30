@@ -312,10 +312,17 @@ export function createDesktopTaskActionAuthorizer(deps: {
         // or archived, delegation run or team changed, group grant. The sender's live
         // Session incarnation, input generation and permission/Plan generation gate
         // executing this call (assertCurrent), never an already queued message.
+        // The captured database client is the owner identity. A held app-session boundary alone
+        // proves nothing: a same-owner Ghost projection repair holds it too. While it is pending
+        // a delivery check cannot be answered, which is a failed check (kept for retry), not a
+        // revocation; once the client is replaced the next check proves the owner changed.
+        const assertSameOwner = (revokedAs: string) => {
+          if (db !== tryGetDbClient()) throw new Error(revokedAs);
+          if (isAppSessionBoundaryPending()) throw new Error('HOST_NOT_READY');
+        };
         const assertDeliveryCurrent = async () => {
           await group?.refresh();
-          if (isAppSessionBoundaryPending() || db !== tryGetDbClient())
-            throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
+          assertSameOwner('TASK_ACTION_AUTHORIZATION_EXPIRED');
           const [fresh] = await db.drizzle
             .select({
               status: sessions.status,
@@ -351,8 +358,7 @@ export function createDesktopTaskActionAuthorizer(deps: {
               throw new Error('TASK_ACTION_AUTHORIZATION_EXPIRED');
           }
           group?.assertCurrent();
-          if (db !== tryGetDbClient() || isAppSessionBoundaryPending())
-            throw new Error('OWNER_SCOPE_CHANGED');
+          assertSameOwner('OWNER_SCOPE_CHANGED');
         };
         const assertCurrentSync = () => {
           runtime?.assertInputCurrent();
