@@ -802,7 +802,14 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         startImage: async (context, request) => {
           const ready = await admitInputHandoff(context);
           if (!ready.ok) return ready;
-          const picture = await readHandoffPicture(request.image, context.workingDir);
+          const picture = await readHandoffPicture(request.image, context.workingDir, (absPath) => authorizeDesktopSessionPath({
+            sessionId: ready.sessionId,
+            sessionInstanceId: context.sessionInstanceId,
+            workingDir: context.workingDir ?? '',
+            path: absPath,
+            toolName: 'cindy_helper.ask_owner',
+            operation: 'read',
+          }, deps.getLiveSessionGrantState));
           if (!picture.ok) return picture;
           const result = await ready.service.startImageQr({
             sessionId: ready.sessionId,

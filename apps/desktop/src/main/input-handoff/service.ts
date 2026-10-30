@@ -53,7 +53,7 @@ export interface InputHandoffImageStartRequest {
   timeoutMinutes?: number;
 }
 
-export type InputHandoffImageStartError = InputHandoffStartError | 'NOT_AN_IMAGE' | 'NO_QR_FOUND' | 'QR_UNREADABLE';
+export type InputHandoffImageStartError = InputHandoffStartError | 'NOT_AN_IMAGE' | 'NO_QR_FOUND' | 'QR_UNREADABLE' | 'NO_SESSION_CONTEXT';
 
 /** Why a target cannot be handed off, known before starting. */
 export interface InputHandoffTargetProblem {
@@ -178,6 +178,7 @@ function answeredOnFact(holder: InputHandoffHolder): string {
 export class InputHandoffService {
   private readonly entries = new Map<string, Entry>();
   private readonly recentStarts = new Map<string, number[]>();
+  private readonly decoding = new Set<{ sessionId: string; cancelled: boolean }>();
 
   constructor(private readonly deps: InputHandoffServiceDeps) {}
 
@@ -256,7 +257,16 @@ export class InputHandoffService {
     if (refused) return refused;
     if (!this.deps.qrFromPicture)
       return { ok: false, errorCode: 'UNSUPPORTED', message: 'Reading QR codes from a picture is only available on macOS for now.' };
-    const found = await this.deps.qrFromPicture(request.image).catch(() => ({ error: 'unreadable' as const }));
+    // Not in `entries` until the picture is read: a task closed meanwhile marks this instead.
+    const decoding = { sessionId: request.sessionId, cancelled: false };
+    this.decoding.add(decoding);
+    const found = await this.deps.qrFromPicture(request.image)
+      .catch(() => ({ error: 'unreadable' as const }))
+      .finally(() => this.decoding.delete(decoding));
+    if (decoding.cancelled) {
+      if (found && !('error' in found)) found.jpeg.fill(0);
+      return { ok: false, errorCode: 'NO_SESSION_CONTEXT', message: 'This task stopped before the code could be shown.' };
+    }
     if (found && 'error' in found) {
       return found.error === 'not_image'
         ? { ok: false, errorCode: 'NOT_AN_IMAGE', message: 'That file is not a picture Cindy can read (use PNG or JPEG).' }
@@ -421,6 +431,7 @@ export class InputHandoffService {
   }
 
   cleanupForSession(sessionId: string): void {
+    for (const pending of this.decoding) if (pending.sessionId === sessionId) pending.cancelled = true;
     for (const entry of this.entries.values()) {
       if (entry.sessionId !== sessionId || entry.snapshot?.terminal) continue;
       entry.silent = true;
@@ -429,6 +440,7 @@ export class InputHandoffService {
   }
 
   cleanupAll(): void {
+    for (const pending of this.decoding) pending.cancelled = true;
     for (const entry of this.entries.values()) {
       if (entry.snapshot?.terminal) continue;
       entry.silent = true;

@@ -115,7 +115,9 @@ export class ImageQrHandoffSession {
   }
 
   async decide(decision: InputHandoffDecision, actor?: InputHandoffHolder): Promise<boolean> {
-    if (this.ended || !this.acceptsRevision(decision.expectedRevision)) return false;
+    // Like InputHandoffSession: decisions bind to the current revision only, so a
+    // stale done/cancel/claim from before another device took over is refused.
+    if (this.ended || decision.expectedRevision !== this.revision) return false;
     switch (decision.action) {
       case 'done':
         this.answeredOn = actor ?? { local: true };

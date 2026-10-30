@@ -194,6 +194,35 @@ describe('代输入 requests the agent makes', () => {
     expect(h.snapshots).toEqual([]);
     expect(h.notified).toEqual([]);
   });
+
+  // PR #8083 review: closing the task while the picture is read must not pop a card later.
+  it('shows nothing when the task closes while the screenshot is being read', async () => {
+    let decoded!: (value: { text: string; jpeg: Buffer; width: number; height: number }) => void;
+    const h = harness(undefined, () => new Promise((resolve) => { decoded = resolve; }));
+    const pending = h.service.startImageQr({ sessionId: 'task', purpose: 'Scan', image: Buffer.from('png') });
+    await vi.waitFor(() => expect(decoded).toBeTypeOf('function'));
+    h.service.cleanupForSession('task');
+    const jpeg = Buffer.from('jpeg');
+    decoded({ text: 'https://passport.feishu.cn/qr/abc', jpeg, width: 8, height: 8 });
+    expect(await pending).toMatchObject({ ok: false, errorCode: 'NO_SESSION_CONTEXT' });
+    expect(h.snapshots).toEqual([]);
+    expect(h.notified).toEqual([]);
+    expect(jpeg.every((byte) => byte === 0)).toBe(true);
+  });
+
+  // PR #8083 review: once a device takes over, a decision sent against the earlier revision is stale.
+  it('refuses a stale decision from before another device took over the scan', async () => {
+    const h = harness(undefined, async () => ({ text: 'https://passport.feishu.cn/qr/abc', jpeg: Buffer.from('jpeg'), width: 8, height: 8 }));
+    const started = await h.service.startImageQr({ sessionId: 'task', purpose: 'Scan', image: Buffer.from('png') });
+    if (!started.ok) throw new Error(started.errorCode);
+    const before = h.latest().revision;
+    h.service.resolve(started.requestId, { kind: 'input_handoff', action: 'claim', expectedRevision: before }, { deviceId: 'phone-1' });
+    await vi.waitFor(() => expect(h.latest().holder).toMatchObject({ deviceId: 'phone-1' }));
+    h.service.resolve(started.requestId, { kind: 'input_handoff', action: 'cancel', expectedRevision: before }, { local: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(h.service.isCurrent(started.requestId)).toBe(true);
+    expect(h.continued).toEqual([]);
+  });
 });
 
 describe('代输入 continuation for the agent', () => {
