@@ -10,7 +10,7 @@ import type { ProviderView } from '@cindy/model-providers';
 import type { MobileCodexRateLimitsResult } from '@cindy/maker-shared/device-link-contract';
 
 // Account generations are driven explicitly below; no full auth host is needed.
-vi.mock('@/contexts/AuthContext', () => ({ useOptionalAuthUser: () => null }));
+vi.mock('@/contexts/AuthContext', () => ({ useOptionalAuthUser: () => null, useOptionalAuthDeviceId: () => null }));
 
 const sharing = vi.hoisted(() => ({ received: [] as ProviderShareReceived[] }));
 vi.mock('@/features/provider-share/providerShareStore', () => ({

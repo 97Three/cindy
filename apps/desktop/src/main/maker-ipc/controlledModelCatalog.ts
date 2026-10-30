@@ -1,11 +1,13 @@
+import type { InvokeResultPayload } from '@cindy/device-link';
 import { MODEL_CATALOG_READ_CHANNELS, type ControlledModelLocation } from '../../shared/controlledModelCatalog.js';
+import { extractIpcError } from '../../shared/ipcError.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
 
 export interface ControlledModelCatalogDeps {
   assertCaller(): void;
   captureOwner(): () => void;
   locations(): Promise<{ status: 'complete' | 'degraded'; locations: ControlledModelLocation[] }>;
-  invoke(deviceId: string, channel: string, args: unknown[], assertOwner: () => void): Promise<unknown>;
+  invoke(deviceId: string, channel: string, args: unknown[], assertOwner: () => void): Promise<InvokeResultPayload>;
 }
 
 /** B supplies both the locations and their catalogs; A's received shares are irrelevant. */
@@ -54,6 +56,18 @@ export function createControlledModelCatalogReader(deps: ControlledModelCatalogD
     if (!current.locations.some(location => location.agentDeviceId === deviceId)) {
       throwIpcError('PRECONDITION_FAILED', 'Model source is no longer available');
     }
-    return result;
+    if (!result.ok) {
+      // Keep source readiness/compatibility semantics across the extra hop.
+      // Authorization above still wins over an obsolete source response.
+      if (result.error.code === 'IPC_ERROR') {
+        const error = extractIpcError(new Error(result.error.message));
+        if (error) throwIpcError(error.code, error.message);
+      }
+      if (result.error.code === 'CHANNEL_NOT_ALLOWED') {
+        throwIpcError('DEVICE_LINK_CHANNEL_NOT_ALLOWED', result.error.message);
+      }
+      throwIpcError('PRECONDITION_FAILED', 'Model source is currently unavailable');
+    }
+    return result.result;
   };
 }

@@ -40,7 +40,7 @@ export function useModelRouteDevices(input: {
   const { deviceId: selfDeviceId } = useAuth();
   const { devices: selectableDevices } = useSelectableDevices();
   const { devices: shareDevices, isReceived } = useProviderShareAgentDevices([lead, pending], controlledDeviceId);
-  const hostLocations = useControlledModelLocations(sshRemote ? undefined : controlledDeviceId);
+  const hostLocations = useControlledModelLocations(sshRemote ? undefined : controlledDeviceId, selfDeviceId);
   return useMemo(() => {
     if (controlledDeviceId === undefined || sshRemote) return { leadAgentDeviceId: lead, devices: undefined };
     if (controlledDeviceId) {

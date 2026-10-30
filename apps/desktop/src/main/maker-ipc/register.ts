@@ -10319,11 +10319,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       controlledLocationsRead = { owner, promise };
       return promise;
     },
-    invoke: async (deviceId, channel, args, assertOwner) => {
-      const result = await remoteBackgroundInvoke(deviceId, channel, args, { preSend: assertOwner });
-      if (!result.ok) throwIpcError('PRECONDITION_FAILED', 'Model source is currently unavailable');
-      return result.result;
-    },
+    invoke: (deviceId, channel, args, assertOwner) =>
+      remoteBackgroundInvoke(deviceId, channel, args, { preSend: assertOwner }),
   });
   makerSessionRegistry.handle(CONTROLLED_MODEL_CATALOG_CHANNEL, (_event, request) => readControlledCatalog(request));
   registerMakerSessionCreateHandler<Session>(makerSessionRegistry, {

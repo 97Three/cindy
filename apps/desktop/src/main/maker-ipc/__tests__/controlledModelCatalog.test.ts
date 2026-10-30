@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createControlledModelCatalogReader, type ControlledModelCatalogDeps } from '../controlledModelCatalog.js';
 import { invokeModelCatalog } from '../../../renderer/lib/invokeModelCatalog';
 import { modelCatalogKey } from '../../../shared/controlledModelCatalog';
+import { extractIpcError } from '../../../shared/ipcError';
 
 // #8010, unit: real reader must use B's sources (including A and B-only shares),
 // restrict reads, and reject late results after revocation/account change.
@@ -11,7 +12,7 @@ function fixture() {
     { agentDeviceId: 'device-a', name: 'A' },
     { agentDeviceId: 'share:b-only', name: 'Provider · Owner' },
   ] }));
-  const invoke = vi.fn<ControlledModelCatalogDeps['invoke']>().mockResolvedValue({ providers: [{ id: 'a-provider' }] });
+  const invoke = vi.fn<ControlledModelCatalogDeps['invoke']>().mockResolvedValue({ ok: true, result: { providers: [{ id: 'a-provider' }] } });
   const assertOwner = vi.fn();
   const assertCaller = vi.fn();
   return { locations, invoke, assertOwner, assertCaller,
@@ -22,6 +23,17 @@ const request = (agentDeviceId = 'device-a') => ({
 });
 
 describe('controlled model catalogs', () => {
+  // #8010 review / unit: the real host reader must preserve nested source errors;
+  // success-only transport fixtures missed retry and old-source fallback semantics.
+  it.each([
+    { code: 'IPC_ERROR', message: '[MODEL_VISIBILITY_NOT_READY] preparing', expected: 'MODEL_VISIBILITY_NOT_READY' },
+    { code: 'CHANNEL_NOT_ALLOWED', message: 'old source', expected: 'DEVICE_LINK_CHANNEL_NOT_ALLOWED' },
+  ] as const)('preserves $expected across the task host', async ({ code, message, expected }) => {
+    const f = fixture();
+    f.invoke.mockResolvedValue({ ok: false, error: { code, message } });
+    const error = await f.read(request()).catch(error => error);
+    expect(extractIpcError(error)?.code).toBe(expected);
+  });
   // #8010 / unit: exercise both sides of the transport contract. Provider-only
   // fixtures cannot detect lost runtime rosters or reasoning/context metadata.
   it.each([
@@ -29,7 +41,7 @@ describe('controlled model catalogs', () => {
     { channel: 'maker:list-available-agents', args: [], value: ['pi', 'codex'] },
   ])('preserves the source response for $channel through the renderer and host readers', async ({ channel, args, value }) => {
     const f = fixture();
-    f.invoke.mockResolvedValue(value);
+    f.invoke.mockResolvedValue({ ok: true, result: value });
     const link = { invoke: vi.fn(async (host: string, endpoint: string, payload: unknown[]) => {
       if (host !== 'device-b' || endpoint !== 'maker:model-catalog:read') throw new Error('wrong task host');
       return f.read(payload[0]);
@@ -76,7 +88,7 @@ describe('controlled model catalogs', () => {
     const f = fixture();
     f.invoke.mockImplementation(async () => {
       f.locations.mockResolvedValue({ status: 'complete', locations: [] });
-      return { providers: [{ id: 'a-provider' }] };
+      return { ok: true, result: { providers: [{ id: 'a-provider' }] } };
     });
     await expect(f.read(request())).rejects.toThrow('PRECONDITION_FAILED');
   });
@@ -84,7 +96,7 @@ describe('controlled model catalogs', () => {
     const f = fixture();
     f.invoke.mockImplementation(async () => {
       f.assertOwner.mockImplementation(() => { throw new Error('account changed'); });
-      return { providers: [{ id: 'a-provider' }] };
+      return { ok: true, result: { providers: [{ id: 'a-provider' }] } };
     });
     await expect(f.read(request())).rejects.toThrow('account changed');
     f.assertCaller.mockImplementation(() => { throw new Error('guest denied'); });

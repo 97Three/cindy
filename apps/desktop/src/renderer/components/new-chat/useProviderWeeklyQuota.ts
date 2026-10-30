@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useOptionalAuthDeviceId } from '@/contexts/AuthContext';
 import type { ProviderView } from '@cindy/model-providers';
 import { providerWeeklyQuotaSource } from '../../../shared/providerQuotaSource';
 import type { MobileCodexRateLimitsResult } from '@cindy/maker-shared/device-link-contract';
@@ -150,8 +151,12 @@ export function useProviderUsageSnapshots(
   { web = false }: { web?: boolean } = {},
 ): ProviderUsageSnapshots {
   const source = providerWeeklyQuotaSource(provider);
-  const local = scope.deviceId === null;
-  const remoteDeviceId = scope.deviceId;
+  // A can be an explicit source in B's catalog. Reading A's own quota is local,
+  // even though its catalog remains routed through B for visibility checks.
+  // Normalize here so rail rows, model details and group members agree.
+  const selfDeviceId = useOptionalAuthDeviceId();
+  const local = scope.deviceId === null || scope.deviceId === selfDeviceId;
+  const remoteDeviceId = local ? null : scope.deviceId;
   const { snapshot: localCodex } = useCodexRateLimits(local && source === 'codex', provider.id);
   const localWeb = useAccountUsage(
     undefined,

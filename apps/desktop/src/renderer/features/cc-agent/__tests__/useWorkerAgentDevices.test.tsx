@@ -44,14 +44,17 @@ afterEach(() => {
 describe('useWorkerAgentDevices', () => {
   // #8010 / unit: mounted production route + provider/capability hooks, with only
   // the transport faked. Earlier cases did not exercise refresh of live consumers.
-  // Minimum input: two task hosts using the same source, plus B's home catalog.
-  it('refreshes B source catalogs after a peer reset without evicting B home or another task host', async () => {
+  // Review gap: local provider/agent events must invalidate A's catalog via B.
+  // Minimum input: B using A, an unrelated host/source, plus B's home catalog.
+  it.each(['peer reset', 'local providers', 'local agents'])('refreshes B source catalogs after %s without evicting B home or an unrelated task host', async trigger => {
     const resetListeners = new Set<(event: { deviceId: string }) => void>();
+    const providerListeners = new Set<() => void>();
+    const agentListeners = new Set<() => void>();
     let revision = 1;
     const invoke = vi.fn(async (host: string, channel: string, args: unknown[]) => {
       if (channel === 'maker:model-catalog:read') {
         const request = args[0] as { op: string; channel: string };
-        if (request.op === 'locations') return { locations: [{ agentDeviceId: 'self-pc', name: 'A' }] };
+        if (request.op === 'locations') return { locations: [{ agentDeviceId: host === 'host-d' ? 'other-pc' : 'self-pc', name: 'Source' }] };
         channel = request.channel;
       }
       if (channel === 'maker:get-capabilities') return {
@@ -65,14 +68,18 @@ describe('useWorkerAgentDevices', () => {
       }] };
       throw new Error(`unexpected channel: ${channel}`);
     });
-    vi.stubGlobal('electronAPI', { deviceLink: {
+    vi.stubGlobal('electronAPI', { maker: {
+      onProvidersChanged: (listener: () => void) => { providerListeners.add(listener); return () => providerListeners.delete(listener); },
+      onAgentsChanged: (listener: () => void) => { agentListeners.add(listener); return () => agentListeners.delete(listener); },
+    }, deviceLink: {
       invoke, onPeerLinkReset: (listener: (event: { deviceId: string }) => void) => {
         resetListeners.add(listener); return () => resetListeners.delete(listener);
       },
     } });
     const useSource = (host: string) => {
-      const route = useWorkerAgentDevices({ controlledDeviceId: host, leadAgentDeviceId: 'self-pc' });
-      const key = modelCatalogKey('self-pc', route.catalogHostDeviceId);
+      const source = host === 'host-d' ? 'other-pc' : 'self-pc';
+      const route = useWorkerAgentDevices({ controlledDeviceId: host, leadAgentDeviceId: source });
+      const key = modelCatalogKey(source, route.catalogHostDeviceId);
       return { providers: useDeviceProviders(key), caps: useAgentCapabilities('claude-code', key) };
     };
     const b = renderHook(() => useSource('host-b'));
@@ -85,12 +92,18 @@ describe('useWorkerAgentDevices', () => {
     const homeSnapshot = home.result.current;
     invoke.mockClear();
     revision = 2;
-    await act(async () => { for (const reset of resetListeners) reset({ deviceId: 'host-b' }); });
+    await act(async () => {
+      if (trigger === 'peer reset') for (const reset of resetListeners) reset({ deviceId: 'host-b' });
+      else for (const refresh of trigger === 'local providers' ? providerListeners : agentListeners) refresh();
+    });
     expect(b.result.current.providers.providers[0].name).toBe('host-b:2');
     expect(b.result.current.caps.capabilities?.availableModels[0].displayName).toBe('host-b:2');
     expect(d.result.current).toBe(dSnapshot);
     expect(home.result.current).toBe(homeSnapshot);
     expect(invoke.mock.calls.every(([host, channel]) => host === 'host-b' && channel === 'maker:model-catalog:read')).toBe(true);
+    b.unmount(); d.unmount(); home.unmount();
+    expect(providerListeners.size).toBe(0);
+    expect(agentListeners.size).toBe(0);
   });
 
   it('coalesces pushes during discovery, drops the stale response and removes subscriptions on unmount', async () => {

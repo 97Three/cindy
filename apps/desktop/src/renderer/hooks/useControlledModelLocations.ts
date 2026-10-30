@@ -9,7 +9,7 @@ import { evictControlledDeviceCapabilities, refreshControlledDeviceCapabilities 
 const EMPTY_LOCATIONS: ControlledModelLocation[] = [];
 
 /** The task host discovers sources; no intersection with the controller's shares/devices. */
-export function useControlledModelLocations(deviceId: string | null | undefined) {
+export function useControlledModelLocations(deviceId: string | null | undefined, selfDeviceId?: string | null) {
   const owner = getDataOwnerGeneration();
   const [snapshot, setSnapshot] = useState<{
     deviceId: string; owner: typeof owner; locations: ControlledModelLocation[] | undefined;
@@ -96,14 +96,23 @@ export function useControlledModelLocations(deviceId: string | null | undefined)
         && (event.deviceId === deviceId || sourceIds.has(event.deviceId)))
         || (event.deviceId === deviceId && event.channel === CONTROLLED_MODEL_CATALOG_CHANGED)) reload();
     });
+    // A does not receive its own broadcasts through B. Its local notifications
+    // must also refresh catalogs routed through B, without using A's local grants.
+    const reloadLocalSource = () => {
+      if (selfDeviceId && isDataOwnerGenerationCurrent(owner)
+        && (!supported || sourceIds.has(selfDeviceId))) reload();
+    };
+    const offProviders = window.electronAPI?.maker?.onProvidersChanged?.(reloadLocalSource);
+    const offAgents = window.electronAPI?.maker?.onAgentsChanged?.(reloadLocalSource);
     window.addEventListener('focus', reload);
     void refresh();
     return () => {
       active = false;
       offStatus?.(); offPresence?.(); offReset?.(); offControl?.(); offPush?.();
+      offProviders?.(); offAgents?.();
       window.removeEventListener('focus', reload);
     };
-  }, [deviceId, owner]);
+  }, [deviceId, selfDeviceId, owner]);
   if (!deviceId || isSharedTaskPeer(deviceId) || !window.electronAPI?.deviceLink) return undefined;
   // Until discovery completes, retain the saved source instead of temporarily
   // calibrating its model against B's local catalog. Only proven old hosts fall back.

@@ -80,9 +80,12 @@ describe('useVendorAuthGate device-link 来源快照复用', () => {
     ['codex', 'codex', 'self-a'],
     ['pi', 'pi', 'share:b-only'],
   ] as const)('checks %s on %s through the task host without using local credentials', async (vendor, agent, source) => {
-    const sourceRead = vi.fn(async (_id: string, channel: string) => channel === 'maker:agent:status'
-      ? { binaryReady: true, authReady: false }
-      : { providers: [provider({ agents: [agent], routing: { [agent]: {} }, models: { [agent]: [] } })] });
+    const sourceRead = vi.fn(async (_id: string, channel: string) => ({
+      ok: true as const,
+      result: channel === 'maker:agent:status'
+        ? { binaryReady: true, authReady: false }
+        : { providers: [provider({ agents: [agent], routing: { [agent]: {} }, models: { [agent]: [] } })] },
+    }));
     const read = createControlledModelCatalogReader({
       assertCaller: () => {}, captureOwner: () => () => {},
       locations: async () => ({ status: 'complete', locations: [{ agentDeviceId: source, name: 'Source' }] }),
