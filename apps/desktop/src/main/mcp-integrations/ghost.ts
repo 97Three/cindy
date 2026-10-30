@@ -133,6 +133,7 @@ import { workdirWriteVerdict } from '../cindy-brain/fsSlot.js';
 import * as blobStore from '../cindy-media/blobStore.js';
 import { commitMessageMediaRefs } from '../cindy-media/chatAttachments.js';
 import { callCindyMedia } from '../cindy-media/invocationService.js';
+import { inspectMedia, previewGeneratedImages } from '../cindy-media/mediaInspection.js';
 import type { MediaDownloadContext } from '../cindy-media/mediaDownload.js';
 import * as ledger from '../cindy-media/ledger.js';
 import { chatAttachmentOrigin } from '../cindy-media/attachmentGrantGate.js';
@@ -470,7 +471,7 @@ async function packForgeSource(
  * ──────────────────────────────────────────────────────────────────────── */
 
 export interface GhostGrantLiveSessionState {
-  /** Rechecks accepted account input and the existing plugin-managed helper surface. */
+  /** Rechecks account-owned input and the current helper surface. */
   contributionAccountAllowed?: (acceptedOperation?: boolean) => Promise<boolean>;
   permissionMode: PermissionMode | null;
   remoteHostId: string | null;
@@ -1969,6 +1970,20 @@ export function getCindyGhostsMcpDeps(
     callMedia: async (request) => {
       const sessionContext = resolveSessionContext();
       const sessionId = sessionContext?.sessionId;
+      const inspectionOwner = getActiveAppSession();
+      const inspectionContext = {
+        sessionId: sessionId ?? '',
+        isCurrent: () => {
+          if (!sessionId || !sessionContext?.sessionInstanceId) return false;
+          try {
+            const owner = getActiveAppSession();
+            if (isAppSessionBoundaryPending() || owner.dataOwnerId !== inspectionOwner.dataOwnerId || owner.generation !== inspectionOwner.generation) return false;
+            const live = hostDeps.getLiveSessionGrantState?.(sessionId, sessionContext.sessionInstanceId);
+            return !!live && live.isCurrent?.() !== false;
+          } catch { return false; }
+        },
+      };
+      if (request.action === 'inspect') return inspectMedia(request, inspectionContext);
       if (request.action === 'import_image') {
         const live = requireLiveSessionInstance(sessionId, sessionContext?.sessionInstanceId, hostDeps.getLiveSessionGrantState);
         if (!live.ok || !sessionContext?.workingDir) return { ok: false, errorCode: 'PERMISSION_DENIED', message: live.ok ? '当前任务缺少工作目录。' : live.message };
@@ -2028,7 +2043,9 @@ export function getCindyGhostsMcpDeps(
           });
         }
       }
-      return result;
+      return request.action === 'request' || request.action === 'poll'
+        ? previewGeneratedImages(result, inspectionContext)
+        : result;
     },
     // 花名册快照(server 装配时取一次):唤醒的芯片意识 + 召回线索,进
     // ghost_list 工具描述做语义召回。system 段由 getGhostRosterPrompt 在每个
@@ -2323,6 +2340,7 @@ export function getCindyGhostsMcpDeps(
           },
         };
       }
+      const callId = randomUUID();
       const attachmentUrls = [...new Set(attachments ?? [])];
       if (attachmentUrls.length > 0) {
         const grant = await grantAttachmentUrls({
@@ -2364,6 +2382,7 @@ export function getCindyGhostsMcpDeps(
         if (dirConfirm.isCurrent) handoffChecks.push(dirConfirm.isCurrent);
         if (handoffExpired()) return handoffDenied;
         const deposited = getDirDepositVault().deposit({
+          callId,
           ghostId: installedGhostStoragePart(target),
           dirAbs: dirConfirm.userGranted ? dirConfirm.approvedRealPath : dir,
           workdirAbs: sessionWorkdir,
@@ -2501,7 +2520,6 @@ export function getCindyGhostsMcpDeps(
       // 中可 card-update)→ finalize(问"这单供过卡吗",开晚到宽限窗)→
       // 真供过卡才把 xdt_card_id 注入 result(mcpServer 提升到顶层,renderer
       // 据此配对取卡;没供过 = 结果零变化,模型永远看不到内部 UUID)。
-      const callId = randomUUID();
       const cardService = getGhostCardService();
       const callSessionContext = resolveSessionContext();
       cardService.registerCall(callId, {
