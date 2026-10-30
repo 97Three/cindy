@@ -344,6 +344,42 @@ afterEach(() => {
 });
 
 describe('AddProviderWizard — preset 直达', () => {
+  it('opens custom configuration from the header and leaves only cancel below the list', async () => {
+    const onOpenCustomForm = vi.fn();
+    const onClose = vi.fn();
+    render(<AddProviderWizard providers={[]} onOpenCustomForm={onOpenCustomForm} onClose={onClose} onDone={vi.fn()} />);
+    await screen.findByText('DeepSeek');
+
+    const custom = screen.getByRole('button', { name: 'settings.providers.wizard.customAction' });
+    const title = screen.getByRole('heading', { name: 'settings.providers.wizard.title' });
+    expect(title.parentElement?.contains(custom)).toBe(true);
+    expect(screen.queryByText('settings.providers.wizard.customTitle')).toBeNull();
+    expect(screen.queryByText('settings.providers.wizard.customMeta')).toBeNull();
+    expect(screen.queryByText('settings.providers.wizard.pickHint')).toBeNull();
+    expect(screen.getByRole('button', { name: 'settings.providers.wizard.cancel' })).toBeTruthy();
+
+    fireEvent.click(custom);
+    await waitFor(() => expect(onOpenCustomForm).toHaveBeenCalledOnce());
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('keeps search, supplier selection, back navigation and cancellation working', async () => {
+    const onClose = vi.fn();
+    render(<AddProviderWizard providers={[]} onOpenCustomForm={vi.fn()} onClose={onClose} onDone={vi.fn()} />);
+    await screen.findByText('DeepSeek');
+    const search = screen.getByRole('textbox', { name: 'settings.providers.wizard.searchPlaceholder' });
+    await waitFor(() => expect(document.activeElement).toBe(search));
+    fireEvent.change(search, { target: { value: 'DeepSeek' } });
+    expect(screen.queryByText('LiteLLM')).toBeNull();
+    fireEvent.click(screen.getByText('DeepSeek').closest('button')!);
+    await screen.findByDisplayValue('DeepSeek');
+    expect(screen.queryByRole('button', { name: 'settings.providers.wizard.customAction' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /settings.providers.wizard.back/ }));
+    await screen.findByRole('textbox', { name: 'settings.providers.wizard.searchPlaceholder' });
+    fireEvent.click(screen.getByRole('button', { name: 'settings.providers.wizard.cancel' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  });
+
   it('adds llama.cpp immediately without checking, installing or starting the runtime', async () => {
     let finish!: () => void;
     vi.mocked(window.electronAPI.maker.llamaCppEnsure).mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
