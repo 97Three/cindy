@@ -582,7 +582,7 @@ describe('db worker tx handlers', () => {
         sessionId: 's1', importClientIdPrefix: 'codex-import:', sdkSessionId: 'thread-1', model: 'gpt-5',
         rows: [{ lineNo: 1, role: 'assistant' as const, text: 'Done.' + citation, content: 'Done.' + citation, createdAt: 301001, sourceCreatedAt: 1001, phase: 'final_answer' as const }],
       };
-      await expect(client.tx('codex.importMessages', args)).resolves.toMatchObject({ hiddenClientIds: ['codex-import:1'] });
+      await expect(client.tx('codex.importMessages', args)).resolves.toMatchObject({ hiddenClientIds: ['codex-import:1'], updatedLocalIds: ['local-1'] });
       await expect(client.query('SELECT id FROM messages WHERE rewind_at IS NULL ORDER BY created_at')).resolves.toEqual([{ id: 'local-1' }]);
       const local = await client.queryOne<{ content: string; agent_meta: string }>('SELECT content, agent_meta FROM messages WHERE id = ?', ['local-1']);
       expect(JSON.parse(local!.content)).toBe('Done.' + citation);
@@ -617,6 +617,32 @@ describe('db worker tx handlers', () => {
         ],
       });
       await expect(client.query('SELECT id FROM messages WHERE session_id = ?', ['s2'])).resolves.toHaveLength(3);
+    }, { useInlineWorker });
+  });
+
+  // #8005 review: valid nested fence examples/inline backticks must not prevent
+  // matching a terminal citation, while an unclosed code block remains prose.
+  it.each([false, true])('codex import recognizes actual Markdown fences around examples (inline=%s)', async (useInlineWorker) => {
+    await withClient(async (client) => {
+      await seedSession(client, 'fences');
+      const citation = '\n<oai-mem-citation><citation_entries>MEMORY.md:1[note]</citation_entries></oai-mem-citation>';
+      const cases = [
+        { body: 'Example:\n````markdown\n```\n````\nDone.', dedupe: true },
+        { body: 'Use ``` as the delimiter.', dedupe: true },
+        { body: 'Example:\n~~~~\n~~~\n~~~~\nDone.', dedupe: true },
+        { body: 'Example:\n````\n```', dedupe: false },
+        { body: 'Example:\n```\n~~~', dedupe: false },
+      ];
+      for (const [index, { body, dedupe }] of cases.entries()) {
+        await client.exec('INSERT INTO messages (id, client_id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+          [`local-${index}`, `local-${index}`, 'fences', 'assistant', JSON.stringify(body), 1000 + index]);
+        await client.tx('codex.importMessages', {
+          sessionId: 'fences', importClientIdPrefix: 'codex-import:', sdkSessionId: 'thread', model: 'gpt-5',
+          rows: [{ lineNo: index, role: 'assistant', text: body + citation, content: body + citation, createdAt: 1000 + index }],
+        });
+        await expect(client.queryOne('SELECT content FROM messages WHERE client_id = ?', [`codex-import:${index}`]))
+          .resolves.toEqual(dedupe ? undefined : { content: JSON.stringify(body + citation) });
+      }
     }, { useInlineWorker });
   });
 

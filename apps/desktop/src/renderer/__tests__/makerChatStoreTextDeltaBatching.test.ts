@@ -2110,8 +2110,14 @@ describe('makerChatStore text delta batching', () => {
     send('local-db:messages:deleted', { sessionId: SESSION_ID,
       clientId: 'codex-import:thread:1', clientIds: ['codex-import:thread:1'],
     });
+    const enriched = 'Same answer\n<oai-mem-citation><citation_entries>MEMORY.md:1[note]</citation_entries></oai-mem-citation>';
+    send('local-db:messages:created', { sessionId: SESSION_ID, message: {
+      id: 'live-answer', clientId: 'live-answer', role: 'assistant', content: enriched,
+      createdAt: '2026-06-15T00:00:05.000Z', agentMeta: { assistantPhase: 'final_answer', totalCostUsd: 1 },
+    } });
     expect(makerChatStore.getSnapshot(SESSION_ID).messages).toEqual([
-      expect.objectContaining({ clientId: 'live-answer', content: 'Same answer' }),
+      expect.objectContaining({ clientId: 'live-answer', content: enriched,
+        assistantPhase: 'final_answer' }),
     ]);
   });
 

@@ -5,6 +5,8 @@ vi.mock('../cindy-media/toolProcessMedia.js', () => ({ materializeToolProcessMed
 vi.mock('../localDb/client/current.js', () => ({ getDbClient: vi.fn(() => ({ drizzle: {} })) }));
 vi.mock('../botTaskReplyResults.js', () => ({ readTaskResultsForReply: vi.fn(async () => []) }));
 import { readTaskResultsForReply } from '../botTaskReplyResults.js';
+vi.mock('../maker-host/codex-local-sessions.js', () => ({ importExternalCodexMessagesForSession: vi.fn(async () => undefined) }));
+import { importExternalCodexMessagesForSession } from '../maker-host/codex-local-sessions.js';
 /**
  * messagePersistBroadcaster.test.ts
  * ---------------------------------------------------------------------------
@@ -186,6 +188,30 @@ const SUMMARY = 'tool finished';
 
 // 落库走 writeChain microtask,断言前 flush 一个宏任务边界把队列排空。
 const flushWrites = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+// #8005 review, unit: late live persistence must reconcile an already imported
+// copy without another history read. An unresolved write must not trigger it.
+it.each(['current', 'owner-changed', 'cleared'] as const)('reconciles imported Codex replies after the live write commits without a list request (%s)', async (boundary) => {
+  const sessionId = 'codex-late-live';
+  clearSessionPersistState(sessionId);
+  noteSessionClearBoundary(sessionId, null);
+  noteSessionAgentKind(sessionId, 'codex');
+  let release!: () => void;
+  vi.mocked(createMessage).mockImplementationOnce(async () => {
+    await new Promise<void>(resolve => { release = resolve; });
+    return {} as never;
+  });
+  onAssistantTextEvent(sessionId, { agentMessageId: 'native-late', text: 'Done', isFinal: true }, null);
+  await Promise.resolve();
+  expect(importExternalCodexMessagesForSession).not.toHaveBeenCalled();
+  if (boundary === 'owner-changed') ownerScopeState.current = false;
+  if (boundary === 'cleared') noteSessionClearBoundary(sessionId, Date.now() + 1);
+  release();
+  await drainPersistQueue();
+  if (boundary === 'current') expect(importExternalCodexMessagesForSession).toHaveBeenCalledExactlyOnceWith(sessionId, { localWrite: true });
+  else expect(importExternalCodexMessagesForSession).not.toHaveBeenCalled();
+  noteSessionClearBoundary(sessionId, null);
+});
 const broadcastGuard = () => expect.objectContaining({ shouldBroadcast: expect.any(Function) });
 const terminalSubagentObservation = (taskId: string, parentToolUseId?: string) => ({
   subagentObservation: {

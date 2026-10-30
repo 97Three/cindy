@@ -9,10 +9,11 @@ const electronMock = vi.hoisted(() => ({ userData: '', region: 'global' as 'glob
 const dbMock = vi.hoisted(() => ({ current: null as Database.Database | null }));
 const deletionMock = vi.hoisted(() => ({
   broadcast: vi.fn(),
+  row: vi.fn(),
   scope: { ownerScopeKey: 'test-owner', ownerStamp: { dataOwnerId: 'test-user', ownerGeneration: 1 } },
 }));
 
-vi.mock('../localDb/ipc/messages.js', () => ({ broadcastMessageDeleted: deletionMock.broadcast }));
+vi.mock('../localDb/ipc/messages.js', () => ({ broadcastMessageDeleted: deletionMock.broadcast, broadcastMessageRow: deletionMock.row }));
 vi.mock('../device-link/broadcast-tap.js', () => ({
   captureDataOwnerBroadcastScope: () => deletionMock.scope,
 }));
@@ -124,6 +125,7 @@ function createLocalDb(): Database.Database {
       content TEXT NOT NULL,
       tool_use_id TEXT,
       agent_meta TEXT,
+      agent_kind TEXT,
       created_at INTEGER NOT NULL,
       rewind_at INTEGER
     );
@@ -1178,12 +1180,17 @@ describe('importExternalCodexMessagesForSession', () => {
     // assertion misses the deletion push needed by their additive history merge.
     const importedCopy = db.prepare('SELECT client_id FROM messages WHERE session_id = ? AND content = ?').get(sid, JSON.stringify('Second answer' + citation)) as { client_id: string };
     deletionMock.broadcast.mockClear();
+    deletionMock.row.mockClear();
     live('late', 'Second answer', 3000, 'final_answer');
-    await importExternalCodexMessagesForSession(sid);
+    await importExternalCodexMessagesForSession(sid, { localWrite: true });
     await importExternalCodexMessagesForSession(sid);
     expect(deletionMock.broadcast).toHaveBeenCalledExactlyOnceWith({
       sessionId: sid, clientId: importedCopy.client_id, clientIds: [importedCopy.client_id],
     }, deletionMock.scope);
+    expect(deletionMock.row).toHaveBeenCalledExactlyOnceWith(sid, expect.objectContaining({
+      clientId: 'late', content: 'Second answer' + citation,
+      agentMeta: expect.objectContaining({ totalCostUsd: 1, assistantPhase: 'final_answer' }),
+    }), deletionMock.scope);
     expect(visible()).toHaveLength(5);
     expect(JSON.parse(visible()[4]!.content)).toBe('Second answer' + citation);
     expect(db.prepare('SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND rewind_at IS NOT NULL').get(sid)).toEqual({ n: 1 });
@@ -1206,12 +1213,17 @@ describe('importExternalCodexMessagesForSession', () => {
     const tx = vi.fn(
       async (name: string, args: unknown) => runInprocTx(db, { name, args }) as never,
     );
-    setCurrentDbClient({ ...makeTestDbClient(db), tx }, 'test-user');
+    const client = makeTestDbClient(db);
+    const query = vi.spyOn(client, 'query');
+    setCurrentDbClient({ ...client, tx }, 'test-user');
 
     await importExternalCodexMessagesForSession(`codex-${threadId}`);
+    query.mockClear();
     await importExternalCodexMessagesForSession(`codex-${threadId}`);
 
     expect(tx).toHaveBeenCalledTimes(1);
+    // Cache hits must not fetch/serialize the full local transcript on each page.
+    expect(query).not.toHaveBeenCalled();
     const count = db.prepare('SELECT COUNT(*) AS count FROM messages').get() as { count: number };
     expect(count.count).toBe(1);
   });

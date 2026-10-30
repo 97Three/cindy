@@ -1502,7 +1502,7 @@ export type DbTxResultByName = {
     approximate: number;
   } | null;
   'authorization.readProjection': import('../../autoReviewProjection.js').StoredAutoReviewProjection;
-  'codex.importMessages': { changed: number; hiddenClientIds?: string[] };
+  'codex.importMessages': { changed: number; hiddenClientIds?: string[]; updatedLocalIds?: string[] };
   'claude.importMessages': { changed: number };
   'rewind.commit': undefined;
   'session.treeRehydrate': { messageCount: number; hiddenClientIds: string[] };

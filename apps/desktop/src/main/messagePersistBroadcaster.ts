@@ -1,4 +1,5 @@
 import { materializeToolProcessMedia } from './cindy-media/toolProcessMedia.js';
+import { importExternalCodexMessagesForSession } from './maker-host/codex-local-sessions.js';
 import { withToolProcessMedia, type ProcessMediaRef, type NativeToolMedia } from '@cindy/maker-shared/tool-process-media';
 import { readTaskResultsForReply } from './botTaskReplyResults.js';
 /**
@@ -780,6 +781,13 @@ function enqueueVisibleDbMessage(
   enqueueWrite(label, async (ownerScope) => {
     const result = await createVisibleDbMessage(sessionId, stamped, ownerScope);
     onPersisted?.();
+    if (stamped.role === 'assistant' && stamped.agentKind === 'codex'
+      && sessionId.startsWith('codex-') && isOwnerScopeCurrent(ownerScope)
+      && !backgroundTurnPredatesSessionClear(sessionId, stamped.createdAt)) {
+      // A list read may have imported this reply before the live write. Repair
+      // it now; an already open local window need not request history again.
+      await importExternalCodexMessagesForSession(sessionId, { localWrite: true });
+    }
     return result;
   });
 }

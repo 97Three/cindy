@@ -958,8 +958,14 @@ describe('remoteSessionStore', () => {
     remoteSessionStore.applyRemotePush('dev-1', 'local-db:messages:deleted', {
       sessionId: 's1', clientId: importedId, clientIds: [importedId],
     });
+    const enriched = 'Same answer\n<oai-mem-citation><citation_entries>MEMORY.md:1[note]</citation_entries></oai-mem-citation>';
+    remoteSessionStore.applyRemotePush('dev-1', 'local-db:messages:created', {
+      sessionId: 's1', message: { ...message('live-answer', 's1'), content: enriched,
+        createdAt: '2026-06-15T00:00:05.000Z', agentMeta: { assistantPhase: 'final_answer', totalCostUsd: 1 } },
+    });
     expect(remoteSessionStore.getMessages('s1')).toEqual([
-      expect.objectContaining({ clientId: 'live-answer', content: 'Same answer' }),
+      expect.objectContaining({ clientId: 'live-answer', content: enriched,
+        agentMeta: expect.objectContaining({ assistantPhase: 'final_answer', totalCostUsd: 1 }) }),
     ]);
   });
 

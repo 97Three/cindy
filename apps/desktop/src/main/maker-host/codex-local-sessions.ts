@@ -14,7 +14,8 @@ import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import { promises as fsp } from 'node:fs';
 import { createReadStream } from 'node:fs';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -35,7 +36,9 @@ import {
 
 import { getCurrentDbClientUserId, getDbClient } from '../localDb/client/current.js';
 import { captureDataOwnerBroadcastScope } from '../device-link/broadcast-tap.js';
-import { broadcastMessageDeleted } from '../localDb/ipc/messages.js';
+import { broadcastMessageDeleted, broadcastMessageRow } from '../localDb/ipc/messages.js';
+import { messages } from '../localDb/schema.js';
+import { messageToCamel } from '../localDb/mapper.js';
 import { createBetterSqliteDatabase } from '../localDb/betterSqliteFactory.js';
 import { createLogger } from '../logger.js';
 import { normalizeWorkingDirForStorage } from '../../shared/workingDir.js';
@@ -338,7 +341,6 @@ interface ExternalImportFileCacheEntry {
   path: string;
   mtimeMs: number;
   size: number;
-  localFingerprint: string;
 }
 
 type ExternalImportFileStat = Pick<ExternalImportFileCacheEntry, 'mtimeMs' | 'size'>;
@@ -3975,9 +3977,9 @@ export async function classifyCodexHistoryOversized(
 
 /**
  * 为外部 Codex thread 创建的本地会话按需导入可读消息。
- * rollout 与本地正文均未变化时短路；否则按行号导入，并协调实时消息及存量导入副本。
+ * 文件未变化时短路；实时消息落库后主动绕过文件缓存，协调存量导入副本。
  */
-export async function importExternalCodexMessagesForSession(sessionId: string): Promise<void> {
+export async function importExternalCodexMessagesForSession(sessionId: string, opts?: { localWrite?: boolean }): Promise<void> {
   const db = getDbClient();
   const cacheScope = getCurrentDbClientUserId();
   const ownerScope = captureDataOwnerBroadcastScope();
@@ -3997,21 +3999,12 @@ export async function importExternalCodexMessagesForSession(sessionId: string): 
   if (!session.id.startsWith(LOCAL_SESSION_ID_PREFIX)) return;
 
   const importClientIdPrefix = `codex-import:${session.sdkSessionId}:`;
-  // A rollout can be imported before the live write commits. File stat alone
-  // must not make that duplicate permanent. Hash only local text rows, so
-  // unrelated tasks/tools do not invalidate this session's file cache. Capture
-  // before import: a concurrent write or citation enrichment forces a recheck.
-  const localRows = await db.query(`
-    SELECT id, role, content, agent_meta, created_at, rewind_at
-    FROM messages WHERE session_id = ? AND role IN ('user', 'assistant')
-      AND client_id NOT LIKE ? ORDER BY rowid
-  `, [sessionId, `${importClientIdPrefix}%`]);
-  const localFingerprint = createHash('sha256').update(JSON.stringify(localRows)).digest('hex');
+  // Persistence explicitly requests reconciliation. History/cache reads never
+  // fetch or hash the complete local transcript just to detect a late write.
   const cachedImportFile = codexMessageImportFileCache.get(sessionId);
   if (cacheScope && cachedImportFile?.scope === cacheScope) {
     const cachedStat = await statImportFile(cachedImportFile.path);
-    if (cachedStat && isCachedImportFileUnchanged(cachedImportFile, cachedStat)
-      && cachedImportFile.localFingerprint === localFingerprint) return;
+    if (!opts?.localWrite && cachedStat && isCachedImportFileUnchanged(cachedImportFile, cachedStat)) return;
     codexMessageImportFileCache.delete(sessionId);
   } else if (cachedImportFile) {
     codexMessageImportFileCache.delete(sessionId);
@@ -4030,11 +4023,11 @@ export async function importExternalCodexMessagesForSession(sessionId: string): 
   const imported = await readCodexRolloutMessages(rolloutPath, session.id);
   if (imported.length === 0) {
     if (cacheScope) {
-      codexMessageImportFileCache.set(sessionId, { scope: cacheScope, path: rolloutPath, ...rolloutStat, localFingerprint });
+      codexMessageImportFileCache.set(sessionId, { scope: cacheScope, path: rolloutPath, ...rolloutStat });
     }
     return;
   }
-  const { changed, hiddenClientIds } = await db.tx('codex.importMessages', {
+  const { changed, hiddenClientIds, updatedLocalIds } = await db.tx('codex.importMessages', {
     sessionId,
     importClientIdPrefix,
     sdkSessionId: session.sdkSessionId,
@@ -4054,8 +4047,15 @@ export async function importExternalCodexMessagesForSession(sessionId: string): 
     // Publish only committed removals, with the owner captured before any await.
     broadcastMessageDeleted({ sessionId, clientId: hiddenClientIds[0]!, clientIds: hiddenClientIds }, ownerScope);
   }
+  if (updatedLocalIds?.length) {
+    const updated = await db.drizzle.select().from(messages).where(and(
+      eq(messages.sessionId, sessionId), inArray(messages.id, updatedLocalIds), isNull(messages.rewindAt),
+      sql`${messages.createdAt} > COALESCE((SELECT cleared_at FROM sessions WHERE id = ${sessionId}), -1)`,
+    ));
+    for (const row of updated) broadcastMessageRow(sessionId, messageToCamel(row), ownerScope);
+  }
   if (cacheScope) {
-    codexMessageImportFileCache.set(sessionId, { scope: cacheScope, path: rolloutPath, ...rolloutStat, localFingerprint });
+    codexMessageImportFileCache.set(sessionId, { scope: cacheScope, path: rolloutPath, ...rolloutStat });
   }
   if (changed === 0) return;
   log.info('imported external Codex messages', {

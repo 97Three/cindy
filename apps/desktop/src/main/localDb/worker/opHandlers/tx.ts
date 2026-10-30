@@ -2529,7 +2529,7 @@ function imRotateSession(
   })();
 }
 
-function codexImportMessages(db: Database.Database, args: unknown): { changed: number; hiddenClientIds?: string[] } {
+function codexImportMessages(db: Database.Database, args: unknown): { changed: number; hiddenClientIds?: string[]; updatedLocalIds?: string[] } {
   const payload = asRecord(args, 'codex.importMessages args');
   const sessionId = expectString(payload.sessionId, 'sessionId');
   const importClientIdPrefix = expectString(payload.importClientIdPrefix, 'importClientIdPrefix');
@@ -2566,6 +2566,7 @@ function codexImportMessages(db: Database.Database, args: unknown): { changed: n
     }>).map((row) => [row.clientId, row]));
     const consumed = new Set<string>();
     const hiddenClientIds: string[] = [];
+    const updatedLocalIds: string[] = [];
     // Text fallback must not match an earlier turn that happened to say the
     // same thing. Include external user turns as well as Cindy's local rows.
     const userTimes = existing.filter((row) => row.role === 'user').map((row) => row.createdAt);
@@ -2606,7 +2607,9 @@ function codexImportMessages(db: Database.Database, args: unknown): { changed: n
               ...(phase && !duplicate.meta.assistantPhase ? { assistantPhase: phase } : {}),
               ...(agentMessageId && !duplicate.meta.agentMessageId ? { agentMessageId, sdkSessionId } : {}),
             });
-            changed += enrichLocal.run(content, meta, sessionId, duplicate.id, content, meta).changes;
+            const updated = enrichLocal.run(content, meta, sessionId, duplicate.id, content, meta).changes;
+            changed += updated;
+            if (updated > 0) updatedLocalIds.push(duplicate.id);
           }
           // Soft-hide only verified import copies; preserve their original data.
           if (previous) {
@@ -2631,7 +2634,8 @@ function codexImportMessages(db: Database.Database, args: unknown): { changed: n
       }).changes;
     }
     if (changed > 0) invalidateSessionListProjection(db, sessionId);
-    return { changed, ...(hiddenClientIds.length > 0 ? { hiddenClientIds } : {}) };
+    return { changed, ...(hiddenClientIds.length > 0 ? { hiddenClientIds } : {}),
+      ...(updatedLocalIds.length > 0 ? { updatedLocalIds } : {}) };
   });
   return transaction();
 }
@@ -3977,7 +3981,19 @@ function memoryCitationTail(text: string): string {
   const open = text.lastIndexOf('<oai-mem-citation>');
   if (open <= 0) return '';
   const body = text.slice(0, open);
-  if (!body.trim() || (body.match(/```|~~~/g)?.length ?? 0) % 2 !== 0) return '';
+  if (!body.trim()) return '';
+  let fence: { char: string; length: number } | undefined;
+  for (const line of body.split(/\r?\n/)) {
+    const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (!match) continue;
+    const marker = match[1]!;
+    if (fence) {
+      if (marker[0] === fence.char && marker.length >= fence.length && !match[2]!.trim()) fence = undefined;
+    } else if (marker[0] !== '`' || !match[2]!.includes('`')) {
+      fence = { char: marker[0]!, length: marker.length };
+    }
+  }
+  if (fence) return '';
   const tail = text.slice(open);
   if (!/^<oai-mem-citation>\s*<citation_entries>[\s\S]+?<\/citation_entries>\s*(?:<rollout_ids>[\s\S]*?<\/rollout_ids>\s*)?<\/oai-mem-citation>\s*$/.test(tail)) return '';
   return text.slice(body.trimEnd().length);
