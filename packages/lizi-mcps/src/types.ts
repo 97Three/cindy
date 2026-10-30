@@ -493,9 +493,24 @@ export interface SshPoolLike {
  *  - 插件启用策略由 host 在 Agent runtime / Codex thread 创建时冻结；这里不得
  *    注入调用时读取设置的门控，否则工具暴露状态与执行权限会在运行中分叉。
  */
+/** 与「设置 → 远程连接」添加表单同一份字段。 */
+export interface SshAddHostInput {
+  id: string;
+  hostname: string;
+  port?: number;
+  user: string;
+  authMethod?: 'agent' | 'key';
+  identityFile?: string;
+  displayName?: string;
+}
+
 export interface SshMcpDeps {
   getPool(): Promise<SshPoolLike>;
   ensureReady(id: string): Promise<void>;
+  /** 设置页同一添加流程：写入本机 SSH 配置并刷新连接池；失败以 `[CODE] message` 抛出。 */
+  addHost(input: SshAddHostInput): Promise<void>;
+  /** 设置页「重新读取 ~/.ssh/config」。读取失败时返回诊断类别，连接池保持上次成功的结果。 */
+  reloadConfig(): Promise<{ diagnostic: string | null; warningCount: number }>;
   /** Host-owned synchronous boundary redactor. It must not retain its inputs. */
   redactSensitiveText(snapshot: SshHostSnapshotLike, text: string): string;
   logger?: LiziMcpLogger;
