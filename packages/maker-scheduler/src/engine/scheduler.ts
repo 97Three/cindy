@@ -1106,6 +1106,19 @@ export class Scheduler extends EventEmitter {
       // Restore its ownership even while the new Continue waits to dispatch.
       this.buildOnTurnActive(run.id)(sessionId);
       const completion = this.runNowInner(run.scheduleId, run.id, undefined, run, runner)
+        .catch(async (error) => {
+          // Before runner dispatch, a rejected setup still owns the claim.
+          // Keep the original turn reclaimable; terminal/stop paths own their
+          // own settlement and must never be made replayable by this handler.
+          const phase = this.inflightAttempts.get(run.id)?.phase;
+          if (phase === 'loading' || phase === 'persisting') {
+            await this.storage.updateRun(run.id, {
+              status: 'interrupted', finishedAt: this.clock.now(), errorMsg: 'app restarted',
+            });
+            this.emitEvent({ type: 'changed', scheduleId: run.scheduleId });
+          }
+          throw error;
+        })
         .finally(() => {
           this.finishInflightAttempt(run.id);
           this.manualContinuations.delete(sessionId);

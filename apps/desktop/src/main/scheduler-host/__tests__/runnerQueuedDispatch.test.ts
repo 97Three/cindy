@@ -3172,6 +3172,46 @@ describe('queued heartbeat for a Bot Session task (persisted Auto)', () => {
     mocks.getSessionFsSnapshot.mockResolvedValue(persisted);
   });
 
+  // Replaces the renderer's signature-text scan: a real fresh runner must not
+  // broadcast until production backfill has persisted the sidebar metadata.
+  // Unit: hold one in-memory DB write, observe the public session-bound callback.
+  it('persists fresh schedule metadata before broadcasting session-bound', async () => {
+    const harness = createSessionHarness(async () => ({ accepted: true }));
+    const saved: Record<string, unknown> = { source: 'desktop' };
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    const db = { update: () => ({ set: (patch: Record<string, unknown>) => ({
+      where: async () => { entered(); await held; Object.assign(saved, patch); },
+    }) }) };
+    mocks.backfillSessionMeta.mockImplementation(async (_db, id, patch, logger) => {
+      await sharedProduction.backfill!(db as never, id, patch, logger);
+    });
+    const queue = createQueueHarness({ busy: false });
+    const { runner, maker } = createRunnerHarness(harness.session, queue.deps);
+    vi.mocked(maker.isSessionAlive).mockReturnValue(false);
+    const ctx = createFireContext();
+    const broadcasts: Record<string, unknown>[] = [];
+    ctx.onSessionBound = async () => { broadcasts.push({ ...saved }); };
+    const fire = runner.fire(heartbeatSchedule({ targetSessionId: undefined,
+      workingDir: '/tmp/bound', workspaceKind: 'project', model: 'claude-opus-4-6',
+      providerId: 'test-provider' }), ctx);
+    const settled = fire.then(() => undefined, (error: unknown) => error);
+    try {
+      await Promise.race([ready, settled.then((error) => { throw error; })]);
+      expect(broadcasts).toEqual([]);
+      release();
+      await vi.waitFor(() => expect(broadcasts).toHaveLength(1));
+      expect(broadcasts[0]).toMatchObject({ source: 'scheduler', workspaceKind: 'project' });
+    } finally {
+      release();
+      ctx.abortController.abort();
+      await settled;
+    }
+    expect(String(await settled)).toMatch(/abort/i);
+  });
+
   // Local QA 2026-10-21: an explicit model on an ordinary bound schedule caused
   // routing backfill to overwrite Auto with Full Access, then cancel dispatch.
   // Existing queue tests stubbed the backfill and missed its persisted result.

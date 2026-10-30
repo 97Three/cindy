@@ -220,7 +220,11 @@ it.each(['automatic', 'manual', 'recovery'] as const)(
   },
 );
 
-it('waits for manual continuation after restart, then restores the same run and silence lookup', async () => {
+// discussion_r4419242692: a claimed continuation must remain reclaimable if
+// loading fails, while a rejection after completion must not replay settled work.
+// Unit: public resume entry, one original row and a one-shot storage failure.
+it.each(['none', 'read-rejected', 'schedule-missing', 'finish-rejected'] as const)(
+  'restores the same run and silence lookup after restart (%s)', async (failure) => {
   const storage = new InMemoryStorage();
   const clock = new FakeClock();
   let finish!: (result: FireResult) => void;
@@ -242,6 +246,18 @@ it('waits for manual continuation after restart, then restores the same run and 
   await h.scheduler.tick();
   expect(storage.claimInterruptedRun).not.toHaveBeenCalled();
   expect(h.fireCalls).toHaveLength(0);
+  if (failure === 'read-rejected' || failure === 'schedule-missing') {
+    const get = vi.spyOn(storage, 'get');
+    if (failure === 'read-rejected') get.mockRejectedValueOnce(new Error('storage unavailable'));
+    else get.mockResolvedValueOnce(null);
+    const failed = await h.scheduler.resumeInterruptedRun('original-task');
+    await expect(failed!.completion).rejects.toThrow(
+      failure === 'read-rejected' ? 'storage unavailable' : 'Schedule not found',
+    );
+    expect(storage.runs.get(oldRun.id)?.status).toBe('interrupted');
+    expect(h.fireCalls).toHaveLength(0);
+    expect(h.scheduler.resolveInflightRunForSession('original-task')).toBeUndefined();
+  }
   const resumed = await h.scheduler.resumeInterruptedRun('original-task');
   expect(resumed).not.toBeNull();
   await expect(h.scheduler.resumeInterruptedRun('original-task')).rejects.toThrow('already continuing');
@@ -249,8 +265,14 @@ it('waits for manual continuation after restart, then restores the same run and 
   expect(h.fireCalls[0]!.ctx).toMatchObject({ runId: oldRun.id, firedAt: oldRun.firedAt, resumeSessionId: oldRun.sessionId });
   expect(h.scheduler.resolveInflightRunForSession('original-task')).toBe(oldRun.id);
   expect(h.scheduler.silenceRun(oldRun.id)).toBe(true);
+  if (failure === 'finish-rejected') {
+    vi.spyOn(storage, 'update').mockRejectedValueOnce(new Error('completion metadata unavailable'));
+  }
   finish({ sessionId: 'original-task', resultText: 'continued and completed' });
-  await resumed!.completion;
+  if (failure === 'finish-rejected') {
+    await expect(resumed!.completion).rejects.toThrow('completion metadata unavailable');
+    expect(await h.scheduler.resumeInterruptedRun('original-task')).toBeNull();
+  } else await resumed!.completion;
   await vi.waitFor(() => expect(storage.runs.get(oldRun.id)?.status).toBe('success'));
   expect(storage.runs.size).toBe(1);
   expect(storage.runs.get(oldRun.id)).toMatchObject({ firedAt: oldRun.firedAt,
