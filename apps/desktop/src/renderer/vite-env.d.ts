@@ -3093,6 +3093,7 @@ interface ElectronAPI {
         | { type: 'provider-share-join'; link: string }
         | { type: 'plugin'; pluginId: string }
         | { type: 'local-plugin-share'; snapshotId: string }
+        | { type: 'installed-plugin'; ghostId?: string }
         | { type: 'settings'; tab: 'voice-input' | 'providers' | 'billing' | 'remote-control'; connect?: string; intent?: 'topup' },
     ) => void,
   ) => () => void;
@@ -3115,7 +3116,8 @@ interface ElectronAPI {
     | { type: 'chat-invite-malformed' }
     | { type: 'provider-share-join'; link: string }
     | { type: 'plugin'; pluginId: string }
-        | { type: 'local-plugin-share'; snapshotId: string }
+    | { type: 'local-plugin-share'; snapshotId: string }
+    | { type: 'installed-plugin'; ghostId?: string }
     | { type: 'settings'; tab: 'voice-input' | 'providers' | 'billing' | 'remote-control'; connect?: string; intent?: 'topup' }
     | null
   >;
@@ -5507,20 +5509,23 @@ interface ElectronAPI {
    */
   browserBackend: {
     getState: () => Promise<{
-      active: 'external' | 'rsb-webview';
-      systemDefault: 'external' | 'rsb-webview';
+      active: 'external' | 'rsb-webview' | 'user-browser';
+      systemDefault: 'external' | 'rsb-webview' | 'user-browser';
       isOverride: boolean;
       useRealProfile: boolean;
     }>;
-    setKind: (kind: 'external' | 'rsb-webview') => Promise<{
+    setKind: (kind: 'external' | 'rsb-webview' | 'user-browser') => Promise<{
       ok: true;
-      active: 'external' | 'rsb-webview';
+      active: 'external' | 'rsb-webview' | 'user-browser';
     }>;
-    reset: () => Promise<{ ok: true; active: 'external' | 'rsb-webview' }>;
+    reset: () => Promise<{ ok: true; active: 'external' | 'rsb-webview' | 'user-browser' }>;
     getHealth: () => Promise<BrowserBackendHealth>;
     recover: () => Promise<BrowserBackendRecoveryResult>;
     setUseRealProfile: (enabled: boolean) => Promise<{ ok: true; enabled: boolean }>;
     probeSourceRead: () => Promise<BrowserBackendSourceReadAccess>;
+    openExtensionStore?: () => Promise<
+      import('../shared/browserBackend').BrowserExtensionStoreOpenResult
+    >;
   };
 
   // ── Dialog（v0.6 新增） ────────────────────────────────────────────────────
