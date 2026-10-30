@@ -72,6 +72,8 @@ export function createChatOutboxDelivery(deps: {
       if (!deps.canRun() || !deps.current()) return;
       if (!row.chat || !current(row)) continue;
       const room = row.chat.roomId;
+      // A cross-device duplicate is already sent; retain its posted marker without polling for an unknown ID.
+      if (row.chat.shareToMain?.state === 'sent' && row.chat.shareToMain.messageId === null) continue;
       // A later rejection cannot disprove a previous POST whose outcome was lost.
       const previouslyStarted = row.enqueueStarted === true;
       if (blocked.has(room)) continue;

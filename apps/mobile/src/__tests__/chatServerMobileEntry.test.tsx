@@ -993,43 +993,57 @@ it('restores a failed share after restart, keeps its body, and does not block la
 
 // #7847 review, integration: a saved share receipt survives restart beyond the
 // snapshot window. Retire it only after its canonical message reaches disk.
-it('recovers an off-window share receipt after restart and keeps it on a failed history write', async () => {
+// r4420823552: unlike the known-ID case, a cross-device duplicate acknowledges the
+// share with no ID. Keep its posted marker without repeatedly polling or sending.
+it.each([false, true])('recovers an off-window share after restart without resending (already shared=%s)', async alreadyShared => {
   const storage = { getAllKeys: async () => [...h.disk.keys()], getItem: async (key: string) => h.disk.get(key) ?? null,
     setItem: async (key: string, value: string) => { h.disk.set(key, value); }, removeItem: async (key: string) => { h.disk.delete(key); } };
   const account = getMobileAuthOwner().accountKey;
   let store = createDurableOutbox(storage); await store.activate(account);
   const replyId = '00000000-0000-4000-8000-000000000041', shareId = '00000000-0000-4000-8000-000000000042';
   const reply = { id: replyId, seq: '41', authorId: self, author: { kind: 'human', name: 'Me' },
-    content: [{ type: 'text', text: 'Reply' }], createdAt: '2026-10-29', deleted: false, threadRootId: self };
+    content: [{ type: 'text', text: alreadyShared ? 'Edited after desktop share' : 'Reply' }], createdAt: '2026-10-29', deleted: false, threadRootId: self };
   const shared = { ...reply, id: shareId, seq: '42', threadRootId: null, content: [{ type: 'card', namespace: 'cindy.thread-share', schemaRevision: 1,
     data: { messageId: replyId, threadRootId: self }, fallback: '' }] };
   await enqueueChatMessage(store, account, id, { clientId: 'confirmed-share', text: 'Reply', threadRootId: self,
     mentions: { all: false, botIds: [] }, alsoSendToMain: true }, 0);
   const row = store.getSnapshot()[0];
   await store.update(row, { state: 'confirming', enqueueStarted: true,
-    chat: { ...row.chat!, messageId: replyId, shareToMain: { state: 'sent', messageId: shareId } } });
+    chat: { ...row.chat!, messageId: replyId, shareToMain: alreadyShared ? { state: 'pending' } : { state: 'sent', messageId: shareId } } });
   store = createDurableOutbox(storage); await store.activate(account);
   const request = vi.fn(async (path: string, method?: string) => {
-    if (method === 'POST') throw new Error('Must not resend');
+    if (method === 'POST') {
+      if (alreadyShared) throw Object.assign(new Error('OPERATION_CONFLICT'), { code: 'OPERATION_CONFLICT', status: 409 });
+      throw new Error('Must not resend');
+    }
     if (path === '/me') return { actor: { id: self, kind: 'human' } };
     if (path.endsWith('/snapshot')) return { room, members: [], messages: [], cursor: '200' };
     if (path.includes('/messages?')) return [reply];
     if (path.endsWith(`/messages/${self}`)) return { ...reply, id: self, seq: '1', threadRootId: null };
+    if (path.endsWith(`/messages/${replyId}`)) return reply;
     if (path.endsWith(`/messages/${shareId}`)) return shared;
     return [];
   });
-  const runner = createChatOutboxDelivery({ store, client: createChatServerClient(request as any), current: () => true, canRun: () => true, accessLost: async () => {} });
-  h.historyWriteFails = true;
-  await runner.run();
+  const client = createChatServerClient(request as any);
+  const runner = () => createChatOutboxDelivery({ store, client, current: () => true, canRun: () => true, accessLost: async () => {} });
+  h.historyWriteFails = !alreadyShared;
+  await runner().run();
   expect(store.getSnapshot()).toHaveLength(1);
+  expect(store.getSnapshot()[0].chat?.shareToMain).toMatchObject({ state: 'sent', messageId: alreadyShared ? null : shareId });
+  const acknowledgedRequests = request.mock.calls.length;
+  store = createDurableOutbox(storage); await store.activate(account);
   h.historyWriteFails = false;
-  await runner.run();
-  expect(store.getSnapshot()).toEqual([]);
+  await runner().run();
+  if (alreadyShared) {
+    expect(store.getSnapshot()[0].chat?.shareToMain).toMatchObject({ state: 'sent', messageId: null });
+    expect(request).toHaveBeenCalledTimes(acknowledgedRequests);
+  } else expect(store.getSnapshot()).toEqual([]);
   const requests = request.mock.calls.length;
-  await runner.run(); expect(request).toHaveBeenCalledTimes(requests);
-  expect(request.mock.calls.some(([, method]) => method === 'POST')).toBe(false);
+  await runner().run(); expect(request).toHaveBeenCalledTimes(requests);
+  expect(request.mock.calls.filter(([, method]) => method === 'POST')).toHaveLength(alreadyShared ? 1 : 0);
   setMobileAuthOwner(null); peekChatMessages(id); setMobileAuthOwner('owner');
-  expect((await readChatMessages(id, self))?.page.snapshot.messages).toContainEqual(shared);
+  const saved = (await readChatMessages(id, self))!.page;
+  expect(alreadyShared ? saved.messages : saved.snapshot.messages).toContainEqual(alreadyShared ? reply : shared);
 });
 
 // The existing runner is the authority across account switches and crash windows.
