@@ -9,6 +9,8 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, expect, it, vi } from 'vitest';
 import { CompanionProfileNativeView } from '@/session/CompanionProfileNativeView.ios';
 import type { CompanionProfileNativeViewProps } from '@/session/CompanionProfileNativeView';
+const native = vi.hoisted(() => ({ glass: true }));
+vi.mock('@/session/useLiquidGlassAvailable', () => ({ useLiquidGlassAvailable: () => native.glass }));
 
 vi.mock('@/session/ComposerSheet', () => import('@/session/ComposerSheet.ios'));
 vi.mock('react-native', () => ({
@@ -23,7 +25,8 @@ vi.mock('@expo/ui/swift-ui', () => {
     Spacer: () => null, ProgressView: () => null, Toggle: () => null, Picker: Container, TextField: () => null,
     Form: ({ children }: any) => <form>{children}</form>, List: Container,
     Button: ({ children, onPress, modifiers = [], testID }: any) => <button type="button"
-      data-testid={testID} disabled={modifiers.some((m: any) => m.disabled)} onClick={onPress}>{children}</button>,
+      data-testid={testID} data-button-style={modifiers.find((m: any) => m.buttonStyle)?.buttonStyle}
+      disabled={modifiers.some((m: any) => m.disabled)} onClick={onPress}>{children}</button>,
   };
 });
 vi.mock('@expo/ui/swift-ui/modifiers', () => ({
@@ -31,7 +34,8 @@ vi.mock('@expo/ui/swift-ui/modifiers', () => ({
     'buttonStyle', 'contentShape', 'disabled', 'environment', 'font', 'foregroundStyle', 'frame', 'lineLimit',
     'listRowInsets', 'pickerStyle', 'tag', 'tint', 'opacity', 'scrollDisabled', 'containerRelativeFrame',
     'onGeometryChange', 'padding', 'presentationDetents', 'interactiveDismissDisabled',
-    'presentationDragIndicator', 'scrollContentBackground', 'listStyle', 'scrollDismissesKeyboard']
+    'presentationDragIndicator', 'scrollContentBackground', 'listStyle', 'scrollDismissesKeyboard',
+    'background', 'buttonBorderShape', 'controlSize', 'glassEffect']
     .map(key => [key, (value: unknown) => ({ [key]: value })])),
   shapes: { rectangle: () => ({}) },
 }));
@@ -52,7 +56,7 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const panel = { id: 'models', text: '', values: {}, action: { id: 'models-save', label: '保存更改', fields: [] } };
 const roots: ReturnType<typeof createRoot>[] = [];
-afterEach(() => { act(() => roots.splice(0).forEach(root => root.unmount())); });
+afterEach(() => { act(() => roots.splice(0).forEach(root => root.unmount())); native.glass = true; });
 function mount(overrides: Partial<CompanionProfileNativeViewProps> = {}) {
   const container = document.createElement('div');
   const root = createRoot(container); roots.push(root);
@@ -77,6 +81,7 @@ it('places the native 保存 beside Back outside the scrolling form and submits 
   const { container, props } = mount();
   const save = container.querySelector<HTMLButtonElement>('[data-testid="companionProfile.models.save"]')!;
   expect(save.textContent).toBe('保存');
+  expect(save.dataset.buttonStyle).toBe('glass');
   expect(save.closest('form')).toBeNull();
   const header = save.parentElement!;
   expect(header.textContent).toContain('模型候选链');
@@ -88,6 +93,12 @@ it('places the native 保存 beside Back outside the scrolling form and submits 
   expect(props.onSubmit).toHaveBeenCalledExactlyOnceWith(panel);
   act(() => back.click());
   expect(props.onBack).toHaveBeenCalledOnce();
+});
+
+it('uses the existing bordered native button fallback when Liquid Glass is unavailable', () => {
+  native.glass = false;
+  const { container } = mount();
+  expect(container.querySelector<HTMLElement>('[data-testid="companionProfile.models.save"]')!.dataset.buttonStyle).toBe('bordered');
 });
 
 it.each([{ dirty: false }, { busy: true }, { online: false }, { conflict: true }])(

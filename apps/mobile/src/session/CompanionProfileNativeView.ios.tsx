@@ -14,6 +14,7 @@ import type { ProfilePanel, ProfileValues } from './companionProfileData';
 import { useNativeTextDraft } from './nativeTextDraft';
 import { CompanionPortraitPicker } from './CompanionPortraitPicker';
 import { CompanionNativeContent } from './CompanionNativeContent.ios';
+import { useNativeGlassButtonStyle } from '@/platform/chrome/nativeGlassButtonStyle.ios';
 import { saveCompanionReplyTargetPreference, useCompanionReplyTargetPreference } from './companionReplyTargetPreference';
 
 export function CompanionNativeField({ field, values, onChange, busy }: { field: RemoteActionField; values: ProfileValues; onChange(values: ProfileValues): void; busy: boolean }) {
@@ -41,10 +42,11 @@ const Field = CompanionNativeField;
 export function CompanionProfileNativeView(p: CompanionProfileNativeViewProps) {
   const { t, i18n } = useTranslation(); const { colors } = useTheme();
   const showReplyTargets = useCompanionReplyTargetPreference();
+  const saveButtonStyle = useNativeGlassButtonStyle();
   const modelSave = p.page === 'models' && p.panel?.action && !p.loading && !p.deleted && !p.confirmation
     ? <Button onPress={() => p.onSubmit(p.panel!)} testID="companionProfile.models.save"
-        modifiers={[buttonStyle('plain'), disabled(p.busy || !p.dirty || !p.online || p.conflict), frame({ minWidth: 44, minHeight: 44 })]}>
-        <Text>{t('devices.common.save')}</Text>
+        modifiers={[...saveButtonStyle, disabled(p.busy || !p.dirty || !p.online || p.conflict)]}>
+        <Text modifiers={[frame({ minWidth: 44, minHeight: 44 }), contentShape(shapes.rectangle())]}>{t('devices.common.save')}</Text>
       </Button>
     : undefined;
   const tr = (key: string) => t(`devices.companionProfile.${key}`, { deviceName: p.deviceName });
