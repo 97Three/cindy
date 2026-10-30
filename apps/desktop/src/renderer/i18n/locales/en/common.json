@@ -2880,7 +2880,8 @@
         "hint": "Auto detects the spoken language. Choose one to reduce multilingual mix-ups.",
         "ariaLabel": "Language selection",
         "options": {
-          "auto": "Auto"
+          "auto": "Auto",
+          "es": "Español"
         },
         "optionDescriptions": {
           "auto": "Let the recognition service detect it",
@@ -2888,7 +2889,8 @@
           "zh-TW": "Traditional Chinese (Taiwan)",
           "en": "English",
           "ja": "Japanese",
-          "ko": "Korean"
+          "ko": "Korean",
+          "es": "Spanish"
         }
       },
       "shortcut": {
