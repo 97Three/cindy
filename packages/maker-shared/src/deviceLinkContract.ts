@@ -38,6 +38,21 @@ export interface MobileUsageWidgetSource {
   when: string;
   /** Reset of the window the tube shows, so the widget can keep the countdown current. */
   resetsAtMs: number | null;
+  /** The panel's detail ring, drawn when the widget has a single source. */
+  detail?: MobileUsageWidgetDetail;
+}
+
+export interface MobileUsageWidgetDetail {
+  title: string;
+  plan: string;
+  /** 0...1 remaining per window, outermost first; colors are panel color names. */
+  rings: { fraction: number; color: string }[];
+  bigValue: string;
+  bigUnit: string | null;
+  bigColor: string | null;
+  bigCompact: boolean;
+  bigCaption: string;
+  legend: { label: string; color: string }[];
 }
 
 export interface MobileUsageWidgetDay {

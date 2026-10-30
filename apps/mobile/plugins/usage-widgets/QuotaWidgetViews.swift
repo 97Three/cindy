@@ -207,6 +207,8 @@ struct QuotaWidgetView: View {
         if snapshot.sources.isEmpty {
           EmptyStateView(title: WidgetText.text("noSources", locale: format.locale), body_: WidgetText.text("emptyBody", locale: format.locale))
             .padding(16)
+        } else if snapshot.sources.count == 1, let source = snapshot.sources.first, let detail = source.detail {
+          SingleSourceView(source: source, detail: detail, format: format)
         } else {
           content(snapshot.sources, format: format)
         }

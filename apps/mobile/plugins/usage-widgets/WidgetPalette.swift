@@ -41,6 +41,29 @@ enum WidgetPalette {
   static let codex = Color(rgb(0x7A9DFF))
   static let pi = dynamic(rgb(0x14B8A6), rgb(0x2DD4BF))
 
+  static let ink5 = neutral(0.05, 0.05)
+  /// Neutral ring arcs (a balance) share the liquid's tone, like the panel.
+  static let fill = neutral(0.42, 0.80)
+  static let claude2 = Color(rgb(0xE8A184))
+  static let claude3 = Color(rgb(0xF2C9B6))
+
+  /// The panel's semantic color names (`MenubarColor`).
+  static func named(_ name: String?) -> Color {
+    switch name {
+    case "ink2": return ink2
+    case "ink3": return ink3
+    case "fill": return fill
+    case "warn": return warn
+    case "error": return error
+    case "claude": return claude
+    case "claude2": return claude2
+    case "claude3": return claude3
+    case "codex": return codex
+    case "pi": return pi
+    default: return ink
+    }
+  }
+
   static func level(_ level: String) -> Color? {
     switch level {
     case "warn": return warn

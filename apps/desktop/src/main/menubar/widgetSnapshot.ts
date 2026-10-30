@@ -17,7 +17,7 @@ import type { MenubarFamily } from './snapshot.js';
 const WIDGET_DAYS = 30;
 const FAMILIES: MenubarFamily[] = ['claude', 'codex', 'grok', 'kimi'];
 
-/** Panel strings the widget needs, plus the short duration templates for live countdowns. */
+/** Panel strings the widget needs, plus the duration templates for live countdowns. */
 const UI_KEYS = [
   'today', 'dailyAverage', 'paid', 'tokenUnit', 'noUsage', 'scopeLocal', 'scopeAll',
   'monthScopeLocal', 'monthScopeAll', 'updatedJustNow', 'updatedMinutes', 'updatedHours', 'updatedDays',
@@ -39,6 +39,7 @@ export function buildUsageWidgetSnapshot(
   for (const cell of view.sources) {
     // Pay-as-you-go and unread sources have no level; the panel lists them as rows, not tubes.
     if (cell.kind === 'payg' || cell.fill === null) continue;
+    const detail = view.details[cell.id];
     sources.push({
       id: cell.id,
       kind: cell.kind,
@@ -54,6 +55,19 @@ export function buildUsageWidgetSnapshot(
       emphasized: cell.emphasized,
       when: cell.when,
       resetsAtMs: cell.resetsAtMs ?? null,
+      ...(detail ? {
+        detail: {
+          title: detail.title,
+          plan: detail.plan,
+          rings: detail.rings,
+          bigValue: detail.bigValue,
+          bigUnit: detail.bigUnit,
+          bigColor: detail.bigColor,
+          bigCompact: detail.bigCompact,
+          bigCaption: detail.bigCaption,
+          legend: detail.legend,
+        },
+      } : {}),
     });
   }
   const scope = view.settings.scope;
@@ -68,6 +82,8 @@ export function buildUsageWidgetSnapshot(
     const value = raw(`menubar.durationShort.${key}`);
     if (value !== null) strings[`durationShort.${key}`] = value;
   }
+  const resetsIn = raw('menubar.cell.resetsIn');
+  if (resetsIn !== null) strings.resetsIn = resetsIn;
   return {
     version: 1,
     generatedAtMs: nowMs,

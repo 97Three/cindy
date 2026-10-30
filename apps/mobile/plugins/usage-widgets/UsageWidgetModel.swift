@@ -18,6 +18,30 @@ struct WidgetSource: Decodable, Identifiable {
   let emphasized: Bool
   let when: String
   let resetsAtMs: Double?
+  /// The panel's detail ring; drawn when the widget shows a single source.
+  var detail: WidgetDetail? = nil
+}
+
+struct WidgetRing: Decodable {
+  let fraction: Double
+  let color: String
+}
+
+struct WidgetLegend: Decodable {
+  let label: String
+  let color: String
+}
+
+struct WidgetDetail: Decodable {
+  let title: String
+  let plan: String
+  let rings: [WidgetRing]
+  let bigValue: String
+  let bigUnit: String?
+  let bigColor: String?
+  let bigCompact: Bool
+  let bigCaption: String
+  let legend: [WidgetLegend]
 }
 
 struct WidgetDay: Decodable {
@@ -192,7 +216,7 @@ enum WidgetText {
       "emptyUsageTitle": "还没读到用量", "emptyUsageBody": "打开 Cindy 连上一台电脑，这里就会显示每天的用量。",
       "updateTitle": "电脑上的 Cindy 需要更新", "updateBody": "更新后这里会显示余量和每天的用量。",
       "noSources": "还没有带余量的账号", "valueBasis": "订阅等值", "valueBasisLong": "订阅等值估算", "reset": "已重置",
-      "todayNone": "今天还没有用量",
+      "todayNone": "今天还没有用量", "resetsIn": "{{duration}}后重置",
     ],
     "zh-Hant": [
       "quotaName": "訂閱餘量", "quotaDescription": "每個訂閱還剩多少、什麼時候回滿。",
@@ -201,7 +225,7 @@ enum WidgetText {
       "emptyUsageTitle": "還沒讀到用量", "emptyUsageBody": "打開 Cindy 連上一台電腦，這裡就會顯示每天的用量。",
       "updateTitle": "電腦上的 Cindy 需要更新", "updateBody": "更新後這裡會顯示餘量和每天的用量。",
       "noSources": "還沒有帶餘量的帳號", "valueBasis": "訂閱等值", "valueBasisLong": "訂閱等值估算", "reset": "已重置",
-      "todayNone": "今天還沒有用量",
+      "todayNone": "今天還沒有用量", "resetsIn": "{{duration}}後重置",
     ],
     "en": [
       "quotaName": "Subscription quota", "quotaDescription": "What each subscription has left and when it refills.",
@@ -210,7 +234,7 @@ enum WidgetText {
       "emptyUsageTitle": "No usage yet", "emptyUsageBody": "Open Cindy and connect a computer to see your daily usage.",
       "updateTitle": "Update Cindy on your computer", "updateBody": "Quota and daily usage appear here after the update.",
       "noSources": "No accounts with quota yet", "valueBasis": "Subscription value", "valueBasisLong": "Subscription value estimate",
-      "reset": "Reset", "todayNone": "No usage today",
+      "reset": "Reset", "todayNone": "No usage today", "resetsIn": "Resets in {{duration}}",
       "today": "Today", "dailyAverage": "Daily avg", "paid": "Paid", "tokenUnit": "tokens",
       "monthScopeAll": "Last 30 days · All devices", "monthScopeLocal": "Last 30 days · This computer",
       "scopeAll": "All devices", "scopeLocal": "This computer",

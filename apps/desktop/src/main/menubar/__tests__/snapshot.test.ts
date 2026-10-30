@@ -317,8 +317,11 @@ describe('buildUsageWidgetSnapshot', () => {
       kind: 'balance', id: 'cindy', logoSvg: MENUBAR_CINDY_LOGO, available: 20, fullAmount: 40, burnPerDay: null,
       observedAtMs: NOW, currency: 'USD', quota: { resetsAtMs: NOW + DAY, todaySpend: null },
     };
-    const snapshot = buildUsageWidgetSnapshot(buildMenubarView(input([quota])), NOW, () => null);
+    const view = (source: MenubarSourceInput) => buildMenubarView(input([source]));
+    const snapshot = buildUsageWidgetSnapshot(view(quota), NOW, () => null);
     expect(snapshot?.sources[0]).toMatchObject({ logo: 'cindy', resetsAtMs: NOW + DAY });
+    // A lone source is drawn as the panel's detail ring.
+    expect(snapshot?.sources[0].detail).toMatchObject({ bigValue: view(quota).details.cindy.bigValue, rings: [{ fraction: 0.5 }] });
   });
 
   it('has nothing to show behind the sign-in gate', () => {

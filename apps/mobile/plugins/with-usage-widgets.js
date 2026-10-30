@@ -12,6 +12,7 @@ const SOURCES = [
   'WidgetPalette.swift',
   'QuotaWidgetViews.swift',
   'UsageWidgetViews.swift',
+  'SingleSourceViews.swift',
 ];
 // Same number font as the macOS menu bar panel (OFL, shipped next to its helper).
 const FONTS = ['BarlowCondensed-Medium.ttf', 'BarlowCondensed-SemiBold.ttf'];
