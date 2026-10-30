@@ -1,7 +1,7 @@
 import { app, BrowserWindow, contentTracing, type WebContents } from 'electron';
 import { Session } from 'node:inspector';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
-import { writeFile } from 'node:fs/promises';
+import { writeFile, copyFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { PerformanceTraceEvent } from '../../shared/performanceTrace';
 import type { TraceCapture } from './controller';
@@ -44,7 +44,7 @@ export async function beginNativeTrace({
   dir,
   source,
   startedAt,
-  getOwner,
+  isCurrent,
   onSample,
   onEvent,
   onStop,
@@ -52,14 +52,17 @@ export async function beginNativeTrace({
   dir: string;
   source: WebContents;
   startedAt: number;
-  getOwner(): string;
+  isCurrent(): boolean;
   onSample(sample: TraceSample): void;
   onEvent(events: PerformanceTraceEvent[]): void;
   onStop(): Promise<void>;
 }): Promise<TraceCapture> {
   const sender = source;
   const window = BrowserWindow.fromWebContents(sender);
-  const owner = getOwner();
+  const assertCurrent = () => {
+    if (!isCurrent()) throw new Error('Recording session changed');
+  };
+  assertCurrent();
   const inspector = new Session();
   let mainStarted = false,
     rendererStarted = false,
@@ -72,7 +75,9 @@ export async function beginNativeTrace({
   try {
     inspector.connect();
     await post(inspector, 'Profiler.enable');
+    assertCurrent();
     await post(inspector, 'Profiler.setSamplingInterval', { interval: 4000 });
+    assertCurrent();
     mainOffset = Date.now() - startedAt;
     await post(inspector, 'Profiler.start');
     mainStarted = true;
@@ -81,12 +86,15 @@ export async function beginNativeTrace({
     inspector.disconnect();
   }
   try {
+    assertCurrent();
     // Never steal an existing debugger/DevTools connection.
     if (sender.debugger.isAttached()) throw new Error('Debugger already attached');
     sender.debugger.attach('1.3');
     attached = true;
     await bounded(sender.debugger.sendCommand('Profiler.enable'));
+    assertCurrent();
     await bounded(sender.debugger.sendCommand('Profiler.setSamplingInterval', { interval: 4000 }));
+    assertCurrent();
     rendererOffset = Date.now() - startedAt;
     await bounded(sender.debugger.sendCommand('Profiler.start'));
     rendererStarted = true;
@@ -96,6 +104,7 @@ export async function beginNativeTrace({
   const previousTraceBusy = traceBusy;
   let startPending = false;
   try {
+    assertCurrent();
     if (previousTraceBusy) throw new Error('Previous Chromium trace is still saving');
     traceBusy = true;
     const starting = contentTracing.startRecording({
@@ -115,7 +124,8 @@ export async function beginNativeTrace({
     } catch (error) {
       // A late start must not leave tracing active forever or stop a newer recording.
       void starting
-        .then(() => contentTracing.stopRecording(path.join(dir, 'chromium-trace.json')))
+        .then(() => contentTracing.stopRecording())
+        .then((file) => rm(file, { force: true }))
         .catch(() => {})
         .finally(() => {
           traceBusy = false;
@@ -131,7 +141,7 @@ export async function beginNativeTrace({
   loopDelay.enable();
   let capacityPending = false;
   const interval = setInterval(() => {
-    if (owner !== getOwner() || sender.isDestroyed()) {
+    if (!isCurrent() || sender.isDestroyed()) {
       void onStop();
       return;
     }
@@ -181,7 +191,7 @@ export async function beginNativeTrace({
   window?.on('restore', onRestore);
   let stopped = false;
   return {
-    stop: async () => {
+    stop: async ({ discard } = { discard: false }) => {
       if (stopped) return { profiles, partial };
       stopped = true;
       clearInterval(interval);
@@ -196,10 +206,12 @@ export async function beginNativeTrace({
       ) => {
         try {
           const result = await get();
+          if (discard || !isCurrent()) return;
           const profile = result.profile as CpuProfile;
           await writeFile(path.join(dir, `${process}.cpuprofile`), JSON.stringify(profile), {
             mode: 0o600,
           });
+          if (!isCurrent()) return;
           const projected = projectCpuProfile(
             profile,
             app.getAppPath(),
@@ -226,17 +238,44 @@ export async function beginNativeTrace({
           : Promise.resolve(),
         traceStarted
           ? bounded(
-              contentTracing.stopRecording(path.join(dir, 'chromium-trace.json')).finally(() => {
-                traceBusy = false;
-              }),
+              contentTracing
+                .stopRecording()
+                .then(async (file) => {
+                  // Chromium first writes its own temporary file. Never send an invalidated
+                  // capture directly to an account directory, including a late native stop.
+                  const target = path.join(dir, 'chromium-trace.json');
+                  try {
+                    if (!discard && isCurrent()) {
+                      await copyFile(file, target);
+                      if (!isCurrent()) await rm(target, { force: true });
+                    }
+                  } finally {
+                    await rm(file, { force: true });
+                  }
+                })
+                .finally(() => {
+                  traceBusy = false;
+                }),
               15_000,
             ).catch(() => {
               partial = true;
             })
           : Promise.resolve(),
       ]);
-      if (attached && !sender.isDestroyed() && sender.debugger.isAttached())
-        sender.debugger.detach();
+      try {
+        if (attached && !sender.isDestroyed() && sender.debugger.isAttached())
+          sender.debugger.detach();
+      } catch {
+        partial = true;
+      }
+      if (discard || !isCurrent()) {
+        profiles.length = 0;
+        await Promise.all(
+          ['main.cpuprofile', 'renderer.cpuprofile', 'chromium-trace.json'].map((name) =>
+            rm(path.join(dir, name), { force: true }),
+          ),
+        );
+      }
       return { profiles, partial };
     },
   };

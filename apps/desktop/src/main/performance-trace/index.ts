@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell, type WebContents } from 'electron';
-import { mkdir, writeFile, rename, readdir, stat, rm } from 'node:fs/promises';
+import { mkdir, writeFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {
@@ -25,6 +25,7 @@ import { PerformanceTraceController, type TraceCapture } from './controller';
 import { beginNativeTrace } from './capture';
 import { createTraceCommandHandler } from './ipc';
 import { readTraceArtifacts } from './artifacts';
+import { cleanupTraceReports, startTraceRetention } from './retention';
 
 let registered = false;
 
@@ -70,40 +71,35 @@ export function initPerformanceTraceService(): void {
     reveal: async (id) => {
       shell.showItemInFolder(path.join(directory(id), 'report.json'));
     },
-    begin: async (id, startedAt): Promise<TraceCapture> => {
+    begin: async (id, startedAt, isCurrent): Promise<TraceCapture> => {
+      const sender = source!;
       const root = ownerScopedUserDataPath('diagnostics', 'performance-traces');
       const dir = path.join(root, id);
       directories.clear();
       directories.set(id, dir);
       await mkdir(dir, { recursive: true, mode: 0o700 });
-      // Only expired directories minted by this feature; exported copies are never touched.
-      for (const entry of await readdir(root, { withFileTypes: true })) {
-        if (
-          !entry.isDirectory() ||
-          !/^[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}$/.test(
-            entry.name,
-          )
-        )
-          continue;
-        const old = path.join(root, entry.name);
-        try {
-          if (Date.now() - (await stat(old)).mtimeMs > 7 * 86400_000)
-            await rm(old, { recursive: true, force: true });
-        } catch {
-          /* Retention failures must not prevent recording a new incident. */
-        }
-      }
+      await cleanup();
+      if (!isCurrent() || sender.isDestroyed())
+        throwIpcError('PRECONDITION_FAILED', 'Recording session changed before capture started');
       return beginNativeTrace({
         dir,
-        source: source!,
+        source: sender,
         startedAt,
-        getOwner: activeOwnerScopeKey,
+        isCurrent,
         onSample: (sample) => controller.sample(sample),
         onEvent: (events) => controller.events(events),
         onStop: () => controller.close(),
       });
     },
   });
+  const cleanup = () => {
+    const owner = activeOwnerScopeKey();
+    return cleanupTraceReports(
+      ownerScopedUserDataPath('diagnostics', 'performance-traces'),
+      (id) => owner === activeOwnerScopeKey() && controller.releaseExpiredReport(id),
+    );
+  };
+  const stopRetention = startTraceRetention(cleanup);
   ipcMain.handle(
     PERFORMANCE_TRACE_CHANNEL,
     createTraceCommandHandler({
@@ -131,8 +127,18 @@ export function initPerformanceTraceService(): void {
       return;
     controller.events(values);
   });
-  onQuit('performance-trace', () => controller.close(), 'async');
+  onQuit(
+    'performance-trace',
+    () => {
+      stopRetention();
+      return controller.close();
+    },
+    'async',
+  );
   onAppSessionInvalidated(() => {
-    void controller.close();
+    void controller
+      .invalidate()
+      .then(cleanup)
+      .catch(() => {});
   });
 }

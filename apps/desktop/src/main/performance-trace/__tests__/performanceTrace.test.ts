@@ -7,11 +7,12 @@ import type { IpcMainInvokeEvent } from 'electron';
 import { submitPerformanceReport } from '../upload';
 import type { LogUploadMeta } from '../../log-upload/types';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, readFile, mkdir, utimes, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { readTraceArtifacts, TRACE_ARTIFACT_NAMES, type TraceArtifact } from '../artifacts';
 import { restorePerformanceFiles } from '../restore';
+import { cleanupTraceReports, startTraceRetention, TRACE_RETENTION_MS } from '../retention';
 
 /** Test value: production recording lifecycle and upload projection. User-requested diagnostics
  * must preserve local evidence on failure and isolate owners. Full-file uploads retain all
@@ -20,7 +21,7 @@ import { restorePerformanceFiles } from '../restore';
  * start/stop, a rejected upload, owner change, or one profiler frame/event with a secret field.
  * Minimal new failure: a missing chunk/marker, failed final request, or secret in a raw profile.
  * Tier: unit, injected clocks/network/profilers; bounded files in an isolated OS temp directory.
- * Standalone Vitest run: 0.54s on Windows (2026-10-29); test execution 94ms.
+ * Standalone Vitest run: 0.773s on Windows (2026-10-30); test execution 156ms.
  */
 function fixture() {
   let now = 1000,
@@ -59,6 +60,93 @@ afterEach(() => {
 });
 
 describe('performance recording', () => {
+  // Session invalidation fires before the new generation is committed. The callback passed
+  // to native startup must already reject this old operation at that boundary.
+  it('invalidates pending startup and discards the capture without saving across accounts', async () => {
+    const f = fixture();
+    let finish!: () => void;
+    let isCurrent!: () => boolean;
+    vi.mocked(f.deps.begin).mockImplementationOnce((_id, _at, current) => {
+      isCurrent = current;
+      return new Promise((resolve) => {
+        finish = () => resolve({ stop: f.stop });
+      });
+    });
+    const starting = f.controller.start();
+    const rejected = expect(starting).rejects.toThrow('PRECONDITION_FAILED');
+    expect(isCurrent()).toBe(true);
+    const closing = f.controller.invalidate();
+    expect(isCurrent()).toBe(false);
+    f.owner('bob:2');
+    finish();
+    await Promise.all([rejected, closing]);
+    expect(f.stop).toHaveBeenCalledWith({ discard: true });
+    expect(f.reports).toEqual([]);
+    expect(f.controller.snapshot().phase).toBe('idle');
+  });
+  // Review: a close during pending begin used to return before capture.stop/save.
+  // Unit: deferred native start (success and failure), no real waits or profiler.
+  it.each([false, true])(
+    'waits for pending startup before closing (start fails: %s)',
+    async (fails) => {
+      const f = fixture();
+      let finish!: () => void;
+      vi.mocked(f.deps.begin).mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            finish = () => (fails ? reject(new Error('start failed')) : resolve({ stop: f.stop }));
+          }),
+      );
+      const starting = f.controller.start().catch(() => undefined);
+      let closed = false;
+      const closing = f.controller.close().then(() => {
+        closed = true;
+      });
+      await Promise.resolve();
+      expect(closed).toBe(false);
+      finish();
+      await Promise.all([starting, closing]);
+      expect(closed).toBe(true);
+      expect(f.stop).toHaveBeenCalledTimes(fails ? 0 : 1);
+      expect(f.reports).toHaveLength(fails ? 0 : 1);
+      expect(f.controller.snapshot().phase).toBe(fails ? 'idle' : 'ready');
+    },
+  );
+  // Retention must not let reveal recreate an expired report or remove an in-flight upload.
+  it('releases completed reports for retention while protecting captures and uploads', async () => {
+    const f = fixture();
+    await f.controller.start();
+    expect(f.controller.releaseExpiredReport('ABCD-EFGH')).toBe(false);
+    await f.controller.stop();
+    let finish!: () => void;
+    vi.mocked(f.deps.save).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const revealing = f.controller.reveal();
+    expect(f.controller.releaseExpiredReport('ABCD-EFGH')).toBe(false);
+    expect(f.controller.canStart()).toBe(false);
+    await expect(f.controller.upload('')).rejects.toThrow('PRECONDITION_FAILED');
+    finish();
+    await revealing;
+    vi.mocked(f.deps.upload).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const uploading = f.controller.upload('');
+    await vi.waitFor(() => expect(f.deps.upload).toHaveBeenCalledOnce());
+    expect(f.controller.releaseExpiredReport('ABCD-EFGH')).toBe(false);
+    finish();
+    await uploading;
+    expect(f.controller.releaseExpiredReport('ABCD-EFGH')).toBe(true);
+    expect(f.controller.snapshot().phase).toBe('idle');
+    await expect(f.controller.reveal()).rejects.toThrow('PRECONDITION_FAILED');
+    await expect(f.controller.upload('')).rejects.toThrow('PRECONDITION_FAILED');
+  });
   it('records only during a capture, preserves timeline data, and saves once on concurrent stops', async () => {
     const f = fixture();
     const event = {
@@ -187,6 +275,57 @@ describe('performance recording', () => {
     expect(f.controller.snapshot()).toMatchObject({ phase: 'ready', partial: true });
     await f.controller.reveal();
     expect(f.reports).toHaveLength(1);
+  });
+});
+
+describe('performance report retention', () => {
+  // Review: expired raw profiles survived indefinitely without another recording.
+  // Real cleanup entry, bounded OS temp fixtures; the former tests covered no retention.
+  it('removes only expired generated directories and preserves active/new/exported files', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'cindy-trace-retention-'));
+    const now = Date.now();
+    const old = new Date(now - TRACE_RETENTION_MS - 1);
+    try {
+      for (const name of ['2345-6789', 'BCDE-FGHJ', 'K M N', 'PQRS-TVWX']) {
+        const dir = path.join(root, name);
+        await mkdir(dir);
+        await writeFile(path.join(dir, 'chromium-trace.json'), '{}');
+        if (name !== 'PQRS-TVWX') await utimes(dir, old, old);
+      }
+      await writeFile(path.join(root, 'YZ23-4567'), 'not a directory');
+      await cleanupTraceReports(root, (id) => id !== 'BCDE-FGHJ', now);
+      expect((await readdir(root)).sort()).toEqual([
+        'BCDE-FGHJ',
+        'K M N',
+        'PQRS-TVWX',
+        'YZ23-4567',
+      ]);
+      await cleanupTraceReports(root, () => true, now);
+      expect(await readdir(root)).not.toContain('BCDE-FGHJ');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  it('sweeps at startup and hourly without recordings, avoids overlaps, and stops on disposal', async () => {
+    vi.useFakeTimers();
+    let finish!: () => void;
+    const sweep = vi.fn(async () => {});
+    sweep.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const dispose = startTraceRetention(sweep);
+    expect(sweep).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(3600_000);
+    expect(sweep).toHaveBeenCalledOnce();
+    finish();
+    await vi.advanceTimersByTimeAsync(3600_000);
+    expect(sweep).toHaveBeenCalledTimes(2);
+    dispose();
+    await vi.advanceTimersByTimeAsync(3600_000);
+    expect(sweep).toHaveBeenCalledTimes(2);
   });
 });
 

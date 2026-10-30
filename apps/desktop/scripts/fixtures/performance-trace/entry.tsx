@@ -5,6 +5,13 @@ import {
   openPerformanceTrace,
 } from '../../../src/renderer/components/performance-trace/PerformanceTrace';
 import type { PerformanceTraceState } from '../../../src/shared/performanceTrace';
+import { MenuButton } from '../../../src/renderer/components/title-bar/MenuButton';
+
+if (ctx.case === 'secondary-menu') {
+  const url = new URL(window.location.href);
+  url.searchParams.set('secondaryWindow', '1');
+  window.history.replaceState(null, '', url);
+}
 
 const listeners = new Set<(state: PerformanceTraceState) => void>();
 let state: PerformanceTraceState = {
@@ -26,16 +33,23 @@ if (ctx.case !== 'default')
   };
 function Entry() {
   useEffect(() => {
-    if (ctx.case === 'recording') return;
+    if (ctx.case === 'recording' || ctx.case.endsWith('-menu')) return;
     if (ctx.case === 'default' || ctx.case.startsWith('reopened')) openPerformanceTrace();
     else {
       // A completed capture pushes ready; merely reading a previous result does not.
       for (const listener of listeners) listener(state);
     }
   }, []);
-  return <PerformanceTrace />;
+  return ctx.case.endsWith('-menu') ? (
+    <div className="p-4">
+      <MenuButton />
+    </div>
+  ) : (
+    <PerformanceTrace />
+  );
 }
 void mountPage({
+  route: '/',
   host: {
     performanceTrace: {
       command: async (command: string) => {

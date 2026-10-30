@@ -35,9 +35,20 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
+  window.history.replaceState(null, '', '/');
 });
 
 describe('MenuButton tooltip and dropdown interaction', () => {
+  // Review: secondary windows mount the shared menu but no PerformanceTrace host.
+  // Unit: the real startup URL flag must hide this dead action, retaining other menu entries.
+  it('does not offer performance tracing in a secondary window', async () => {
+    window.history.replaceState(null, '', '/?secondaryWindow=1');
+    const user = userEvent.setup();
+    render(<MenuButton />);
+    await user.click(screen.getByRole('button', { name: 'titleBar.menu' }));
+    expect(screen.queryByRole('menuitem', { name: 'performanceTrace.title' })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'titleBar.menuItems.resourceUsage' })).toBeTruthy();
+  });
   // Unit: real menu/dialog lifecycle; reopening a completed capture must offer a new recording,
   // not imply the previous report was just created. The former start-only case missed this.
   // Minimal regression: stop, enter a note, close, reopen from the menu.
