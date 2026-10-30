@@ -4047,9 +4047,7 @@
         "metaOAuth": "Abonnementkonto",
         "metaApiKey": "API-Schlüssel",
         "metaNoAuth": "Lokal / selbst gehostet · keine Authentifizierung",
-        "customTitle": "Benutzerdefinierter Endpunkt",
-        "customMeta": "Beliebige OpenAI- / Anthropic-kompatible Quelle verbinden",
-        "pickHint": "Wähle das Konto oder den Dienst aus, den du verbinden möchtest.",
+        "customAction": "Nicht aufgeführt? Benutzerdefiniert hinzufügen",
         "oauthDesc": "Melde dich über deinen Browser an. Kein API-Schlüssel erforderlich.",
         "deviceOAuthDesc": "Auf der Verifizierungsseite des Anbieters mit einem einmaligen Gerätecode autorisieren",
         "authorizeInBrowser": "Im Browser autorisieren",
@@ -7948,8 +7946,9 @@
         "usesExplanation": "Kumulierte gemeinsame Tool-Aufrufe über alle Releases im autorisierten Nutzerkreis. Deine Aufrufe unten zählen nur für dieses Konto auf diesem Computer."
       },
       "contribution": {
-        "unreadReview": "Neues Prüfergebnis",
+        "unreadReview": "Neues Plugin-Ergebnis",
         "viewReviewResult": "Prüfergebnis für {{version}} ansehen",
+        "viewMarketResult": "Marktplatz-Ergebnis anzeigen",
         "anonymous": "Anonym veröffentlichen",
         "anonymousHint": "Öffentliche Autorenangabe für das gesamte Plugin ausblenden. Wenn deaktiviert, zeigt jede Version den bei ihrer Einreichung gespeicherten Namen des ursprünglichen Autors.",
         "anonymousAuthorOnly": "Nur der ursprüngliche Autor kann dies ändern",
@@ -8045,6 +8044,7 @@
           "rejected": "Zurückgegeben",
           "enabled": "Veröffentlicht",
           "disabled": "Ausgelistet",
+          "archived": "Archiviert",
           "current_changed": "Community-Version geändert",
           "revoked": "Version widerrufen",
           "cancelled": "Abgebrochen"
@@ -18662,6 +18662,23 @@
     "groupHint": "Wenn deaktiviert, verwenden alle über diese Gruppe geleiteten Aufgaben die Standardgeschwindigkeit, auch Ultrafast.",
     "pending": "Einige Computer haben die Einstellung noch nicht bestätigt. Lass sie verbunden und aktualisiere die Computer der Gruppe, die diese Einstellung nicht unterstützen.",
     "saveFailed": "Die Einstellung wurde möglicherweise gespeichert, aber einige laufende Aufgaben haben die Standardgeschwindigkeit noch nicht bestätigt. Prüfe die Verbindung und versuche es erneut."
+  },
+  "usageCost": {
+    "title": "Kostendetails",
+    "conversation": "Chat",
+    "additional": "Zusätzliche Gebühren",
+    "unknownModel": "Modell nicht erfasst",
+    "estimate": "Geschätzter Wert",
+    "charged": "Nutzungsgebühr",
+    "loading": "Details werden geladen…",
+    "unavailable": "Für diesen Eintrag sind keine Details verfügbar.",
+    "explanation": "Nach Modell und Kanal gruppiert. Der Abowert ist eine Schätzung, keine zusätzliche Gebühr. Nur erfasste Kosten sind enthalten; bei älteren Einträgen können Details fehlen.",
+    "source": {
+      "subscription": "Abo",
+      "cindy-ai": "Cindy AI",
+      "provider": "API-Anbieter",
+      "unknown": "Kanal nicht erfasst"
+    }
   },
   "performanceTrace": {
     "title": "Performance-Trace",

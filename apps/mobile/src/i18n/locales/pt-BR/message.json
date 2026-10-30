@@ -424,5 +424,22 @@
     "openVideoSource": "Abrir vídeo original",
     "calculationUnavailable": "Não foi possível calcular este valor.",
     "incomplete": "Parte do conteúdo não pôde ser exibida."
+  },
+  "usageCost": {
+    "title": "Detalhes dos custos",
+    "conversation": "Conversa",
+    "additional": "Custos adicionais",
+    "unknownModel": "Modelo não registrado",
+    "estimate": "Valor estimado",
+    "charged": "Custo de uso",
+    "loading": "Carregando detalhes…",
+    "unavailable": "Os detalhes deste registro não estão disponíveis.",
+    "explanation": "Agrupados por modelo e canal. O valor da assinatura é uma estimativa, não uma cobrança adicional. Apenas os custos registrados são incluídos; registros mais antigos podem ter detalhes incompletos.",
+    "source": {
+      "subscription": "Assinatura",
+      "cindy-ai": "Cindy AI",
+      "provider": "Provedor de API",
+      "unknown": "Canal não registrado"
+    }
   }
 }

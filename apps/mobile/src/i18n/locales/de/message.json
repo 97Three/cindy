@@ -423,5 +423,22 @@
     "openVideoSource": "Originalvideo öffnen",
     "calculationUnavailable": "Dieser Wert kann nicht berechnet werden.",
     "incomplete": "Einige Inhalte konnten nicht angezeigt werden."
+  },
+  "usageCost": {
+    "title": "Kostendetails",
+    "conversation": "Chat",
+    "additional": "Zusätzliche Gebühren",
+    "unknownModel": "Modell nicht erfasst",
+    "estimate": "Geschätzter Wert",
+    "charged": "Nutzungsgebühr",
+    "loading": "Details werden geladen…",
+    "unavailable": "Für diesen Eintrag sind keine Details verfügbar.",
+    "explanation": "Nach Modell und Kanal gruppiert. Der Abowert ist eine Schätzung, keine zusätzliche Gebühr. Nur erfasste Kosten sind enthalten; bei älteren Einträgen können Details fehlen.",
+    "source": {
+      "subscription": "Abo",
+      "cindy-ai": "Cindy AI",
+      "provider": "API-Anbieter",
+      "unknown": "Kanal nicht erfasst"
+    }
   }
 }

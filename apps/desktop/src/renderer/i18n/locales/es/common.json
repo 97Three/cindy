@@ -4089,9 +4089,7 @@
         "metaOAuth": "cuenta de suscripción",
         "metaApiKey": "Clave API",
         "metaNoAuth": "Local/autohospedado · sin autenticación",
-        "customTitle": "Punto final personalizado",
-        "customMeta": "Conecte cualquier fuente compatible con OpenAI / Anthropic",
-        "pickHint": "Elija la cuenta o servicio para conectarse.",
+        "customAction": "¿No aparece? Añadir personalizado",
         "oauthDesc": "Inicie sesión a través de su navegador. No se requiere clave API.",
         "deviceOAuthDesc": "Autorizar en la página de verificación del proveedor con un código de dispositivo único",
         "authorizeInBrowser": "Autorizar en el navegador",
@@ -8004,8 +8002,9 @@
         "usesExplanation": "Llamadas compartidas acumuladas a herramientas en todas las versiones dentro del público autorizado. Tus llamadas a continuación solo contabilizan esta cuenta en esta computadora."
       },
       "contribution": {
-        "unreadReview": "Nuevo resultado de revisión",
+        "unreadReview": "Nuevo resultado del complemento",
         "viewReviewResult": "Ver el resultado de revisión de {{version}}",
+        "viewMarketResult": "Ver resultado del mercado",
         "anonymous": "Publicar de forma anónima",
         "anonymousHint": "Oculta la atribución pública de todo el complemento. Si se desactiva, cada versión muestra el nombre del autor original guardado al enviarla.",
         "anonymousAuthorOnly": "Solo el autor original puede cambiar esto",
@@ -8101,6 +8100,7 @@
           "rejected": "Devuelto",
           "enabled": "Publicado",
           "disabled": "Retirado del catálogo",
+          "archived": "Archivado",
           "current_changed": "Versión de la comunidad modificada",
           "revoked": "Versión revocada",
           "cancelled": "Cancelado"
@@ -18821,6 +18821,23 @@
     "groupHint": "Si se desactiva, todas las tareas enrutadas a través de este grupo usan la velocidad estándar, incluidas las de Ultrafast.",
     "pending": "Algunas computadoras no han confirmado la configuración. Mantenlas conectadas y actualiza las computadoras del grupo que no admitan esta configuración.",
     "saveFailed": "Es posible que la configuración se haya guardado, pero algunas tareas en ejecución no han confirmado la velocidad estándar. Comprueba la conexión y vuelve a intentarlo."
+  },
+  "usageCost": {
+    "title": "Detalles del coste",
+    "conversation": "Conversación",
+    "additional": "Cargos adicionales",
+    "unknownModel": "Modelo no registrado",
+    "estimate": "Valor estimado",
+    "charged": "Cargo por uso",
+    "loading": "Cargando detalles…",
+    "unavailable": "Los detalles de este registro no están disponibles.",
+    "explanation": "Agrupados por modelo y canal. El valor de la suscripción es una estimación, no un cargo adicional. Solo se incluyen los costes registrados; los registros antiguos pueden tener detalles incompletos.",
+    "source": {
+      "subscription": "Suscripción",
+      "cindy-ai": "Cindy AI",
+      "provider": "Proveedor de API",
+      "unknown": "Canal no registrado"
+    }
   },
   "performanceTrace": {
     "title": "Traza de rendimiento",

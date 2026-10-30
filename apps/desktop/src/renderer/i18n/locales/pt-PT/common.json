@@ -4089,9 +4089,7 @@
         "metaOAuth": "Conta de subscrição",
         "metaApiKey": "Chave de API",
         "metaNoAuth": "Local / alojamento próprio · sem autenticação",
-        "customTitle": "Endpoint personalizado",
-        "customMeta": "Ligar qualquer fonte compatível com OpenAI / Anthropic",
-        "pickHint": "Escolha a conta ou o serviço a ligar.",
+        "customAction": "Não está na lista? Adicionar personalizado",
         "oauthDesc": "Inicie sessão no navegador. Não é necessária uma chave de API.",
         "deviceOAuthDesc": "Autorize na página de verificação do fornecedor com um código de dispositivo de utilização única",
         "authorizeInBrowser": "Autorizar no navegador",
@@ -8004,8 +8002,9 @@
         "usesExplanation": "Chamadas de ferramentas partilhadas acumuladas em todas as versões para o público autorizado. As suas chamadas abaixo contabilizam apenas esta conta neste computador."
       },
       "contribution": {
-        "unreadReview": "Novo resultado da revisão",
+        "unreadReview": "Novo resultado do plugin",
         "viewReviewResult": "Ver o resultado da revisão de {{version}}",
+        "viewMarketResult": "Ver resultado da publicação",
         "anonymous": "Publicar anonimamente",
         "anonymousHint": "Ocultar a atribuição pública de autoria de todo o plugin. Quando desativado, cada versão apresenta o nome do autor original guardado aquando da submissão.",
         "anonymousAuthorOnly": "Apenas o autor original pode alterar esta opção",
@@ -8101,6 +8100,7 @@
           "rejected": "Devolvido",
           "enabled": "Publicado",
           "disabled": "Removido da listagem",
+          "archived": "Arquivado",
           "current_changed": "Versão da comunidade alterada",
           "revoked": "Versão revogada",
           "cancelled": "Cancelado"
@@ -18821,6 +18821,23 @@
     "groupHint": "Quando desativado, todas as tarefas encaminhadas por este grupo usam a velocidade padrão, incluindo Ultrafast.",
     "pending": "Alguns computadores não confirmaram a definição. Mantenha-os ligados e atualize os computadores do grupo que não suportam esta definição.",
     "saveFailed": "A definição pode ter sido guardada, mas algumas tarefas em execução não confirmaram a velocidade padrão. Verifique a ligação e tente novamente."
+  },
+  "usageCost": {
+    "title": "Detalhes dos custos",
+    "conversation": "Conversa",
+    "additional": "Custos adicionais",
+    "unknownModel": "Modelo não registado",
+    "estimate": "Valor estimado",
+    "charged": "Custo de utilização",
+    "loading": "A carregar detalhes…",
+    "unavailable": "Os detalhes deste registo não estão disponíveis.",
+    "explanation": "Agrupados por modelo e canal. O valor da subscrição é uma estimativa, não uma cobrança adicional. Apenas são incluídos os custos registados; os registos mais antigos podem ter detalhes incompletos.",
+    "source": {
+      "subscription": "Subscrição",
+      "cindy-ai": "Cindy AI",
+      "provider": "Fornecedor de API",
+      "unknown": "Canal não registado"
+    }
   },
   "performanceTrace": {
     "title": "Rastreio de desempenho",

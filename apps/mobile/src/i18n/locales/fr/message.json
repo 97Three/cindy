@@ -424,5 +424,22 @@
     "openVideoSource": "Ouvrir la vidéo d'origine",
     "calculationUnavailable": "Impossible de calculer cette valeur.",
     "incomplete": "Une partie du contenu n'a pas pu être affichée."
+  },
+  "usageCost": {
+    "title": "Détail des coûts",
+    "conversation": "Conversation",
+    "additional": "Frais supplémentaires",
+    "unknownModel": "Modèle non enregistré",
+    "estimate": "Valeur estimée",
+    "charged": "Frais de consommation",
+    "loading": "Chargement des détails…",
+    "unavailable": "Les détails de cet enregistrement ne sont pas disponibles.",
+    "explanation": "Les coûts sont regroupés par modèle et par canal. La valeur de l’abonnement est une estimation, sans facturation supplémentaire. Seuls les coûts enregistrés sont inclus ; les anciens enregistrements peuvent être incomplets.",
+    "source": {
+      "subscription": "Abonnement",
+      "cindy-ai": "Cindy AI",
+      "provider": "Fournisseur d’API",
+      "unknown": "Canal non enregistré"
+    }
   }
 }

@@ -4089,9 +4089,7 @@
         "metaOAuth": "Conta de assinatura",
         "metaApiKey": "Chave de API",
         "metaNoAuth": "Local / hospedagem própria · sem autenticação",
-        "customTitle": "Endpoint personalizado",
-        "customMeta": "Conecte qualquer fonte compatível com OpenAI / Anthropic",
-        "pickHint": "Escolha a conta ou o serviço para conectar.",
+        "customAction": "Não está na lista? Adicionar personalizado",
         "oauthDesc": "Entre pelo navegador. Não é necessário ter uma chave de API.",
         "deviceOAuthDesc": "Autorize na página de verificação do provedor com um código de dispositivo de uso único",
         "authorizeInBrowser": "Autorizar no navegador",
@@ -8004,8 +8002,9 @@
         "usesExplanation": "Total acumulado de chamadas de ferramentas compartilhadas em todas as versões para o público autorizado. Suas chamadas abaixo contabilizam apenas esta conta neste computador."
       },
       "contribution": {
-        "unreadReview": "Novo resultado de análise",
+        "unreadReview": "Novo resultado do plugin",
         "viewReviewResult": "Ver resultado da análise de {{version}}",
+        "viewMarketResult": "Ver resultado da publicação",
         "anonymous": "Publicar anonimamente",
         "anonymousHint": "Oculta a atribuição pública de autoria de todo o plugin. Quando desativado, cada versão mostra o nome do autor original salvo no momento do envio.",
         "anonymousAuthorOnly": "Somente o autor original pode alterar isso",
@@ -8101,6 +8100,7 @@
           "rejected": "Devolvido",
           "enabled": "Publicado",
           "disabled": "Fora da listagem",
+          "archived": "Arquivado",
           "current_changed": "Versão da comunidade alterada",
           "revoked": "Versão revogada",
           "cancelled": "Cancelado"
@@ -18821,6 +18821,23 @@
     "groupHint": "Quando desativado, todas as tarefas encaminhadas por este grupo usam a velocidade padrão, incluindo Ultrafast.",
     "pending": "Alguns computadores não confirmaram a configuração. Mantenha-os conectados e atualize os computadores do grupo que não oferecem suporte a esta configuração.",
     "saveFailed": "A configuração pode ter sido salva, mas algumas tarefas em execução não confirmaram a velocidade padrão. Verifique a conexão e tente novamente."
+  },
+  "usageCost": {
+    "title": "Detalhes dos custos",
+    "conversation": "Conversa",
+    "additional": "Custos adicionais",
+    "unknownModel": "Modelo não registrado",
+    "estimate": "Valor estimado",
+    "charged": "Custo de uso",
+    "loading": "Carregando detalhes…",
+    "unavailable": "Os detalhes deste registro não estão disponíveis.",
+    "explanation": "Agrupados por modelo e canal. O valor da assinatura é uma estimativa, não uma cobrança adicional. Apenas os custos registrados são incluídos; registros mais antigos podem ter detalhes incompletos.",
+    "source": {
+      "subscription": "Assinatura",
+      "cindy-ai": "Cindy AI",
+      "provider": "Provedor de API",
+      "unknown": "Canal não registrado"
+    }
   },
   "performanceTrace": {
     "title": "Rastreamento de desempenho",

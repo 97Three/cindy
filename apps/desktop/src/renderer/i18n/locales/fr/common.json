@@ -4089,9 +4089,7 @@
         "metaOAuth": "Compte d'abonnement",
         "metaApiKey": "Clé API",
         "metaNoAuth": "Local / auto-hébergé · sans authentification",
-        "customTitle": "Endpoint personnalisé",
-        "customMeta": "Connectez n'importe quelle source compatible OpenAI / Anthropic",
-        "pickHint": "Choisissez le compte ou le service à connecter.",
+        "customAction": "Pas dans la liste ? Ajouter un service personnalisé",
         "oauthDesc": "Connectez-vous via votre navigateur. Aucune clé API requise.",
         "deviceOAuthDesc": "Autorisez l'accès sur la page de vérification du fournisseur avec un code d'appareil à usage unique",
         "authorizeInBrowser": "Autoriser dans le navigateur",
@@ -8004,8 +8002,9 @@
         "usesExplanation": "Nombre cumulé d'appels d'outils partagés, toutes versions confondues, au sein de l'audience autorisée. Vos appels ci-dessous ne concernent que ce compte sur cet ordinateur."
       },
       "contribution": {
-        "unreadReview": "Nouveau résultat de revue",
+        "unreadReview": "Nouveau résultat du plugin",
         "viewReviewResult": "Voir le résultat de la revue de {{version}}",
+        "viewMarketResult": "Voir le résultat de la publication",
         "anonymous": "Publier anonymement",
         "anonymousHint": "Masquer l'attribution publique pour l'ensemble du plugin. Si cette option est désactivée, chaque version affiche le nom de l'auteur d'origine enregistré lors de sa soumission.",
         "anonymousAuthorOnly": "Seul l'auteur d'origine peut modifier ce réglage",
@@ -8101,6 +8100,7 @@
           "rejected": "Renvoyé",
           "enabled": "Publié",
           "disabled": "Retiré de la liste",
+          "archived": "Archivé",
           "current_changed": "Version communautaire modifiée",
           "revoked": "Version révoquée",
           "cancelled": "Annulé"
@@ -18821,6 +18821,23 @@
     "groupHint": "Si désactivé, toutes les tâches acheminées par ce groupe utilisent la vitesse standard, y compris Ultrafast.",
     "pending": "Certains ordinateurs n'ont pas confirmé le réglage. Laissez-les connectés et mettez à jour les ordinateurs du groupe qui ne prennent pas en charge ce réglage.",
     "saveFailed": "Le réglage est peut-être enregistré, mais certaines tâches en cours n'ont pas confirmé la vitesse standard. Vérifiez la connexion et réessayez."
+  },
+  "usageCost": {
+    "title": "Détail des coûts",
+    "conversation": "Conversation",
+    "additional": "Frais supplémentaires",
+    "unknownModel": "Modèle non enregistré",
+    "estimate": "Valeur estimée",
+    "charged": "Frais de consommation",
+    "loading": "Chargement des détails…",
+    "unavailable": "Les détails de cet enregistrement ne sont pas disponibles.",
+    "explanation": "Les coûts sont regroupés par modèle et par canal. La valeur de l’abonnement est une estimation, sans facturation supplémentaire. Seuls les coûts enregistrés sont inclus ; les anciens enregistrements peuvent être incomplets.",
+    "source": {
+      "subscription": "Abonnement",
+      "cindy-ai": "Cindy AI",
+      "provider": "Fournisseur d’API",
+      "unknown": "Canal non enregistré"
+    }
   },
   "performanceTrace": {
     "title": "Suivi des performances",

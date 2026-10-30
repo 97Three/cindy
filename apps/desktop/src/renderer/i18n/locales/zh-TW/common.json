@@ -4015,9 +4015,7 @@
         "metaOAuth": "訂閱帳號",
         "metaApiKey": "API key",
         "metaNoAuth": "本機 / 自託管 · 無需鑑權",
-        "customTitle": "自定義端點",
-        "customMeta": "接入任意 OpenAI / Anthropic 相容的模型來源",
-        "pickHint": "選擇要連線的帳號或服務。",
+        "customAction": "找不到？新增自訂",
         "oauthDesc": "在瀏覽器中登入帳號，無需 API key。",
         "deviceOAuthDesc": "使用一次性裝置碼，在供應商驗證頁面完成授權",
         "authorizeInBrowser": "在瀏覽器中授權",
@@ -7916,8 +7914,9 @@
         "usesExplanation": "目前共享範圍內各版本累計的工具呼叫次數。下方個人呼叫僅統計本機目前帳戶，口徑不同。"
       },
       "contribution": {
-        "unreadReview": "有新的審核結果",
+        "unreadReview": "有新的處理結果",
         "viewReviewResult": "查看 {{version}} 審核結果",
+        "viewMarketResult": "查看市場處理結果",
         "anonymous": "匿名發布",
         "anonymousHint": "隱藏整款插件的公開署名，可隨時修改。關閉後顯示各版本送審時儲存的原作者暱稱。",
         "anonymousAuthorOnly": "僅原作者可修改",
@@ -8013,6 +8012,7 @@
           "rejected": "已退回",
           "enabled": "已上架",
           "disabled": "已下架",
+          "archived": "已封存",
           "current_changed": "市場版本已切換",
           "revoked": "版本已撤銷",
           "cancelled": "已取消"
@@ -18601,6 +18601,23 @@
     "groupHint": "關閉後，經此組執行的任務使用普通模式，也適用於 Ultrafast。",
     "pending": "部分電腦尚未確認設定。請保持連線，並更新不支援此設定的組內電腦。",
     "saveFailed": "設定可能已儲存，但執行中的任務尚未全部確認切換為普通模式。請檢查連線後重試。"
+  },
+  "usageCost": {
+    "title": "費用明細",
+    "conversation": "對話",
+    "additional": "附加費用",
+    "unknownModel": "未記錄模型",
+    "estimate": "估算價值",
+    "charged": "按量費用",
+    "loading": "正在讀取明細…",
+    "unavailable": "這筆記錄暫無明細。",
+    "explanation": "按模型和渠道彙總。訂閱價值是估算，不是額外扣費。僅包含已記錄的費用，歷史記錄的明細可能不完整。",
+    "source": {
+      "subscription": "訂閱帳戶",
+      "cindy-ai": "Cindy AI",
+      "provider": "API 供應商",
+      "unknown": "未記錄渠道"
+    }
   },
   "performanceTrace": {
     "title": "效能追蹤",
