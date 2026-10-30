@@ -34,8 +34,6 @@ import {
   type CodexThreadSummary,
   type SqlRow,
 } from '../../maker-host/codex-local-sessions.js';
-import { codexImportedThreadModelProviderId } from '../../maker-host/codex-credential-switch.js';
-import { getCodexProxyAuthInjectionState } from '../../maker-host/codex-proxy-host.js';
 import { stripCompleteIdeOpenedFileBlocks } from '../../maker-host/imported-user-content.js';
 import { writeMigratedTranscript } from '../../session-share/migrationTranscriptWriter.js';
 import { isZstdPath, parseJsonLine, readFirstLine, readLines } from '../lineReader.js';
@@ -453,6 +451,11 @@ async function materialize(session: SourceSession, ctx: ReadContext): Promise<Na
   const existing = desktopDb ? readRawThreadRow(desktopDb, loc.threadId) : null;
   const existingRollout = existing ? str(existing.rollout_path) : '';
   // 外部 Codex 记录的是它自己的 provider（如 openai），Cindy 按路由的身份恢复，不一致会被拒绝。
+  // 按需加载：这两个模块加载时会读应用路径，扫描与读取不需要它们。
+  const [{ codexImportedThreadModelProviderId }, { getCodexProxyAuthInjectionState }] = await Promise.all([
+    import('../../maker-host/codex-credential-switch.js'),
+    import('../../maker-host/codex-proxy-host.js'),
+  ]);
   const modelProvider = codexImportedThreadModelProviderId({
     providerId: ctx.route?.providerId ?? null,
     model: ctx.route?.model ?? loc.model ?? '',
