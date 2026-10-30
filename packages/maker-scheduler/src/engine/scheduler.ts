@@ -544,6 +544,7 @@ export class Scheduler extends EventEmitter {
       clearInterval(this.tickHandle);
       this.tickHandle = null;
     }
+    this.started = false;
     // Fence late provider-close events before aborting any runner. A normal app
     // exit interrupts work; it is neither a user cancellation nor a run failure.
     const interrupted = options?.interrupted
@@ -558,6 +559,21 @@ export class Scheduler extends EventEmitter {
     for (const controller of this.inflightControllers.values()) {
       try { controller.abort(); } catch (err) {
         this.logger?.warn?.('scheduler.stop: controller.abort threw', err);
+      }
+    }
+    if (options?.interrupted) {
+      // A returned runner no longer owns a live turn, but its original terminal
+      // writes still own the attempt. Keep those writes (and silence) alive.
+      // Release other attempts synchronously so delayed setup cannot dispatch.
+      for (const attempt of [...this.inflightAttempts.values()]) {
+        if (attempt.phase === 'finalizing') continue;
+        this.unregisterInflight(attempt.scheduleId, attempt.runId);
+        this.silencedRuns.delete(attempt.runId);
+        this.finishInflightAttempt(attempt.runId);
+      }
+      const remaining = await this.waitForRunSettlement(() => this.inflightAttempts.size);
+      if (remaining > 0) {
+        this.logger?.warn?.('scheduler.stop: terminal storage writes did not settle before the shutdown wait budget', { remaining });
       }
     }
     if (this.inflightAttempts.size > 0) {
@@ -586,7 +602,6 @@ export class Scheduler extends EventEmitter {
     // silenceRun 文档一致 —— 标记丢失的安全方向就是照常通知。
     this.silencedRuns.clear();
     this.activeSchedules.clear();
-    this.started = false;
     this.emitRuntimeState();
     await Promise.all(interrupted.map(async (run) => {
       await this.storage.updateRun(run.runId, {
@@ -2362,16 +2377,21 @@ export class Scheduler extends EventEmitter {
       }
       return n;
     };
-    const deadline = this.clock.now() + 5000;
-    while (pendingCount() > 0 && this.clock.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    const remaining = pendingCount();
+    const remaining = await this.waitForRunSettlement(pendingCount);
     if (remaining > 0) {
       this.logger?.warn?.(
         `scheduler: abortInflightAndWait timed out, ${remaining} run(s) still in-flight for schedule ${scheduleId}`,
       );
     }
+  }
+
+  /** Shared pause/delete/quit drain; storage stalls retain the existing budget. */
+  private async waitForRunSettlement(pendingCount: () => number): Promise<number> {
+    const deadline = this.clock.now() + 5000;
+    while (pendingCount() > 0 && this.clock.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return pendingCount();
   }
 
   // ---------- typed event API ----------

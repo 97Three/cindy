@@ -145,6 +145,69 @@ it('preserves interrupted runs on app exit instead of recording a provider-close
   expect(h.storage.runs.get(runId)?.status).toBe('interrupted');
 });
 
+// discussion_r4419551671: previous exit tests held the runner, not its terminal
+// storage write. Public stop must drain the latter without losing silence or
+// turning already-ended work into a resumable interruption. Unit, fake timers.
+it.each(['automatic', 'manual', 'recovery'].flatMap((source) =>
+  [false, true].map((failed) => ({ source, failed })),
+))('drains terminal persistence before app exit ($source, failed=$failed)', async ({ source, failed }) => {
+  vi.useFakeTimers();
+  let release!: () => void;
+  let entered!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const ready = new Promise<void>((resolve) => { entered = resolve; });
+  const h = makeHarness({ runnerImpl: async (_schedule, ctx) => {
+    await ctx.onSessionBound?.('ending-task');
+    ctx.onTurnActive?.('ending-task');
+    h.scheduler.silenceRun(ctx.runId);
+    if (failed) throw new Error('real execution failure');
+    return { sessionId: 'ending-task', resultText: 'finished work' };
+  } });
+  let running: Promise<unknown> | undefined;
+  let stopping: Promise<void> | undefined;
+  try {
+    await h.scheduler.start();
+    const schedule = await h.scheduler.create(baseInput);
+    const update = h.storage.updateRun.bind(h.storage);
+    vi.spyOn(h.storage, 'updateRun').mockImplementation(async (id, patch) => {
+      if (patch.status === 'success' || patch.status === 'failed') { entered(); await held; }
+      return update(id, patch);
+    });
+    if (source === 'recovery') {
+      await h.storage.insertRun({ id: 'old-run', scheduleId: schedule.id, sessionId: 'ending-task',
+        firedAt: h.clock.now() - 1000, status: 'interrupted' });
+      h.storage.claimInterruptedRun = async () => h.storage.updateRun('old-run', { status: 'running' });
+      running = (await h.scheduler.resumeInterruptedRun('ending-task'))!.completion;
+    } else {
+      h.clock.setTo(schedule.nextFireAt!);
+      running = source === 'automatic' ? h.scheduler.tick() : h.scheduler.runNow(schedule.id);
+    }
+    await ready;
+    const runId = h.fireCalls[0]!.ctx.runId;
+    let stopped = false;
+    stopping = h.scheduler.stop({ interrupted: true }).then(() => { stopped = true; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stopped).toBe(false);
+    expect(h.storage.runs.get(runId)?.status).toBe('running');
+    release();
+    await running;
+    await vi.advanceTimersByTimeAsync(50);
+    await stopping;
+    expect(h.storage.runs.get(runId)).toMatchObject({
+      status: failed ? 'failed' : 'success',
+      ...(failed ? { errorMsg: 'real execution failure' } : { resultText: 'finished work', readAt: h.clock.now() }),
+    });
+    expect(h.scheduler.getRuntimeSnapshot().inFlightRuns).toHaveLength(0);
+  } finally {
+    release();
+    await running?.catch(() => {});
+    await vi.advanceTimersByTimeAsync(50);
+    await stopping?.catch(() => {});
+    await h.scheduler.stop();
+    vi.useRealTimers();
+  }
+});
+
 // Before dispatch no user turn exists to continue. Stop at each persistence
 // boundary must leave a cancelled row, never a fake resumable interruption.
 it.each(['manual-get', 'manual-insert', 'automatic-claim', 'automatic-insert'] as const)(
