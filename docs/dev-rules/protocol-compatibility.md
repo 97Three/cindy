@@ -735,6 +735,15 @@ Chat Server 群消息投影（Desktop IPC 与 `bot-group-chat` 远程资源共�
 
 ## 手机直连群的设置管理
 
+### 同账号跨设备伙伴候选
+
+Desktop `chatServer.ownedBots` 返回账号所有可加入的伙伴；`botId` 表示 actor 的稳定 externalId，
+不再保证存在本机 Profile。可选 `avatar`、`homeDeviceId` 用于候选展示，旧调用方可忽略。
+建群仍提交 externalId，成员邀请仍提交 actorId；手机经电脑的 `create` / `add-member` /
+`set-members` 保留原 input，新主机允许缺少本地行但能在 ownedBots 中确认的 externalId，
+本机隐藏行继续拒绝。旧主机可能返回 MEMBER_UNAVAILABLE，手机保留错误，不伪报加入成功。
+没有新服务端路由、迁移或原生模块改动；加群不改变 homeDevice 或执行授权。
+
 ### 群解散与个人列表移除
 
 `GET /me` 明确声明 `groupLifecycleVersion: 1` / `conversationListStateVersion: 1` 才启用对应动作。
@@ -2016,9 +2025,11 @@ Codex 原生图片恢复（#6412）在既有 `maker:remote-agent:v1` 上追加�
 - **已建任务换 Agent 所在电脑**(2026-10-07)：选模型时可把 Agent 挪到本机或另一台电脑，与任务中途换
   引擎同一套意图——下一条消息发送时落地，原生会话在原来那台、接不上，一律全量交接 + 全新原生会话，
   并插 `agent_switch` 边界行。`maker:switch-session-agent` 新增可选第 7 参 `{ agentDeviceId: string | null }`
-  (null = 任务所在电脑)；不带 = 位置不变(旧控制端与内部调用都走这里，A 不做推断)。pending 意图投影与
-  边界行内容只在换电脑时多出 `agentDeviceId` / `fromAgentDeviceId`、`toAgentDeviceId`、
-  `fromAgentDeviceName`、`toAgentDeviceName`，旧端忽略即可(旧端的分隔条显示成「从 X 切换到 X」)。
+  (null = 任务所在电脑)；不带 = 位置不变(旧控制端与内部调用都走这里，A 不做推断)。pending 意图投影
+  只在换电脑时多出 `agentDeviceId`。边界行始终记录 `fromAgentDeviceId`(null = 任务所在电脑)；
+  `toAgentDeviceId` 仅在换电脑时出现，作为分隔条与换机判据，`fromAgentDeviceName` /
+  `toAgentDeviceName` 也只在换电脑时出现。旧端忽略这些字段即可(旧端的分隔条显示成「从 X 切换到 X」)；
+  旧版边界行可能没有 `fromAgentDeviceId`，消费方按无设备证据兼容。
   Agent 要落在另一台电脑时，A 在**选择时**就读那台的目录核对(在线、供应商已开放、有这个模型)，不留
   发送时才在那台失败、且之后每次发送都重试的意图；本机窗口拿到 `REMOTE_AGENT_DEVICE_UNREACHABLE` /
   `REMOTE_AGENT_MODEL_UNAVAILABLE`，device-link 控制端降级为 `PRECONDITION_FAILED`。Mobile 与桌面同一套
@@ -3102,7 +3113,7 @@ Mobile 对所有预创建恢复记录（含未收到创建回包的 `reserved`�
 - 新客户端请求 `/api/model-catalog/catalog?registrySchemaVersion=3`。V1/V2 继续可读；Server 任意版本缺少某条原生协议时，使用 Cindy 本地声明。V3 的明确协议修正、显式 null 与退役优先；删除字段或遗漏规则不再清空本地协议知识，撤销须用精确条目的 null／retired 表达。仅原生协议作此字段级补全，价格、窗口、可用性与完整目录的 revision、LKG、冲突拒绝仍用既有策略。
 - Server 支持 V3 后，仅给明确请求 V3 的客户端返回 nativeApi/nativeApiRules；无参数／V1／V2 请求必须返回旧版本并去掉新字段，ETag 按实际响应格式隔离。不得直接把 V3 制品目录原样发送给旧客户端。
 - UI 的 CatalogModel.nativeApi 是主进程按实际 provider/model 投影的结果。Pi 的 piApi 是执行配置，不能反过来当作模型原生协议。界面只展示简短的协议名、原生支持／兼容模式，不展示目录实现与抓包说明。
-- 默认开关按原生协议与 Harness/出站协议比较：兼容路径默认关闭；已有用户显式偏好优先。逐引擎服务端显式 defaultEnabled 保留策展覆盖能力。Google 原生模型推荐 Pi，Messages 推荐 Claude Code，Responses 推荐 Codex，Chat Completions 推荐 Pi；推荐必须在可用候选内。
+- 默认开关按原生协议与 Harness/出站协议比较：兼容路径默认关闭；已有用户显式偏好优先。逐引擎服务端显式 defaultEnabled 保留策展覆盖能力。Google 原生模型推荐 Pi，Messages 推荐 Claude Code，Responses 推荐 Codex，Chat Completions 推荐 Pi；推荐必须在可用候选内。（2026-10-30 起，目录 `recommendedAgents` 有声明时优先，此协议推断只作兜底，见下文「推荐引擎下发」。）
 - 此客户端改动不代表 Server 已部署 V3。发布目录前须验证旧客户端降级、新客户端 V3、更新/撤销/冲突与相应 ETag 四项；不能只修改 bundled 数据宣布线上生效。
 
 ### Cindy 本地协议声明的维护（2026-09-05）
@@ -4229,3 +4240,15 @@ targets.get 按本插件 requestKey 查询原收据；settled 自然终态由原
 RemoteResourceDisplay 与 BotGroupSummary 可选携带 `teammateActivity: { phase }`。宿主从现有运行、待确认、完成、错误状态投影，Desktop/iOS/Android 共用状态优先级。生成文案、确认权限、已读回执均保持原有路径。旧控制端忽略字段；新控制端连接旧宿主时回退已有 generation、确认快照及普通未读，不把缺失状态推断成完成。
 
 字段位于现有 Remote Resource 的业务 payload 内，不改握手、签名、顶层帧、relay 路由或重连逻辑；官方与自建中转都沿用通用加密转发，无需中转升级。群直连复用现有 executions/plans 只读接口，不修改服务端；旧服务器缺少接口时保留普通列表。
+
+## 推荐引擎下发（`registryRecommendedAgents`，2026-10-30）
+
+- Registry V6 新增可选 `recommendedAgents`：`{ providerId, modelIdPrefix?, agent }` 规则表，正本在 Server
+  `source/registry/recommended-agents.json`。已发布的 V6 解析器拒绝未知字段，所以它走独立能力位：
+  新客户端请求带 `registryRecommendedAgents=1`；Server 对未带该参数的请求（含旧 V6 客户端）去掉字段，
+  ETag 按实际响应隔离。V1–V5 投影一律不含此字段。
+- 客户端只把它当建议：解析后投影成 `CatalogModel.recommendedAgent`，用于默认选中引擎；不改变模型成员、
+  可见性与用户已换过的引擎。推荐的引擎在该来源只能走本地兼容转换时不采用，回退到协议推断。
+- 离线回退：升级后首次请求失败时，仍可读取升级前按旧 URL（不带新能力位，或 V5）缓存的 last-known-good
+  快照；此时没有推荐表，按协议推断兜底，不报错。
+- 字段位于目录 HTTP 响应内，不涉及 device-link、relay 或远控 wire；手机端经现有活动目录投影拿到结果。
