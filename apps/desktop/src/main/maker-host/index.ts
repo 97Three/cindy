@@ -137,7 +137,8 @@ import { readProviderGroupBinding } from '../provider-group/bindings.js';
 import { createSubscriptionFastPolicy } from './subscription-fast-policy.js';
 import { getProviderGroupGuestSwitch } from '../provider-group/guestSwitch.js';
 import { tapWindowBroadcast } from '../device-link/broadcast-tap.js';
-import { remoteBackgroundInvoke, remoteInvoke } from '../device-link/index.js';
+import { openRemoteLink, remoteBackgroundInvoke, remoteInvoke } from '../device-link/index.js';
+import { isCrossRegionProviderShareTarget, renewCrossRegionProviderShareLink } from '../device-link/providerShareCrossRegion.js';
 import { handleListDevices, defaultDeps as deviceDirectoryDeps } from '../device-link/ipc.js';
 import { parseProviderShareAgentDeviceId } from '../device-link/providerShareGuest.js';
 import { isProviderShareCredentialConsentSkipped } from '../device-link/providerShareGuestPrefs.js';
@@ -459,6 +460,12 @@ const requestAutoReviewText = createAutoReviewModelRouter({
   createAuxiliaryFallback: createCustomAutoReviewFallback,
 });
 
+let autoReviewContextResolver: AutoReviewDelegate['prepareRequest'];
+/** Main bootstrap supplies a fresh owner-bound lookup; no plugin/renderer can set this. */
+export function setAutoReviewContextResolver(resolver: AutoReviewDelegate['prepareRequest']): void {
+  autoReviewContextResolver = resolver;
+}
+
 export const reviewAutoPermissionAction: AutoReviewDelegate = createAutoPermissionReviewer({
   logger: desktopMakerLogger,
   managesRetries: true,
@@ -470,7 +477,10 @@ const reviewToolLoop = createToolLoopReviewer({
   requestText: (prompt, opts) => requestUtilityText(getMaker(), prompt, opts),
 });
 
-reviewAutoPermissionAction.prepareRequest = async request => request;
+reviewAutoPermissionAction.prepareRequest = async request => {
+  if (!autoReviewContextResolver) throw new Error('Authorization context is not ready');
+  return autoReviewContextResolver(request);
+};
 
 /**
  * Codex 模型补拉 coordinator —— 随 maker 一起创建(需要 maker 实例做 live 拉取)、随
@@ -2921,6 +2931,8 @@ export function getMaker(): Maker {
       startDeviceAgentSession: createDeviceAgentStarter({
         readImageDeliveryEpoch: readGeneratedImageEpoch,
         remoteInvoke: remoteBackgroundInvoke,
+        renewSharedProviderLink: (peer) => isCrossRegionProviderShareTarget(peer)
+          ? renewCrossRegionProviderShareLink(peer) : openRemoteLink(peer),
         rgPath: getRipgrepBinaryPath,
         // 对方的 Codex 把本机当 exec-server 执行环境：用本机随包的同一个 codex。
         codexPath: () => getCachedBinaryStatus('codex').binaryPath ?? undefined,

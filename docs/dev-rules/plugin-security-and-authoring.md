@@ -127,7 +127,22 @@ Library 请求同时绑定迁移代次和安装批准，根解析、排队及开
   `minCindyVersion`。Manifest schema 不设置统一的 Cindy 版本下限；具体版本只属于插件包元数据。
   v3 **没有** `slots`；
   `tools`、`card`、`panel`、`mainView`、`taskView`、`subscribe`、`skill`、`cindy`、`agent`、`node`、`network`、
-  `preview` 等顶层字段本身就是插件贡献项或自主 Host 能力的直接声明。
+  `preview`、`browserExtension` 等顶层字段本身就是插件贡献项或自主 Host 能力的直接声明。
+- `browserExtension` 是宿主承接随包浏览器扩展连接的直接字段（2026-10-27 由 Cindy Chrome
+  插件自带接线进程迁入宿主）：`protocol` 必须是当前宿主实现的 `cindy-browser-extension/3`，
+  `extensionIds` 是允许连接的扩展 id（装入时逐条展示并钉死），可选 `nativeHost{name,binary}`
+  由宿主复制包内平台二进制并注册 Native Messaging：该程序在插件沙箱外运行且同一账号的所有
+  Cindy 共用一份注册，宿主只为官方 Cindy Chrome（`my-browser`、`com.makecindy.browser`、
+  声明了 Node 程序，且打包版里来自公共市场并与批准字节一致——清单 id 是自报的，不算身份；
+  未打包的开发版视为官方）安装，其它插件的声明被忽略（2026-10-29 决定，宿主代码点名具体插件的唯一
+  例外）；注册在没有任何运行中的 Cindy 仍在使用时撤销。可选 `pageControl: true` 表示扩展实现
+  页面控制契约、可作为 Browser Use 的「我的浏览器」执行端；同样只有官方 Cindy Chrome 的声明生效，其它
+  插件声明了也不会接管「我的浏览器」（2026-10-30 决定）。宿主代码里不得出现具体插件名
+  或专有协议：桥接按声明启停（`cindy-brain/browserExtensionSlot.ts`），扩展发起的请求经
+  `browser-extension-relay` 事件转交给声明插件，插件经 `browser-extension-request` 投递作业、
+  推送配对身份。不设站点名单（2026-10-30 决定：安全交给任务的权限档位与自动审核，与专用浏览器
+  一致）；旧插件仍推送的 `setPolicy` 照常应答但不生效。本机与私网地址和公网网站一样可访问
+  （2026-10-28 决定）。新增 id 或新增 `pageControl` 视为权限变多，删减视为收权。
 - 无配置的布尔能力只接受字面量 `true`：`notify`、`badge`、`confirm`、`fs`、`library`、
   `sessionContext`、`pick`、`workspace`。不用就省略，写 `false` 是无效清单。
 - `card: {}` 与 `agent: {}` 分别表示基础卡片能力和由真实用户点击触发 Agent 回合；
@@ -986,3 +1001,20 @@ public 身份归属；共享访客不能借用 Host 个人发布能力。插件�
 详见 [客户端实现与验证边界](../plugin-community-contribution.md) 和
 [HTTP 契约](../plugin-community-contribution-contract.md)。此改动涉及打包原语和授权边界，仍须人工 review
 及本规则第 5 节的插件基座白名单确认后方可合并；本地代码检查不替代该门禁。
+
+
+## 插件伙伴委派协议与回执（未发布）
+
+agent.delegation 为可选独立能力，依赖 tasks + targets，只有 Host 确认的
+delegationCapabilityApproved 才授予；历史未知字段、旧 tasks/targets 批准不推断新授权。
+缺省不改变旧权限项、批准、配置或回执摘要；已安装的历史字段保留，不因新校验停用。
+新包严格校验声明，旧 receipt 缺少新可选字段照常读取。无需 schema migration。
+
+targets.capabilities 新增只读协议发现；delegation.version=1 与 execution 就绪状态分开。
+执行端接入现有 Auto 审核后才报告 execution=true；未就绪时显式 delegation 请求在预留/投递前返回
+UNSUPPORTED_CAPABILITY，不降级为普通消息或另建任务。旧 Host 无入口时不发送。
+委派只允许 bot + queue，scope 最多 8000 字符并参与请求摘要，持久回执保存版本、
+执行范围及原目标/批准事实。取消、撤权、换批准版本和恢复排队沿原接口复核。
+Main 从当前接受的输入、原批准和持久回执读取 scope，交给现有 Auto 审核投影；
+不伪造主人原话，不提升伙伴权限，不新增团队，Core 不包含业务插件流程。
+作者契约见 cindy-plugin-creator/references/plugin-agent-tasks.md §4.11.7。

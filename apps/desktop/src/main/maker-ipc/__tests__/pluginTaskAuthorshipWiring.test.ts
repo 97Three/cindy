@@ -15,6 +15,32 @@ const compile = (code: string) => ts.transpileModule(code, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
 }).outputText;
 
+// PR #7824 merge regression: target delegation remains available after plugin
+// inputs gain ordinary account-tool access. The existing DB/resolver tests did
+// not exercise this bootstrap callback; one accepted target input reproduces it (guard).
+it('keeps explicit target delegation available for account-scoped plugin input', () => {
+  const start = source.indexOf('  const loadPluginTargetReview =');
+  const endMarker = '  pluginTargetReviewReady = true;';
+  const end = source.indexOf(endMarker, start) + endMarker.length;
+  expect(start).toBeGreaterThan(0);
+  let activeInput!: (sessionId: string) => unknown;
+  const bindings = {
+    createPluginTargetReviewLoader: (deps: {activeInput: typeof activeInput}) => { activeInput = deps.activeInput; return async () => null; },
+    createPluginTaskReviewResolver: (load: unknown) => load, setAutoReviewContextResolver: vi.fn(),
+    getCurrentDbClientSnapshot: vi.fn(), drainPersistQueue: vi.fn(), assertPluginTargetQueuedDelivery: vi.fn(),
+    pluginDelegationAuthorizationRevision: vi.fn(), getPluginTaskDefaults: vi.fn(),
+    inputCoordinator: {
+      getAcceptedInputProvenance: () => ({clientId: 'plugin-target:r'}),
+      getActiveInputClientIds: () => ['plugin-target:r'], getActiveInputClientId: () => 'plugin-target:r',
+      isActiveInputAccountScoped: () => true, getGeneration: () => 2,
+    },
+    maker: {getSession: () => ({isTurnRunning: () => true, instanceId: 'instance', getTurnGeneration: () => 3})},
+  };
+  const run = new Function(...Object.keys(bindings), compile(`let pluginTargetReviewReady = false;\n${source.slice(start, end)}\nreturn pluginTargetReviewReady;`));
+  expect(run(...Object.values(bindings))).toBe(true);
+  expect(activeInput('task')).toEqual({clientId: 'plugin-target:r', generation: 2, instanceId: 'instance', turnGeneration: 3});
+});
+
 it.each(['Do not publish.', '', undefined])('keeps live authority through the final delegated steer boundary: %j', async previous => {
   const start = source.indexOf('await sess.steer(steerPayload as never, {');
   expect(start).toBeGreaterThan(0);
