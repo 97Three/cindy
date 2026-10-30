@@ -336,11 +336,14 @@ export async function ensureBotGroupLaneSession(input: {
   plan?: { planId: string; workDir: string; sessionId?: string };
   threadRootId?: string;
   talkPlanId?: string;
+  personalDigest?: boolean;
 }): Promise<EnsureBotGroupLaneResult> {
   const owner = captureBotOperationOwner();
   const client = getDbClient();
   const db = client.drizzle;
-  const routeKey = input.plan
+  const routeKey = input.personalDigest && input.chatAccess
+    ? `${chatGroupLaneRouteKey(input.groupId,input.chatAccess)}:personal-digest`
+    : input.plan
     ? input.chatAccess ? `${chatGroupLaneRouteKey(input.groupId, input.chatAccess)}:plan:${input.plan.planId}` : botGroupPlanRouteKey(input.groupId, input.plan.planId)
     : input.chatAccess && input.talkPlanId ? chatGroupTalkRouteKey(input.groupId, input.chatAccess, input.talkPlanId)
     : input.chatAccess && input.threadRootId ? chatGroupThreadRouteKey(input.groupId, input.chatAccess, input.threadRootId)
