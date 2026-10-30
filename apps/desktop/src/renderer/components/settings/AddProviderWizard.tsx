@@ -1577,7 +1577,7 @@ export function AddProviderWizard({
             <button
               type="button"
               onClick={onOpenCustomForm}
-              className="min-h-6 shrink-0 rounded-full py-1 text-11 font-normal text-[var(--text-tertiary)] underline-offset-4 transition-colors hover:text-[var(--text-primary)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+              className="min-h-6 shrink-0 rounded-full py-1 text-11 font-medium text-[var(--accent-emphasis)] underline underline-offset-4 transition-colors hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
             >
               {t('settings.providers.wizard.customAction')}
             </button>
