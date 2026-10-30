@@ -21,7 +21,8 @@ const temporary = await mkdtemp(path.join(os.tmpdir(), 'cindy-mcp-app-sandbox-')
 const independent = process.argv.includes('--raw');
 const authorMode = process.argv.find(arg => arg.startsWith('--author='))?.split('=')[1];
 const hostSdk = process.argv.includes('--host-sdk');
-const pluginView = process.argv.includes('--plugin') || !!authorMode || hostSdk;
+const bom = process.argv.includes('--bom');
+const pluginView = process.argv.includes('--plugin') || !!authorMode || hostSdk || bom;
 const remoteView = process.argv.includes('--remote');
 const measureMetrics = process.argv.includes('--metrics');
 const assets = http.createServer((req, res) => {
@@ -51,7 +52,11 @@ const endpoint = await startMockAppServer({
 });
 try {
   if (pluginView) await writeFile(path.join(temporary, 'fixture.txt'), 'host-only-file');
-  if (pluginView) await writeFile(path.join(temporary, 'plugin.json'), JSON.stringify(hostSdk ? hostSdkFixture() : authorMode ? await authorFixture(authorMode, temporary) : await pluginUiFixture(independent, independent ? allowed : undefined, true)));
+  if (pluginView) {
+    const fixture = hostSdk ? hostSdkFixture() : authorMode ? await authorFixture(authorMode, temporary) : await pluginUiFixture(independent, independent ? allowed : undefined, true);
+    if (bom) fixture.html = String.fromCharCode(0xfeff) + fixture.html;
+    await writeFile(path.join(temporary, 'plugin.json'), JSON.stringify(fixture));
+  }
   await writeFile(
     path.join(temporary, 'preload.cjs'),
     "require('electron').contextBridge.exposeInMainWorld('testHost', {invoke: input => require('electron').ipcRenderer.invoke('test:mcp-app', input)});",
@@ -196,6 +201,9 @@ try {
         const dispatch=host.dispatch.bind(host);
         host.dispatch=(caller,session,id,message)=>{if(message.method==='tools/call'&&message.params.name==='echo')sdkIds.push({text:message.params.arguments.text,id:message.id});return dispatch(caller,session,id,message);};
       }
+      if(process.env.CINDY_MCP_APP_TEST_BOM==='1'){
+        const open=host.open.bind(host);host.open=async(...args)=>{const doc=await open(...args);assert.equal(doc.html.charCodeAt(0),0xfeff);if(process.env.CINDY_MCP_APP_TEST_HOST_SDK!=='1')assert.equal(doc.sdk,undefined);return doc;};
+      }
       setMcpAppFileReader((id,token,request)=>host.readPluginFile(id,token,request));
       if(process.env.CINDY_MCP_APP_TEST_METRICS==='1'){
         setMcpAppsHost(host);registerAppServer(config.id,()=>config);
@@ -258,6 +266,7 @@ try {
         stage='host SDK document replacement';
         await wait(()=>inner()?.executeJavaScript('window.pageState?.ready===true'));
         assert.equal(await inner().executeJavaScript('window.pageState.page'),1);
+        assert.equal(await inner().executeJavaScript('window.loaderCompatMode'), 'CSS1Compat');
         assert.equal(await inner().executeJavaScript('typeof window.App'),'undefined');
         assert.equal(record.sdk,undefined);
         const attachment=process.env.CINDY_MCP_APP_TEST_REMOTE!=='1'
@@ -312,6 +321,7 @@ try {
         console.log('HOST_SDK_VERDICT=passed (official import, loader replacement, repeated replacement, pending approval/upstream cancellation, late result isolation, reused request IDs, latest context, no replay)');
         return;
       }
+      if(process.env.CINDY_MCP_APP_TEST_BOM==='1')assert.equal(await inner().executeJavaScript('document.compatMode'),'CSS1Compat');
       if(authorMode==='loader'){
         // Integration tier: authored loader + generated SDK page through the real Host
         // and dispatcher. Old shell coverage lacked document replacement and JSON updates.
@@ -576,6 +586,7 @@ try {
     CINDY_MCP_APP_TEST_URL: endpoint.url,
     CINDY_MCP_APP_TEST_RAW: independent ? '1' : '0',
     CINDY_MCP_APP_TEST_HOST_SDK: hostSdk ? '1' : '0',
+    CINDY_MCP_APP_TEST_BOM: bom ? '1' : '0',
     CINDY_MCP_APP_TEST_REMOTE: remoteView ? '1' : '0',
     CINDY_MCP_APP_TEST_METRICS: measureMetrics ? '1' : '0',
     CINDY_MCP_APP_TEST_ALLOWED: allowed,

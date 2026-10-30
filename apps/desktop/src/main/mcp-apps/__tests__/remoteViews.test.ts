@@ -342,10 +342,25 @@ describe('Main-bound remote MCP App Views', () => {
 });
 
 // Unit: real remote open must preserve the optional executor SDK. Old hosts omit it.
-it.each([undefined, { version: 'executor-version', source: 'export class App {}' }])('forwards optional executor SDK %j', async sdk => {
+it.each([undefined, { source: 'export class App {}' }])('forwards optional executor SDK %j', async sdk => {
   const f = fixture();
   f.invoke.mockResolvedValueOnce({ ...document, ...(sdk ? { sdk } : {}) });
   const local = await f.open();
   expect(state.mounts.get(local.viewId)!.document.sdk).toEqual(sdk);
   await f.views.releaseCaller('renderer:1');
+});
+
+// Lead R6: an optional extension cannot make a valid historical document unloadable.
+it.each([null, 4, {}, { source: 4 }])('drops malformed SDK metadata while opening the document: %j', async sdk => {
+  const f = fixture();
+  f.invoke.mockResolvedValueOnce({ ...document, sdk });
+  const local = await f.open();
+  expect(state.mounts.get(local.viewId)!.document.html).toBe(document.html);
+  expect(state.mounts.get(local.viewId)!.document.sdk).toBeUndefined();
+});
+it('accepts SDK source without version metadata', async () => {
+  const f = fixture();
+  f.invoke.mockResolvedValueOnce({ ...document, sdk: { source: 'export class App {}' } });
+  const local = await f.open();
+  expect(state.mounts.get(local.viewId)!.document.sdk).toEqual({ source: 'export class App {}' });
 });

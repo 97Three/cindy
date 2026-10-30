@@ -1,3 +1,4 @@
+import { needsHostAppSdk } from '@cindy/maker-shared/mcp-app-sdk';
 import { hostAppSdkAsset } from './hostSdk.js';
 import { GHOST_PIPE_CALL_MAX_TOTAL_MS } from '../../shared/ghost.js';
 import { pagePermissionGrants } from './pagePermissions.js';
@@ -162,7 +163,6 @@ interface View {
   bridge: AppBridge;
   transport: ViewTransport;
   initialized: boolean;
-  initializationStarted: boolean;
   generation: number;
   documentTransport: Transport;
   documentReady: Promise<void>;
@@ -390,7 +390,7 @@ export class McpAppsHost {
         throw new Error('MCP_APP_VIEW_LIMIT');
       const viewId = randomUUID();
       const document: McpAppDocument = {
-        sdk: hostAppSdkAsset,
+        ...(needsHostAppSdk(resource.html) ? { sdk: hostAppSdkAsset } : {}),
         viewId,
         html: resource.html,
         csp: policy.header,
@@ -445,7 +445,6 @@ export class McpAppsHost {
         transport,
         context,
         initialized: false,
-        initializationStarted: false,
         generation: 0,
         documentTransport: transport,
         documentReady: Promise.resolve(),
@@ -453,7 +452,6 @@ export class McpAppsHost {
           // Revoke before closing the old SDK Protocol, including its error replies.
           view.generation++;
           view.initialized = false;
-          view.inputSent = view.resultSent = true;
           transport.discardDocumentEvents();
           view.links.forEach(link => link.resolve(false));
           view.unlisten.splice(0).forEach(remove => remove());
@@ -520,7 +518,7 @@ export class McpAppsHost {
           void assertCurrent()
             .then(async () => {
               const attachments = (record.tool._meta as Record<string, unknown> | undefined)?.['cindy/attachments'];
-              if (generation === 0 && view.files && attachments) {
+              if (!view.inputSent && view.files && attachments) {
                 const projected = await view.files.project(attachments);
                 await assertCurrent();
                 view.context = { ...view.context, toolInfo: { tool: {
@@ -531,14 +529,14 @@ export class McpAppsHost {
               bridge.setHostContext(view.context);
             })
             .then(async () => {
-              if (generation !== 0) return;
+              if (view.inputSent) return;
               const args = view.files ? await view.files.project(record.arguments) : record.arguments;
               await assertCurrent();
+              view.inputSent = true;
               await bridge.sendToolInput({ arguments: args });
             })
             .then(() => {
               if (view.generation !== generation) return;
-              view.inputSent = true;
               return this.sendResult(viewId, view);
             })
             .catch(() => {
@@ -620,12 +618,14 @@ export class McpAppsHost {
                 size: info.size, url: block.uri, path: block.uri });
             }
           }
+          await assertCurrent();
+          // Once accepted, queued input belongs to this card/View, not its document.
           const assertMessageCurrent = async () => {
-            await assertCurrent();
+            await assertView();
             for (const file of files) await view.files!.describeGranted(file.url!);
           };
           if (files.length) await this.deps.sendMessage(sessionId, record, content, assertMessageCurrent, files);
-          else await this.deps.sendMessage(sessionId, record, content, assertCurrent);
+          else await this.deps.sendMessage(sessionId, record, content, assertView);
           return {};
         };
         if (!remote && config.plugin && this.deps.downloadFile) bridge.ondownloadfile = async (params, extra) => {
@@ -836,7 +836,7 @@ export class McpAppsHost {
   }
 
   private async sendResult(id: string, view: View): Promise<void> {
-    if (view.resultSent || (!view.record.result && !view.record.cancelled)) return;
+    if (!view.initialized || view.resultSent || (!view.record.result && !view.record.cancelled)) return;
     const generation = view.generation;
     const bridge = view.bridge;
     try {
@@ -851,9 +851,10 @@ export class McpAppsHost {
     if (view.resultSent || view.generation !== generation) return;
     try {
       if (view.record.result) {
-        view.resultSent = true;
         const result = view.files ? await view.files.project(view.record.result) : view.record.result;
-        if (view.generation === generation) await bridge.sendToolResult(result as CallToolResult);
+        if (view.generation !== generation || view.resultSent) return;
+        view.resultSent = true;
+        await bridge.sendToolResult(result as CallToolResult);
       } else if (view.record.cancelled) {
         view.resultSent = true;
         await bridge.sendToolCancelled({ reason: view.record.cancelled });
@@ -895,9 +896,8 @@ export class McpAppsHost {
     ) {
       message = { ...message, params: { ...message.params, content: [message.params.content] } };
     }
-    if ('method' in message && message.method === 'ui/initialize' && 'id' in message) {
-      if (view.initializationStarted) view.documentReady = view.restartDocument();
-      view.initializationStarted = true;
+    if ('method' in message && message.method === 'ui/initialize' && 'id' in message && view.initialized) {
+      view.documentReady = view.restartDocument();
     }
     const generation = view.generation;
     await view.documentReady;

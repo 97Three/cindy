@@ -1,3 +1,4 @@
+import { withHostAppSdk } from '@cindy/maker-shared/mcp-app-sdk';
 import { app, protocol, session, type WebContents, type WebFrameMain } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { getCurrentDbClientSnapshot } from '../localDb/client/current.js';
@@ -6,7 +7,6 @@ import {
   mcpAppSandboxDocument,
   mcpAppFrameUrlAllowed,
   HOST_APP_SDK_PATH,
-  withHostAppSdk,
   type McpAppDocument,
 } from '../../shared/mcpApps.js';
 import { mcpAppDirectSandboxDocument } from './sandboxBridge.js';
@@ -25,7 +25,7 @@ export function setMcpAppCallerCleanup(cleanup?: (caller: string) => Promise<voi
 const documents = new Map<
   string,
   {
-    fileKey: string; document: McpAppDocument; owner: object | null; caller?: string;
+    html: string; fileKey: string; document: McpAppDocument; owner: object | null; caller?: string;
     dispose?: () => void;
     bridge?: { key: string; frame?: WebFrameMain; invoke(input: unknown): Promise<unknown> };
   }
@@ -61,6 +61,7 @@ export function supplyMcpAppDocument(
   dispose?: () => void,
 ): void {
   documents.set(document.viewId, {
+    html: document.sdk ? withHostAppSdk(document.html, 'cindy-mcp-app://' + document.viewId + '-view' + HOST_APP_SDK_PATH) : document.html,
     fileKey: randomUUID(), document, owner: getCurrentDbClientSnapshot(), caller, dispose,
     bridge: invoke ? { key: randomUUID(), invoke } : undefined,
   });
@@ -274,7 +275,7 @@ export function registerMcpAppProtocol(): void {
       ? entry.bridge
         ? mcpAppDirectSandboxDocument(resourceUrl, `cindy-mcp-app://${id}/bridge`)
         : mcpAppSandboxDocument('', resourceUrl)
-      : doc.sdk ? withHostAppSdk(doc.html, new URL(HOST_APP_SDK_PATH, url).href) : doc.html, {
+      : entry.html, {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
