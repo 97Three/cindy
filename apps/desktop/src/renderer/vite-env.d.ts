@@ -5866,6 +5866,7 @@ interface ElectronAPI {
       providerId: string,
       options?: { releaseOwner?: boolean; ownerId?: string },
     ) => Promise<{ ok: true }>;
+    importProviderFile: () => Promise<string | string[] | null>;
     previewProviderImport: (
       importId: string,
       targetProviderId?: string,
