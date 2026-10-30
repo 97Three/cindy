@@ -3871,7 +3871,7 @@
           "contextLimitOverWindow": "Above the provider’s declared window; requests may fail.",
           "restoreDefault": "Restore default",
           "engines": "Engine support",
-          "enginesHint": "Compatibility mode converts requests. It is off by default and can be enabled when needed.",
+          "enginesHint": "Compatibility mode converts requests locally in Cindy. It is off by default and can be enabled when needed.",
           "engineUnsupported": "Not supported",
           "engineNotConfigured": "Not configured",
           "engineNoFast": "No Fast",
@@ -3910,10 +3910,10 @@
           "protocol": {
             "reference": "Native API",
             "compatibility": "Compatibility mode",
-            "compatibilityHint": "Compatibility mode may be unstable or behave unexpectedly. Recommended for experienced users.",
-            "matching": "Native support",
+            "compatibilityHint": "Cindy converts requests locally. This may be unstable or behave unexpectedly. Recommended for experienced users.",
             "unknown": "Protocol unconfirmed",
-            "automatic": "Automatic"
+            "automatic": "Automatic",
+            "upstream": "Upstream APIs"
           },
           "lifecycle": {
             "alpha": "Early access",

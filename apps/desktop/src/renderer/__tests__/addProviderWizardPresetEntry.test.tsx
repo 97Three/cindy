@@ -1229,19 +1229,19 @@ it('imports the same discovered OpenRouter identity, capabilities and prices int
     const model = provider.models[agent]![0];
     expect(model).toMatchObject({ contextWindow: 1048576, nativeApi: 'openai-completions',
       cost: { input: 0.75864, output: 1.51728 } });
-    expect(modelProtocolComparison(provider, { [agent]: model }).forAgent(agent)?.mode)
-      .toBe(agent === 'pi' ? 'matching' : 'compatibility');
-    expect(model.defaultEnabled).toBe(agent === 'pi');
+    // OpenRouter serves Messages, Responses and Chat for every model: no local conversion.
+    expect(modelProtocolComparison(provider, { [agent]: model }).forAgent(agent)?.mode).toBe('matching');
+    expect(model.defaultEnabled).toBe(true);
   }
 });
 
 describe.each([true, false])('native defaults with discovery available=%s', discoveryAvailable => {
   it.each([
-    ['openai/gpt-6-astra', 'openai-responses', [false, true, true]],
-    ['anthropic/claude-fable-5', 'anthropic-messages', [true, false, true]],
-    ['deepseek/deepseek-v4-pro', 'openai-completions', [false, false, true]],
-    ['google/gemini-3.8-flash', 'google-generative-ai', [false, false, true]],
-  ] as const)('enables only matching engines when selecting %s', async (id, nativeApi, enabled) => {
+    ['openai/gpt-6-astra', 'openai-responses'],
+    ['anthropic/claude-fable-5', 'anthropic-messages'],
+    ['deepseek/deepseek-v4-pro', 'openai-completions'],
+    ['google/gemini-3.8-flash', 'google-generative-ai'],
+  ] as const)('enables every engine OpenRouter serves when selecting %s', async (id, nativeApi) => {
     const agents = ['claude-code', 'codex', 'pi'] as const;
     const preset = structuredClone(BUNDLED_CATALOG.presets!.find(p => p.id === 'openrouter')!);
     for (const agent of agents) {
@@ -1263,13 +1263,12 @@ describe.each([true, false])('native defaults with discovery available=%s', disc
     await waitFor(() => expect(createCustomProvider).toHaveBeenCalledOnce());
     const saved = vi.mocked(createCustomProvider).mock.calls[0][0];
     const provider = buildUserProvider(saved, { presets: [preset], modelRegistry: BUNDLED_CATALOG.modelRegistry });
-    agents.forEach((agent, index) => {
-      // Model selection must not be persisted as a per-engine compatibility override.
+    agents.forEach(agent => {
+      // Model selection must not be persisted as a per-engine visibility override.
       expect(saved.runtimes[agent]!.models.find(m => m.id === id)).not.toHaveProperty('defaultEnabled');
       const model = provider.models[agent]!.find(m => m.id === id)!;
-      expect(model).toMatchObject({ nativeApi, defaultEnabled: enabled[index] });
-      expect(modelProtocolComparison(provider, { [agent]: model }).forAgent(agent)?.mode)
-        .toBe(enabled[index] ? 'matching' : 'compatibility');
+      expect(model).toMatchObject({ nativeApi, defaultEnabled: true });
+      expect(modelProtocolComparison(provider, { [agent]: model }).forAgent(agent)?.mode).toBe('matching');
     });
   });
 });
@@ -1421,7 +1420,7 @@ it('preserves OAuth-discovered prices for every engine when finishing model sele
   for (const agent of ['claude-code', 'codex', 'pi'] as const) {
     expect(saved.runtimes[agent]!.models[0].discoveredCost).toEqual(prices[agent]);
     expect(projected.models[agent]![0].cost).toEqual(prices[agent]);
-    expect(projected.models[agent]![0].defaultEnabled).toBe(agent === 'pi');
+    expect(projected.models[agent]![0].defaultEnabled).toBe(true);
   }
 });
 

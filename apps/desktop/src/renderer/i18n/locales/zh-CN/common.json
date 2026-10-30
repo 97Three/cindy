@@ -3840,7 +3840,7 @@
           "contextLimitOverWindow": "已超过上游声明的长度，可能导致请求失败。",
           "restoreDefault": "恢复默认",
           "engines": "引擎支持",
-          "enginesHint": "兼容模式需要转换请求，默认关闭，可按需开启。",
+          "enginesHint": "兼容模式由 Cindy 在本地转换请求，默认关闭，可按需开启。",
           "engineUnsupported": "不支持",
           "engineNotConfigured": "尚未配置",
           "engineNoFast": "无 Fast",
@@ -3879,10 +3879,10 @@
           "protocol": {
             "reference": "原生协议",
             "compatibility": "兼容模式",
-            "compatibilityHint": "兼容模式可能出现运行不稳定或功能异常，建议有经验的用户使用。",
-            "matching": "原生支持",
+            "compatibilityHint": "由 Cindy 在本地转换请求格式，可能出现运行不稳定或功能异常，建议有经验的用户使用。",
             "unknown": "协议待确认",
-            "automatic": "自动选择"
+            "automatic": "自动选择",
+            "upstream": "上游接口"
           },
           "lifecycle": {
             "alpha": "试用版",

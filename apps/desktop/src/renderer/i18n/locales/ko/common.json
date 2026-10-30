@@ -3840,7 +3840,7 @@
           "contextLimitOverWindow": "공급업체가 명시한 한도를 초과하여 요청이 실패할 수 있습니다.",
           "restoreDefault": "기본값 복원",
           "engines": "엔진 지원",
-          "enginesHint": "호환 모드는 요청을 변환합니다. 기본적으로 꺼져 있으며 필요할 때 켤 수 있습니다.",
+          "enginesHint": "호환 모드에서는 Cindy가 로컬에서 요청을 변환합니다. 기본적으로 꺼져 있으며 필요할 때 켤 수 있습니다.",
           "engineUnsupported": "지원 안 함",
           "engineNotConfigured": "설정되지 않음",
           "engineNoFast": "Fast 없음",
@@ -3879,10 +3879,10 @@
           "protocol": {
             "reference": "기본 API",
             "compatibility": "호환 모드",
-            "compatibilityHint": "호환 모드에서는 작동이 불안정하거나 일부 기능에 문제가 생길 수 있습니다. 숙련된 사용자에게 권장합니다.",
-            "matching": "기본 지원",
+            "compatibilityHint": "Cindy가 로컬에서 요청을 변환합니다. 작동이 불안정하거나 일부 기능에 문제가 생길 수 있습니다. 숙련된 사용자에게 권장합니다.",
             "unknown": "프로토콜 미확인",
-            "automatic": "자동 선택"
+            "automatic": "자동 선택",
+            "upstream": "업스트림 API"
           },
           "lifecycle": {
             "alpha": "체험판",
