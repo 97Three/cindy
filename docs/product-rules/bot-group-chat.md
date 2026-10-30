@@ -223,6 +223,10 @@ Chat Server 声明 `capabilities.groupSingleSpeaker: 1` 时，服务器群按下
   上游容量不足复用 SDK 的过载判定（包括标准 `upstream-overload` reason、Codex `serverOverloaded` 与 Anthropic 529），
   归为独立的 `UPSTREAM_OVERLOADED`：说明模型服务暂时繁忙，建议稍后重新发送或选择其他可用模型；不增加群聊重投。
   本地成员和分工步骤的计时器超时同样带上 `RUNTIME_TIMEOUT`，保留等待用户批准时暂停计时的规则。
+  普通回复与分工步骤的 2 小时上限都只累计实际运行时间；等待结束后用剩余时长继续，
+  多个确认重叠时直到全部结束才恢复，不重置完整预算。确认包含既有权限、提问、计划审阅与插件设置等待，
+  插件设置完成后的卡片展示宽限期不算等待。会话自身的空闲看门狗和主动停止仍可收尾。
+  回归见 `maker-ipc/__tests__/botGroupChatService.test.ts`。
   明确的额度耗尽优先于泛化 429，明确的暂时限流不会因 `usageLimit` 标记误报为额度耗尽。
   直接发送拒绝也在执行端分类本地 `message`，跨群仍只提交白名单错误类别。
   远程任务名额不足在创建专线与发送失败时保留本地诊断并分类：`DEVICE_LIMIT` / `TOTAL_LIMIT`
@@ -885,7 +889,7 @@ Desktop 群聊与话题之间的分隔线支持左右拖拽和方向键调宽；
 
 - 服务端 `userPrincipal` 已改为已有身份只读，首次创建用 `INSERT ... DO NOTHING`，并发冲突后另一次 SELECT；每次仍校验 disabled 与 actingAs 归属。
 - Desktop actor 刷新兜底从 5 秒调整为 60 秒，Auth profile 刷新从 60 秒调整为 300 秒。本机伙伴变化信号、云端 `actor.changed` 仍可主动失效；强制刷新失败保留失效标记，按既有错误退避重试，不能受最近成功登记的 60 秒节流阻挡。
-- 每个空闲伙伴独立按 2 / 4 / 8 / 15 秒空领取退避，另加最多 1 秒抖动；本机 2 秒调度 tick 带来不到 2 秒额外等待，因此稳定空闲兜底约 16–18 秒。queued 通知、重连和运行结束重置退避；401/429 等失败等待优先，运行中 15 秒续租及忙碌 lane 的检查保留。尚无覆盖全部未打开房间的可靠工作通知，因此没有拉长到 60 秒。
+- 空闲伙伴按设备只读探测是否有任务（每批最多 128 个，探测并发最多 4）；真正领取继续使用单伙伴接口。主人 work.available 通知合并 250ms 后直接唤醒目标伙伴，探测不阻塞通知；不同伙伴的已返回结果互不等待。仅完整空队列证明且 WebSocket 在线、支持工作通知时退避至多 60 秒，其余为 15 秒，另加最多 1 秒抖动及调度误差。旧探测不能覆盖新提示；401/429 立即设置共享请求门禁，普通失败按伙伴退避。身份登记独立重试，当前运行时重连从 actor 游标续读。15 秒续租、执行租约失效及显式重试规则不变。设计见 [工作轮询设计](../dev-rules/chat-work-polling.md)。
 - 共用 [chatHistory.ts](../../packages/maker-shared/src/chatHistory.ts)：首次 snapshot，缺页才取 messages，重启／重连按已提交 cursor 读 changes。已加载旧消息按 revision 更新／保留删除 tombstone；最新页变化后保留旧范围覆盖，分页边界移动不导致所有旧页重新下载。变化正文不带的表情聚合／话题回复数只刷新受影响的已展示页。
 - Desktop 在账号 SQLite 的 `chat_cache_rooms`、`chat_cache_messages` 中保存投影（追加 migration `0133`）；worker 事务同时提交消息、覆盖范围、snapshot、generation 与 cursor，并用 version + generation 防止并行实例回写旧状态（包括清除重建后的版本号重复）。WebSocket 按序处理，落盘完成后 ACK。
 - Mobile 复用现有私有文件缓存能力，在 `cache/chat-history-v1/` 中按账号／realm／endpoint／已验证 human actor／房间生成哈希文件名；每房间消息、页覆盖、游标原子替换，跨挂载 CAS。聊天正文不占用 AsyncStorage，避免多房间累计挤满偏好／草稿的共享库；不新增原生依赖或冷更输入。切账号及退出先失效旧实例、等待在途写入后清理文件，清理失败在下一次登录前重试。元数据失效标记必须在刷新成功落盘后消费，CAS 冲突重试不能丢弃，刷新期间到达的新标记也必须保留。活动群的通知先完成增量补齐再 ACK；列表的跨设备已读通知单独失效相应房间读位，重连、actor 游标重置及手动刷新重新校准个人元数据。
