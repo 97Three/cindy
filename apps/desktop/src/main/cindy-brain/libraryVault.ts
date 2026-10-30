@@ -184,6 +184,11 @@ const META_FILE = 'meta.json';
 const USAGE_FILE = 'usage.json';
 const TMP_DIR = 'tmp';
 
+/** Host-owned sibling staging is never a user Library entry, even after a crash. */
+export function isLibraryPublishTempName(name: string): boolean {
+  return /^\.cindy-library-publish-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/.test(name);
+}
+
 /**
  * Library 相对路径校验:isSafeGhostRelativePath 之上再拒 Windows 保留设备名、
  * 尾点段(Windows 落盘静默剥尾点,回执名与真身不一致),外加段数/总长上限。
@@ -908,6 +913,7 @@ export class LibraryVault {
         continue;
       }
       for (const entry of entries) {
+        if (isLibraryPublishTempName(entry.name)) continue;
         if (dir === this.root && entry.name === META_DIR) continue; // 宿主命名空间不入账
         if (++visited > this.limits.usageScanFuse) return { files, bytes, tripped: true };
         const full = path.join(dir, entry.name);
@@ -1181,14 +1187,21 @@ export class LibraryVault {
       }
       const prior = await this.lstatTarget(resolved.target);
       const existedBytes = prior && prior.isFile() ? prior.size : 0;
+      const publishing = path.join(path.dirname(resolved.target), `.cindy-library-publish-${randomUUID()}.tmp`);
       try {
         req.assertCurrent?.();
         await fs.promises.mkdir(path.dirname(resolved.target), { recursive: true });
         req.assertCurrent?.();
-        await replaceFile(stream.tmpAbs, resolved.target);
+        // Native Windows replacement requires distinct siblings. A cross-volume
+        // mount fails this rename before touching the destination; never copy over it.
+        await fs.promises.rename(stream.tmpAbs, publishing);
+        req.assertCurrent?.();
+        await replaceFile(publishing, resolved.target);
       } catch (err) {
         await this.abortStreamUnlocked(stream.streamId).catch(() => {});
         return this.tmpFailure(err, '分块提交失败(主机 IO 错误)');
+      } finally {
+        await fs.promises.rm(publishing, { force: true });
       }
       const after = await this.lstatTarget(resolved.target);
       if (!after || !after.isFile()) {
@@ -1377,7 +1390,7 @@ export class LibraryVault {
     try {
       if (!recursive) {
         const dirents = await fs.promises.readdir(listRoot, { withFileTypes: true });
-        const names = dirents.map((d) => d.name).filter((n) => !(listRoot === base && n === META_DIR)).sort();
+        const names = dirents.map((d) => d.name).filter((n) => !isLibraryPublishTempName(n) && !(listRoot === base && n === META_DIR)).sort();
         for (const name of names) {
           const full = path.join(listRoot, name);
           let st: fs.Stats;
@@ -1414,6 +1427,7 @@ export class LibraryVault {
             continue;
           }
           for (const entry of dirents) {
+            if (isLibraryPublishTempName(entry.name)) continue;
             if (dir === base && entry.name === META_DIR) continue; // 宿主命名空间不可见
             const full = path.join(dir, entry.name);
             const rel = path.relative(base, full).split(path.sep).join('/');
@@ -1532,6 +1546,7 @@ export class LibraryVault {
         continue;
       }
       for (const entry of entries) {
+        if (isLibraryPublishTempName(entry.name)) continue;
         const full = path.join(cur, entry.name);
         if (entry.isDirectory()) stack.push(full);
         else if (entry.isFile()) {

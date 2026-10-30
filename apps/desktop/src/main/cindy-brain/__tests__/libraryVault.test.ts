@@ -24,6 +24,12 @@ import { relocateLibraryMetaOwner } from '../libraryBinding.js';
 
 const nativeReplace = vi.hoisted(() => vi.fn<(source: string, destination: string) => Promise<void>>());
 vi.mock('../../windowsAtomicRename.js', () => ({ atomicReplaceWindowsDirectoryEntry: nativeReplace }));
+// Forward the named ESM export too: changing fs.promises alone does not replace its bound rename.
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  const { promises } = await import('node:fs');
+  return { ...actual, rename: (...args: Parameters<typeof actual.rename>) => promises.rename(...args) };
+});
 
 const sha256Of = (s: string): string => createHash('sha256').update(s).digest('hex');
 
@@ -132,35 +138,91 @@ describe('LibraryVault', () => {
       await expect(fs.promises.stat(path.join(libraryRoot, 'stale.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
       expect(await fs.promises.readdir(path.join(libraryRoot, '.cindy-library', 'tmp'))).toEqual([]);
     });
-    // 4420270574, unit: importStream previously only covered new paths.
-    // A Windows replace error on an existing destination must still publish complete bytes.
-    // The native syscall is simulated; paths and file I/O use this machine's filesystem.
-    it.each(['EPERM', 'EEXIST'])('replaces an existing Library import after Windows %s', async code => {
+    // 4420466789, unit: the earlier Windows mock lost the native sibling-only contract.
+    // Real importStream/writeCommit must replace old contents and reclaim both staging locations.
+    it.each(['importStream', 'writeCommit'] as const)('publishes %s through a sibling-only Windows replacement', async entry => {
       const vault = makeVault();
       await vault.open();
-      expect(await vault.write({ path: 'input.txt', content: 'previous' })).toMatchObject({ ok: true });
-      const target = path.join(libraryRoot, 'input.txt');
+      expect(await vault.write({ path: 'docs/input.txt', content: 'previous' })).toMatchObject({ ok: true });
+      const target = path.join(libraryRoot, 'docs', 'input.txt');
+      expect((await fs.promises.stat(path.join(libraryRoot, '.cindy-library', 'tmp'))).dev)
+        .toBe((await fs.promises.stat(path.dirname(target))).dev);
       const rename = fs.promises.rename.bind(fs.promises);
       nativeReplace.mockImplementation(async (source, destination) => {
-        await fs.promises.copyFile(source, destination);
-        await fs.promises.unlink(source);
+        if (source === destination || path.dirname(source) !== path.dirname(destination))
+          throw new Error('source and destination must be distinct siblings');
+        await rename(source, destination);
       });
       const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
       const renameSpy = vi.spyOn(fs.promises, 'rename').mockImplementation(async (source, destination) => {
-        if (destination === target) throw Object.assign(new Error('cannot overwrite'), { code });
+        if (destination === target) throw Object.assign(new Error('cannot overwrite'), { code: entry === 'importStream' ? 'EPERM' : 'EEXIST' });
         await rename(source, destination);
       });
       try {
         async function* source() { yield Buffer.from('new'); }
-        expect(await vault.importStream({ path: 'input.txt', source: source(), assertCurrent: () => {} }))
-          .toMatchObject({ ok: true, bytes: 3, sha256: sha256Of('new') });
+        let result;
+        if (entry === 'importStream') result = await vault.importStream({ path: 'docs/input.txt', source: source(), assertCurrent: () => {} });
+        else {
+          const begin = await vault.writeBegin({ path: 'docs/input.txt', totalBytes: 3 });
+          if (!begin.ok) throw new Error(begin.message);
+          await vault.writeChunk({ streamId: begin.streamId, seq: 1, content: 'new' });
+          result = await vault.writeCommit({ streamId: begin.streamId });
+        }
+        expect(nativeReplace).toHaveBeenCalledOnce();
+        expect(result).toMatchObject({ ok: true, bytes: 3, sha256: sha256Of('new') });
         expect(await fs.promises.readFile(target, 'utf8')).toBe('new');
+        expect(await fs.promises.readdir(path.dirname(target))).toEqual(['input.txt']);
         expect(await fs.promises.readdir(path.join(libraryRoot, '.cindy-library', 'tmp'))).toEqual([]);
       } finally {
         platform.mockRestore();
         renameSpy.mockRestore();
         nativeReplace.mockReset();
       }
+    });
+    // 4420466789, unit: publication failure/revocation must preserve the old file,
+    // release the reservation and remove sibling staging as well as the original stream.
+    it.each(['publish-error', 'cancel-after-move', 'cross-device'] as const)('cleans both staging locations on %s', async mode => {
+      const vault = makeVault();
+      await vault.open();
+      await vault.write({ path: 'docs/input.txt', content: 'previous' });
+      const target = path.join(libraryRoot, 'docs', 'input.txt');
+      const rename = fs.promises.rename.bind(fs.promises);
+      let current = true;
+      const renameSpy = vi.spyOn(fs.promises, 'rename').mockImplementation(async (source, destination) => {
+        if (mode === 'publish-error' && destination === target) throw new Error('publication failed');
+        const isMove = String(source).endsWith('.stream');
+        if (mode === 'cross-device' && isMove) throw Object.assign(new Error('different volume'), { code: 'EXDEV' });
+        await rename(source, destination);
+        if (mode === 'cancel-after-move' && isMove) current = false;
+      });
+      try {
+        async function* source() { yield Buffer.from('new'); }
+        const result = await vault.importStream({ path: 'docs/input.txt', source: source(), assertCurrent: () => {
+          if (!current) throw new Error('cancelled');
+        } });
+        expect(result).toMatchObject({ ok: false });
+        expect(await fs.promises.readFile(target, 'utf8')).toBe('previous');
+        expect(await fs.promises.readdir(path.dirname(target))).toEqual(['input.txt']);
+        expect(await fs.promises.readdir(path.join(libraryRoot, '.cindy-library', 'tmp'))).toEqual([]);
+        expect(vault.pendingStreamReservationBytes()).toBe(0);
+      } finally { renameSpy.mockRestore(); }
+    });
+    // A crash can leave host staging on disk: it must stay out of the public list/index
+    // and usage accounting, including subtraction when its containing directory is deleted.
+    it('keeps sibling staging out of lists and reconciled/deleted user usage', async () => {
+      const vault = makeVault();
+      await vault.open();
+      await vault.write({ path: 'docs/input.txt', content: 'new' });
+      await vault.write({ path: 'keep.txt', content: 'keep' });
+      await fs.promises.writeFile(path.join(libraryRoot, 'docs', '.cindy-library-publish-11111111-2222-3333-4444-555555555555.tmp'), 'staged');
+      for (const recursive of [false, true]) {
+        const list = await vault.list({ path: 'docs', recursive });
+        if (!list.ok) throw new Error(list.message);
+        expect(list.entries.map(e => e.path)).toEqual(['docs/input.txt']);
+      }
+      expect(await vault.reconcileUsage()).toMatchObject({ ok: true, files: 2, bytes: 7 });
+      expect(await vault.delete({ path: 'docs', recursive: true })).toMatchObject({ ok: true });
+      expect(await vault.status()).toMatchObject({ ok: true, fileCount: 1, usedBytes: 4 });
     });
     it('does not open a default library whose persisted owner differs from the plugin', async () => {
       const previous = makeVault({ ghostId: 'other-plugin' });
