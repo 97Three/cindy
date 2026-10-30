@@ -13912,6 +13912,20 @@
       }
     },
     "draft": {
+      "directoryRecovery": {
+        "required": "Some linked folders need authorization. Reselect all {{count}} linked folders",
+        "changed": "A linked folder has changed. Check the folders, then reselect all {{count}} linked folders",
+        "unavailable": "A linked folder is unavailable. Check the folder or system permissions, or return to editing and remove it",
+        "selecting": "Reselecting folder {{index}}/{{count}}: {{directory}}",
+        "cancelled": "Folder selection cancelled. Your prompt and linked folders are preserved",
+        "mismatch": "The selected folder differs from the original. Your folder list is unchanged",
+        "failed": "Could not complete folder selection. Your prompt and linked folders are preserved",
+        "ready": "Folders reselected. Send the task again",
+        "readyGoal": "Folders reselected. Create the goal again",
+        "reselect": "Reselect Folders",
+        "cancel": "Cancel Folder Selection",
+        "edit": "Return to Editing"
+      },
       "createSessionFailed": "Failed to create session, please retry",
       "piRemoteUnsupported": "Pi runs locally only and can't use SSH remote hosts. Switch to Claude or Codex to use this host.",
       "localWorktreeCleanupPending": "The previous local worktree session is still awaiting cleanup. Try again after cleanup finishes.",
