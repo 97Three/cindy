@@ -273,6 +273,10 @@ Session 列表与搜索摘要新增可选 `projectDir`，数据库 migration 013
 Renderer → Main 输入附带可选 `projectDir`，旧输入缺字段时回落到执行目录。
 该字段只影响项目名称；伙伴群名和无项目任务的显示规则保持原样，不新增 channel 或能力。
 
+手机首页与桌面远程镜像的既有列表缓存保留可选 `projectDir`（含显式 null），路径不截断，
+旧缓存缺字段时继续回落到执行目录。移动菜单由共享组件按同一归属规则禁用当前项目，
+避免把仍在 checkout 执行的任务误移回项目根目录；不新增缓存或存储版本。
+
 本机 Agent 工具的新建模式要求 `project_path`；`list_projects` / `create_project`
 保留 `working_dir` 并新增 `project_path` 回执。旧调用缺参数明确失败，不静默新建。
 `send_to_session` 的既有任务投递不要求项目，跨电脑投递合同不变。
