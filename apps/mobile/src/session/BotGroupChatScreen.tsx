@@ -392,22 +392,26 @@ function BotGroupChatContent({ deviceId, deviceName, groupId, messageId, notific
       .finally(() => { loadForJump.current = false; setJumpPass(pass => pass + 1); });
   }, [jumpTarget, group, chat.loadOlder, positionAtMessage, report, t, jumpPass]);
 
-  const openThread = useCallback((message: BotGroupMessageView) => {
-    if (deviceId || threadRootId || !chat.server || message.threadRootId || message.deleted) return;
+  const rememberGroupPosition = useCallback((fallbackId: string) => {
     const top = viewport.current.offsetY + (floatingHeader ? headerHeight : 0);
     const visible = [...messagePositions.current].filter(([id, y]) =>
       y + (messageHeights.current.get(id) ?? 0) > top).sort((a, b) => a[1] - b[1])[0];
-    returnAnchor.current = { owner: viewportOwner, id: visible?.[0] ?? message.id,
+    returnAnchor.current = { owner: viewportOwner, id: visible?.[0] ?? fallbackId,
       offset: visible ? visible[1] - viewport.current.offsetY : (floatingHeader ? headerHeight : 0) + spacing.md };
     stickToBottom.current = false;
     pauseReadUntilInteraction.current = true;
+  }, [floatingHeader, headerHeight, viewportOwner]);
+  const openThread = useCallback((message: BotGroupMessageView) => {
+    if (deviceId || threadRootId || !chat.server || message.threadRootId || message.deleted) return;
+    rememberGroupPosition(message.id);
     const route = botGroupRoute(host, groupId);
     router.push({ ...route, params: { ...route.params, threadRootId: message.id } });
-  }, [deviceId, threadRootId, chat.server, floatingHeader, headerHeight, viewportOwner, host, groupId, router]);
+  }, [deviceId, threadRootId, chat.server, rememberGroupPosition, host, groupId, router]);
   const openTopic = (rootId: string, target?: string) => {
     if (deviceId || !chat.server) return;
     const root = group?.messages.find(message => message.id === rootId);
     if (root && !target && !threadRootId) { openThread(root); return; }
+    if (!threadRootId) rememberGroupPosition(rootId);
     const route = botGroupRoute(host, groupId);
     router.push({ ...route, params: { ...route.params, threadRootId: rootId, ...(target ? { messageId: target } : {}) } });
   };

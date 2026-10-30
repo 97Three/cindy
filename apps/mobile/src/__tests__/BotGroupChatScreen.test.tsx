@@ -1842,13 +1842,17 @@ describe('mobile group threads', () => {
       .toContain(new Date(rootMessage().createdAt).toLocaleString());
   });
 
-  it('restores the retained group viewport without scrolling or marking it read while a topic is open', async () => {
+  it.each(['root', 'shared'] as const)('restores the retained group viewport without scrolling or marking it read after opening a %s topic entry', async entry => {
     h.chat.server = true;
     h.chat.markRead = vi.fn(async () => {});
-    const data = threadGroup();
+    const anchorId = entry === 'root' ? rootId : 'posted';
+    const data = entry === 'root' ? threadGroup() : threadGroup({ messages: [message('posted', 2, {
+      threadShare: { messageId: 'source', threadRootId: rootId, status: 'available', authorKind: 'user',
+        authorBotId: 'self', authorName: 'Me', sharedByAuthor: true, content: 'Shared reply', attachments: [], createdAt: 1000, edited: false },
+    })] });
     await render(data, 'ready', undefined, '');
     const layout = async (y: number) => act(async () => {
-      (byId(`botGroup.row.${rootId}`) as unknown as HTMLElement & { nativeLayout: (event: unknown) => void })
+      (byId(`botGroup.row.${anchorId}`) as unknown as HTMLElement & { nativeLayout: (event: unknown) => void })
         .nativeLayout({ nativeEvent: { layout: { y, height: 200 } } });
     });
     await layout(300);
@@ -1857,8 +1861,15 @@ describe('mobile group threads', () => {
       h.scroll.onContentSizeChange(390, 1500);
       h.scroll.onScroll({ nativeEvent: { contentOffset: { y: 250 }, contentSize: { height: 1500 }, layoutMeasurement: { height: 500 } } });
     });
-    await openTopicMenu(rootId);
-    await click(`botGroup.thread.context.${rootId}.action.thread`);
+    if (entry === 'root') {
+      await openTopicMenu(rootId);
+      await click(`botGroup.thread.context.${rootId}.action.thread`);
+    } else {
+      await click('botGroup.thread.posted');
+    }
+    expect(h.push).toHaveBeenLastCalledWith({ pathname: '/companions/groups/[groupId]', params: {
+      groupId: 'g1', threadRootId: rootId, ...(entry === 'shared' ? { messageId: 'source' } : {}),
+    } });
     h.scrollToEnd.mockClear(); h.chat.markRead.mockClear();
     h.focused = false;
     await render(data, 'ready', undefined, '');
