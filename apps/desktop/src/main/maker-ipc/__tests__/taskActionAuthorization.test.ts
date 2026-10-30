@@ -1015,6 +1015,34 @@ describe('teammate turn principal', () => {
     },
   );
 
+  // #7912: the ordinary cross-device route remains available, but a remote
+  // schedule that starts an independent Full Access Agent is the same command
+  // risk as the local route and must show the same visible decision.
+  it('applies the command decision to remote independent Agent schedules without blacklisting ordinary edits', async () => {
+    const h = desktopFixture('automatic');
+    live(h);
+    const definition = { id: 'remote-agent', name: 'Remote agent', useWorktree: false,
+      prompt: 'Run the saved work', executionMode: 'agent' as const, workingDir: '/remote/work' };
+    h.schedules.set(definition.id, definition);
+    const effect = vi.fn(async () => 'started');
+    const runRequest = { sessionId: 'companion', server: 'cindy_scheduler' as const,
+      tool: 'schedule_run_now', args: { id: definition.id, device: 'remote-mac' } };
+    h.confirm.mockResolvedValue(false);
+    expect(JSON.stringify(await withToolCallAuthority(h.authorize, runRequest, effect))).toContain('USER_CANCELLED');
+    expect(effect).not.toHaveBeenCalled();
+    expect(h.confirm).toHaveBeenCalledWith('companion', runRequest.tool, runRequest.args,
+      expect.objectContaining({ risk: 'command', details: expect.objectContaining({
+        schedule: expect.objectContaining({ id: definition.id, workingDir: '/remote/work' }),
+        execution: { mode: 'agent', newTaskPermissionMode: 'bypassPermissions' },
+      }) }));
+
+    h.confirm.mockClear();
+    const metadataEdit = { sessionId: 'companion', server: 'cindy_scheduler' as const,
+      tool: 'schedule_update', args: { id: definition.id, device: 'remote-mac', name: 'Renamed' } };
+    expect(await withToolCallAuthority(h.authorize, metadataEdit, effect)).toBe('started');
+    expect(h.confirm).not.toHaveBeenCalled();
+  });
+
   // r4409663577: helper create starts Full Access without a directory override.
   // Unit, real admission/effect: ordinary task sends must not mint silent authority.
   it('confirms a new Full Access handoff without changing existing sends or inherited-permission creates', async () => {
@@ -1080,7 +1108,7 @@ describe('teammate turn principal', () => {
     expect(JSON.stringify(await withToolCallAuthority(h.authorize, request, resume))).toContain('AUTHORIZATION_EXPIRED');
     expect(resume).not.toHaveBeenCalled();
     expect(h.confirm).toHaveBeenCalledWith('companion', request.tool, request.args,
-      { server: 'cindy_scheduler', risk: 'resume', details: { schedule: expect.objectContaining({
+      { server: 'cindy_scheduler', risk: 'command', details: { schedule: expect.objectContaining({
         workingDir: '/work', scriptConfig: { command: 'printf reviewed', capabilities: [] },
       }) } });
     h.confirm.mockResolvedValue(true);

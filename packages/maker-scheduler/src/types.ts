@@ -290,6 +290,9 @@ export interface Schedule {
   expireAt?: number;
 }
 
+/** Complete persisted definition captured when a host approval is shown. */
+export type ScheduleMutationGuard = Readonly<Schedule>;
+
 export interface ScheduleRun {
   id: string;
   scheduleId: string;

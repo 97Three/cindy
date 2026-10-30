@@ -32,6 +32,7 @@ import {
   type SshHostSnapshotLike,
 } from '@cindy/mcps';
 import type { OrcaMcpDeps } from '@cindy/mcps';
+import type { Schedule } from '@cindy/maker-scheduler';
 import { createCindyGhostsMcpServer } from 'cindy-tools';
 import type { MakerMemoryManager } from '@cindy/maker-core';
 import {
@@ -103,7 +104,7 @@ import { createTaskDigestReader } from './taskDigest.js';
 import { createDesktopTaskDigestDeps, createRemoteWorkbenchMessageReader } from './taskDigestHost.js';
 import { createTaskToolCallAuthorizer } from '../maker-ipc/taskToolCallAuthorizer.js';
 import { createDesktopTaskActionAuthorizer } from '../maker-ipc/taskActionHost.js';
-import { assertTaskActionCurrent } from '../maker-ipc/taskActionAuthorization.js';
+import { assertTaskActionCurrent, taskActionScheduleGuard } from '../maker-ipc/taskActionAuthorization.js';
 import {
   getSessionRowSnapshot,
   patchSessionMetaInDb,
@@ -331,14 +332,30 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       input: getTaskActionInputState, getSession: getTaskActionSession, confirm: confirmTaskAction,
       capturePermissionRequest: captureTaskActionPermissionRequest,
       getSessionWorkDir: resolveHookSessionWorkDir,
-      getScheduleDefinition: async (id, hookInstallation) => {
-        const schedule = await getScheduler().get(id);
+      getScheduleDefinition: async (id, hookInstallation, device) => {
+        let schedule: Schedule | null;
+        if (device && device !== 'local') {
+          if (!deps.historyRemote) return null;
+          let assertAccess: (() => void) | undefined;
+          try {
+            assertAccess = deps.historyRemote.captureAccess();
+            const response = await deps.invokeRemote(device, 'maker:schedule:get', [id], { preSend: assertAccess });
+            assertAccess();
+            if (!response.ok) return null;
+            schedule = response.result as Schedule | null;
+          } catch {
+            return null;
+          }
+        } else {
+          schedule = await getScheduler().get(id);
+        }
         if (!schedule) return null;
         const { name, prompt, persistentSession, useWorktree, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId } = schedule;
         const preRunWorkingDir = preRunHook?.command?.trim()
           ? (targetSessionId ? await resolveHookSessionWorkDir(targetSessionId) : undefined) ?? workingDir
           : undefined;
         const definition = { id, name, prompt, persistentSession, useWorktree, executionMode, scriptConfig, preRunHook, workingDir, targetSessionId,
+          mutationGuard: schedule,
           ...(preRunHook?.command?.trim() ? { preRunWorkingDir: preRunWorkingDir?.trim() ? preRunWorkingDir : homedir() } : {}) };
         if (!hookInstallation) return definition;
         let installWorkingDir = hookInstallation.workingDir;
@@ -545,6 +562,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       withAccountDataAccess,
       authorizeCall: authorizeTaskToolCall,
       getScheduler: () => getScheduler(),
+      getApprovedScheduleGuard: taskActionScheduleGuard,
       // 其它电脑上的定时任务:与历史查询共用设备目录与 owner fence,走既有远程控制通道。
       ...(deps.historyRemote
         ? {
