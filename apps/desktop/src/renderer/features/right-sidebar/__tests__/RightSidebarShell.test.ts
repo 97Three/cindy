@@ -2,7 +2,7 @@
 
 import { createElement, useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { AppShortcutOverrides } from '../../../../shared/appShortcuts';
 import {
   BROWSER_COMMENT_ELEMENT_SELECTED_CHANNEL,
@@ -2268,6 +2268,8 @@ describe('RightSidebarShell 全局页签跨任务存活', () => {
   });
 
   afterEach(() => {
+    // 先卸载 Shell:下面的重置会让它重渲染并重跑 effect,而 electronAPI 随后就被删掉。
+    cleanup();
     unregisterTabKind('plugin-view');
     unregisterTabKind('terminal');
     unregisterTabKind('web-browser');
