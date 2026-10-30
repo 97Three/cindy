@@ -1674,7 +1674,9 @@
     }
   },
   "settings": {
-    "newChatDefaults": { "title": "새 작업의 기본 권한" },
+    "newChatDefaults": {
+      "title": "새 작업의 기본 권한"
+    },
     "imConnection": {
       "reconnect": "다시 연결",
       "savedNote": "연결 정보가 저장되어 있습니다. 바로 다시 연결할 수 있습니다.",
@@ -2381,7 +2383,12 @@
         "zh-TW": "繁體中文",
         "en": "English",
         "ja": "日本語",
-        "ko": "한국어"
+        "ko": "한국어",
+        "es": "Español",
+        "fr": "Français",
+        "de": "Deutsch",
+        "pt-PT": "Português (Portugal)",
+        "pt-BR": "Português (Brasil)"
       }
     },
     "userProfile": {

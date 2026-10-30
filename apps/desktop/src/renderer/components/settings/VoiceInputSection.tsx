@@ -13,7 +13,6 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Switch } from '@/components/ui/switch';
 import { Tip } from '@/components/ui/tooltip';
 import { useAuth } from '@/contexts/AuthContext';
-import { SUPPORTED_LOCALES } from '@/i18n';
 import { createLogger } from '@/lib/logger';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { cn } from '@/lib/utils';
@@ -79,7 +78,9 @@ import {
 import type { VoiceInputConnectionTestFailureReason } from '../../../shared/voiceInputConnectionTest';
 
 const log = createLogger('VoiceInputSection');
-const LANGUAGE_OPTIONS: ReadonlyArray<VoiceInputLanguage> = ['auto', ...SUPPORTED_LOCALES];
+// Recognition-language availability is independent of UI localization.
+// Preserve the existing ASR choices when adding interface catalogs.
+const LANGUAGE_OPTIONS: ReadonlyArray<VoiceInputLanguage> = ['auto', 'zh-CN', 'zh-TW', 'en', 'ja', 'ko'];
 const AUTO_MICROPHONE_VALUE = '__auto__';
 const DICTIONARY_FILTERS = ['all', 'automatic', 'manual'] as const;
 
