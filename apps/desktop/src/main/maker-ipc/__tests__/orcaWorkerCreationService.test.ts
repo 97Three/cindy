@@ -3383,6 +3383,31 @@ describe('Worker tool defaults follow the submitted panel route atomically', () 
   const request = { leadSessionId: 'lead-1', role: 'developer', label: 'worker', useCreationPrefs: true };
   const saved = { agent: 'codex' as const, model: 'gpt-5.4', effort: 'high', fast: true,
     providerId: 'xd', agentDeviceId: null };
+  // PR #7933 unit regression: createWorker must preserve admission errors before
+  // resolving defaults. Existing admission tests always supplied agent; the minimal
+  // failure is an unavailable saved provider, no agent, and a full team or used label.
+  it.each([
+    { label: 'another-worker', errorCode: 'WORKER_LIMIT_HARD_EXCEEDED',
+      limit: { workerHardLimit: 1, occupiedSlots: 1, remainingSlots: 0 } },
+    { label: ' WORKER ', errorCode: 'DUPLICATE_LABEL' },
+  ])('rejects $errorCode before reading a saved route or catalog', async ({ label, errorCode, limit }) => {
+    const getCreationSelection = vi.fn(() => ({ ...saved, providerId: 'disconnected' }));
+    const { service, deps } = createDeps({
+      getCreationSelection,
+      listWorkersByLead: vi.fn(async () => [{ id: 'worker-existing', label: 'worker', status: 'idle' as const }]),
+      readCollaborationSettings: vi.fn(() => ({ workerSoftLimit: 1, workerHardLimit: 1 })),
+    });
+    const result = await service.createWorker({ ...request, label });
+    expect(result).toMatchObject({ ok: false, errorCode });
+    if (limit) expect(result).toHaveProperty('limit', limit);
+    else expect(result).not.toHaveProperty('limit');
+    expect(getCreationSelection).not.toHaveBeenCalled();
+    expect(deps.getProviderRoutingContext).not.toHaveBeenCalled();
+    expect(deps.getAvailableModels).not.toHaveBeenCalled();
+    expect(deps.getLeadSessionRow).not.toHaveBeenCalled();
+    expect(deps.reserveWorkerCreation).not.toHaveBeenCalled();
+    expect(deps.bootstrapSession).not.toHaveBeenCalled();
+  });
   it('checks existing creation authority before reading a remembered remote catalog', async () => {
     const getCreationSelection = vi.fn(() => ({ ...saved, agentDeviceId: 'another-computer' }));
     const assertCurrent = vi.fn(async () => { throw new Error('permission revoked'); });

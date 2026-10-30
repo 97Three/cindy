@@ -1017,6 +1017,30 @@ export function createOrcaWorkerCreationService(deps: OrcaWorkerCreationDeps): O
     }, assertCurrent);
   }
 
+  async function checkWorkerCreationAdmission(leadSessionId: string, label: string,
+    assertCurrent?: () => Promise<void>): Promise<
+      | { ok: true; settings: ReturnType<OrcaWorkerCreationDeps['readCollaborationSettings']> }
+      | Extract<OrcaWorkerCreationResult, { ok: false }>
+    > {
+    const existing = await deps.listWorkersByLead(leadSessionId);
+    if (existing.some((worker) => worker.label?.toLowerCase() === label)) {
+      return { ok: false, errorCode: 'DUPLICATE_LABEL', message: `label "${label}" already used in this team` };
+    }
+
+    await assertCurrent?.();
+    const settings = {...deps.readCollaborationSettings()};
+    const activeCount = existing.filter((worker) => deps.isActiveWorkerStatus(worker.status)).length;
+    if (activeCount >= settings.workerHardLimit) {
+      return {
+        ok: false,
+        errorCode: 'WORKER_LIMIT_HARD_EXCEEDED',
+        message: `hard limit ${settings.workerHardLimit} reached`,
+        limit: limitSnapshot(settings.workerHardLimit, activeCount),
+      };
+    }
+    return { ok: true, settings };
+  }
+
   async function createWorkerInTeam(request: Omit<OrcaWorkerCreateInTeamParams, 'agent'> & OrcaWorkerCreateRequest,
     assertCurrent?: () => Promise<void>, onCreated?: (guard: () => Promise<void>) => void): Promise<OrcaWorkerCreationResult> {
     if (!request.useCreationPrefs && request.agent) {
@@ -1029,6 +1053,8 @@ export function createOrcaWorkerCreationService(deps: OrcaWorkerCreationDeps): O
     request = { ...request, role: role.value, label: label.value };
     // Preserve admission before catalog I/O, including remote routes restored from memory.
     await assertCurrent?.();
+    const admission = await checkWorkerCreationAdmission(request.leadSessionId, label.value, assertCurrent);
+    if (!admission.ok) return admission;
     const lead = await deps.getLeadSessionRow(request.leadSessionId);
     if (!lead) return { ok: false, errorCode: 'NOT_FOUND', message: 'Lead session not found' };
     const selection = await resolveWorkerCreationDefaults(request, lead, deps);
@@ -1049,22 +1075,9 @@ export function createOrcaWorkerCreationService(deps: OrcaWorkerCreationDeps): O
     if (!label.ok) return { ok: false, errorCode: 'INVALID_PARAMS', message: label.message };
     params = { ...params, label: label.value };
 
-    const existing = await deps.listWorkersByLead(params.leadSessionId);
-    if (existing.some((worker) => worker.label?.toLowerCase() === label.value)) {
-      return { ok: false, errorCode: 'DUPLICATE_LABEL', message: `label "${label.value}" already used in this team` };
-    }
-
-    await assertCurrent?.();
-    const settings = {...deps.readCollaborationSettings()};
-    const activeCount = existing.filter((worker) => deps.isActiveWorkerStatus(worker.status)).length;
-    if (activeCount >= settings.workerHardLimit) {
-      return {
-        ok: false,
-        errorCode: 'WORKER_LIMIT_HARD_EXCEEDED',
-        message: `hard limit ${settings.workerHardLimit} reached`,
-        limit: limitSnapshot(settings.workerHardLimit, activeCount),
-      };
-    }
+    const admission = await checkWorkerCreationAdmission(params.leadSessionId, label.value, assertCurrent);
+    if (!admission.ok) return admission;
+    const { settings } = admission;
     const lead = await deps.getLeadSessionRow(params.leadSessionId);
     if (!lead) {
       return { ok: false, errorCode: 'NOT_FOUND', message: `lead session ${params.leadSessionId} not found` };

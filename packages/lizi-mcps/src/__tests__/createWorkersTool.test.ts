@@ -145,7 +145,9 @@ describe('create_workers tool', () => {
     }));
   });
 
-  it('stops a hard=3 batch after the first limit failure and summarizes all nine requests', async () => {
+  // PR #7933 unit: the existing explicit-agent batch covered hard-limit stopping,
+  // but omitted-agent requests must retain the same stop, skipped results and capacity report.
+  it.each([false, true])('stops a hard=3 batch and summarizes all nine requests (omit agent: %s)', async (omitAgent) => {
     let call = 0;
     const createWorker = vi.fn<CreateWorkerDeps['createWorker']>(async () => {
       call += 1;
@@ -154,7 +156,11 @@ describe('create_workers tool', () => {
     const registry = setup(createWorker);
 
     const result = parse(await registry.call('create_workers', {
-      workers: Array.from({ length: 9 }, (_, index) => worker(index + 1)),
+      workers: Array.from({ length: 9 }, (_, index) => {
+        const spec = worker(index + 1);
+        if (omitAgent) delete spec.agent;
+        return spec;
+      }),
     }));
 
     expect(result).toMatchObject({
