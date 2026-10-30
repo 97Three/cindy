@@ -245,3 +245,16 @@ it('supplies the SDK for a template-literal dynamic import', () => {
   const html = '<script type="module">import(`@modelcontextprotocol/ext-apps`);</script>';
   expect(withHostAppSdk(html, sdkUrl)).toContain(sdkUrl);
 });
+
+// Codex 4427968307: built bundles may mention the package without importing it.
+// Production HTML preparation must leave their bytes (and remote budget) alone.
+// Unit tier: ordinary strings, license comments and source text in templates.
+it.each([
+  'const packageName = "@modelcontextprotocol/ext-apps";',
+  '/* import "@modelcontextprotocol/ext-apps"; */ console.log("bundled");',
+  '// import("@modelcontextprotocol/ext-apps")',
+  'const example = `import "@modelcontextprotocol/ext-apps"`;',
+])('does not supply the SDK for JavaScript text without a module request: %s', source => {
+  const html = '<!doctype html><script type="module">' + source + '</script>';
+  expect(withHostAppSdk(html, sdkUrl)).toBe(html);
+});

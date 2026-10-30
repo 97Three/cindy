@@ -1,6 +1,9 @@
 import { Script } from 'node:vm';
-import { expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { mcpAppDirectSandboxDocument } from '../sandboxBridge.js';
+
+beforeEach(() => vi.useFakeTimers());
+afterEach(() => vi.useRealTimers());
 
 function fixture() {
   const handlers = new Map<string, (event: unknown) => void>();
@@ -16,7 +19,7 @@ function fixture() {
   const document = { createElement: () => frame, body: { appendChild: vi.fn() } };
   const html = mcpAppDirectSandboxDocument('cindy-mcp-app://view-view/resource', 'cindy-mcp-app://view/bridge');
   const script = html.slice(html.indexOf('<script>') + 8, html.indexOf('</script>'));
-  new Script(script).runInNewContext({ window, document, fetch });
+  new Script(script).runInNewContext({ window, document, fetch, setTimeout, clearTimeout });
   return { handlers, parent, frame, fetch, pending };
 }
 it('ignores forged App requests and Host responses from the Renderer, relaying only the inner window', () => {
@@ -87,4 +90,38 @@ it('drops in-flight old-document replies before posting to the new frame', async
   for (let index = 0; index < 8; index++) await Promise.resolve();
   expect(f.frame.contentWindow.postMessage).not.toHaveBeenCalledWith(old, '*');
   expect(f.frame.contentWindow.postMessage).toHaveBeenCalledWith(current, '*');
+});
+
+// Codex 4427968303: Desktop owns RPC in the real proxy, bypassing Controller
+// initialize handling. A replacement that never becomes ready must close, while
+// same-generation retries cannot keep it alive. Unit tier, fake timers only.
+it('bounds replacement initialization without extending the deadline for retries', () => {
+  const f = fixture();
+  const receive = (method: string) => f.handlers.get('message')!({ source: f.frame.contentWindow,
+    data: { jsonrpc: '2.0', method, ...(method === 'ui/initialize' ? { id: 1, params: {} } : {}) } });
+  receive('ui/notifications/initialized');
+  f.parent.postMessage.mockClear();
+  receive('ui/initialize');
+  vi.advanceTimersByTime(44_000);
+  receive('ui/initialize');
+  expect(f.parent.postMessage).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(1_000);
+  expect(f.parent.postMessage).toHaveBeenCalledExactlyOnceWith(
+    { jsonrpc: '2.0', method: 'ui/notifications/sandbox-failed' }, '*');
+});
+it('clears a ready replacement deadline and gives the next document a fresh one', () => {
+  const f = fixture();
+  const receive = (method: string) => f.handlers.get('message')!({ source: f.frame.contentWindow,
+    data: { jsonrpc: '2.0', method, ...(method === 'ui/initialize' ? { id: 1, params: {} } : {}) } });
+  receive('ui/notifications/initialized');
+  receive('ui/initialize');
+  vi.advanceTimersByTime(44_000);
+  receive('ui/notifications/initialized');
+  receive('ui/initialize');
+  f.parent.postMessage.mockClear();
+  vi.advanceTimersByTime(1_000);
+  expect(f.parent.postMessage).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(44_000);
+  expect(f.parent.postMessage).toHaveBeenCalledExactlyOnceWith(
+    { jsonrpc: '2.0', method: 'ui/notifications/sandbox-failed' }, '*');
 });
