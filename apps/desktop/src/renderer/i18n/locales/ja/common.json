@@ -7909,8 +7909,9 @@
         "usesExplanation": "許可された共有範囲の全バージョンにおける累計ツール呼び出し数です。下の個人の呼び出しは、この端末の現在のアカウントのみを集計します。"
       },
       "contribution": {
-        "unreadReview": "新しい審査結果があります",
+        "unreadReview": "新しい処理結果があります",
         "viewReviewResult": "{{version}} の審査結果を見る",
+        "viewMarketResult": "マーケットの対応結果を見る",
         "anonymous": "匿名で公開",
         "anonymousHint": "プラグイン全体の公開作者名を非表示にします。オフにすると、各バージョンの審査提出時に保存された元の作者名が表示されます。",
         "anonymousAuthorOnly": "変更できるのは元の作者のみです",
@@ -8006,6 +8007,7 @@
           "rejected": "差し戻し",
           "enabled": "公開を開始",
           "disabled": "公開を停止",
+          "archived": "アーカイブ済み",
           "current_changed": "公開バージョンを変更",
           "revoked": "バージョンを取り消し",
           "cancelled": "取り消し済み"

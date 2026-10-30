@@ -7909,8 +7909,9 @@
         "usesExplanation": "허용된 공유 범위의 모든 버전에서 누적된 도구 호출 수입니다. 아래 내 호출은 이 컴퓨터의 현재 계정만 집계합니다."
       },
       "contribution": {
-        "unreadReview": "새 심사 결과가 있습니다",
+        "unreadReview": "새 처리 결과가 있습니다",
         "viewReviewResult": "{{version}} 심사 결과 보기",
+        "viewMarketResult": "마켓 처리 결과 보기",
         "anonymous": "익명으로 게시",
         "anonymousHint": "플러그인 전체의 공개 작성자 이름을 숨깁니다. 끄면 각 버전의 심사 제출 시 저장된 원작자 이름이 표시됩니다.",
         "anonymousAuthorOnly": "원작자만 변경할 수 있습니다",
@@ -8006,6 +8007,7 @@
           "rejected": "반려됨",
           "enabled": "게시 시작",
           "disabled": "게시 중단",
+          "archived": "보관됨",
           "current_changed": "게시 버전 변경",
           "revoked": "버전 철회됨",
           "cancelled": "취소됨"
