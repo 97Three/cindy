@@ -70,6 +70,8 @@ export interface MenubarSubscriptionInput {
   device?: MenubarRemoteDevice | null;
   /** Codex rate-limit resets the user can redeem. */
   resetCredits?: MenubarResetCredits | null;
+  /** Set when the other computer cannot be reached now: the reading is from this time. */
+  lastSeenAtMs?: number | null;
 }
 
 export interface MenubarRemoteDevice {
@@ -493,8 +495,9 @@ class Builder {
 
   /** The subscription with the most room left, else a balance with money on it. */
   private recommended(): MenubarSourceInput | null {
+    // An offline computer's account cannot be used from here until it is back.
     const subscriptions = this.visibleSubscriptions()
-      .filter((source) => (this.remaining(source) ?? 0) > 0)
+      .filter((source) => !source.lastSeenAtMs && (this.remaining(source) ?? 0) > 0)
       .sort(
         (a, b) =>
           (this.remaining(b) ?? 0) - (this.remaining(a) ?? 0)
@@ -508,7 +511,7 @@ class Builder {
   private tightest(): MenubarSubscriptionInput | null {
     return (
       this.visibleSubscriptions()
-        .filter((source) => (this.remaining(source) ?? 0) > 0)
+        .filter((source) => !source.lastSeenAtMs && (this.remaining(source) ?? 0) > 0)
         .sort((a, b) => (this.remaining(a) ?? 0) - (this.remaining(b) ?? 0))[0] ?? null
     );
   }
@@ -672,12 +675,16 @@ class Builder {
     const reserve = remaining <= 0 && (source.creditsUnlimited || (source.credits ?? 0) > 0);
     const limit = state.limit;
     // Read together with the percentage above: "90% · resets in 6d 7h", for the window shown.
+    // An unreachable computer's reading says how old it is instead of a countdown.
+    const seenAtMs = source.lastSeenAtMs ?? null;
     let when = '';
-    if (limit.window.resetsAtMs !== null) {
+    if (seenAtMs !== null) {
+      when = this.ago(seenAtMs);
+    } else if (limit.window.resetsAtMs !== null) {
       const duration = this.shortDuration(limit.window.resetsAtMs - this.input.nowMs);
       when = roomy ? this.t('cell.resetsIn', { duration }) : duration;
     }
-    const whenLevel: MenubarLevel = level;
+    const whenLevel: MenubarLevel = seenAtMs !== null ? 'normal' : level;
     return {
       ...base,
       name,
@@ -689,7 +696,8 @@ class Builder {
       reserve,
       when,
       whenLevel,
-      resetsAtMs: limit.window.resetsAtMs,
+      resetsAtMs: seenAtMs !== null ? null : limit.window.resetsAtMs,
+      ...(seenAtMs !== null ? { stale: true } : {}),
       accessibilityLabel: reserve
         ? this.t('a11y.reserve', { name: `${source.brand} ${name}` })
         : this.t('a11y.remaining', { name: source.brand === name ? name : `${source.brand} ${name}`, n: Math.round(remaining) }),

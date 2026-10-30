@@ -4,17 +4,19 @@ import { useAuth } from '@/auth/AuthContext';
 import { useDeviceLink } from '@/device-link/DeviceLinkContext';
 import {
   clearUsageWidgetState,
-  readUsageWidgetState,
+  readPinnedUsageWidgetDevices,
+  readUsageWidgetStore,
+  refreshUsageWidgetStore,
   usageWidgetsSupported,
-  writeUsageWidgetState,
+  writeUsageWidgetStore,
 } from './usageWidgetSync';
 
-// The menu bar panel itself rebuilds about once a minute; the widgets need far less.
+// The computers rebuild their overview every few minutes; the widgets need no more.
 const REFRESH_MS = 5 * 60_000;
 
 /**
  * Keeps the iOS home-screen widgets fed while the app is active (renders nothing). Widgets
- * cannot reach a computer themselves, so the app hands them the panel's latest snapshot.
+ * cannot reach a computer themselves, so the app hands them each computer's latest overview.
  */
 export function UsageWidgetBridge() {
   const { invoke, readDeviceList, status } = useDeviceLink();
@@ -41,8 +43,10 @@ export function UsageWidgetBridge() {
       pending = true;
       try {
         const { devices } = await latest.current.readDeviceList();
-        const state = await readUsageWidgetState(devices, latest.current.invoke);
-        if (state && latest.current.accountGeneration === generation) writeUsageWidgetState(state);
+        const store = await refreshUsageWidgetStore(
+          readUsageWidgetStore(), devices, latest.current.invoke, readPinnedUsageWidgetDevices(),
+        );
+        if (latest.current.accountGeneration === generation) writeUsageWidgetStore(store);
       } catch {
         // Keep the last snapshot; the widgets show how old it is.
       } finally {

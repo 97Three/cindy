@@ -83,6 +83,8 @@ export interface MenubarSourceCell {
   whenLevel: MenubarLevel;
   /** Reset of the window the tube shows; consumers that outlive the build keep `when` current. */
   resetsAtMs?: number | null;
+  /** The reading is the last one from a computer that cannot be reached now; `when` says its age. */
+  stale?: boolean;
   accessibilityLabel: string;
 }
 

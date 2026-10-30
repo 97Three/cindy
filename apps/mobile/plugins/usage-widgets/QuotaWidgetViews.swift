@@ -50,6 +50,7 @@ struct TubeView: View {
       }
     }
     .frame(width: width, height: height)
+    .opacity(source.stale == true ? 0.45 : 1)
   }
 }
 
@@ -85,6 +86,7 @@ struct SourceValue: View {
       .lineLimit(1)
       .minimumScaleFactor(0.7)
       .foregroundStyle(color ?? WidgetPalette.ink)
+      .opacity(source.stale == true ? 0.5 : 1)
     } else {
       Text(source.label ?? "—")
         .font(.system(size: 10.5, weight: .semibold))

@@ -5,38 +5,67 @@ import {
   type MobileUsageWidgetSnapshot,
 } from '@cindy/maker-shared/device-link-contract';
 
-/**
- * What the iOS widgets read from the App Group. `update-desktop` is only written when every
- * reachable computer is too old to answer; a temporary failure keeps the last snapshot.
- */
+/** One computer's answer. `update-desktop`: its Cindy is too old to answer. */
 export type UsageWidgetState =
   | { kind: 'snapshot'; receivedAtMs: number; deviceName: string; snapshot: MobileUsageWidgetSnapshot }
   | { kind: 'update-desktop'; receivedAtMs: number };
 
+/**
+ * What the iOS widgets read from the App Group. Each widget shows either "automatic" (the
+ * computer that answered last) or the computer it was set to in its edit sheet. A request
+ * that gets no answer keeps that computer's previous state, so the widgets show its age.
+ */
+export interface UsageWidgetStore {
+  version: 2;
+  autoDeviceId: string | null;
+  /** Computers a widget can be set to, as listed in its edit sheet. */
+  computers: { id: string; name: string }[];
+  states: Record<string, UsageWidgetState>;
+}
+
 // Absent on binaries built before the widgets (OTA updates reach them too).
 const native = requireOptionalNativeModule<{
   writeSnapshot(json: string): boolean;
+  readSnapshot(): string | null;
   clearSnapshot(): void;
+  readPinnedDeviceIds(): string[];
 }>('CindyUsageWidgets');
 
 export const usageWidgetsSupported = native !== null;
 
-export function writeUsageWidgetState(state: UsageWidgetState): boolean {
-  return native?.writeSnapshot(JSON.stringify(state)) ?? false;
+export function writeUsageWidgetStore(store: UsageWidgetStore): boolean {
+  return native?.writeSnapshot(JSON.stringify(store)) ?? false;
+}
+
+export function readUsageWidgetStore(): UsageWidgetStore | null {
+  try {
+    const store = JSON.parse(native?.readSnapshot() ?? 'null') as Partial<UsageWidgetStore> | null;
+    return store?.version === 2 && store.states && Array.isArray(store.computers) ? store as UsageWidgetStore : null;
+  } catch {
+    return null;
+  }
 }
 
 export function clearUsageWidgetState(): void {
   native?.clearSnapshot();
 }
 
+/** Computers that home-screen widgets are set to; the widgets record them when they draw. */
+export function readPinnedUsageWidgetDevices(): string[] {
+  return native?.readPinnedDeviceIds() ?? [];
+}
+
 const MOBILE_PLATFORMS = new Set(['ios', 'android', 'web']);
 
-/** Online computers that allow remote control, macOS first (only it runs the menu bar panel). */
-export function usageWidgetCandidates(devices: readonly DeviceView[]): DeviceView[] {
-  return devices
-    .filter(device => !device.isSelf && device.online && device.remoteControlEnabled
-      && !MOBILE_PLATFORMS.has(device.platform ?? ''))
-    .sort((a, b) => Number(b.platform === 'darwin') - Number(a.platform === 'darwin'));
+/** The user's other computers that allow remote control, online or not. */
+function isWidgetComputer(device: DeviceView): boolean {
+  return !device.isSelf && device.remoteControlEnabled && !MOBILE_PLATFORMS.has(device.platform ?? '');
+}
+
+/** Online computers in the order "automatic" tries them: the last one that answered, then Macs. */
+export function usageWidgetCandidates(devices: readonly DeviceView[], preferred: string | null = null): DeviceView[] {
+  const rank = (device: DeviceView) => (device.deviceId === preferred ? 0 : device.platform === 'darwin' ? 1 : 2);
+  return devices.filter(device => isWidgetComputer(device) && device.online).sort((a, b) => rank(a) - rank(b));
 }
 
 type Invoke = <T>(deviceId: string, channel: string, args?: unknown[]) => Promise<T>;
@@ -55,35 +84,68 @@ function isSnapshot(value: unknown): value is MobileUsageWidgetSnapshot {
 }
 
 /**
- * Asks each candidate in turn and returns the first usable snapshot. Returns null when no
- * computer could answer this time (offline, panel off, transient error) so the caller keeps
- * whatever the widgets already show.
+ * Asks the computers the widgets need: for "automatic", the one that answered last and then
+ * the others until one answers; plus every computer a widget is set to. A computer that does
+ * not answer keeps its previous state.
  */
-export async function readUsageWidgetState(
+export async function refreshUsageWidgetStore(
+  previous: UsageWidgetStore | null,
   devices: readonly DeviceView[],
   invoke: Invoke,
+  pinned: readonly string[] = [],
   nowMs: () => number = Date.now,
-): Promise<UsageWidgetState | null> {
-  const candidates = usageWidgetCandidates(devices);
-  let tooOld = 0;
-  for (const device of candidates) {
+): Promise<UsageWidgetStore> {
+  const computers = devices.filter(isWidgetComputer);
+  const listed = new Set(computers.map(device => device.deviceId));
+  const states: Record<string, UsageWidgetState> = {};
+  for (const [id, state] of Object.entries(previous?.states ?? {})) {
+    if (listed.has(id)) states[id] = state;
+  }
+  let autoDeviceId = previous?.autoDeviceId && listed.has(previous.autoDeviceId) ? previous.autoDeviceId : null;
+  const outcomes = new Map<string, 'answered' | 'too-old' | 'failed'>();
+  const ask = async (device: DeviceView) => {
+    let outcome: 'answered' | 'too-old' | 'failed' = 'failed';
     try {
       const result = await invoke<{ ok?: boolean; snapshot?: unknown }>(
         device.deviceId, DEVICE_LINK_USAGE_WIDGET_SNAPSHOT_CHANNEL, [],
       );
       if (result?.ok === true && isSnapshot(result.snapshot)) {
-        return {
-          kind: 'snapshot',
-          receivedAtMs: nowMs(),
-          deviceName: device.selfName || device.name,
-          snapshot: result.snapshot,
+        states[device.deviceId] = {
+          kind: 'snapshot', receivedAtMs: nowMs(), deviceName: device.selfName || device.name, snapshot: result.snapshot,
         };
+        outcome = 'answered';
       }
     } catch (error) {
-      if (isChannelNotAllowed(error)) tooOld += 1;
+      if (isChannelNotAllowed(error)) {
+        states[device.deviceId] = { kind: 'update-desktop', receivedAtMs: nowMs() };
+        outcome = 'too-old';
+      }
+    }
+    outcomes.set(device.deviceId, outcome);
+    return outcome;
+  };
+
+  const candidates = usageWidgetCandidates(devices, autoDeviceId);
+  let answered = false;
+  for (const device of candidates) {
+    if (await ask(device) === 'answered') {
+      autoDeviceId = device.deviceId;
+      answered = true;
+      break;
     }
   }
-  return candidates.length > 0 && tooOld === candidates.length
-    ? { kind: 'update-desktop', receivedAtMs: nowMs() }
-    : null;
+  // Only "every reachable computer is too old" may replace a kept snapshot with the update prompt.
+  if (!answered && candidates.length > 0 && candidates.every(device => outcomes.get(device.deviceId) === 'too-old')) {
+    autoDeviceId = candidates[0]!.deviceId;
+  }
+  for (const id of pinned) {
+    const device = candidates.find(candidate => candidate.deviceId === id);
+    if (device && !outcomes.has(id)) await ask(device);
+  }
+  return {
+    version: 2,
+    autoDeviceId,
+    computers: computers.map(device => ({ id: device.deviceId, name: device.selfName || device.name })),
+    states,
+  };
 }

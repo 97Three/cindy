@@ -13,7 +13,10 @@ const SOURCES = [
   'QuotaWidgetViews.swift',
   'UsageWidgetViews.swift',
   'SingleSourceViews.swift',
+  'ComputerIntent.swift',
 ];
+// The edit sheet's "Data source" strings (App Intents metadata reads the Localizable table).
+const LOCALIZATIONS = ['en.lproj', 'zh-Hans.lproj', 'zh-Hant.lproj'];
 // Same number font as the macOS menu bar panel (OFL, shipped next to its helper).
 const FONTS = ['BarlowCondensed-Medium.ttf', 'BarlowCondensed-SemiBold.ttf'];
 const FONT_DIR = '../desktop/native/menubar';
@@ -55,8 +58,10 @@ function configureProject(project, config, platformRoot, projectRoot) {
   const assets = path.join(__dirname, 'usage-widgets');
   fs.mkdirSync(directory, { recursive: true });
   for (const file of SOURCES) fs.copyFileSync(path.join(assets, file), path.join(directory, file));
-  fs.rmSync(path.join(directory, 'Assets.xcassets'), { recursive: true, force: true });
-  copyDirectory(path.join(assets, 'Assets.xcassets'), path.join(directory, 'Assets.xcassets'));
+  for (const folder of ['Assets.xcassets', ...LOCALIZATIONS]) {
+    fs.rmSync(path.join(directory, folder), { recursive: true, force: true });
+    copyDirectory(path.join(assets, folder), path.join(directory, folder));
+  }
   for (const font of FONTS) fs.copyFileSync(path.resolve(projectRoot, FONT_DIR, font), path.join(directory, font));
   fs.writeFileSync(path.join(directory, 'Info.plist'), plist.default.build(extensionInfo(config)));
   fs.writeFileSync(path.join(directory, `${TARGET}.entitlements`), plist.default.build({ [APP_GROUPS]: [appGroupOf(config)] }));
@@ -69,9 +74,15 @@ function configureProject(project, config, platformRoot, projectRoot) {
     project.addBuildPhase(SOURCES.map(file => `${TARGET}/${file}`), 'PBXSourcesBuildPhase', 'Sources', added.uuid);
     project.addBuildPhase([], 'PBXFrameworksBuildPhase', 'Frameworks', added.uuid);
     project.addBuildPhase(
-      [`${TARGET}/Assets.xcassets`, ...FONTS.map(font => `${TARGET}/${font}`)],
+      [`${TARGET}/Assets.xcassets`, ...FONTS.map(font => `${TARGET}/${font}`), ...LOCALIZATIONS.map(folder => `${TARGET}/${folder}`)],
       'PBXResourcesBuildPhase', 'Resources', added.uuid,
     );
+    // Copied as folders, so each lands in the bundle as `<language>.lproj/Localizable.strings`.
+    for (const [key, file] of Object.entries(project.pbxFileReferenceSection())) {
+      if (!key.endsWith('_comment') && String(file.path ?? '').replaceAll('"', '').endsWith('.lproj')) {
+        file.lastKnownFileType = 'folder';
+      }
+    }
   }
   const [, nativeTarget] = target;
   const configurations = project.pbxXCConfigurationList()[nativeTarget.buildConfigurationList].buildConfigurations;

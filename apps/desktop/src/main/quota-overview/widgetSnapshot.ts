@@ -1,8 +1,8 @@
 /**
- * iPhone home-screen widget snapshot, projected from the menu bar view.
+ * iPhone home-screen widget snapshot, projected from the quota overview's panel view.
  *
- * Pure: the widget shows exactly what the macOS panel shows (same sources, order, masking
- * and money basis), so it reuses the built view instead of reading usage a second time.
+ * Pure: the widget shows exactly what a panel shows (same sources, order, masking and money
+ * basis), so it reuses the built view instead of reading usage a second time.
  */
 
 import type {
@@ -11,8 +11,8 @@ import type {
 } from '@cindy/maker-shared/device-link-contract';
 
 import type { MenubarView } from '../../shared/menubarQuota.js';
-import { familyLogo, MENUBAR_CINDY_LOGO } from './logos.js';
-import type { MenubarFamily, MenubarModelSeries } from './snapshot.js';
+import { familyLogo, MENUBAR_CINDY_LOGO } from '../menubar/logos.js';
+import type { MenubarFamily, MenubarModelSeries } from '../menubar/snapshot.js';
 
 const WIDGET_DAYS = 30;
 const FAMILIES: MenubarFamily[] = ['claude', 'codex', 'grok', 'kimi'];
@@ -56,6 +56,7 @@ export function buildUsageWidgetSnapshot(
       emphasized: cell.emphasized,
       when: cell.when,
       resetsAtMs: cell.resetsAtMs ?? null,
+      ...(cell.stale ? { stale: true } : {}),
       ...(detail ? {
         detail: {
           title: detail.title,

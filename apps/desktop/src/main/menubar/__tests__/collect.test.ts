@@ -14,6 +14,7 @@ import {
   modelDisplayNames,
   usageScope,
 } from '../collect';
+import { retainRemoteSubscriptions, REMOTE_RETAIN_MS, type RemoteSeen } from '../remoteSubscriptions';
 import { topModels, type MenubarSubscriptionInput } from '../snapshot';
 import type { UsageHistoryPayload, UsageHistoryTask } from '../../usage/usageHistory';
 
@@ -331,6 +332,31 @@ describe('distinctRemoteSubscriptions', () => {
 
   it('leaves out other-computer accounts it could not read', () => {
     expect(distinctRemoteSubscriptions([], [remote('studio', { windows: [] })])).toEqual([]);
+  });
+
+  // Regression: a computer going offline (or failing one read) made its accounts vanish from the panel and widgets.
+  it('keeps an unreachable computer’s accounts with their age until the retention runs out', () => {
+    const seenAtMs = NOW - 3 * 3_600_000;
+    const session = { kind: 'session' as const, usedPercent: 80, resetsAtMs: NOW - 60_000, windowMinutes: 300 };
+    const studio = remote('studio', { windows: [week(40), session] });
+    const laptop = remote('laptop');
+    const gone = remote('sold');
+    const previous = new Map<string, RemoteSeen>(
+      [studio, laptop, gone].map((source) => [source.id, { source, seenAtMs }]),
+    );
+    const read = { sources: [], unreachable: new Set(['studio']), failed: new Set(['remote:laptop']), incomplete: true };
+
+    const { sources, seen } = retainRemoteSubscriptions(previous, read, NOW);
+    expect(sources.map((source) => [source.id, source.lastSeenAtMs])).toEqual([
+      ['remote:studio', seenAtMs], ['remote:laptop', seenAtMs],
+    ]);
+    // A window that reset while the computer was away counts as refilled.
+    expect(sources[0]!.windows[1]).toMatchObject({ usedPercent: 0, resetsAtMs: null });
+    expect(retainRemoteSubscriptions(seen, read, seenAtMs + REMOTE_RETAIN_MS).sources).toEqual([]);
+
+    const fresh = remote('studio', { windows: [week(10)] });
+    const back = retainRemoteSubscriptions(seen, { sources: [fresh], unreachable: new Set(), failed: new Set(), incomplete: false }, NOW);
+    expect(back.sources).toEqual([fresh]);
   });
 });
 

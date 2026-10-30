@@ -9,7 +9,8 @@ import { registerFilePeerIpc } from './device-link/filePeer';
 import { registerTaskMigrationIpc } from './task-migration/service';
 import { registerLoginItemIpc } from './login-item-ipc.js';
 import { registerMenubarIpc } from './menubar/ipc.js';
-import { initMenubarService, refreshMenubarControlState, refreshMenubarLocalization, stopMenubarService } from './menubar/service.js';
+import { initMenubarService, refreshMenubarControlState, stopMenubarService } from './menubar/service.js';
+import { getQuotaOverviewService } from './quota-overview/service.js';
 import {
   createLatestSourceVersionReader,
   sourceChannel,
@@ -3182,7 +3183,7 @@ ipcMain.handle('app-menu:set-locale', (_event, locale: unknown): { ok: true } =>
   }
   refreshDesktopTrayMenus();
   getAgentIslandService()?.refreshLocalization();
-  refreshMenubarLocalization();
+  getQuotaOverviewService().rebuildSoon();
   return { ok: true };
 });
 

@@ -4711,11 +4711,11 @@ async function executeRemoteInvoke(src: string, payload: InvokePayload | undefin
     }
   }
 
-  // iPhone 桌面小组件：菜单栏面板已算好的同一份余量与用量（只读、已打码、无凭证）。
-  // 面板未运行（关闭、未登录或非 macOS）时回 unavailable，而不是 CHANNEL_NOT_ALLOWED。
+  // iPhone 桌面小组件：与菜单栏面板同一份余量与用量汇总（只读、已打码、无凭证），
+  // 任何平台、面板开关与否都能答；未登录或暂时汇总不出时回 unavailable。
   if (payload.channel === DL_USAGE_WIDGET_SNAPSHOT_CHANNEL) {
-    const { readUsageWidgetSnapshot } = await import('../menubar/service.js');
-    return { ok: true, result: readUsageWidgetSnapshot() };
+    const { readUsageWidgetSnapshot } = await import('../quota-overview/service.js');
+    return { ok: true, result: await readUsageWidgetSnapshot() };
   }
   if (payload.channel === DL_TELEGRAM_STATUS_CHANNEL) {
     return { ok: true, result: readTelegramRemoteStatus() };

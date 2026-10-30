@@ -12,7 +12,7 @@ import {
   type MenubarSubscriptionInput,
 } from '../snapshot';
 import { buildMenubarUiStrings, createMenubarTranslate, fillTemplate } from '../strings';
-import { buildUsageWidgetSnapshot } from '../widgetSnapshot';
+import { buildUsageWidgetSnapshot } from '../../quota-overview/widgetSnapshot';
 
 const NOW = Date.UTC(2026, 9, 11, 3, 0, 0);
 const HOUR = 3_600_000;
@@ -157,6 +157,17 @@ describe('buildMenubarView', () => {
     const remote = codex('alpha', 30, { id: 'remote:dev-2:openai', device: { id: 'dev-2', name: 'Studio' } });
     const view = buildMenubarView(input([remote]));
     expect(view.sources[0].name).toBe('Studio');
+  });
+
+  it('shows an offline computer’s last reading with its age and never recommends it', () => {
+    const offline = codex('alpha', 10, {
+      id: 'remote:dev-2:openai', device: { id: 'dev-2', name: 'Studio' }, lastSeenAtMs: NOW - 3 * HOUR,
+    });
+    const view = buildMenubarView(input([offline, codex('beta', 70)]));
+    expect(view.sources.find((s) => s.id === offline.id)).toMatchObject({
+      value: '90', when: '3 hr ago', stale: true, resetsAtMs: null, emphasized: false,
+    });
+    expect(view.sources.find((s) => s.id === 'beta')?.emphasized).toBe(true);
   });
 
   it('says nothing was read instead of "used up" when no level is known', () => {

@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 import WidgetKit
 
@@ -6,27 +7,26 @@ struct UsageEntry: TimelineEntry {
   let state: WidgetState
 }
 
-/// Reads the snapshot the app last wrote. Entries every 15 minutes keep reset countdowns and
-/// the "updated" age current without new data; the app reloads timelines when data arrives.
-struct UsageProvider: TimelineProvider {
+/// Reads the state the app last wrote for the widget's computer. Entries every 15 minutes keep
+/// reset countdowns and the "updated" age current without new data; the app reloads timelines
+/// when data arrives.
+struct UsageProvider: AppIntentTimelineProvider {
   func placeholder(in context: Context) -> UsageEntry {
     UsageEntry(date: Date(), state: .sample)
   }
 
-  func getSnapshot(in context: Context, completion: @escaping (UsageEntry) -> Void) {
-    let state = WidgetState.load()
-    if context.isPreview, case .empty = state {
-      completion(UsageEntry(date: Date(), state: .sample))
-    } else {
-      completion(UsageEntry(date: Date(), state: state))
-    }
+  func snapshot(for configuration: SelectComputerIntent, in context: Context) async -> UsageEntry {
+    let state = WidgetState.load(computer: configuration.computer?.id)
+    if context.isPreview, case .empty = state { return UsageEntry(date: Date(), state: .sample) }
+    return UsageEntry(date: Date(), state: state)
   }
 
-  func getTimeline(in context: Context, completion: @escaping (Timeline<UsageEntry>) -> Void) {
-    let state = WidgetState.load()
+  func timeline(for configuration: SelectComputerIntent, in context: Context) async -> Timeline<UsageEntry> {
+    if let id = configuration.computer?.id, id != ComputerEntity.autoID { WidgetStore.recordPin(id) }
+    let state = WidgetState.load(computer: configuration.computer?.id)
     let now = Date()
     let entries = (0..<24).map { UsageEntry(date: now.addingTimeInterval(Double($0) * 15 * 60), state: state) }
-    completion(Timeline(entries: entries, policy: .atEnd))
+    return Timeline(entries: entries, policy: .atEnd)
   }
 }
 
@@ -37,7 +37,7 @@ private func openAppURL() -> URL? {
 
 struct QuotaWidget: Widget {
   var body: some WidgetConfiguration {
-    StaticConfiguration(kind: "CindyQuotaWidget", provider: UsageProvider()) { entry in
+    AppIntentConfiguration(kind: "CindyQuotaWidget", intent: SelectComputerIntent.self, provider: UsageProvider()) { entry in
       QuotaWidgetView(state: entry.state, now: entry.date)
         .containerBackground(for: .widget) { WidgetBackdrop() }
         .widgetURL(openAppURL())
@@ -51,7 +51,7 @@ struct QuotaWidget: Widget {
 
 struct DailyUsageWidget: Widget {
   var body: some WidgetConfiguration {
-    StaticConfiguration(kind: "CindyDailyUsageWidget", provider: UsageProvider()) { entry in
+    AppIntentConfiguration(kind: "CindyDailyUsageWidget", intent: SelectComputerIntent.self, provider: UsageProvider()) { entry in
       UsageWidgetView(state: entry.state, now: entry.date)
         .containerBackground(for: .widget) { WidgetBackdrop() }
         .widgetURL(openAppURL())

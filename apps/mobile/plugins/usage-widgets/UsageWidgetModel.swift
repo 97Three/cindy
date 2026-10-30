@@ -18,6 +18,8 @@ struct WidgetSource: Decodable, Identifiable {
   let emphasized: Bool
   let when: String
   let resetsAtMs: Double?
+  /// Last reading of a computer that is offline now; drawn faded, `when` says its age.
+  var stale: Bool? = nil
   /// The panel's detail ring; drawn when the widget shows a single source.
   var detail: WidgetDetail? = nil
 }
@@ -104,19 +106,51 @@ enum WidgetState: Decodable {
     }
   }
 
-  /// Same file name as `CindyUsageWidgetsModule` in the app.
-  static func load() -> WidgetState {
-    guard let group = Bundle.main.object(forInfoDictionaryKey: "CindyAppGroupId") as? String,
-          let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group),
-          let data = try? Data(contentsOf: container.appendingPathComponent("usage-widget-snapshot.json")),
-          let state = try? JSONDecoder().decode(WidgetState.self, from: data)
-    else { return .empty }
-    return state
+  /// The state of the computer a widget is set to; nil or "auto" follows the app's choice.
+  static func load(computer: String?) -> WidgetState {
+    guard let store = WidgetStore.load() else { return .empty }
+    let id = computer == nil || computer == ComputerEntity.autoID ? store.autoDeviceId : computer
+    return id.flatMap { store.states[$0] } ?? .empty
   }
 
   var snapshot: WidgetSnapshot? {
     if case .snapshot(_, _, let snapshot) = self { return snapshot }
     return nil
+  }
+}
+
+/// `UsageWidgetStore` in the app: every computer's latest state and the automatic choice.
+struct WidgetStore: Decodable {
+  struct Computer: Decodable {
+    let id: String
+    let name: String
+  }
+
+  let autoDeviceId: String?
+  let computers: [Computer]
+  let states: [String: WidgetState]
+
+  static var group: String? {
+    Bundle.main.object(forInfoDictionaryKey: "CindyAppGroupId") as? String
+  }
+
+  /// Same file name as `CindyUsageWidgetsModule` in the app.
+  static func load() -> WidgetStore? {
+    guard let group, let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group),
+          let data = try? Data(contentsOf: container.appendingPathComponent("usage-widget-snapshot.json"))
+    else { return nil }
+    return try? JSONDecoder().decode(WidgetStore.self, from: data)
+  }
+
+  /// Tells the app this computer has a widget, so it asks it on each refresh
+  /// (`readPinnedDeviceIds` in `CindyUsageWidgetsModule`).
+  static func recordPin(_ id: String) {
+    guard let group, let defaults = UserDefaults(suiteName: group) else { return }
+    let now = Date().timeIntervalSince1970
+    var pins = (defaults.dictionary(forKey: "usageWidgetPins") as? [String: Double] ?? [:])
+      .filter { now - $0.value < 2 * 24 * 3600 }
+    pins[id] = now
+    defaults.set(pins, forKey: "usageWidgetPins")
   }
 }
 

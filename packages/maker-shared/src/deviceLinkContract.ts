@@ -38,6 +38,8 @@ export interface MobileUsageWidgetSource {
   when: string;
   /** Reset of the window the tube shows, so the widget can keep the countdown current. */
   resetsAtMs: number | null;
+  /** Last reading of a computer that is offline now; `when` says how old it is. */
+  stale?: boolean;
   /** The panel's detail ring, drawn when the widget has a single source. */
   detail?: MobileUsageWidgetDetail;
 }
