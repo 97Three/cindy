@@ -5,7 +5,7 @@ import { authorFixture, packAuthorFixture } from './plugin-author-fixture.mjs';
 import { pluginUiFixture } from './plugin-ui-fixture.mjs';
 const output = path.resolve(process.argv[2] ?? 'tmp/e2e-plugin-ui/demos');
 await mkdir(output, { recursive: true });
-for (const mode of ['raw', 'sdk', 'files']) await authorFixture(mode, output);
+for (const mode of ['raw', 'sdk', 'files', 'shell']) await authorFixture(mode, output);
 for (const raw of [false, true]) await packAuthorFixture(await pluginUiFixture(raw), output);
 await authorFixture('files', output, fixture => {
   fixture.manifest.id = 'ui-files-demo';

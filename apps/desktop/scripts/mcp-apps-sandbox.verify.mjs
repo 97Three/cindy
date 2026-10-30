@@ -122,6 +122,7 @@ try {
     import { LibraryVault } from '../src/main/cindy-brain/libraryVault.ts';
     import { GhostPipeDispatcher } from '../src/main/cindy-brain/pipeDispatcher.ts';
     import { createPluginAppTransport } from '../src/main/mcp-apps/pluginServer.ts';
+    import { pluginAppResult, pluginModelResult } from '../src/main/mcp-apps/pluginCards.ts';
     import http from 'node:http';
     import { app, BrowserWindow, protocol, ipcMain, net, nativeImage } from 'electron';
     import { McpAppsHost, appServerRevision } from '../src/main/mcp-apps/host.ts';
@@ -149,7 +150,7 @@ try {
       const allowed=process.env.CINDY_MCP_APP_TEST_ALLOWED;
       let config={id:'example',url:process.env.CINDY_MCP_APP_TEST_URL,transport:'http'};
       const pluginMode=process.env.CINDY_MCP_APP_TEST_PLUGIN==='1';let executePlugin;
-      let authorVault;
+      let authorVault; const shellCalls=[]; let shellResultOverride;
       const authorLibraryRoot=process.env.CINDY_MCP_APP_TEST_DIR+'/author-library';
       if(pluginMode){
         const fixture=JSON.parse(readFileSync(process.env.CINDY_MCP_APP_TEST_DIR+'/plugin.json','utf8'));
@@ -159,16 +160,17 @@ try {
         const dispatcher=new GhostPipeDispatcher({getGhost:()=>ghost,runtimeStateOf:()=>'running',spawn:async()=>({ok:true}),
           sendToGhost:(_id,payload)=>{handler(payload);return true;}});
         runInNewContext(fixture.main,{setTimeout,cindy:{library:request=>{assert.ok(authorVault);assert.ok(['writeBegin','writeChunk','writeCommit','writeAbort'].includes(request.op));return authorVault[request.op](request);},onHostMessage:fn=>{handler=fn;},send:payload=>payload.type==='tool-progress'?dispatcher.handleToolProgress(ghost.manifest.id,payload):dispatcher.handleToolResult(ghost.manifest.id,payload)}});
-        executePlugin=async(name,args,onProgress)=>{const reply=await dispatcher.callGhostTool({ghostId:ghost.manifest.id,tool:name,args,onProgress});assert.equal(reply.ok,true);return reply.result;};
+        executePlugin=async(name,args,onProgress)=>{const reply=await dispatcher.callGhostTool({ghostId:ghost.manifest.id,tool:name,args,onProgress});assert.equal(reply.ok,true);if(authorMode==='shell'){shellCalls.push({name,args});return shellResultOverride??reply.result;}return reply.result;};
         config={id:'example',url:'',transport:'in-process',plugin:{instance:ghost.manifest.id,revision:'fixture',packageSha256:'fixture',title:ghost.manifest.name,trust:'unverified',domains:independent?[allowed]:[],assertCurrent(){},
           createTransport:()=>createPluginAppTransport({instance:ghost.manifest.id,revision:'fixture',tools:ghost.manifest.tools,ui:ghost.manifest.mcpApps?.ui,hosts:ghost.manifest.network?.hosts,assertCurrent(){},readHtml:()=>fixture.html,
             call:(grant,args)=>executePlugin(grant.tool,args,grant.onProgress)})}};
       }
       connection=new AppConnection(config);const client=await connection.getClient();
-      const tool=(await connection.tools()).find(tool=>tool.name===(authorMode==='files'?'open_showcase':authorMode?'open_planner':independent?'open_metrics':'draft_form'));
-      const args=independent?{threshold:75}:{title:'AI draft',body:'Review before creating'};
+      const tool=(await connection.tools()).find(tool=>tool.name===(authorMode==='shell'?'open_view':authorMode==='files'?'open_showcase':authorMode?'open_planner':independent?'open_metrics':'draft_form'));
+      const args=authorMode==='shell'?{intent:'overview'}:independent?{threshold:75}:{title:'AI draft',body:'Review before creating'};
       const result=pluginMode?await executePlugin(tool.name,args):await client.callTool({name:tool.name,arguments:args});
-      let record={version:1,serverId:'example',serverRevision:appServerRevision(config),resourceUri:tool._meta.ui.resourceUri,tool,arguments:args,result};
+      let record={version:1,serverId:'example',serverRevision:appServerRevision(config),resourceUri:tool._meta.ui.resourceUri,tool,arguments:args,result:authorMode==='shell'?pluginAppResult(result):result};
+      if(authorMode==='shell'){assert.ok(result._meta.view.html.includes('<style>'));assert.deepEqual(Object.keys(pluginModelResult(result)),['content']);}
       let turns=0, receivedImages=[], pageApprovals=0, approvalGate;
       host=new McpAppsHost({downloadFile:pluginMode?input=>saveAppDownload({...input,showSaveDialog:async name=>process.env.CINDY_MCP_APP_TEST_DIR+'/saved-'+name}):undefined,pluginFiles:pluginMode?{
         describe:async(_instance,uri)=>{if(authorVault&&uri.startsWith('library:')){const file=await authorVault.stat({path:uri.slice('library:'.length)});return file.ok&&file.kind==='file'?{mimeType:'text/plain',size:file.bytes}:null;}return uri==='library:fixture.txt'?{mimeType:'text/plain',size:14}:uri==='cindy-media://blobs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png'?{mimeType:'image/png',size:8}:null;},
@@ -235,6 +237,62 @@ try {
       const inner=()=>window.webContents.mainFrame.framesInSubtree.find(frame=>frame.url.includes('-view/resource'));
       assert.equal(await window.webContents.executeJavaScript(
         "window.testHost.invoke({op:'message',viewId:window.testController.document.viewId,message:{jsonrpc:'2.0',id:'forged',method:'tools/list'}}).then(()=>false,()=>true)"),true);
+      if(authorMode==='shell'){
+        // Integration tier: actual packed shell, production result projection/dispatcher
+        // and iframe without allow-forms. Existing fixed-template examples do not cover
+        // first-result HTML or click/Enter interception before native form submission.
+        stage='shell initial result';
+        await wait(()=>inner()?.executeJavaScript("document.querySelector('#content h1')?.textContent==='工作概览'"));
+        assert.equal(shellCalls.length,1,'initial HTML must not require a second backend call');
+        assert.equal(await inner().executeJavaScript("!!document.querySelector('#content style') && !!document.querySelector('#content svg')"),true);
+        assert.equal(await window.webContents.executeJavaScript("document.querySelector('iframe').sandbox.contains('allow-forms')"),false);
+        stage='shell intent';
+        await inner().executeJavaScript("document.querySelector('[data-intent=stats]').click()");
+        await wait(()=>inner().executeJavaScript("document.querySelector('#content h1')?.textContent==='本周进展'"));
+        assert.equal(shellCalls.at(-1).name,'load_view');
+        stage='shell form click';
+        await inner().executeJavaScript("document.querySelector('[data-intent=search]').click()");
+        await wait(()=>inner().executeJavaScript("!!document.querySelector('form')"));
+        await inner().executeJavaScript("document.querySelector('#query').value='<b>点击</b>';document.querySelector('button[type=submit]').click()");
+        await wait(()=>inner().executeJavaScript("document.querySelector('#query-summary').textContent==='已收到关键词：<b>点击</b>'"));
+        assert.equal(shellCalls.at(-1).args.fields.query,'<b>点击</b>');
+        assert.equal(await inner().executeJavaScript("document.querySelector('#query-summary b')===null"),true);
+        stage='shell form Enter';
+        await inner().executeJavaScript("document.querySelector('#query').value='回车提交';document.querySelector('#query').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}))");
+        await wait(()=>inner().executeJavaScript("document.querySelector('#query-summary').textContent==='已收到关键词：回车提交'"));
+        assert.equal(shellCalls.at(-1).args.fields.query,'回车提交');
+        stage='shell native form blocked';
+        const beforeUrl=inner().url, beforeRequests=requests;
+        await inner().executeJavaScript("(()=>{const form=document.createElement('form');form.action="+JSON.stringify(denied)+";form.method='post';document.body.append(form);form.submit();form.remove();})()");
+        await inner().executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        assert.equal(inner().url,beforeUrl,'native submit must not navigate');
+        assert.equal(requests,beforeRequests,'native submit must not reach the network');
+        stage='shell sanitization';
+        // Inject a backend result at the tool boundary; retain the real RPC return path.
+        const unsafe={content:[{type:'text',text:'清理测试'}],_meta:{view:{html:'<style>.safe{font-weight:bold}</style><h1 class="safe" onclick="window.shellUnsafe=1">可信标题</h1><script>window.shellUnsafe=1</script><iframe></iframe><object></object><embed><base><meta><link><a href="javascript:window.shellUnsafe=1">链接</a><svg onload="window.shellUnsafe=1"></svg><button data-intent="overview">恢复概览</button>'}}};
+        shellResultOverride=unsafe;
+        await inner().executeJavaScript("document.querySelector('[data-intent=stats]').click()");
+        await wait(()=>inner().executeJavaScript("document.querySelector('#content h1')?.textContent==='可信标题'"));
+        await inner().executeJavaScript("document.querySelector('#content h1').click();document.querySelector('#content a').click()");
+        assert.equal(await inner().executeJavaScript("document.querySelectorAll('#content script,#content iframe,#content object,#content embed,#content base,#content meta,#content link,#content [onclick],#content [onload],#content a[href]').length"),0);
+        assert.equal(await inner().executeJavaScript('window.shellUnsafe===undefined'),true);
+        assert.equal(turns,0);
+        // Restore the real backend page for reusable screenshots.
+        shellResultOverride=undefined;
+        await inner().executeJavaScript("document.querySelector('[data-intent=overview]').click()");
+        await wait(()=>inner().executeJavaScript("document.querySelector('#content h1')?.textContent==='工作概览'"));
+        await window.webContents.executeJavaScript('document.body.style.margin="0";document.querySelector("iframe").style.width="100%";document.querySelector("iframe").style.border="0"');
+        for(const theme of ['light','dark']){
+          const variables=theme==='light'?{'--color-background-primary':'rgb(248,248,246)','--color-background-secondary':'rgb(238,238,235)','--color-text-primary':'rgb(38,38,38)','--color-text-secondary':'rgb(102,102,100)','--color-border-primary':'rgb(215,215,212)'}:{'--color-background-primary':'rgb(31,31,30)','--color-background-secondary':'rgb(44,44,42)','--color-text-primary':'rgb(235,235,232)','--color-text-secondary':'rgb(165,165,160)','--color-border-primary':'rgb(60,60,58)'};
+          await window.webContents.executeJavaScript('window.testController.context('+JSON.stringify({theme,styles:{variables}})+')');
+          await wait(()=>inner().executeJavaScript('document.documentElement.style.colorScheme==='+JSON.stringify(theme)));
+          await inner().executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+          const size=await inner().executeJavaScript('({width:innerWidth,scroll:document.documentElement.scrollWidth})');assert.ok(size.scroll<=size.width);
+          if(process.env.CINDY_AUTHOR_SCREENSHOTS){mkdirSync(process.env.CINDY_AUTHOR_SCREENSHOTS,{recursive:true});const box=await window.webContents.executeJavaScript('(()=>{const r=document.querySelector("iframe").getBoundingClientRect();return {x:Math.floor(r.x),y:Math.floor(r.y),width:Math.ceil(r.width),height:Math.ceil(r.height)};})()');const shot=await window.webContents.capturePage(box);writeFileSync(process.env.CINDY_AUTHOR_SCREENSHOTS+'/shell-'+theme+'.png',shot.toPNG());}
+        }
+        console.log('AUTHOR_APP_VERDICT=passed (shell; first result, intent replacement, form click/Enter fields, escaped data, sanitized HTML, Light/Dark)');
+        return;
+      }
       if(authorMode==='files'){
         // Integration: the shipped capability example used to have no real View coverage.
         // Minimal input: open_showcase then save_form via its page; assert private results

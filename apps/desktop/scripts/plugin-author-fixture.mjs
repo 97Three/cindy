@@ -8,7 +8,7 @@ import { build } from 'esbuild';
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const examples = path.resolve(scriptDir, '../resources/system-skills/cindy-plugin-creator/references/examples/interactive-pages');
 export async function authorFixture(mode, temporary, transform = fixture => fixture) {
-  const source = path.join(examples, mode === 'files' ? 'files' : mode === 'sdk' ? 'sdk' : 'minimal');
+  const source = path.join(examples, mode === 'shell' ? 'shell' : mode === 'files' ? 'files' : mode === 'sdk' ? 'sdk' : 'minimal');
   const manifest = JSON.parse(await readFile(path.join(source, 'ghost.json'), 'utf8'));
   const main = await readFile(path.join(source, 'main.js'), 'utf8');
   let html;

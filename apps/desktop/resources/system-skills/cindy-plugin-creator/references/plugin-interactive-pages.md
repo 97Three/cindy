@@ -365,42 +365,57 @@ ResourceLink。宿主弹系统另存为框、净化文件名；不代页面下�
 
 联网和凭证都由 main.js 通过 `cindy.fetch` 发出，凭证由宿主注入，规则见 [§4.7](plugin-network.md)。
 
-### 动态内容：模板固定，内容走工具结果
+### 动态内容：推荐通用外壳，也可以用静态模板
 
-页面模板是包内静态 HTML，不能运行时生成或改写来供片。要按意图显示不同页面，由工具
-返回内容，固定模板负责渲染；同一模板可按数据切换概览、明细等视图。
+**推荐：通用外壳。** AI 理解意图 → 模型工具 `open_view({ intent })` → 后端生成整页 HTML
+→ 包内外壳渲染 → 后续操作用 `data-intent` 声明，由外壳调用 app-only 的
+`load_view({ intent, fields })`。外壳本身仍是包内静态文件，不在运行时生成或改写供片文件；
+变化的是工具结果里的 HTML。保持这份约定时，改界面只需改后端，不用重新发布插件。
 
-页面不能携带凭证。页面自己的 `fetch` 和 `<img>` 访问外部地址时，origin 必须分别列在
-CSP 的 `connectDomains` / `resourceDomains`，目标域名还须在 `network.hosts` 范围内；
-**宿主不会为这些页面请求注入凭证**，需要宿主托管凭证的鉴权接口会失败。
-带身份的请求走「页面 `tools/call` → app-only 工具 → main.js `cindy.fetch`」，
-域名、凭证声明与宿主注入按 [§4.7](plugin-network.md)，不把密钥交给页面。
-
-页面专用内容（如 HTML 片段）放工具结果根 `_meta`，业务数据放 `structuredContent`。
-若同一工具也向模型开放，模型调用得到的根 `_meta` 会被剥掉；app-only 工具本身不向模型开放。
-下面省略已有的工具消息分发和 RPC 连接，完整可运行版本见能力全集的「动态内容」卡片：
+`open_view` 返回一句 `content` 摘要和根 `_meta.view.html`。宿主把完整结果保存到交互卡片，
+外壳在第一次 `ui/notifications/tool-result` 就直接渲染；模型侧剥掉根 `_meta`，只看到摘要，
+不必让页面重复请求首屏。需要模型使用的业务数据另放 `structuredContent`。
+下面省略握手、主题、尺寸上报和错误处理，完整版见
+[shell/ui/page.html](examples/interactive-pages/shell/ui/page.html)；配套
+[ghost.json](examples/interactive-pages/shell/ghost.json) 和
+[main.js](examples/interactive-pages/shell/main.js) 默认模拟后端，不联网、不用凭证。
 
 ```js
-// main.js：只返回来自可信后端的片段；真实请求用 cindy.fetch，见 §4.7。
-const result = {
-  content: [{ type: 'text', text: '内容已更新' }],
-  structuredContent: { completed: 2, total: 3 },
-  _meta: { html: '<h4>今日概览</h4><p>还有一项待完成。</p>' }
-};
-// 页面：app 为已连接的 MCP Apps SDK 实例。
-const r = await app.callServerTool({ name: 'dynamic_content', arguments: { intent: 'overview' } });
-document.querySelector('#fragment').innerHTML = r._meta.html;
-document.querySelector('#data').textContent = JSON.stringify(r.structuredContent);
+// 外壳：render 会移除可执行标签、on* 属性和 javascript: 链接，见完整示例。
+if (message.method === 'ui/notifications/tool-result') render(message.params);
+// 后端 HTML 用 data-intent 声明操作，外壳委托给同一 app-only 工具。
+const result = await request('tools/call', {
+  name: 'load_view', arguments: { intent: action.dataset.intent, fields }
+});
+render(result); // 读取 result._meta.view.html，替换当前内容。
 ```
 
-`innerHTML` 插入的 `<script>` 不执行，但这不等于片段安全：页面 CSP 允许内联脚本，
-模板主动创建并插入的脚本、片段里的内联事件仍可执行。后端 HTML 应当作插件自身代码，
-只渲染可信来源；不可信数据一律用 `textContent`，不要拼进 HTML。
+**也可以：包内模板负责排版。** 工具返回内容，模板按数据切换视图；适合界面固定、需要离线，
+或者希望市场审核看到完整界面的场景。下方能力全集的「动态内容」卡片就是这种写法：
+页面片段放根 `_meta`，业务数据放 `structuredContent`，不可信文字用 `textContent`。
 
-鉴权图片也由 main.js 代取：`cindy.fetch({ url, as: 'media', callId: msg.callId })`，
-凭证照常注入。检查 `ok`、HTTP 状态和 `media` 后，用 `media.url` 返回标准
-`resource_link`（`uri: r.media.url`，`mimeType` 填实际图片类型）；页面取该资源的
-`_meta['cindy/file'].url` 赋给 `img.src`。这沿用上节的本卡只读文件授权链，无需把图片转成 data URI。
+**边界：**
+
+- 页面不带凭证。页面 `fetch` / `<img>` 的 origin 要分别列在 CSP 的 `connectDomains` /
+  `resourceDomains`，域名也须在 `network.hosts` 内；宿主不会为页面请求注入凭证。
+  需要身份的请求走「页面 `tools/call` → app-only 工具 → main.js `cindy.fetch`」，
+  域名与凭证声明按 [§4.7](plugin-network.md)，不要把令牌放进 HTML。
+- 后端 HTML 当作插件自身代码，只接收可信来源，后端必须转义所有数据。示例外壳保留
+  `<style>` 和内联 SVG，移除 `script / iframe / object / embed / base / meta / link`、
+  `on*` 属性与 `javascript:` 链接，不执行后端脚本。这不是任意 HTML 的安全隔离器；
+  CSS 和链接也会影响页面。`innerHTML` 插入的脚本默认不执行，但内联事件或主动创建的
+  脚本可能执行，不能只靠这个特性处理不可信内容。
+- 使用通用外壳时，市场审核只能看到外壳，不能据此审核运行时后端生成的全部界面。
+- **表单怎么提交：** 外壳接管提交按钮 click、文本框 Enter，并保留 submit 监听；
+  验证并收集字段 → `tools/call` 调用 app-only 工具 → main.js 用 `cindy.fetch` 发到
+  声明过的域名，凭证由宿主注入。这是表单提交的正规方式。原生提交受 sandbox
+  （无 `allow-forms`）和 CSP `form-action 'none'` 双重拦截，任何地址都提交不出去。
+  页面自己 `fetch` 只能访问 `connectDomains` 内的地址，永远不带宿主凭证。
+  从 basic-host 等允许原生表单的宿主移植时，必须改用上述桥接方式。
+- 鉴权图片由 main.js 用 `cindy.fetch({ url, as: 'media', callId: msg.callId })` 取回，
+  凭证照常注入。检查 `ok`、HTTP 状态及 `media` 后返回标准 `resource_link`
+  （`uri: r.media.url`，`mimeType` 用实际类型）；页面以资源 `_meta['cindy/file'].url`
+  设置 `img.src`，沿用本卡只读授权链，不绕道 data URI。
 
 ### 安装、升级和多端
 
