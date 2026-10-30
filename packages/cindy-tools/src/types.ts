@@ -354,7 +354,7 @@ export type CindyMediaCapability =
 export type CindyMediaToolRequest =
   | { action: 'list_models'; capability?: CindyMediaCapability }
   | { action: 'resolve_local_path'; url: string }
-  | { action: 'inspect'; url: string; timesSeconds?: number[] }
+  | { action: 'inspect'; url: string }
   | { action: 'import_image'; path: string }
   | {
       action: 'prepare';

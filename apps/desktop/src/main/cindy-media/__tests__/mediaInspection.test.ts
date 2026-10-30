@@ -14,15 +14,13 @@ import * as compressor from '../../mcp-integrations/inlineImageCompressor';
 
 // Production inspectMedia + real ledger queries/files. Existing generation tests
 // never decoded the returned URL. Unit tier: scope revocation must drop pixels;
-// a failed preview must retain the paid result. Video decoding is separately smoke-tested.
+// a failed preview must retain the paid result. Videos delegate to the existing path tool.
 const state = vi.hoisted(() => ({ root: '', owner: 'owner', valid: true, pending: false }));
-const extract = vi.hoisted(() => vi.fn());
 vi.mock('electron', () => ({ app: { getPath: () => state.root } }));
 vi.mock('../../appSessionState', () => ({
   activeOwnerScopeKey: () => state.owner,
   isAppSessionBoundaryPending: () => state.pending,
 }));
-vi.mock('../videoInspection', () => ({ extractVideoFrames: extract }));
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEElEQVQImWNgYGD4D8UQBgAd9AP9JAD7OgAAAABJRU5ErkJggg==',
   'base64',
@@ -44,13 +42,6 @@ beforeEach(async () => {
   state.owner = 'owner';
   state.valid = true;
   state.pending = false;
-  extract.mockReset().mockImplementation(async (_bytes, _mime, times: number[]) =>
-    times.map((time) => ({
-      data: PNG.toString('base64'),
-      mimeType: 'image/png',
-      time_seconds: time,
-    })),
-  );
   db = new Database(':memory:');
   db.exec(
     "CREATE TABLE sessions(id TEXT, status TEXT, cleared_at INTEGER); INSERT INTO sessions VALUES('s', 'active', NULL); CREATE TABLE media_refs(hash TEXT, ref_kind TEXT, ref_id TEXT);",
@@ -134,52 +125,42 @@ describe('current-task media inspection', () => {
     expect(result.ok).toBe(false);
     expect(JSON.stringify(result)).not.toContain(state.root);
   });
-  it('returns requested video frames with their times and no audio claim', async () => {
+  it('directs video inspection to path resolution without reading the video', async () => {
     const url = await media(MP4, 'mp4');
-    const result = await inspectMedia({ url, timesSeconds: [0, 2, 4] }, context);
+    const open = vi.spyOn(fs, 'open');
+    const result = await inspectMedia({ url }, context);
     expect(result).toMatchObject({
-      ok: true,
-      audio_included: false,
-      previews: [
-        { url, image_index: 0, time_seconds: 0 },
-        { url, image_index: 1, time_seconds: 2 },
-        { url, image_index: 2, time_seconds: 4 },
-      ],
+      ok: false,
+      errorCode: 'MEDIA_TYPE_UNSUPPORTED',
+      message: expect.stringContaining('resolve_local_path'),
     });
-    expect(extract).toHaveBeenCalledWith(MP4, 'video/mp4', [0, 2, 4]);
+    expect(open).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty('modelImages');
   });
   it.each(['owner', 'permission', 'clear', 'delete', 'ref', 'pending', 'db'] as const)(
-    'drops video frames after %s changes during decoding',
+    'drops image pixels after %s changes during compression',
     async (change) => {
-      const url = await media(MP4, 'mp4');
-      extract.mockImplementation(async () => {
-        if (change === 'owner') state.owner = 'next';
-        if (change === 'permission') state.valid = false;
-        if (change === 'clear') db.exec('UPDATE sessions SET cleared_at = 1');
-        if (change === 'delete') db.exec("UPDATE sessions SET status = 'deleted'");
-        if (change === 'ref') db.exec('DELETE FROM media_refs');
-        if (change === 'pending') state.pending = true;
-        if (change === 'db') clearCurrentDbClient();
-        return [{ data: PNG.toString('base64'), mimeType: 'image/png', time_seconds: 0 }];
-      });
+      const url = await media(Buffer.concat([PNG, Buffer.alloc(200_000)]));
+      const compress = compressor.compressInlineImage;
+      const compressSpy = vi
+        .spyOn(compressor, 'compressInlineImage')
+        .mockImplementation(async (...args) => {
+          const result = await compress(...args);
+          if (change === 'owner') state.owner = 'next';
+          if (change === 'permission') state.valid = false;
+          if (change === 'clear') db.exec('UPDATE sessions SET cleared_at = 1');
+          if (change === 'delete') db.exec("UPDATE sessions SET status = 'deleted'");
+          if (change === 'ref') db.exec('DELETE FROM media_refs');
+          if (change === 'pending') state.pending = true;
+          if (change === 'db') clearCurrentDbClient();
+          return result;
+        });
       const result = await inspectMedia({ url }, context);
+      expect(compressSpy).toHaveBeenCalled();
       expect(result.ok).toBe(false);
       expect(result).not.toHaveProperty('modelImages');
     },
   );
-  it('rejects invalid frame requests and reports decoder failure without diagnostics', async () => {
-    const url = await media(MP4, 'mp4');
-    for (const timesSeconds of [[], [-1], [NaN], [Infinity], [0, 1, 2, 3, 4]]) {
-      expect(await inspectMedia({ url, timesSeconds }, context)).toMatchObject({
-        errorCode: 'INVALID_INPUT',
-      });
-    }
-    expect(extract).not.toHaveBeenCalled();
-    extract.mockRejectedValue(new Error('/private/user/secret.mp4'));
-    const result = await inspectMedia({ url }, context);
-    expect(result).toMatchObject({ errorCode: 'VIDEO_PREVIEW_FAILED' });
-    expect(JSON.stringify(result)).not.toContain('/private');
-  });
   it('keeps generation success and all URLs when previews fail or exceed the batch budget', async () => {
     const good = await media();
     const bad = await media(Buffer.from('not an image'));

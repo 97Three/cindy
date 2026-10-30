@@ -13,20 +13,16 @@ import {
   GHOST_MODEL_IMAGE_BUDGET_BYTES,
 } from '../cindy-brain/ghostModelImages';
 import { compressInlineImage } from '../mcp-integrations/inlineImageCompressor';
-import { extractVideoFrames } from './videoInspection';
 
 const MAX_IMAGE_BYTES = 48 * 1024 * 1024;
-const MAX_VIDEO_BYTES = 64 * 1024 * 1024;
 type InspectionContext = { sessionId: string; isCurrent: () => boolean };
-type Preview = { url: string; image_index: number; time_seconds?: number };
+type Preview = { url: string; image_index: number };
 type ModelImage = { data: string; mimeType: string };
 type InspectionResult =
   | {
       ok: true;
       previews: Preview[];
       modelImages: ModelImage[];
-      audio_included?: false;
-      message?: string;
     }
   | { ok: false; errorCode: string; message: string };
 
@@ -45,7 +41,7 @@ async function readSessionMedia(db: LedgerDb, sessionId: string, hashes: string[
     );
 }
 
-/** Stable failures deliberately contain no host paths or decoder diagnostics. */
+/** Stable failures deliberately contain no host paths or image decoder diagnostics. */
 class InspectionError extends Error {
   constructor(
     readonly code: string,
@@ -87,26 +83,16 @@ async function readMedia(url: string, limit: number, hash: string): Promise<Buff
   }
 }
 
-/** Current-task inspection; never exports a path, creates a copy or generates media. */
+/** Current-task image inspection; never exports a path, creates a copy or generates media. */
 export async function inspectMedia(
-  request: { url: string; timesSeconds?: number[] },
+  request: { url: string },
   context: InspectionContext,
   budget = GHOST_MODEL_IMAGE_BUDGET_BYTES,
 ): Promise<InspectionResult> {
   try {
     const parsed = parseBlobUrl(request.url);
-    if (
-      !parsed ||
-      (request.timesSeconds !== undefined &&
-        (!Array.isArray(request.timesSeconds) ||
-          request.timesSeconds.length < 1 ||
-          request.timesSeconds.length > 4 ||
-          request.timesSeconds.some((time) => !Number.isFinite(time) || time < 0)))
-    )
-      throw new InspectionError(
-        'INVALID_INPUT',
-        '请使用当前任务的 cindy-media:// 地址；视频时间须为 1–4 个非负有限秒数。',
-      );
+    if (!parsed)
+      throw new InspectionError('INVALID_INPUT', '请使用当前任务的 cindy-media:// 图片地址。');
     const snapshot = getCurrentDbClientSnapshot();
     const owner = activeOwnerScopeKey();
     if (!snapshot) throw new InspectionError('PERMISSION_DENIED', '当前任务归属不可用。');
@@ -142,64 +128,32 @@ export async function inspectMedia(
     };
     await assertAuthorized();
     const declaredMime = resolveSafe(request.url).mimeType;
-    const video = declaredMime.startsWith('video/');
-    if (!video && (!declaredMime.startsWith('image/') || request.timesSeconds !== undefined)) {
+    if (!declaredMime.startsWith('image/')) {
       throw new InspectionError(
         'MEDIA_TYPE_UNSUPPORTED',
-        'inspect 只支持图片和视频；图片不能指定抽帧时间。',
+        'inspect 只返回图片预览。视频请用 resolve_local_path 获取本机路径，再自行选择查看或分析方式。',
       );
     }
-    const buffer = await readMedia(
-      request.url,
-      video ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES,
-      parsed.hash,
-    );
+    const buffer = await readMedia(request.url, MAX_IMAGE_BYTES, parsed.hash);
     await assertAuthorized();
     const mime = sniffMediaMime(buffer, declaredMime);
-    if (!mime?.startsWith(video ? 'video/' : 'image/'))
-      throw new InspectionError('MEDIA_TYPE_UNSUPPORTED', '媒体内容不是受支持的图片或视频。');
-    let frames: Array<{ data: string; mimeType: string; time_seconds?: number }>;
-    if (video) {
-      try {
-        frames = await extractVideoFrames(buffer, mime, request.timesSeconds ?? [0]);
-      } catch {
-        throw new InspectionError(
-          'VIDEO_PREVIEW_FAILED',
-          '视频无法解码、抽帧超时或时间超出片长；请检查格式和抽帧时间。未检查声音。',
-        );
-      }
-    } else frames = [{ data: buffer.toString('base64'), mimeType: mime }];
-    const modelImages: Array<{ data: string; mimeType: string }> = [];
-    const previews: Preview[] = [];
-    for (const frame of frames) {
-      const fitted = await fitGhostModelImages(
-        [frame],
-        compressInlineImage,
-        Math.floor(budget / frames.length),
+    if (!mime?.startsWith('image/'))
+      throw new InspectionError('MEDIA_TYPE_UNSUPPORTED', '媒体内容不是受支持的图片。');
+    const fitted = await fitGhostModelImages(
+      [{ data: buffer.toString('base64'), mimeType: mime }],
+      compressInlineImage,
+      budget,
+    );
+    if (!fitted.images.length)
+      throw new InspectionError(
+        'MEDIA_PREVIEW_UNAVAILABLE',
+        '图片无法解码或压缩到预览大小；原始成果不受影响。',
       );
-      if (!fitted.images.length)
-        throw new InspectionError(
-          'MEDIA_PREVIEW_UNAVAILABLE',
-          '图片无法解码或压缩到预览大小；原始成果不受影响。',
-        );
-      previews.push({
-        url: request.url,
-        image_index: modelImages.length,
-        ...(frame.time_seconds !== undefined ? { time_seconds: frame.time_seconds } : {}),
-      });
-      modelImages.push(...fitted.images);
-    }
     await assertAuthorized();
     return {
       ok: true,
-      previews,
-      modelImages,
-      ...(video
-        ? {
-            audio_included: false,
-            message: '仅返回指定时间附近的画面，未检查声音、对白或音画同步。',
-          }
-        : {}),
+      previews: [{ url: request.url, image_index: 0 }],
+      modelImages: fitted.images,
     };
   } catch (error) {
     const known = error instanceof InspectionError;

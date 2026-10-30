@@ -1205,17 +1205,15 @@ describe("cindy · media MCP 边界", () => {
     expect(parsePayload(result)).toEqual({ ok: true, xdt_image_urls: [url], previews: [{ url, image_index: 0 }] });
     expect(result.content[1]).toEqual({ type: 'image', data: 'AAAA', mimeType: 'image/png' });
   });
-  it("routes inspection times without generation and excludes pixels from failed results", async () => {
+  it("routes image inspection without generation and excludes pixels from failed results", async () => {
     const callMedia = vi.fn(async () => ({ ok: false, errorCode: 'MEDIA_NOT_IN_TASK', modelImages: [{ data: 'AAAA', mimeType: 'image/png' }] }));
-    const result = await handleMedia(fakeDeps({ callMedia }), { action: 'inspect', url: 'cindy-media://blobs/video.mp4', times_seconds: [0, 2] });
-    expect(callMedia).toHaveBeenCalledWith({ action: 'inspect', url: 'cindy-media://blobs/video.mp4', timesSeconds: [0, 2] });
+    const result = await handleMedia(fakeDeps({ callMedia }), { action: 'inspect', url: 'cindy-media://blobs/image.png' });
+    expect(callMedia).toHaveBeenCalledWith({ action: 'inspect', url: 'cindy-media://blobs/image.png' });
     expect(result.isError).toBe(true);
     expect(result.content).toHaveLength(1);
     expect(parsePayload(result)).toEqual({ ok: false, errorCode: 'MEDIA_NOT_IN_TASK' });
     callMedia.mockClear();
-    for (const times_seconds of [[], [-1], [Infinity], [0, 1, 2, 3, 4]]) {
-      expect(parsePayload(await handleMedia(fakeDeps({ callMedia }), { action: 'inspect', url: 'cindy-media://blobs/video.mp4', times_seconds }))).toMatchObject({ errorCode: 'INVALID_INPUT' });
-    }
+    expect(parsePayload(await handleMedia(fakeDeps({ callMedia }), { action: 'inspect' }))).toMatchObject({ errorCode: 'INVALID_INPUT' });
     expect(callMedia).not.toHaveBeenCalled();
   });
   it("imports existing screenshots without requiring a model or plugin", async () => {
@@ -1244,16 +1242,17 @@ describe("cindy · media MCP 边界", () => {
     expect(parsePayload(result)).toMatchObject({ ok: true, status: "prepared" });
   });
 
-  it("把受管媒体地址交给 Host 按需解析本地路径", async () => {
-    const url = `cindy-media://blobs/${"a".repeat(64)}.png`;
-    const callMedia = vi.fn(async () => ({ ok: true, local_path: "/media/a.png" }));
+  it.each(['png', 'mp4', 'webm'])("把受管 %s 地址交给 Host 按需解析本地路径", async (ext) => {
+    const url = `cindy-media://blobs/${"a".repeat(64)}.${ext}`;
+    const localPath = `/media/a.${ext}`;
+    const callMedia = vi.fn(async () => ({ ok: true, local_path: localPath }));
     const result = await handleMedia(fakeDeps({ callMedia }), {
       action: "resolve_local_path",
       url,
     });
 
     expect(callMedia).toHaveBeenCalledWith({ action: "resolve_local_path", url });
-    expect(parsePayload(result)).toMatchObject({ ok: true, local_path: "/media/a.png" });
+    expect(parsePayload(result)).toMatchObject({ ok: true, local_path: localPath });
   });
 
   it("在进入 Host 前拒绝缺失字段和未知 capability", async () => {

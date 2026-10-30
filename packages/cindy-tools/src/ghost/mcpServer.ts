@@ -121,8 +121,9 @@ const D_MEDIA = [
   "插件已返回用户配置的 model_id/provider_id 时必须原样传给 prepare，再按目标 capability 走 prepare → request；provider_id 用于区分不同 Provider 下的同名模型。没有已配置模型时，先用 list_models 查询。Gateway 模型的 prepare 会由 Server 根据 model_id 返回 Guide，并在 Guide 不存在或不支持该 capability 时明确报错。",
   "异步任务的 request 返回 pending 时，再按 recommended_poll_after_ms 调 poll；同步任务会直接返回 xdt_image_urls / xdt_video_urls。",
   "Core 图片完成结果由当前 Agent 控制呈现：在最终回复中用返回的受管地址只嵌入展示一次，不要同时重复口播或再次附同一图片。",
-  "生成图片完成时会附带供模型检查的图片预览（批量最多两张），previews 按 image_index 对应后面的 image 内容；原图地址仍用于交付。检查当前任务已有成果可直接用 inspect + url，不需要另问用户或先取得本机路径。inspect 读取当前任务的 cindy-media:// 图片，或用 times_seconds 指定视频抽帧时间（秒，最多四个；省略取首帧）。预览仅供分析，不会自动发给用户。预览失败或省略不代表生成失败，不要因此重新付费生成；可按原地址再次 inspect。视频抽帧不含声音，不能据此声称已检查对白或音画同步。",
-  "展示、改图和附件交接都直接使用 cindy-media:// / xdt-image:// / xdt-video:// 受管地址，不需要本地路径。仅当用户明确询问文件存储位置或本地路径时，才调用 resolve_local_path 并原样传入 url；此调用会把该受管媒体的本机绝对路径返回给 Agent 并写入任务记录。Host 按当前权限处理：Ask 需点击确认，Auto 由当前审批负责人审核，本地 Full Access 自动允许。不要假定稍后还会有确认卡；不要猜路径或扫描磁盘。",
+  "生成图片完成时会附带供模型检查的图片预览（批量最多两张），previews 按 image_index 对应后面的 image 内容；原图地址仍用于交付。检查当前任务已有图片可直接用 inspect + url，不需要另问用户或先取得本机路径。inspect 只读取当前任务的 cindy-media:// 图片。预览仅供分析，不会自动发给用户。预览失败或省略不代表生成失败，不要因此重新付费生成；可按原地址再次 inspect。",
+  "为完成当前任务而查看、抽帧或分析已有媒体时，可主动调用 resolve_local_path 并原样传入 url，取得文件路径后自行选择工具或脚本；不要求用户先询问存储位置或另行口头同意查看。用户询问存储位置时也使用此动作。它把受管媒体的本机绝对路径返回给 Agent 并写入任务记录，Host 仍按当前权限处理：Ask 需点击确认，Auto 由当前审批负责人审核，本地 Full Access 自动允许。路径属于 Cindy Host 所在电脑，不应当作 SSH 工作区路径；不要猜路径或扫描磁盘。只看视频帧不能声称已检查声音、对白或音画同步。",
+  "展示、改图和附件交接仍直接使用 cindy-media:// / xdt-image:// / xdt-video:// 受管地址；本机路径供 Agent 工作使用，不替代给用户的可播放媒体地址。",
   "模型 id、endpoint、Authorization 和 wire model 均由 Host 管理，不要写进 body，不要猜测或覆盖。",
   "Guide 缺失、能力不匹配或当前客户端不支持协议时，结果会带稳定 errorCode、retryable、outcomeKnown 和 allowedActions；可按 allowedActions 换模型、改用其它已授权工具或仍存在的旧链路，不要把 INTERNAL 当成协议能力结论。",
   "prepare 返回的 invocation_id 是一次性付费提交令牌；request 超时或返回 SUBMISSION_OUTCOME_UNKNOWN 时不要自动重提，以免重复扣费。",
@@ -586,7 +587,6 @@ export async function handleMedia(
     path?: string;
     capability?: CindyMediaCapability;
     url?: string;
-    times_seconds?: number[];
     provider_id?: string;
     model_id?: string;
     invocation_id?: string;
@@ -617,11 +617,8 @@ export async function handleMedia(
         ...(input.capability ? { capability: input.capability } : {}),
       });
     } else if (input.action === "inspect") {
-      if (!input.url || (input.times_seconds !== undefined && (
-        !Array.isArray(input.times_seconds) || input.times_seconds.length < 1 || input.times_seconds.length > 4 ||
-        input.times_seconds.some((time) => !Number.isFinite(time) || time < 0)
-      ))) return textResult({ ok: false, errorCode: "INVALID_INPUT", message: "inspect 需要 url；times_seconds 须为 1–4 个非负有限秒数。" }, true);
-      result = await deps.callMedia({ action: "inspect", url: input.url, ...(input.times_seconds ? { timesSeconds: input.times_seconds } : {}) });
+      if (!input.url) return textResult({ ok: false, errorCode: "INVALID_INPUT", message: "inspect 需要当前任务的图片 url。" }, true);
+      result = await deps.callMedia({ action: "inspect", url: input.url });
     } else if (input.action === "import_image") {
       if (!input.path?.trim()) return textResult({ ok: false, errorCode: "INVALID_INPUT", message: "import_image 必须提供 path。" }, true);
       result = await deps.callMedia({ action: "import_image", path: input.path });
@@ -1426,9 +1423,7 @@ export function createCindyGhostsMcpServer(
         .string()
         .max(4096)
         .optional()
-        .describe("inspect 时传当前任务的 cindy-media:// 地址，直接返回图片或视频帧供模型检查。resolve_local_path 时传 cindy-media://、xdt-image:// 或 xdt-video://；仅用户明确询问存储位置时使用，会返回本机路径并按当前权限审核。"),
-      times_seconds: z.array(z.number().finite().nonnegative()).min(1).max(4).optional()
-        .describe("inspect 视频时可选的抽帧时间（秒）；省略取首帧。图片不传。只检查这些画面，不含声音。"),
+        .describe("inspect 时传当前任务的 cindy-media:// 图片地址，返回图片供模型检查。resolve_local_path 时传 cindy-media://、xdt-image:// 或 xdt-video://；查看、抽帧、分析媒体或查询存储位置时使用，按当前权限返回 Host 本机路径，具体查看方式由 Agent 决定。"),
       invocation_id: z
         .string()
         .max(128)
