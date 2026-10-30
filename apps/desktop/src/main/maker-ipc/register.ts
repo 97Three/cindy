@@ -11475,8 +11475,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     closeSession: (sessionId) => maker.closeSession(sessionId, 'agent-switch'),
     listMessagesForHandoff: (sessionId, after) =>
       listMessagesForAgentHandoff(sessionId, 400, after),
-    findParkedEngineSession: (sessionId, targetDbKind) =>
-      findParkedEngineSession(sessionId, targetDbKind),
+    findParkedEngineSession: (sessionId, targetDbKind, fromAgentDeviceId) =>
+      findParkedEngineSession(sessionId, targetDbKind, fromAgentDeviceId),
     applyAgentSwitchToDb: async (sessionId, patch) => {
       // 把 Agent 挪到另一台电脑时那台的目录才算数，不拿本机目录的窗口写进去。
       const movingToOtherDevice = typeof patch.agentDeviceId === 'string';

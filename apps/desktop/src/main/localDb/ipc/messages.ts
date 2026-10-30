@@ -57,6 +57,7 @@ import {
   isSyntheticTriggerText,
   mergeDismissedIntoErrorContent,
 } from '../../../shared/interruptedTurn.js';
+import { isProviderShareAgentDeviceId } from '../../../shared/providerShare.js';
 import { resolveStaleCodexSubscriptionValueEstimate } from '../../../shared/codexSubscriptionValue.js';
 import { normalizeTurnUsageDetails } from '../../../shared/turnUsageDetails.js';
 import {
@@ -2916,12 +2917,17 @@ export interface ParkedEngineSession {
  * 已被后来的全新会话取代,续接它会让引擎拿到与消息流矛盾的记忆。
  * 消息删除写入的 context_rebuild 行会使它之前的全部停泊绑定失效；否则
  * 用户稍后切回旧引擎时仍会 resume 含被删消息的 transcript，绕过本次上下文重建。
+ * 传 fromAgentDeviceId 时只认在该设备离场的边界:另一台电脑上的原生线程在本机
+ * 不存在,误续接会合成一份来源身份错误的恢复历史。缺省不按设备过滤。普通设备 ID
+ * 以边界与当前设备相等为准(A→B→A 可继续原生接续);share: 绑定与旧版缺字段边界
+ * 在后续换电脑后失效,因为逻辑 ID 无法证明原生线程仍在当前物理机。
  * content 是 JSON,无法在 SQL 里按字段过滤,取有界条数(边界行数量 = 切换次数,
  * 天然很小)在 JS 里扫。
  */
 export async function findParkedEngineSession(
   sessionId: string,
   targetDbKind: 'cc' | 'codex' | 'pi',
+  fromAgentDeviceId?: string | null,
 ): Promise<ParkedEngineSession | null> {
   const db = getDbClient().drizzle;
   const [sessRow] = await db
@@ -2954,14 +2960,50 @@ export async function findParkedEngineSession(
     )
     .orderBy(desc(messages.createdAt), desc(messageRowid))
     .limit(50);
+  // Older boundaries did not record their departure device. Keep resuming them
+  // only while the task has stayed on one computer; a later relocation makes the
+  // missing evidence unsafe to interpret locally.
+  let deviceMovedAfterBoundary = false;
   for (const row of rows) {
-    let parsed: { fromAgentKind?: unknown; fromSdkSessionId?: unknown };
+    let parsed: {
+      fromAgentKind?: unknown;
+      fromSdkSessionId?: unknown;
+      fromAgentDeviceId?: unknown;
+      toAgentDeviceId?: unknown;
+    };
     try {
       parsed = JSON.parse(row.content) as typeof parsed;
     } catch {
       continue;
     }
-    if (parsed.fromAgentKind !== targetDbKind) continue;
+    if (parsed.fromAgentKind !== targetDbKind) {
+      // toAgentDeviceId exists only on relocation boundaries. Forced provider
+      // relocations can keep the same logical share/group id while moving to a
+      // different physical computer, so presence (not id inequality) is the
+      // safe signal that an older native binding may have changed owners.
+      if (parsed.toAgentDeviceId !== undefined) deviceMovedAfterBoundary = true;
+      continue;
+    }
+    // A cross-device switch leaves the native thread on the computer it ran on.
+    // This is still the engine's most recent departure, so do not fall back to
+    // an older local thread: resuming it would skip the remote interval's native
+    // memory and synthesize a lossy history with the wrong client identity.
+    if (fromAgentDeviceId !== undefined) {
+      const boundaryDeviceId = parsed.fromAgentDeviceId === null
+        ? null
+        : typeof parsed.fromAgentDeviceId === 'string'
+          ? parsed.fromAgentDeviceId
+          : undefined;
+      // A share binding can hide a physical move behind the same logical id.
+      // Legacy boundaries have no device evidence at all, so a later relocation
+      // also makes them unsafe. Ordinary device ids can be trusted when they
+      // match the current device, including an A -> B -> A return.
+      if (deviceMovedAfterBoundary
+        && (boundaryDeviceId === undefined || isProviderShareAgentDeviceId(boundaryDeviceId))) {
+        return null;
+      }
+      if (boundaryDeviceId !== undefined && boundaryDeviceId !== fromAgentDeviceId) return null;
+    }
     if (
       contextRebuild &&
       (contextRebuild.createdAt > row.createdAt ||
