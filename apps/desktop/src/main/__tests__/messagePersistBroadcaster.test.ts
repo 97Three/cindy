@@ -238,6 +238,56 @@ it('keeps slow Codex reconciliation outside the write queue and batches pending 
   expect(vi.mocked(importExternalCodexMessagesForSession).mock.calls[1]).toEqual([sid, { localWrite: [expect.any(String), expect.any(String)] }]);
 });
 const broadcastGuard = () => expect.objectContaining({ shouldBroadcast: expect.any(Function) });
+// #8025, unit: partial text persisted at a tool/interaction/idle boundary did
+// not trigger reconciliation after final calibration. Reconcile only after the
+// authoritative update commits; cleared/foreign/missing rows cannot enqueue it.
+it.each(['item', 'interaction', 'sealed', 'clear', 'owner', 'missing'] as const)(
+  'reconciles a calibrated Codex reply after its update commits (%s)', async (boundary) => {
+    const sid = 'codex-calibrated';
+    clearSessionPersistState(sid);
+    noteSessionClearBoundary(sid, null);
+    noteSessionAgentKind(sid, 'codex');
+    const agentMessageId = boundary === 'interaction' || boundary === 'sealed' ? undefined : 'native-item';
+    const meta = boundary === 'sealed' ? { uuid: 'sealed-calibration' } : null;
+    const persistId = onAssistantTextEvent(sid, { text: 'Partial', agentMessageId }, meta)!;
+    if (boundary === 'sealed') sealAssistantBlockForLateFinal(sid, null);
+    else {
+      flushAssistantBlock(sid);
+      if (boundary === 'interaction') onInteractionMessage(sid, {
+        kind: 'ask_user_question', requestId: 'calibration', questions: [{ question: 'Continue?' }],
+      });
+      else onToolUseEvent(sid, { toolUseId: 'calibration', toolName: 'exec', input: {} }, null);
+    }
+    await drainPersistQueue();
+    await flushWrites();
+    vi.mocked(importExternalCodexMessagesForSession).mockClear();
+    let release!: () => void;
+    let savedText = 'Partial';
+    vi.mocked(updateMessageContent).mockImplementationOnce(async (_sid, _id, text, _scope, options) => {
+      await new Promise<void>(resolve => { release = resolve; });
+      if (boundary === 'missing' || options?.isCurrent && !options.isCurrent()) return null;
+      savedText = text as string;
+      return { clientId: persistId, createdAt: new Date().toISOString(), agentKind: 'codex' } as never;
+    });
+    vi.mocked(importExternalCodexMessagesForSession).mockImplementationOnce(async () => {
+      expect(savedText).toBe('Complete answer');
+    });
+    expect(onAssistantTextEvent(sid, {
+      text: 'Complete answer', isFinal: true, isFullText: true, agentMessageId,
+    }, meta)).toBe(persistId);
+    await Promise.resolve();
+    expect(importExternalCodexMessagesForSession).not.toHaveBeenCalled();
+    if (boundary === 'clear') noteSessionClearBoundary(sid, Date.now() + 1000);
+    if (boundary === 'owner') ownerScopeState.current = false;
+    release();
+    await drainPersistQueue();
+    await flushWrites();
+    if (['clear', 'owner', 'missing'].includes(boundary)) expect(importExternalCodexMessagesForSession).not.toHaveBeenCalled();
+    else expect(importExternalCodexMessagesForSession).toHaveBeenCalledExactlyOnceWith(sid, { localWrite: [persistId] });
+    vi.mocked(importExternalCodexMessagesForSession).mockReset();
+    noteSessionClearBoundary(sid, null);
+  },
+);
 const terminalSubagentObservation = (taskId: string, parentToolUseId?: string) => ({
   subagentObservation: {
     kind: 'terminal',

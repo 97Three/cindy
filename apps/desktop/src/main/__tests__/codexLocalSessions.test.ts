@@ -1174,35 +1174,43 @@ describe('importExternalCodexMessagesForSession', () => {
 
     // Rollout can reach the importer before the live writer finishes. An
     // unchanged source file must not prevent the later reconciliation.
-    fs.appendFileSync(rolloutPath, line('late', 'Second answer' + citation, 603100, 'final_answer'));
+    fs.appendFileSync(rolloutPath, line('late-progress', 'Looking', 603000, 'commentary')
+      + line('late', 'Second answer' + citation, 603100, 'final_answer'));
     await importExternalCodexMessagesForSession(sid);
     // #8005: the old copy may already be displayed by remote clients. A DB-only
     // assertion misses the deletion push needed by their additive history merge.
     const importedCopy = db.prepare('SELECT client_id FROM messages WHERE session_id = ? AND content = ?').get(sid, JSON.stringify('Second answer' + citation)) as { client_id: string };
+    const progressCopy = db.prepare('SELECT client_id FROM messages WHERE session_id = ? AND content = ?').get(sid, JSON.stringify('Looking')) as { client_id: string };
     deletionMock.broadcast.mockClear();
     deletionMock.row.mockClear();
     live('late', 'Second answer', 3000, 'final_answer');
+    live('late-progress', 'Looking', 3020, 'commentary');
     db.prepare('UPDATE messages SET agent_meta = ? WHERE id = ?').run(
       JSON.stringify({ agentMessageId: 'late-assistant', assistantPhase: 'final_answer', totalCostUsd: 1 }), 'late');
     // Reconciliation must work from durable imported rows even if the native
     // writer has rotated/removed its rollout; no full file read per live reply.
     fs.renameSync(rolloutPath, rolloutPath + '.retained');
     const stat = vi.spyOn(fs.promises, 'stat');
-    await importExternalCodexMessagesForSession(sid, { localWrite: ['late'] });
+    await importExternalCodexMessagesForSession(sid, { localWrite: ['late', 'late-progress'] });
     expect(stat).not.toHaveBeenCalled();
     stat.mockRestore();
     fs.renameSync(rolloutPath + '.retained', rolloutPath);
     await importExternalCodexMessagesForSession(sid);
-    expect(deletionMock.broadcast).toHaveBeenCalledExactlyOnceWith({
-      sessionId: sid, clientId: importedCopy.client_id, clientIds: [importedCopy.client_id],
-    }, deletionMock.scope);
+    // #8025: old viewers only consume clientId. Each hidden copy must appear
+    // in its own deletion event, including a batched commentary + final pair.
+    expect(deletionMock.broadcast).toHaveBeenCalledTimes(2);
+    for (const copy of [progressCopy, importedCopy]) {
+      expect(deletionMock.broadcast).toHaveBeenCalledWith({
+        sessionId: sid, clientId: copy.client_id, clientIds: [copy.client_id],
+      }, deletionMock.scope);
+    }
     expect(deletionMock.row).toHaveBeenCalledExactlyOnceWith(sid, expect.objectContaining({
       clientId: 'late', content: 'Second answer' + citation,
       agentMeta: expect.objectContaining({ totalCostUsd: 1, assistantPhase: 'final_answer' }),
     }), deletionMock.scope);
-    expect(visible()).toHaveLength(5);
+    expect(visible()).toHaveLength(6);
     expect(JSON.parse(visible()[4]!.content)).toBe('Second answer' + citation);
-    expect(db.prepare('SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND rewind_at IS NOT NULL').get(sid)).toEqual({ n: 1 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND rewind_at IS NOT NULL').get(sid)).toEqual({ n: 2 });
     expect(fs.readFileSync(rolloutPath, 'utf8')).toContain('Offline answer' + citation.replace(/\n/g, '\\n'));
   });
 

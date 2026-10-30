@@ -801,6 +801,14 @@ function requestCodexReconciliation(sessionId: string, clientId: string, created
   });
 }
 
+function reconcileCalibratedCodexReply(
+  sessionId: string, updated: NonNullable<Awaited<ReturnType<typeof updateDbMessageContent>>>, ownerScope: OwnerScope,
+): void {
+  if (updated.agentKind === 'codex' && sessionId.startsWith('codex-') && isOwnerScopeCurrent(ownerScope)) {
+    requestCodexReconciliation(sessionId, updated.clientId, Date.parse(updated.createdAt), ownerScope);
+  }
+}
+
 /** 在事件入队时冻结 agent_kind，避免 writeChain 延迟执行时读到切换后的可变 Map。 */
 function enqueueVisibleDbMessage(
   label: string,
@@ -2300,7 +2308,10 @@ function assembleAssistantTextEvent(
         isCurrent: () => isCurrentBoundary() && isOwnerScopeCurrent(ownerScope),
       });
       if (!isCurrentBoundary() || !isOwnerScopeCurrent(ownerScope)) return;
-      if (updated) broadcastMessageRow(sessionId, updated, ownerScope);
+      if (updated) {
+        broadcastMessageRow(sessionId, updated, ownerScope);
+        reconcileCalibratedCodexReply(sessionId, updated, ownerScope);
+      }
       if (agentMeta) {
         const patched = await patchMessageAgentMetaWithResult(sessionId, linkedPersistId, { ...agentMeta });
         if (patched && isCurrentBoundary()) {
@@ -2354,6 +2365,7 @@ function assembleAssistantTextEvent(
             if (updated && isCurrentBoundary() && isOwnerScopeCurrent(ownerScope)) {
               lateFinalCandidate.text = visible;
               broadcastMessageRow(sessionId, updated, ownerScope);
+              reconcileCalibratedCodexReply(sessionId, updated, ownerScope);
             }
           },
         );
@@ -2427,10 +2439,11 @@ function assembleAssistantTextEvent(
               undefined,
               { isCurrent: () => isCurrentBoundary() && isOwnerScopeCurrent(ownerScope) },
             );
-            if (updated) {
+            if (updated && isCurrentBoundary() && isOwnerScopeCurrent(ownerScope)) {
               // 缓存已落库的全文:重复投递同一份快照时不再重复 UPDATE。
               boundaryFlushed.text = visible;
               broadcastMessageRow(sessionId, updated, ownerScope);
+              reconcileCalibratedCodexReply(sessionId, updated, ownerScope);
             }
           },
         );

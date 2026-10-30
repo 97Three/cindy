@@ -4039,8 +4039,11 @@ export async function importExternalCodexMessagesForSession(sessionId: string, o
     })),
   });
   if (hiddenClientIds?.length) {
-    // Publish only committed removals, with the owner captured before any await.
-    broadcastMessageDeleted({ sessionId, clientId: hiddenClientIds[0]!, clientIds: hiddenClientIds }, ownerScope);
+    // Older viewers only read clientId. Publish every committed removal using
+    // the existing singleton payload, with the owner captured before any await.
+    for (const clientId of hiddenClientIds) {
+      broadcastMessageDeleted({ sessionId, clientId, clientIds: [clientId] }, ownerScope);
+    }
   }
   if (updatedLocalIds?.length) {
     const updated = await db.drizzle.select().from(messages).where(and(
