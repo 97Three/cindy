@@ -41,6 +41,8 @@ async function createFakeCdp(options: {
   failFetchEnable?: boolean;
   failFetchEnableForSession?: string;
   failCloseTarget?: boolean;
+  closeTargetNotFound?: boolean;
+  listWorkerAfterStart?: string;
   rejectRepeatCloseTarget?: boolean;
   emitWorkerAutoAttach?: boolean;
   failBrowserClose?: boolean;
@@ -93,7 +95,14 @@ async function createFakeCdp(options: {
         socket.send(JSON.stringify({
           id: command.id,
           result: {
-            targetInfos: options.startupTargets ?? [{ targetId: 'page-1', type: 'page' }],
+            targetInfos: [
+              ...(options.startupTargets ?? [{ targetId: 'page-1', type: 'page' }])
+                .filter(({ targetId }) => !closedTargets.has(targetId)),
+              // Startup issues two getTargets calls; later ones are rechecks.
+              ...(options.listWorkerAfterStart && getTargetsCalls > 2
+                ? [{ targetId: options.listWorkerAfterStart, type: 'worker' }]
+                : []),
+            ],
           },
         }));
       } else if (command.method === 'Target.attachToTarget') {
@@ -119,6 +128,8 @@ async function createFakeCdp(options: {
           ? { id: command.id, error: { message: 'No target with given id' } }
           : { id: command.id, result: {} }));
         closedTargets.add(id);
+      } else if (command.method === 'Target.closeTarget' && options.closeTargetNotFound) {
+        socket.send(JSON.stringify({ id: command.id, error: { message: 'No target with given id' } }));
       } else if (command.method === 'Target.closeTarget' && options.failCloseTarget) {
         socket.send(JSON.stringify({ id: command.id, error: { message: 'close target failed' } }));
       } else if (command.method === 'Browser.close') {
@@ -612,7 +623,7 @@ describe('BrowserProxyAuthCoordinator', () => {
     await coordinator.dispose();
   });
 
-  it('closes a worker once when startup discovery and auto-attach both see it fail', async () => {
+  it('keeps the browser when startup discovery and auto-attach both close the same failing worker', async () => {
     const cdp = await createFakeCdp({
       startupTargets: [
         { targetId: 'page-1', type: 'page' },
@@ -630,8 +641,43 @@ describe('BrowserProxyAuthCoordinator', () => {
     }, { warn: vi.fn() });
 
     await expect(coordinator.start(cdp.cdpUrl)).resolves.toBeUndefined();
-    expect(cdp.commands.filter(({ method }) => method === 'Target.closeTarget')).toHaveLength(1);
     expect(cdp.commands).not.toContainEqual(expect.objectContaining({ method: 'Browser.close' }));
+    await coordinator.dispose();
+  });
+
+  it('treats a worker that already exited as closed and forgets it afterwards', async () => {
+    const cdp = await createFakeCdp({
+      failFetchEnableForSession: 'session-worker',
+      closeTargetNotFound: true,
+    });
+    const onFailure = vi.fn();
+    const coordinator = new BrowserProxyAuthCoordinator({
+      mode: 'proxied',
+      server: 'http://proxy.test:8080',
+      username: 'user',
+      password: 'password',
+    }, { warn: vi.fn() }, onFailure);
+    await coordinator.start(cdp.cdpUrl);
+    const attachWorker = () => cdp.sendEvent({
+      method: 'Target.attachedToTarget',
+      params: {
+        sessionId: 'session-worker',
+        targetInfo: { targetId: 'worker-9', type: 'worker' },
+      },
+    });
+
+    attachWorker();
+    await vi.waitFor(() => {
+      expect(cdp.commands.filter(({ method }) => method === 'Target.closeTarget')).toHaveLength(1);
+    });
+    // The settled close must be evicted, so a reused id is closed afresh
+    // rather than answered from an ever-growing cache.
+    attachWorker();
+    await vi.waitFor(() => {
+      expect(cdp.commands.filter(({ method }) => method === 'Target.closeTarget')).toHaveLength(2);
+    });
+    expect(cdp.commands).not.toContainEqual(expect.objectContaining({ method: 'Browser.close' }));
+    expect(onFailure).not.toHaveBeenCalled();
     await coordinator.dispose();
   });
 
@@ -639,6 +685,7 @@ describe('BrowserProxyAuthCoordinator', () => {
     const cdp = await createFakeCdp({
       failFetchEnableForSession: 'session-worker',
       failCloseTarget: true,
+      listWorkerAfterStart: 'worker-9',
     });
     const onFailure = vi.fn();
     const coordinator = new BrowserProxyAuthCoordinator({

@@ -592,18 +592,31 @@ export class BrowserProxyAuthCoordinator {
   }
 
   /**
-   * Closes a worker that could not be gated, at most once per target. The live
-   * attach event and the startup discovery loop can both observe the same
-   * failing setup; a second Target.closeTarget would hit "No target with given
-   * id" and wrongly escalate to whole-browser teardown. Both callers share the
-   * one close, so its outcome is the same for each.
+   * Closes a worker that could not be gated. Concurrent callers (the live
+   * attach event and the startup discovery loop can observe the same failing
+   * setup) share one in-flight close; the record is dropped once it settles so
+   * short-lived workers cannot grow the map without bound. A close that fails
+   * because the worker already exited ("No target with given id") is a success:
+   * after a failure we recheck Target.getTargets and only rethrow when the
+   * target is still alive, so whole-browser teardown stays reserved for a
+   * worker that really cannot be contained.
    */
   private closeWorkerTarget(targetId: string): Promise<void> {
-    let closing = this.workerClosures.get(targetId);
-    if (!closing) {
-      closing = this.command('Target.closeTarget', { targetId }).then(() => undefined);
-      this.workerClosures.set(targetId, closing);
-    }
+    const inFlight = this.workerClosures.get(targetId);
+    if (inFlight) return inFlight;
+    const closing = (async () => {
+      try {
+        await this.command('Target.closeTarget', { targetId });
+      } catch (error) {
+        const targets = await this.command('Target.getTargets') as {
+          targetInfos?: Array<{ targetId?: string }>;
+        };
+        if ((targets.targetInfos ?? []).some((info) => info.targetId === targetId)) throw error;
+      }
+    })().finally(() => {
+      if (this.workerClosures.get(targetId) === closing) this.workerClosures.delete(targetId);
+    });
+    this.workerClosures.set(targetId, closing);
     return closing;
   }
 
