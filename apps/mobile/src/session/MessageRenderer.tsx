@@ -3716,6 +3716,9 @@ function MessageBubble({
   ) : null;
   const costText = turnCost ? (
     <MessageUsageCost key="cost" label={turnCost} style={styles.messageActionMeta}
+      accessibilityLabel={item.message.turnMoney?.kind === 'value-estimate'
+        ? t('message.renderer.turnCostEstimate', { cost: turnCost })
+        : t('message.renderer.turnCost', { cost: turnCost })}
       deviceId={actions.remoteDeviceId} sessionId={item.message.source.sessionId}
       clientId={item.message.source.clientId} />
   ) : turnTokens ? (

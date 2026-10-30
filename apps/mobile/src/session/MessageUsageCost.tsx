@@ -21,12 +21,14 @@ import { UsageCostDetails } from "./UsageCostDetails";
 
 export function MessageUsageCost({
   label,
+  accessibilityLabel,
   deviceId,
   sessionId,
   clientId,
   style,
 }: {
   label: string;
+  accessibilityLabel: string;
   deviceId?: string;
   sessionId: string;
   clientId: string;
@@ -71,7 +73,7 @@ export function MessageUsageCost({
     <>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={label}
+        accessibilityLabel={accessibilityLabel}
         style={styles.trigger}
         onPress={() => {
           setRows(undefined);
