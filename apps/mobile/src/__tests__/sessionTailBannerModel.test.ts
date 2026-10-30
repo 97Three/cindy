@@ -138,6 +138,17 @@ describe('resolveSessionTailBanner — error-tail', () => {
     expect((encrypted as { text: string }).text).toContain('加密');
   });
 
+  it('does not relabel a concrete compact overflow as unreadable encrypted history', () => {
+    const state = resolveSessionTailBanner(baseInput({
+      messages: [errorRow('overflow', '2026-01-01T00:00:02.000Z', {
+        message: 'Error running remote compact task: maximum context length exceeded',
+        reason: 'context-overflow',
+      })],
+    }));
+    expect(state).toMatchObject({ kind: 'error-tail', text: i18n.t('session.tail.replyFailed'), retryable: true });
+    expect((state as { text: string }).text).not.toContain(i18n.t('session.tail.remoteCompactEncryptedContent'));
+  });
+
   // Compact-specific failures can be rebuilt by the host, unlike bare ciphertext errors.
   it.each([
     ['context-overflow', 'Error running remote compact task: invalid_encrypted_content'],

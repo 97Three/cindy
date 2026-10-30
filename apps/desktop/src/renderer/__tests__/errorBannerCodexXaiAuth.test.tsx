@@ -78,6 +78,16 @@ describe('ErrorBanner Codex xAI auth classification', () => {
 });
 
 describe('ErrorBanner context-overflow retry', () => {
+  // #7951: current translators retain concrete overflow details. The legacy
+  // no-details fallback must not replace that evidence with ciphertext advice.
+  it.each(['live', 'history'])('preserves a remote compact overflow in the %s view', (view) => {
+    const message = 'Error running remote compact task: maximum context length exceeded';
+    render(view === 'live'
+      ? createElement(ErrorBanner, { error: message, errorReason: 'context-overflow', onRetry: vi.fn() })
+      : createElement(ErrorMessageCard, { message, reason: 'context-overflow' }));
+    expect(screen.getByText('chat.errorBanner.contextOverflow')).toBeTruthy();
+    expect(screen.queryByText('chat.errorBanner.remoteCompactEncryptedContent')).toBeNull();
+  });
   it.each([
     'Error running remote compact task: invalid_encrypted_content',
     'Error running remote compact task',

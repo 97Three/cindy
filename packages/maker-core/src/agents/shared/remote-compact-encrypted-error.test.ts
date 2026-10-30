@@ -33,6 +33,10 @@ describe("isRemoteCompactEncryptedContentError", () => {
   // reason. Only that persisted evidence can recover a missing ciphertext code.
   it.each([
     ['context-overflow', 'Error running remote compact task', true],
+    ['context-overflow', 'Error running remote compact task: maximum context length exceeded', false],
+    ['context-overflow', 'Error running remote compact task: {"error":{"code":"context_length_exceeded"}}', false],
+    ['context-overflow', 'Error running remote compact task: timeout', false],
+    ['context-overflow', 'remote compact failed', false],
     [undefined, 'Error running remote compact task', false],
     ['upstream-overload', 'Error running remote compact task', false],
     ['context-overflow', 'invalid_encrypted_content', false],
