@@ -208,9 +208,34 @@ it.each(['current', 'owner-changed', 'cleared'] as const)('reconciles imported C
   if (boundary === 'cleared') noteSessionClearBoundary(sessionId, Date.now() + 1);
   release();
   await drainPersistQueue();
-  if (boundary === 'current') expect(importExternalCodexMessagesForSession).toHaveBeenCalledExactlyOnceWith(sessionId, { localWrite: true });
+  if (boundary === 'current') expect(importExternalCodexMessagesForSession).toHaveBeenCalledExactlyOnceWith(sessionId, { localWrite: [expect.any(String)] });
   else expect(importExternalCodexMessagesForSession).not.toHaveBeenCalled();
   noteSessionClearBoundary(sessionId, null);
+});
+
+// #8025 review: a slow import must not block another task's durable queue, and
+// replies arriving during that import should reconcile together after it.
+it('keeps slow Codex reconciliation outside the write queue and batches pending replies', async () => {
+  const sid = 'codex-batched-reconciliation';
+  clearSessionPersistState(sid);
+  noteSessionAgentKind(sid, 'codex');
+  let release!: () => void;
+  vi.mocked(importExternalCodexMessagesForSession).mockImplementationOnce(async () => {
+    await new Promise<void>(resolve => { release = resolve; });
+  });
+  onAssistantTextEvent(sid, { agentMessageId: 'first', text: 'First', isFinal: true }, null);
+  await drainPersistQueue();
+  expect(importExternalCodexMessagesForSession).toHaveBeenCalledTimes(1);
+  onAssistantTextEvent(sid, { agentMessageId: 'second', text: 'Second', isFinal: true }, null);
+  onAssistantTextEvent(sid, { agentMessageId: 'third', text: 'Third', isFinal: true }, null);
+  onAssistantTextEvent('unrelated-task', { text: 'Unaffected', isFinal: true }, null);
+  await drainPersistQueue();
+  expect(createMessage).toHaveBeenCalledWith('unrelated-task', expect.objectContaining({ content: 'Unaffected' }), expect.anything());
+  expect(importExternalCodexMessagesForSession).toHaveBeenCalledTimes(1);
+  release();
+  await flushWrites();
+  expect(importExternalCodexMessagesForSession).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(importExternalCodexMessagesForSession).mock.calls[1]).toEqual([sid, { localWrite: [expect.any(String), expect.any(String)] }]);
 });
 const broadcastGuard = () => expect.objectContaining({ shouldBroadcast: expect.any(Function) });
 const terminalSubagentObservation = (taskId: string, parentToolUseId?: string) => ({

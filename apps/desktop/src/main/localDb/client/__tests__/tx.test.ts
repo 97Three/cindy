@@ -617,6 +617,12 @@ describe('db worker tx handlers', () => {
         ],
       });
       await expect(client.query('SELECT id FROM messages WHERE session_id = ?', ['s2'])).resolves.toHaveLength(3);
+      // Background reconciliation supplies assistant candidates only. The
+      // persisted imported user turn must still prevent matching an old reply.
+      await expect(client.tx('codex.importMessages', {
+        sessionId: 's2', importClientIdPrefix: 'codex-import:', sdkSessionId: 'thread-2', model: 'gpt-5',
+        rows: [{ lineNo: 2, role: 'assistant', text: 'Same', content: 'Same', createdAt: 2100 }],
+      })).resolves.toEqual({ changed: 0 });
     }, { useInlineWorker });
   });
 
@@ -650,7 +656,8 @@ describe('db worker tx handlers', () => {
     await withClient(async (client) => {
       await seedSession(client, 's1');
       const insert = 'INSERT INTO messages (id, client_id, session_id, role, content, agent_meta, created_at, rewind_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
-      await client.exec(insert, ['native', 'native', 's1', 'assistant', JSON.stringify('Long reply'), JSON.stringify({ sdkSessionId: 'thread-1', agentMessageId: 'native-item' }), 1000, null]);
+      await client.exec(insert, ['native', 'native', 's1', 'assistant', JSON.stringify('Long reply'), JSON.stringify({ agentMessageId: 'native-item' }), 1000, null]);
+      await client.exec(insert, ['other-thread', 'other-thread', 's1', 'assistant', JSON.stringify('Other thread'), JSON.stringify({ sdkSessionId: 'different-thread', agentMessageId: 'same-id' }), 1000, null]);
       await client.exec(insert, ['legacy', 'legacy', 's1', 'assistant', JSON.stringify('Repeated'), null, 1000, null]);
       await client.exec(insert, ['rewound', 'rewound', 's1', 'assistant', JSON.stringify('Rewound'), null, 1000, 2000]);
       const args = {
@@ -660,11 +667,12 @@ describe('db worker tx handlers', () => {
           { lineNo: 2, role: 'assistant' as const, text: 'Repeated', content: 'Repeated', createdAt: 1001 },
           { lineNo: 3, role: 'assistant' as const, text: 'Repeated', content: 'Repeated', createdAt: 1002 },
           { lineNo: 4, role: 'assistant' as const, text: 'Rewound', content: 'Rewound', createdAt: 1003 },
+          { lineNo: 5, role: 'assistant' as const, text: 'Other thread', content: 'Other thread', createdAt: 601000, agentMessageId: 'same-id' },
         ],
       };
       await client.tx('codex.importMessages', args);
       await expect(client.query('SELECT client_id FROM messages WHERE client_id LIKE ? ORDER BY client_id', ['codex-import:%']))
-        .resolves.toEqual([{ client_id: 'codex-import:3' }]);
+        .resolves.toEqual([{ client_id: 'codex-import:3' }, { client_id: 'codex-import:5' }]);
       // A retained rollout must not resurrect a local reply removed by rewind.
       await expect(client.queryOne('SELECT content, rewind_at FROM messages WHERE id = ?', ['rewound']))
         .resolves.toEqual({ content: JSON.stringify('Rewound'), rewind_at: 2000 });

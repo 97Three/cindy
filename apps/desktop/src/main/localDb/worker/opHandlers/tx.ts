@@ -2559,10 +2559,10 @@ function codexImportMessages(db: Database.Database, args: unknown): { changed: n
   const transaction = db.transaction(() => {
     const existing = readExistingMessageFingerprints(db, sessionId, importClientIdPrefix);
     const importedRows = new Map((db.prepare(`
-      SELECT client_id AS clientId, role, content, rewind_at AS rewindAt
+      SELECT client_id AS clientId, role, content, created_at AS createdAt, rewind_at AS rewindAt
       FROM messages WHERE session_id = ? AND client_id LIKE ?
     `).all(sessionId, `${importClientIdPrefix}%`) as Array<{
-      clientId: string; role: string; content: string; rewindAt: number | null;
+      clientId: string; role: string; content: string; createdAt: number; rewindAt: number | null;
     }>).map((row) => [row.clientId, row]));
     const consumed = new Set<string>();
     const hiddenClientIds: string[] = [];
@@ -2570,6 +2570,11 @@ function codexImportMessages(db: Database.Database, args: unknown): { changed: n
     // Text fallback must not match an earlier turn that happened to say the
     // same thing. Include external user turns as well as Cindy's local rows.
     const userTimes = existing.filter((row) => row.role === 'user').map((row) => row.createdAt);
+    for (const row of importedRows.values()) {
+      if (row.role !== 'user') continue;
+      const lineNo = Number(row.clientId.slice(importClientIdPrefix.length));
+      if (Number.isInteger(lineNo) && lineNo >= 0) userTimes.push(row.createdAt - lineNo);
+    }
     for (const value of rows) {
       const row = asRecord(value, 'codex row');
       if (row.role === 'user') userTimes.push(expectNumber(row.sourceCreatedAt ?? row.createdAt, 'row.createdAt'));
@@ -3956,7 +3961,7 @@ function findLocalDuplicate(
       (!row.phase || !prev.meta.assistantPhase || row.phase === prev.meta.assistantPhase) &&
       (!prev.meta.sdkSessionId || prev.meta.sdkSessionId === row.sdkSessionId) &&
       (!row.agentMessageId || !prev.meta.agentMessageId || row.agentMessageId === prev.meta.agentMessageId) &&
-      ((row.agentMessageId && row.agentMessageId === prev.meta.agentMessageId && row.sdkSessionId === prev.meta.sdkSessionId)
+      ((row.agentMessageId && row.agentMessageId === prev.meta.agentMessageId)
         || Math.abs(prev.createdAt - next.createdAt) <= LOCAL_DUPLICATE_WINDOW_MS
           && (row.role !== 'assistant' || !userTimes.some((time) => time > Math.min(prev.createdAt, next.createdAt)
             && time <= Math.max(prev.createdAt, next.createdAt)))) &&

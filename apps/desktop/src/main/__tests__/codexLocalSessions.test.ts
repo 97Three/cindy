@@ -1174,7 +1174,7 @@ describe('importExternalCodexMessagesForSession', () => {
 
     // Rollout can reach the importer before the live writer finishes. An
     // unchanged source file must not prevent the later reconciliation.
-    fs.appendFileSync(rolloutPath, line('late', 'Second answer' + citation, 3100, 'final_answer'));
+    fs.appendFileSync(rolloutPath, line('late', 'Second answer' + citation, 603100, 'final_answer'));
     await importExternalCodexMessagesForSession(sid);
     // #8005: the old copy may already be displayed by remote clients. A DB-only
     // assertion misses the deletion push needed by their additive history merge.
@@ -1182,7 +1182,16 @@ describe('importExternalCodexMessagesForSession', () => {
     deletionMock.broadcast.mockClear();
     deletionMock.row.mockClear();
     live('late', 'Second answer', 3000, 'final_answer');
-    await importExternalCodexMessagesForSession(sid, { localWrite: true });
+    db.prepare('UPDATE messages SET agent_meta = ? WHERE id = ?').run(
+      JSON.stringify({ agentMessageId: 'late-assistant', assistantPhase: 'final_answer', totalCostUsd: 1 }), 'late');
+    // Reconciliation must work from durable imported rows even if the native
+    // writer has rotated/removed its rollout; no full file read per live reply.
+    fs.renameSync(rolloutPath, rolloutPath + '.retained');
+    const stat = vi.spyOn(fs.promises, 'stat');
+    await importExternalCodexMessagesForSession(sid, { localWrite: ['late'] });
+    expect(stat).not.toHaveBeenCalled();
+    stat.mockRestore();
+    fs.renameSync(rolloutPath + '.retained', rolloutPath);
     await importExternalCodexMessagesForSession(sid);
     expect(deletionMock.broadcast).toHaveBeenCalledExactlyOnceWith({
       sessionId: sid, clientId: importedCopy.client_id, clientIds: [importedCopy.client_id],
