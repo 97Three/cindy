@@ -85,7 +85,7 @@ import { ChatResponseError, REACTION_REVISION_MESSAGE_LIMIT, splitChatMessageTex
 import { t } from '../../i18n.js';
 import { signalBotAutonomyBotsChanged } from '../../bot-autonomy/botsChangedSignal.js';
 import { projectBotGroupExecutionFailures } from '@cindy/maker-shared/botGroupPresentation';
-import { botGroupRuntimeFailureCode, settleUndispatchedBotGroupTurn } from '../botGroupRuntimeFailure.js';
+import { botGroupRuntimeFailureCode, settleClosedBotGroupTurn, settleUndispatchedBotGroupTurn } from '../botGroupRuntimeFailure.js';
 import { authorizeGroupTool } from '../botGroupToolAuthorization.js';
 import { botGroupQuoteFromMessage, buildBotGroupQuoteCard, buildBotGroupTaskCard, buildBotGroupThreadShareCard } from '../../../shared/botGroupChat.js';
 import type { BotGroupChatService, BotGroupChatServiceDeps } from '../botGroupChatService.js';
@@ -987,6 +987,25 @@ describe('Chat Server result delivery and refresh', () => {
   }
   const terminal = { sessionId: 'lane', activeInputClientId: null, outcome: 'done' as const, resultText: 'Finished reply' };
   const deliveries = () => fixture.handle.mock.calls.filter(([, , body]) => body?.action === 'complete');
+
+  // #7583, unit: runtime close without an SDK terminal left the leased execution
+  // alive. Existing cases start from done/error; exercise the close adapter with
+  // the real Chat Server service and assert the terminal wire result and lease retirement.
+  it('retires a closed group turn without terminating recovery or a different input', async () => {
+    await start();
+    const inputId = vi.mocked(deps.dispatch).mock.calls[0][0].clientId;
+    const failures = () => fixture.handle.mock.calls.filter(([, , body]) => body?.action === 'fail');
+    expect(await settleClosedBotGroupTurn(service, 'lane', inputId, true)).toBe(false);
+    expect(await settleClosedBotGroupTurn(service, 'lane', 'bot-group:old-input', false)).toBe(false);
+    expect(failures()).toHaveLength(0);
+    expect(await settleClosedBotGroupTurn(service, 'lane', inputId, false)).toBe(true);
+    expect(failures()).toHaveLength(1);
+    expect(failures()[0][2]).toMatchObject({ action: 'fail', detail: 'cindy-runtime-error:RUNTIME_ERROR', epoch: execution.epoch });
+    const heartbeats = fixture.handle.mock.calls.filter(([, , body]) => body?.action === 'heartbeat').length;
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(fixture.handle.mock.calls.filter(([, , body]) => body?.action === 'heartbeat')).toHaveLength(heartbeats);
+    expect(deliveries()).toHaveLength(0);
+  });
 
   // #6418: media visibility changes, but the original reply still determines
   // continuation. The helper mock isolates import/ledger tests from settlement.
@@ -4498,6 +4517,30 @@ describe('Chat Server directed sends', () => {
     const result = await service.chatServer!.ownedBots();
     expect(result).toMatchObject({ ok: true });
     expect(result.ok && result.bots.some(bot => bot.botId === 'local-bot' && typeof bot.actorId === 'string')).toBe(true);
+  });
+
+  it('lists owned companions on other devices without importing them locally, excluding disabled actors', async () => {
+    const original = fixture.handle.getMockImplementation()!;
+    fixture.handle.mockImplementation((route, method, body) => route === '/actors' ? { body: [
+      { id: botId, kind: 'bot', externalId: 'local-bot', name: 'Bot' },
+      { id: humanId, kind: 'bot', externalId: 'linux-bot', name: 'Linux', homeDeviceId: 'linux', avatar: '🐧' },
+      { id: rootId, kind: 'bot', externalId: 'deleted-bot', name: 'Deleted', disabled: true },
+    ] } : original(route, method, body));
+    expect(await service.chatServer!.ownedBots()).toMatchObject({ ok: true, bots: [
+      { actorId: botId, botId: 'local-bot' },
+      { actorId: humanId, botId: 'linux-bot', name: 'Linux', homeDeviceId: 'linux', avatar: '🐧' },
+    ] });
+    expect(fixture.profiles).toHaveLength(1);
+  });
+
+  it.each([null, 'another-device'])('respects local pause only while this computer owns execution (home=%s)', async homeDeviceId => {
+    fixture.profiles = [{ id: 'local-bot', displayName: 'Bot', status: 'paused' }];
+    const original = fixture.handle.getMockImplementation()!;
+    fixture.handle.mockImplementation((route, method, body) => route === '/actors' ? { body: [
+      { id: botId, kind: 'bot', externalId: 'local-bot', name: 'Bot', homeDeviceId },
+    ] } : original(route, method, body));
+    const result = await service.chatServer!.ownedBots();
+    expect(result.ok && result.bots.map(bot => bot.botId)).toEqual(homeDeviceId ? ['local-bot'] : []);
   });
 
   it.each(['main', 'thread'])('rejects a selected bot that left before the %s send instead of posting empty mentions', async entry => {
