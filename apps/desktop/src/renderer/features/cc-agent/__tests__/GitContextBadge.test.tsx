@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Tooltip } from '@/components/ui/tooltip';
 import type { PrStatusResult, SessionPrRef, SessionPrRefAction } from '@cindy/maker-shared';
+import { sharedTaskHostPeer } from '@cindy/device-link';
 import type { Session } from '@/lib/ccAgent.types';
 import type { SessionGitContext } from '@/hooks/useSessionGitContext';
 
@@ -105,6 +106,28 @@ describe('GitContextBadge', () => {
     );
 
     expect(screen.getByRole('button', { name: /manage.title/ })).toBeTruthy();
+  });
+
+  // Unit regression: the shared-task host intentionally rejects management
+  // reads. Keep PR viewing available without offering this unusable entry;
+  // previous remote coverage only exercised same-account device IDs.
+  it('共享访客不显示管理入口，同账号远程仍可管理且两者保留PR查看', () => {
+    const { context, rerender } = renderHeader();
+    for (const deviceLinkDeviceId of [
+      sharedTaskHostPeer('shared-task', 'host-device'),
+      'host-device',
+    ]) {
+      gitContextMock.mockReturnValue(context);
+      rerender(
+        <Tooltip.Provider>
+          <GitContextBadge session={{ ...dialogueSession, deviceLinkDeviceId }} />
+        </Tooltip.Provider>,
+      );
+      expect(Boolean(screen.queryByRole('button', { name: /manage.title/ }))).toBe(
+        deviceLinkDeviceId === 'host-device',
+      );
+      expect(screen.getAllByRole('button', { name: /pr.openAria/ })).toHaveLength(2);
+    }
   });
 
   // Unit: one PR is now one navigation button. Previous tests pinned a popover

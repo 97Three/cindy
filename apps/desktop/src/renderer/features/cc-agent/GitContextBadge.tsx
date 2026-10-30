@@ -39,6 +39,7 @@ import { cn } from '@/lib/utils';
 import { Tooltip } from '@/components/ui/tooltip';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { sessionPrUrl } from '@cindy/maker-shared';
+import { isSharedTaskPeer } from '@cindy/device-link';
 import { SessionPrManager } from './SessionPrManager';
 import { WINDOW_NO_DRAG_STYLE } from '@/components/layout/windowDrag';
 import type { Session } from '@/lib/ccAgent.types';
@@ -136,7 +137,13 @@ function GitContextBadgeContent({ session }: { session: Session }) {
           setSummary={setSummary}
         />
       ))}
-      <SessionPrManager key={session.id} session={session} readOnly={session.source === 'review'} />
+      {!isSharedTaskPeer(session.deviceLinkDeviceId ?? '') && (
+        <SessionPrManager
+          key={session.id}
+          session={session}
+          readOnly={session.source === 'review'}
+        />
+      )}
     </div>
   );
 }
