@@ -694,7 +694,8 @@ class Builder {
       const duration = this.shortDuration(limit.window.resetsAtMs - this.input.nowMs);
       when = roomy ? this.t('cell.resetsIn', { duration }) : duration;
     }
-    const whenLevel: MenubarLevel = seenAtMs !== null ? 'normal' : level;
+    // Numbers keep their ink; the liquid alone carries the quota color (owner decision 2026-10-31).
+    const whenLevel: MenubarLevel = 'normal';
     return {
       ...base,
       name,
@@ -810,7 +811,7 @@ class Builder {
       rings: [{ fraction, color: 'ink' }],
       bigValue: this.balanceMoney(source.available, source.currency),
       bigUnit: null,
-      bigColor: levelColor(balanceLevel(source)),
+      bigColor: null,
       bigCompact: true,
       bigCaption: this.t(quota ? 'detail.quotaCaption' : 'detail.balanceCaption'),
       legend: [],
@@ -995,7 +996,7 @@ class Builder {
       rings,
       bigValue: String(Math.round(remaining)),
       bigUnit: '%',
-      bigColor: levelColor(level),
+      bigColor: null,
       bigCompact: multi,
       bigCaption: this.t('detail.windowLeft', { window: this.windowLabel(limit.window) }),
       legend: multi

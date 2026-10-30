@@ -240,7 +240,7 @@ describe('buildMenubarView', () => {
       windows: [{ kind: 'session', usedPercent: 92, resetsAtMs: NOW + 3 * HOUR + 5 * 60_000, windowMinutes: 300 }],
     });
     const view = buildMenubarView(input([low, codex('beta', 20)]));
-    expect(view.sources.find((cell) => cell.id === 'alpha')).toMatchObject({ when: 'Resets in 3h 5m', whenLevel: 'error' });
+    expect(view.sources.find((cell) => cell.id === 'alpha')).toMatchObject({ when: 'Resets in 3h 5m', whenLevel: 'normal', level: 'error' });
     expect(view.headlineSecondary).toBe('alpha resets in 3h 5m.');
     expect(view.headlineAlert).toBe(true);
   });

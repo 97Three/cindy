@@ -2268,7 +2268,8 @@ struct CellView: View {
         }
       }
       .monospacedDigit()
-      .foregroundStyle(Palette.level(cell.level) ?? Palette.ink)
+      // The number keeps its ink; the liquid and its glow carry the quota color.
+      .foregroundStyle(Palette.ink)
       .animation(Motion.quick, value: value)
     } else if let label = cell.valueLabel {
       Text(label)

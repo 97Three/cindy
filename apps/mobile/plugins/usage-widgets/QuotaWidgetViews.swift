@@ -68,15 +68,14 @@ struct HatchPattern: Shape {
   }
 }
 
-/// Number above the tube: Barlow digits with a smaller % on the same baseline.
+/// Number above the tube: Barlow digits with a smaller % on the same baseline. It keeps its
+/// ink at every level; the liquid alone carries the quota color.
 struct SourceValue: View {
   let source: WidgetSource
   let size: CGFloat
   let unitSize: CGFloat
-  @Environment(\.widgetRenderingMode) private var renderingMode
 
   var body: some View {
-    let color = renderingMode == .accented ? nil : WidgetPalette.level(source.level)
     if let value = source.value {
       HStack(alignment: .firstTextBaseline, spacing: 1) {
         Text(value).font(WidgetNumFont.font(source.kind == "balance" ? size - 2 : size))
@@ -86,7 +85,7 @@ struct SourceValue: View {
       }
       .lineLimit(1)
       .minimumScaleFactor(0.7)
-      .foregroundStyle(color ?? WidgetPalette.ink)
+      .foregroundStyle(WidgetPalette.ink)
       .opacity(source.stale == true ? 0.5 : 1)
     } else {
       Text(source.label ?? "—")
@@ -98,7 +97,8 @@ struct SourceValue: View {
   }
 }
 
-/// Reset time under a tube; tinted screens lose the color, so a dot marks low sources.
+/// Reset time under a tube, in plain ink; tinted screens lose the liquid color, so a dot marks
+/// low sources there.
 struct SourceWhen: View {
   let text: String
   let level: String
@@ -117,7 +117,7 @@ struct SourceWhen: View {
         .lineLimit(1)
         .truncationMode(.tail)
     }
-    .foregroundStyle((accented ? nil : WidgetPalette.level(level)) ?? WidgetPalette.ink2)
+    .foregroundStyle(WidgetPalette.ink2)
   }
 }
 
