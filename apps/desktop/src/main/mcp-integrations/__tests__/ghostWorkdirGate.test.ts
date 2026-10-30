@@ -154,6 +154,7 @@ vi.mock('../../maker-ipc/botAuthorizationService.js', () => ({
 
 const WORKDIR = '/proj/alpha';
 const listMock = vi.fn<() => unknown[]>(() => []);
+const approvedReceiptMock = vi.fn<(...args: unknown[]) => { manifest: InstalledGhost["manifest"] } | null>(() => null);
 const activeSessionAvailableMock = vi.fn<(ghostId: string) => boolean>(() => true);
 const dispatchMock = vi.fn(async () => ({ ok: true as const, result: 'done' }));
 const setupAssessmentMock = vi.fn((_ghostId: string): GhostSetupAssessment => {
@@ -185,7 +186,7 @@ const sessionSnapshotMock = vi.fn(async (): Promise<{
   remoteHostId: null,
 }));
 vi.mock('../../cindy-brain/index.js', () => ({
-  getGhostManager: () => ({ list: listMock, managedRootDirs: () => [] }),
+  getGhostManager: () => ({ list: listMock, readApprovedInstallReceipt: approvedReceiptMock, managedRootDirs: () => [] }),
   ghostForgeForbiddenRootDirs: () => [],
   listAvailableGhostsForAuthorization: () => listMock(),
   findAvailableGhostForAuthorization: (id: string) =>
@@ -362,6 +363,8 @@ beforeEach(() => {
   authorizationRequestMock.mockClear();
   isAuthorizationSessionMock.mockResolvedValue(false);
   fs.mkdirSync(outsideDir, { recursive: true });
+  approvedReceiptMock.mockReset();
+  approvedReceiptMock.mockReturnValue(null);
   listMock.mockReset();
   listMock.mockReturnValue([chipGhost('art'), chipGhost('other')]);
   activeSessionAvailableMock.mockReset();
@@ -3779,14 +3782,26 @@ describe('plugin page audience and shared tool execution', () => {
     expect(result).toMatchObject({ ok: false, errorCode: 'TOOL_NOT_FOUND' });
     expect(dispatchMock).not.toHaveBeenCalled();
   });
-  it('keeps an old receipt usable as text while withholding view-only result metadata', async () => {
+  // #4421074557, unit: real ghost_call entry must strip page-private metadata even
+  // when unavailable HTML removes UI from the runtime projection. Existing case
+  // only withheld approval; canonical receipt still carries the original declaration.
+  it.each([false, true])('keeps an old receipt usable as text with unavailable UI=%s and withholds metadata', async unavailable => {
     const ghost = pageGhost(); delete ghost.uiCapabilityApproved;
     ghost.manifest.mcpApps = { ui: { resources: [{
             uri: "ui://form",
             file: 'ui/form.html'
         }], tools: { run: { resourceUri: "ui://form" } } } };
     listMock.mockReturnValue([ghost]);
-    dispatchMock.mockResolvedValueOnce({ ok: true, result: { content: [{ type: 'text', text: 'done' }], _meta: { privatePageData: 'hidden' } } } as never);
+    if (unavailable) {
+      approvedReceiptMock.mockReturnValue({ manifest: ghost.manifest });
+      ghost.manifest = { ...ghost.manifest, mcpApps: undefined };
+    }
+    dispatchMock.mockImplementationOnce(async () => {
+      // The privacy decision must be captured before dispatch, not re-read after
+      // an installation changes while the plugin is returning its result.
+      approvedReceiptMock.mockReturnValue(null);
+      return { ok: true, result: { content: [{ type: 'text', text: 'done' }], _meta: { privatePageData: 'hidden' } } } as never;
+    });
     const result = await makeDeps().callGhostTool({ ghostId: 'art', tool: 'run', args: {} });
     expect(result).toMatchObject({ ok: true, result: { content: [{ type: 'text', text: 'done' }] } });
     if (!result.ok) throw new Error('legacy tool was disabled');

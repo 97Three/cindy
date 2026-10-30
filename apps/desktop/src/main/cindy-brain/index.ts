@@ -10045,7 +10045,7 @@ export function registerGhostIpc(): void {
       // registry;指令查重与 tokenBroker 门控只存在于 install/update,
       // inspect 不覆盖,这里按同一口径补齐(评审 P1)。
       inspectPackage: async (filePath) => {
-        const probe = await manager.inspect(filePath);
+        const probe = await manager.inspect(filePath, 'stored-release');
         if ('rejection' in probe) return false;
         if (!ghostOwnerScope.isStable(exportOwner) || !exportedGhost ||
             exportedInstanceId === null || exportedApproval === null ||

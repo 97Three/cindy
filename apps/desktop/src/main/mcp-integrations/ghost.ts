@@ -2154,6 +2154,12 @@ export function getCindyGhostsMcpDeps(
           target.approval.state !== 'approved' || target.approval.revision !== pageCall.revision ||
           pageCall.sessionId !== sessionContext?.sessionId)) return { ok: false, errorCode: 'PERMISSION_DENIED', message: 'Page call authorization changed' };
       const instanceId = installedGhostStoragePart(target);
+      // Capture result privacy from this approved revision before any async work.
+      // Missing historical HTML disables pages, not the original view-only data boundary.
+      const resultUi = getPluginToolUi(target.manifest) ?? (target.approval?.state === 'approved'
+        ? getPluginToolUi(getGhostManager().readApprovedInstallReceipt(instanceId, target.approval.revision)?.manifest ?? target.manifest)
+        : undefined);
+      const hasViewOnlyResult = Boolean(resultUi?.tools[tool]);
       const approvalToken = ghostInstallApprovalToken(target.approval);
       const grantTarget: GhostGrantTarget = {
         approvalToken,
@@ -2569,7 +2575,7 @@ export function getCindyGhostsMcpDeps(
       // View-only metadata is independent of card creation (visibility-only tools,
       // SSH and taskless model calls may not produce a local card). Legacy tools
       // without a UI declaration retain their ordinary JSON result unchanged.
-      if (result.ok && getPluginToolUi(target.manifest)?.tools[tool]) {
+      if (result.ok && hasViewOnlyResult) {
         result.result = pluginModelResult(result.result);
       }
       const requestedImages = result.ok ? result.images : undefined;

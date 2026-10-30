@@ -167,7 +167,7 @@ function harness(
   };
   const manager = {
     list: () => [...installed.values()],
-    inspect: vi.fn(async () => inspected),
+    inspect: vi.fn(async (_path?: string, _source?: 'stored-release') => inspected),
     readApprovedInstallReceipt: vi.fn((id: string, revision: string) =>
       receipts.get(id)?.revision === revision ? receipts.get(id) : null,
     ),
@@ -405,6 +405,17 @@ describe('local file recovery and source gates through production IPC callbacks'
     await expect(target.callbacks['ghosts:export']({}, 'filo-local')).resolves.toMatchObject({
       status: 'saved',
     });
+  });
+  // Unit: real export IPC must validate the existing snapshot as stored data.
+  // Existing export cases accepted every inspection; this boundary rejects a
+  // missing historical UI only when mistakenly sent through fresh-install validation.
+  it('exports a historical snapshot whose UI is no longer available', async () => {
+    const target = harness();
+    const inspect = target.manager.inspect.getMockImplementation()!;
+    target.manager.inspect.mockImplementation(async (file, source) => source === 'stored-release'
+      ? inspect(file, source)
+      : { rejection: { code: 'file-invalid', reason: 'mcpApps.ui.resources 文件 ui/page.html 缺失' } } as never);
+    await expect(target.callbacks['ghosts:export']({}, 'filo-local')).resolves.toMatchObject({ status: 'saved' });
   });
   it('does not export a Broker merely because an ordinary root has the same name', async () => {
     const target = harness({ broker: true });
