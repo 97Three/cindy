@@ -1567,20 +1567,48 @@ describe('media user-round costs', () => {
     select.mockRestore();
   });
 
-  it.each([false, true])('hydrates additional fees without rewriting billing even with a source and stale total (stale=%s)', async (stale) => {
+  // A committed media fee must survive a missing follow-up patch. The older
+  // stale-total cases did not exercise unpriced assistants or absent metadata.
+  // Real list/around IPC over SQLite; billing metadata must remain untouched.
+  it.each([
+    { name: 'current total', original: { turnCost: actual(1), userTurnCost: actual(1.75) }, amount: 1.75 },
+    { name: 'stale total', original: { turnCost: actual(1), userTurnCost: actual(1) }, amount: 1.75 },
+    { name: 'no total', original: { turnCost: actual(1) }, amount: 1.75 },
+    { name: 'zero price', original: { turnCostUsd: 0 }, amount: .75 },
+    { name: 'usage only', original: {}, amount: .75 },
+    { name: 'no metadata', original: undefined, amount: .75 },
+    { name: 'legacy USD with subscription value', original: { turnCostUsd: 1 }, amount: 3.75, subscriptionValue: 2 },
+    { name: 'stale media snapshot', original: { turnCost: actual(1), userTurnCost: actual(1.5) }, amount: 1.75, snapshotAmount: .5 },
+    { name: 'snapshot without total', original: {}, amount: .75, snapshotAmount: .75 },
+  ])('hydrates a committed media fee with $name without rewriting billing', async ({ original: costs, amount, subscriptionValue, snapshotAmount }) => {
     const { sqlite } = fixture();
     insertCostMessage(sqlite, { id: 'user', role: 'user', createdAt: 1,
       agentMeta: { mediaCosts: [actual(.75)] } });
-    const original = { turnCost: actual(1), userTurnCost: actual(stale ? 1 : 1.75),
-      turnUsageDetails: { inputTokens: 1, billingSource: 'cindy-ai', model: 'existing' } };
+    const original = costs && { ...costs,
+      turnUsageDetails: { inputTokens: 1, billingSource: 'cindy-ai', model: 'existing',
+        ...(subscriptionValue ? { perModelCost: [{ model: 'subscription-model', billingSource: 'subscription',
+          money: { ...actual(subscriptionValue), kind: 'value-estimate', approximate: true } }] } : {}),
+        ...(snapshotAmount ? { additionalCosts: [actual(snapshotAmount)] } : {}),
+      } };
+    insertCostMessage(sqlite, { id: 'resume', role: 'user', createdAt: 2, agentMeta: { autoResume: true } });
     insertCostMessage(sqlite, { id: 'answer', role: 'assistant', createdAt: 2, agentMeta: original });
+    insertCostMessage(sqlite, { id: 'next-user', role: 'user', createdAt: 2 });
+    insertCostMessage(sqlite, { id: 'next-answer', role: 'assistant', createdAt: 2 });
     registerMessageIpc();
     const rows = await h.handlers.get('local-db:messages:list')!({}, 's1', { limit: 10 }) as Array<{ id: string; agentMeta: unknown }>;
-    expect(rows.find(row => row.id === 'answer')?.agentMeta).toMatchObject({
-      ...original, userTurnCost: actual(1.75), turnUsageDetails: {
-        ...original.turnUsageDetails, additionalCosts: [actual(.75)],
+    const expected = {
+      ...original, userTurnCost: { ...actual(amount), approximate: !!subscriptionValue },
+      userTurnCostIsEstimate: !!subscriptionValue, turnUsageDetails: {
+        ...original?.turnUsageDetails, additionalCosts: [actual(.75)],
       },
-    });
-    expect(JSON.parse((sqlite.prepare("SELECT agent_meta FROM messages WHERE id = 'answer'").get() as { agent_meta: string }).agent_meta)).toEqual(original);
+    };
+    expect(rows.find(row => row.id === 'answer')?.agentMeta).toMatchObject(expected);
+    expect(rows.find(row => row.id === 'next-answer')?.agentMeta).toBeNull();
+    // A narrow history window must recover the prior user outside that window,
+    // including repeated reads and same-millisecond next-round boundaries.
+    const around = await h.handlers.get('local-db:messages:around')!({}, 's1', 'answer', { radius: 1 }) as typeof rows;
+    expect(around.find(row => row.id === 'answer')?.agentMeta).toMatchObject(expected);
+    expect((sqlite.prepare("SELECT agent_meta FROM messages WHERE id = 'answer'").get() as { agent_meta: string | null }).agent_meta)
+      .toBe(original ? JSON.stringify(original) : null);
   });
 });

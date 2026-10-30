@@ -2333,17 +2333,19 @@ export async function readPriorUserRoundCost(
  *
  * This is deliberately read-only: a history page can immediately display the
  * correct user-round total without rewriting legacy data or changing the raw
- * segment values used by every billing aggregate. New messages already carry
- * the persisted field and skip this path.
+ * segment values used by every billing aggregate. Media charges are committed
+ * on the user row before the assistant follow-up. Rebuild their display snapshot
+ * from that ledger: missing metadata and existing totals/snapshots cannot prove
+ * that the latest fee was projected.
  *
  * Scan only from the oldest row on this page back to the previous real user
  * boundary. A full-session walk here used to re-read tens of thousands of
  * agent_meta blobs on every history page.
  */
 async function hydrateLegacyUserTurnCosts(history: Message[]): Promise<Message[]> {
-  const additionalSnapshotClientIds = new Set(history.filter(message => message.role === 'assistant' &&
-    (message.agentMeta?.userTurnCost || message.agentMeta?.userTurnCostUsd) &&
-    !normalizeTurnUsageDetails(message.agentMeta?.turnUsageDetails)?.additionalCosts).map(message => message.clientId));
+  const pageAssistantClientIds = new Set(history.filter(message => message.role === 'assistant')
+    .map(message => message.clientId));
+  if (pageAssistantClientIds.size === 0) return history;
   const legacyClientIds = new Set(
     history.flatMap((message) => {
       const agentMeta = message.agentMeta;
@@ -2359,8 +2361,6 @@ async function hydrateLegacyUserTurnCosts(history: Message[]): Promise<Message[]
         : [];
     }),
   );
-  if (legacyClientIds.size === 0 && additionalSnapshotClientIds.size === 0) return history;
-
   const sessionId = history[0]?.sessionId;
   if (!sessionId) return history;
   const oldestOnPage = oldestHistoryMessage(history);
@@ -2462,7 +2462,7 @@ async function hydrateLegacyUserTurnCosts(history: Message[]): Promise<Message[]
     if (segmentMoney) roundValues.push(segmentMoney);
     roundValues.push(...supplementalConversationEstimates(meta));
     // Only calculate recovery totals for messages on this history page, not every older segment.
-    const roundMoney = additionalCosts.length && additionalSnapshotClientIds.has(row.clientId)
+    const roundMoney = additionalCosts.length && pageAssistantClientIds.has(row.clientId)
       ? addCompatibleRegionalMoney(roundValues, segmentMoney?.currency) : null;
     if (hasRealUserBoundary && roundMoney) roundMoneyByClientId.set(row.clientId, {
       money: roundMoney,
@@ -2493,7 +2493,7 @@ async function hydrateLegacyUserTurnCosts(history: Message[]): Promise<Message[]
     const message = history[index];
     const agentMeta = message.agentMeta;
     const additional = additionalByClientId.get(message.clientId);
-    if (additional && agentMeta && !normalizeTurnUsageDetails(agentMeta.turnUsageDetails)?.additionalCosts) {
+    if (additional) {
       const round = roundMoneyByClientId.get(message.clientId);
       hydrated ??= history.slice();
       hydrated[index] = { ...message, agentMeta: { ...agentMeta,
@@ -2502,8 +2502,11 @@ async function hydrateLegacyUserTurnCosts(history: Message[]): Promise<Message[]
           userTurnCostUsd: round.money.currency === 'USD' ? round.money.amount : undefined,
           userTurnCostIsEstimate: round.isEstimate,
         } : {}),
-        turnUsageDetails: buildTurnUsageDetails({ ...normalizeTurnUsageDetails(agentMeta.turnUsageDetails), additionalCosts: additional }) ?? undefined,
+        turnUsageDetails: buildTurnUsageDetails({ ...normalizeTurnUsageDetails(agentMeta?.turnUsageDetails), additionalCosts: additional }) ?? undefined,
       } };
+      // The ledger projection already includes legacy USD segments and estimates.
+      // Do not overwrite it with the older USD-only compatibility subtotal.
+      continue;
     }
     if (
       message.role !== 'assistant' ||
