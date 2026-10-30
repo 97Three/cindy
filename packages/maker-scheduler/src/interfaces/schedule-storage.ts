@@ -75,7 +75,9 @@ export interface ScheduleStorage {
    * runNow/终态行挤出窗口时会漏判（codex review P2）。
    */
   hasRunningRuns(scheduleId?: string): Promise<boolean>;
-  /** An unfinished running/interrupted run consumes a Once trigger until the
-   * user continues it. Query by status without a history-display row limit. */
+  /** A running owner or an interrupted run with persisted accepted input
+   * consumes a Once trigger. An interrupted pre-accept attempt does not.
+   * Query without a history-display row limit; later user input must not
+   * make an already accepted prompt eligible for automatic replay. */
   hasUnfinishedRuns(scheduleId: string): Promise<boolean>;
 }

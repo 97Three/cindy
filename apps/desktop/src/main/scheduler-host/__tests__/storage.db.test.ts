@@ -1099,7 +1099,11 @@ describe('DrizzleScheduleStorage (in-memory)', () => {
     try {
       await harness.storage.insert(baseSchedule({ id: 'unfinished-once', recurring: false }));
       await harness.storage.insert(baseSchedule({ id: 'other-once', recurring: false }));
-      await harness.storage.insertRun({ id: 'unfinished', scheduleId: 'unfinished-once', firedAt: 1, status });
+      harness.sqlite.prepare("INSERT INTO sessions (id, title) VALUES ('unfinished-task', 'task')").run();
+      await harness.storage.insertRun({ id: 'unfinished', scheduleId: 'unfinished-once', sessionId: 'unfinished-task', firedAt: 1, status });
+      harness.sqlite.prepare(`INSERT INTO messages (id, client_id, session_id, role, content, agent_meta, created_at)
+        VALUES ('accepted', 'accepted', 'unfinished-task', 'user', 'prompt', ?, 1)`)
+        .run(JSON.stringify({ origin: { kind: 'scheduler', runId: 'unfinished' } }));
       for (let i = 0; i < 60; i++) {
         await harness.storage.insertRun({ id: `finished-${i}`, scheduleId: 'unfinished-once', firedAt: i + 2, status: 'success' });
       }
@@ -1109,6 +1113,40 @@ describe('DrizzleScheduleStorage (in-memory)', () => {
       expect(await harness.storage.hasUnfinishedRuns('unfinished-once')).toBe(false);
     } finally { harness.close(); }
   });
+
+  // discussion_r4420988894 / db: a pre-accept crash must not consume Once
+  // forever. Use the same persisted run/message and stale sweep as production;
+  // a later manual input blocks Continue but must not replay an accepted prompt.
+  it.each(['absent', 'accepted', 'other-run', 'other-task', 'later-input', 'invalid-json'] as const)(
+    'only accepted input keeps a swept Once claimed: %s', async (mode) => {
+      const h = createStorageHarness();
+      try {
+        h.sqlite.prepare(`INSERT INTO sessions (id, title, active_turn_started_at)
+          VALUES ('once-task', 'task', 20), ('other-task', 'other', 20)`).run();
+        await h.storage.insert(baseSchedule({ recurring: false, nextFireAt: undefined }));
+        await h.storage.insertRun({ id: 'pending-once', scheduleId: 'sch-1', sessionId: 'once-task',
+          firedAt: 10, heartbeatAt: 10, status: 'running' });
+        if (mode !== 'absent') {
+          const meta = mode === 'invalid-json' ? '{' : JSON.stringify({
+            origin: { kind: 'scheduler', runId: mode === 'other-run' ? 'other' : 'pending-once' },
+          });
+          h.sqlite.prepare(`INSERT INTO messages (id, client_id, session_id, role, content, agent_meta, created_at)
+            VALUES ('input', 'input', ?, 'user', 'prompt', ?, 15)`)
+            .run(mode === 'other-task' ? 'other-task' : 'once-task', meta);
+        }
+        if (mode === 'later-input') h.sqlite.prepare(`INSERT INTO messages
+          (id, client_id, session_id, role, content, created_at)
+          VALUES ('later', 'later', 'once-task', 'user', 'manual input', 30)`).run();
+        // Fresh running owners remain protected even before their input commit.
+        expect(await h.storage.hasUnfinishedRuns('sch-1')).toBe(true);
+        expect(await h.storage.markRunningAsInterrupted(11)).toEqual(['sch-1']);
+        expect(await h.storage.hasUnfinishedRuns('sch-1')).toBe(mode === 'accepted' || mode === 'later-input');
+        const claimed = await h.storage.claimInterruptedRun('once-task', 40);
+        if (mode === 'accepted') expect(claimed?.id).toBe('pending-once');
+        else expect(claimed).toBeNull();
+      } finally { h.close(); }
+    },
+  );
 
   it('touchRunHeartbeats: 只给 running 行续心跳,终态行不补写', async () => {
     const harness = createStorageHarness();

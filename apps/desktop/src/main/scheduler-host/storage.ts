@@ -1252,7 +1252,17 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     const [row] = await this.getDb()
       .select({ id: scheduleRuns.id })
       .from(scheduleRuns)
-      .where(and(eq(scheduleRuns.scheduleId, scheduleId), inArray(scheduleRuns.status, ['running', 'interrupted'])))
+      .where(and(eq(scheduleRuns.scheduleId, scheduleId), or(
+        // A live owner may not have committed its input yet. After the stale
+        // sweep, only the existing accepted-input ledger consumes the trigger.
+        eq(scheduleRuns.status, 'running'),
+        and(eq(scheduleRuns.status, 'interrupted'), sql`EXISTS (
+          SELECT 1 FROM messages m
+          WHERE m.session_id = ${scheduleRuns.sessionId} AND m.role = 'user'
+            AND CASE WHEN json_valid(m.agent_meta)
+              THEN json_extract(m.agent_meta, '$.origin.runId') END = ${scheduleRuns.id}
+        )`),
+      )))
       .limit(1);
     return Boolean(row);
   }
