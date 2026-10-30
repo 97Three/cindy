@@ -49,6 +49,24 @@ const NETWORK_CAPABLE_TARGET_TYPES = new Set([
   'worklet',
 ]);
 
+/**
+ * Child targets whose failed setup is contained to that target. Chromium does
+ * not expose every domain on workers (e.g. Fetch / Target can answer "method
+ * not found"), and a background worker failing to prepare must not take the
+ * whole managed browser down. Pages and frames stay whole-browser fail-closed.
+ */
+const WORKER_TARGET_TYPES = new Set([
+  'service_worker',
+  'shared_worker',
+  'worker',
+  'shared_storage_worklet',
+  'worklet',
+]);
+
+function isWorkerTargetType(type: unknown): boolean {
+  return typeof type === 'string' && WORKER_TARGET_TYPES.has(type);
+}
+
 function isNetworkCapableTargetType(type: unknown): boolean {
   return typeof type === 'string' && NETWORK_CAPABLE_TARGET_TYPES.has(type);
 }
@@ -679,6 +697,17 @@ export class BrowserProxyAuthCoordinator {
           }
         } catch {
           this.logger.warn('browser proxy authentication could not prepare a new browser target');
+          // A worker that cannot be gated is closed on its own: it never runs
+          // ungated, and the page that owns it keeps working. Only when that
+          // containment fails (or for pages/frames) is the browser torn down.
+          if (isWorkerTargetType(targetInfo?.type) && targetInfo?.targetId) {
+            try {
+              await this.command('Target.closeTarget', { targetId: targetInfo.targetId });
+              return;
+            } catch {
+              // fall through to whole-browser fail-closed
+            }
+          }
           // Through the shared task, not failClosed() directly. During startup
           // this is awaited by start(); afterwards it runs as a loose event
           // task, so a teardown begun here must be visible to dispose() —

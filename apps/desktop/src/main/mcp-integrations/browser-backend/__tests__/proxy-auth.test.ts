@@ -40,6 +40,7 @@ async function createFakeCdp(options: {
   failAttachToTarget?: boolean;
   failFetchEnable?: boolean;
   failFetchEnableForSession?: string;
+  failCloseTarget?: boolean;
   failBrowserClose?: boolean;
   closeOnBrowserClose?: boolean;
   emitAutoAttach?: boolean;
@@ -100,6 +101,8 @@ async function createFakeCdp(options: {
         || command.sessionId === options.failFetchEnableForSession
       )) {
         socket.send(JSON.stringify({ id: command.id, error: { message: 'dummy secret must not escape' } }));
+      } else if (command.method === 'Target.closeTarget' && options.failCloseTarget) {
+        socket.send(JSON.stringify({ id: command.id, error: { message: 'close target failed' } }));
       } else if (command.method === 'Browser.close') {
         if (options.failBrowserClose) {
           socket.send(JSON.stringify({ id: command.id, error: { message: 'close failed' } }));
@@ -530,6 +533,69 @@ describe('BrowserProxyAuthCoordinator', () => {
     expect(logger.warn).toHaveBeenCalledWith(
       'browser proxy authentication could not prepare a new browser target',
     );
+    await coordinator.dispose();
+  });
+
+  it('closes only a worker whose setup fails and keeps the browser alive', async () => {
+    const cdp = await createFakeCdp({ failFetchEnableForSession: 'session-worker' });
+    const onFailure = vi.fn();
+    const coordinator = new BrowserProxyAuthCoordinator({
+      mode: 'proxied',
+      server: 'http://proxy.test:8080',
+      username: 'user',
+      password: 'password',
+    }, { warn: vi.fn() }, onFailure);
+    await coordinator.start(cdp.cdpUrl);
+
+    cdp.sendEvent({
+      method: 'Target.attachedToTarget',
+      params: {
+        sessionId: 'session-worker',
+        targetInfo: { targetId: 'worker-9', type: 'worker' },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(cdp.commands).toContainEqual(expect.objectContaining({
+        method: 'Target.closeTarget',
+        params: { targetId: 'worker-9' },
+      }));
+    });
+    expect(cdp.commands).not.toContainEqual(expect.objectContaining({ method: 'Browser.close' }));
+    expect(cdp.commands).not.toContainEqual(expect.objectContaining({
+      method: 'Runtime.runIfWaitingForDebugger',
+      sessionId: 'session-worker',
+    }));
+    expect(onFailure).not.toHaveBeenCalled();
+    await coordinator.dispose();
+  });
+
+  it('still tears the browser down when a failed worker cannot be closed', async () => {
+    const cdp = await createFakeCdp({
+      failFetchEnableForSession: 'session-worker',
+      failCloseTarget: true,
+    });
+    const onFailure = vi.fn();
+    const coordinator = new BrowserProxyAuthCoordinator({
+      mode: 'proxied',
+      server: 'http://proxy.test:8080',
+      username: 'user',
+      password: 'password',
+    }, { warn: vi.fn() }, onFailure);
+    await coordinator.start(cdp.cdpUrl);
+
+    cdp.sendEvent({
+      method: 'Target.attachedToTarget',
+      params: {
+        sessionId: 'session-worker',
+        targetInfo: { targetId: 'worker-9', type: 'worker' },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(cdp.commands).toContainEqual(expect.objectContaining({ method: 'Browser.close' }));
+    });
+    expect(onFailure).toHaveBeenCalledTimes(1);
     await coordinator.dispose();
   });
 
