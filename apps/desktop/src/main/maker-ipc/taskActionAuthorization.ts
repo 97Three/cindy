@@ -68,10 +68,11 @@ export interface TaskActionScope {
   routine?: { botId: string; id: string; revision: number };
   /** Existing, explicitly confirmed delegation; never inferred from creator/follower. */
   delegated: boolean;
-  /** Rechecked at mutation/delivery; includes account, target and delegation revocation. */
+  /** Rechecked at mutation; includes account, target and delegation revocation. */
   assertCurrent(): Promise<void>;
   /** Host generation check for existing synchronous commit/pre-send callbacks. */
   assertCurrentSync?(): void;
+  /** Queued delivery outlives the admitting turn: real revocation only, no live turn facts. */
   assertDeliveryCurrent?(): Promise<void>;
 }
 
@@ -348,6 +349,25 @@ export class TaskActionAuthorizationError extends Error {
   constructor() {
     super('TASK_ACTION_AUTHORIZATION_EXPIRED');
   }
+}
+
+const REVOKED_MESSAGES: ReadonlySet<string> = new Set([
+  'TASK_ACTION_AUTHORIZATION_EXPIRED',
+  'TASK_ACTION_AUTHORIZATION_REQUIRED',
+  'OWNER_SCOPE_CHANGED',
+]);
+
+/**
+ * Whether a delivery-guard rejection proves the grant is gone. A check that merely failed
+ * (group transport outage, database not ready, anything unknown) is not a revocation: its
+ * message stays queued for retry instead of being destroyed. Group errors are matched by
+ * code (`GROUP_AUTHORIZATION_UNAVAILABLE` is the temporary one) to avoid importing the group module.
+ */
+export function isTaskActionRevoked(error: unknown): boolean {
+  if (error instanceof TaskActionAuthorizationError) return true;
+  if (typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'GROUP_AUTHORIZATION_REQUIRED')
+    return true;
+  return error instanceof Error && REVOKED_MESSAGES.has(error.message);
 }
 
 /** Capture once; late callbacks must not pick up another invocation's authority. */

@@ -215,7 +215,7 @@ const r = await cindy.agent.requestSchedule({
 - `list({targetKind:'project'|'task'|'bot'})`：返回 `{targets:[{kind,id,label,detail}]}`，只含本机可用目标的名称和目录/说明，不含消息历史。插件可自行搜索和展示列表，最近活动只用于排序。
 - `resolve({target:{kind,id}})`：复核已保存或本次选择的目标，返回最新 `{kind,id,label,detail}`。只查询，不创建任务、不打开 UI、不保存绑定；固定目标失效返回 TARGET_UNAVAILABLE，不自动替换。插件可将 `{kind,id}` 存入自己的配置。project 的 id 是 Cindy 已有项目目录，task/bot 的 id 是任务/伙伴标识。
 - `send({target:{kind,id},requestKey,text,context?,title?,autoTitle?,route?,permissionMode?,delivery?,attachments?})`：直接指定目标，Host 当次复核。project 在目录中新建普通任务，可传统一模型目录的 route 和已授权范围内的 permissionMode；task/bot 沿用接收方模型、权限、目录，不接受 route 或 permissionMode。`delivery` 为 `queue | steer`，缺省 queue；project 不接受 steer。steer 尝试同轮注入，不停止当前轮，空闲或插话暂不可用时入队。返回 `{taskId,accepted:true,delivery:"queue"|"steer"}` 表示实际接受路径，不表示执行完成。筛查拒绝返回 DELIVERY_REJECTED，不入队重试；ACK 未知返回 DELIVERY_UNCERTAIN，不得换键重发。不开放读取任意任务历史或改模。
-- 同一次 send 重试沿用相同 requestKey、target、内容和 delivery（缺省与 queue 等价）；同键参数变化返回 REQUEST_KEY_CONFLICT。Host 在执行前持久保留投递回执，重启后已接受的请求返回原结果，未确定结果的请求返回 DELIVERY_UNCERTAIN，不再次创建或投递。回执不保存正文或附件字节。不要通过更换 requestKey 绕过未知结果，应先让用户在 Cindy 检查。
+- 同一次 send 重试沿用相同 requestKey、target、内容和 delivery（缺省与 queue 等价）；同键参数变化返回 REQUEST_KEY_CONFLICT。Host 在执行前持久保留投递回执，重启后已接受的请求返回原结果，未确定结果的请求返回 DELIVERY_UNCERTAIN，不再次创建或投递。普通投递回执不保存正文或附件字节；显式委派另保存下述有界执行范围。不要通过更换 requestKey 绕过未知结果，应先让用户在 Cindy 检查。
 - `cancel({requestKey})`：使本次请求及迟到的发送失效，仅撤回本插件该请求尚未执行的输入；不会停止接收方其他输入，也不保证撤销已经开始的工作。新操作使用新的 requestKey。
 - `tasks.send` 和 `targets.send` 均支持可选 `attachments:[{base64,name?}]`：只接收插件提供的图片字节，不接受本机路径、URL、媒体 URI 或自报 MIME。Host 检测 PNG/JPEG/WebP，最多 4 张、合计 20 MiB。先检查 `tasks.capabilities().messageAttachments.kinds` 包含 image；旧客户端不支持时停止，不静默丢图或改投临时路径。截图进既有 cindy-media，作为消息附件展示并进入模型输入；不需要额外声明 media.deposit。附件内容及名称参与幂等签名，更换附件不能复用同键。
 - 所有插件的两种发送入口共用 40 MiB 在途附件额度；超额在解码和写回执前返回可重试的 `TASK_BUSY`。等待已有请求结束后沿用原 requestKey 重试，不自动改投或丢图。
@@ -270,7 +270,8 @@ text 与 context 合计不超过 64000；tasks.send 的 text 上限仍为 32768�
 不接受自报 confirmed。权限参与幂等摘要，同键修改返回冲突；缺省旧请求可重放，旧 Host 未声明支持时不发新参数。
 
 原有 `cindy.tasks` 的归属限制不变。先调用 `capabilities()` 获取实际支持操作。当前仅支持本插件创建的本机普通任务：
-`models`、`create`、`get`、`setModel`、`list`、`send`、`getRun`、`listRuns`、`readMessages`、`cancel`、`setHidden`。
+`models`、`create`、`get`、`setModel`、`list`、`send`、`getRun`、`listRuns`、`readMessages`、`cancel`、`setHidden`、`archive`。
+`archive({taskId})` 归档自有的空闲任务（忙时 `TASK_BUSY`），用户可恢复，没有删除接口；按视频等开新任务的插件，切换时归档上一条。
 可对自有任务调用 `startTeam({taskId})` 启用 Orca 主任务，并用 `getTeam({taskId})` 读取实际协同状态。协调主任务需经用户授权 Auto，Worker 自动沿用 Auto。
 这些任务及其 Worker 不提供 `cindy_helper` 的账号级历史或跨任务控制能力，`cindy_memory.session_search` 也拒绝历史检索；协调使用独立 Orca 工具，结果由插件通过 `readMessages/getTeam` 读取。旧 errand/workspace 不因来源标记受到限制；明确卸载撤销归属后，调用方已无正在执行的输入或已接受新真人输入时，保留的用户任务恢复普通 helper 与历史检索能力；仍执行旧插件输入时继续受限，自动回报和插件输入重试不构成真人接管。这不恢复插件控制权，也不保证停止已接受执行，不构成通用执行沙箱。
 在首次派发前调用 `setTeamPlan({taskId,plan:{concurrency,task,items}})`，每项包含
@@ -288,7 +289,7 @@ text 与 context 合计不超过 64000；tasks.send 的 text 上限仍为 32768�
 `models()` 返回统一目录可选项的完整 route、efforts 和 supportsFastMode。用户明确选择后将 route 原样传给 create，或用 `setModel({taskId, expectedRevision, route})` 修改已有自有任务。运行中按普通任务的安全边界切换，不修改应用默认。两方法使用前检查 capabilities.operations。
 当 `capabilities().pluginDefaultModel === true` 时，持续复用任务的插件可在每次新输入前调用
 `setModel({taskId, expectedRevision, route:'plugin-default'})`。Host 当次读取本插件有效的任务模型设置（隐藏卡片时忽略旧值），
-复用 create 的模型解析规则（未指定时采用当前新任务选择），只同步模型、来源、引擎、强度和 Fast，
+复用 create 的模型解析规则（未指定时跟随系统辅助模型，优先 Pi 引擎与较低推理强度，最后才是当前新任务选择），只同步模型、来源、引擎、强度和 Fast，
 不改权限、目录或其它任务。返回 `{status,task}`；配置相同返回 unchanged，不反复切换。
 后续 send 使用返回 task.revision。须先处理已接受/结果不确定的旧请求，再同步下一次输入，
 不得修改旧请求的回执或为模型变化重发。旧 Host 未声明此能力时保留原任务行为，不传入该 route。
@@ -355,3 +356,41 @@ run 的 acceptedConfig 是接收配置，execution 是观测到的原生 instanc
 没有足够证据的重启/恢复窗口返回 reconciling，不能当 completed、failed 或零分；
 不要自动重发可能已经产生副作用的输入。费用目前 unavailable，绝不以耗时推算。
 实验性接口尚未提供全部恢复路径的最终对账和事件补拉，因此暂不用于无人值守正式评测。
+
+
+## 4.11.7 伙伴委派协议与回执（未发布）
+
+此增量在插件系统实现，不创建普通任务代替伙伴，不更改伙伴身份、模型、目录或权限档。
+插件声明 `agent: { tasks: true, targets: true, delegation: true }`；`agent:delegation`
+为独立权限，需 Host 显式批准。既有 tasks/targets 批准和历史未知字段不授予委派执行。
+存量插件、凭证、设置和普通消息投递不受影响。
+
+先检查 `typeof cindy.targets?.capabilities === 'function'`，再调用 `await cindy.targets.capabilities({})`。
+返回 `{delegation:{version:1,execution:boolean,targetKinds:['bot'],delivery:['queue']}}`。
+version 只表示本 Host 理解协议；execution 才表示审核接线可用，不表示该插件已获批准。
+审核接线安装完成后 execution 为 true；缺少接线时显式委派返回 UNSUPPORTED_CAPABILITY，且不会预留回执或投递。
+旧 Host 缺少入口或返回 INVALID_PARAMS 时停止，不去掉 delegation 重发或改用 tasks.create。
+
+审核接线可用时，通过原 `targets.send` 增加 `delegation:{task:string}`。
+只支持 bot + queue，task 为非空、最多 8000 字符、不含 NUL 的执行范围；不接受其它委派字段。
+插件应写明目标及允许的结果交付，外部业务正文仍为输入数据；该字段不成为主人原话。
+Host 沿用投递回执，持久化版本 1 的范围、插件实例、目标伙伴/Session、requestKey 与批准版本。
+范围参与幂等摘要：同键变更范围或去掉范围返回 REQUEST_KEY_CONFLICT；未知结果不得换键重投。
+取消保留原请求身份，不恢复已取消回执；撤权、换安装版本或审核接线失效后拒绝排队派发。
+审核消费者核对当前已接受输入、持久回执、原伙伴关联、安装批准与主人指令投影。输入切换、插话、重试、撤权或更换账号后不会借用旧回执。sourcePlugin 只是来源标签，不授予权限。
+Auto 使用回执的任务范围并保留主人的限制；Ask、Full Access 沿用原权限档，插件不能提升伙伴权限。
+`targets.cancel` 仍不停止伙伴。仅当 Host 已撤回原输入、当前无运行工作且无残留队列时，可额外返回
+`{settled:true,requestKey,clientId}`。缺少 settled 或请求不匹配时不得解除未确认的执行占位；旧 Host 的回执行为不变。
+执行能力声明及单元测试通过不代表某个业务插件已通过真实端到端验收。
+
+### 委派收据查询（未发布）
+
+先检查 targets.capabilities().delegation 的 execution、receiptQuery 和 settled 均为 true。
+显式 delegation 的 send 成功响应新增 executionId、requestKey、target；同键同内容仍返回原收据。
+targets.get({requestKey}) 只读本插件原收据，未知键返回 {found:false}；已知键返回
+{found:true,executionId,requestKey,target,taskId,status,delivery,settled,result?}。
+status 是 pending/accepted/cancelled 投递状态，不能当作任务完成；result 含原输入的
+instanceId、generation、outcome（completed/failed/cancelled/interrupted）及可选 outputMessageId。
+自然终态持久记录，重启后仍可查询；崩溃而没有终态证据时 settled=false，不自动重发。
+恢复尚未结束时保持 settled=false；恢复最终失败后记录原输入的 failed 终态，即使运行时已重建也保留原 instanceId/generation，不结算后来排队的请求。
+取消只撤回该插件输入，只有原队列和执行确已结束时 settled=true。不读取伙伴历史。
