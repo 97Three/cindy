@@ -97,8 +97,8 @@ struct SourceValue: View {
   }
 }
 
-/// Reset time under a tube, in plain ink; tinted screens lose the liquid color, so a dot marks
-/// low sources there.
+/// Reset time under a tube. It colors only when quota will go unused at the reset
+/// (`WidgetFormat.resetLevel`); tinted screens lose the color, so a dot marks it there.
 struct SourceWhen: View {
   let text: String
   let level: String
@@ -117,7 +117,7 @@ struct SourceWhen: View {
         .lineLimit(1)
         .truncationMode(.tail)
     }
-    .foregroundStyle(WidgetPalette.ink2)
+    .foregroundStyle((accented ? nil : WidgetPalette.level(level)) ?? WidgetPalette.ink2)
   }
 }
 
@@ -156,7 +156,7 @@ struct SourceColumn: View {
       .font(.system(size: nameSize))
       .foregroundStyle(WidgetPalette.ink2)
       .padding(.top, stacked ? 8 : 6)
-      SourceWhen(text: format.when(source, coarse: coarseWhen), level: source.level, size: whenSize)
+      SourceWhen(text: format.when(source, coarse: coarseWhen), level: format.resetLevel(source), size: whenSize)
         .padding(.top, stacked ? 3 : 1)
     }
     .frame(maxWidth: .infinity)

@@ -85,6 +85,8 @@ export interface MenubarSourceCell {
   resetsAtMs?: number | null;
   /** The reading is the last one from a computer that cannot be reached now; `when` says its age. */
   stale?: boolean;
+  /** A long window will reset with quota unused at the current pace; `whenLevel` colors the time. */
+  unusedAtReset?: boolean;
   accessibilityLabel: string;
 }
 

@@ -20,6 +20,8 @@ struct WidgetSource: Decodable, Identifiable {
   let resetsAtMs: Double?
   /// Last reading of a computer that is offline now; drawn faded, `when` says its age.
   var stale: Bool? = nil
+  /// Will reset with quota unused at the current pace; the reset time colors as it nears.
+  var unusedAtReset: Bool? = nil
   /// The panel's detail ring; drawn when the widget shows a single source.
   var detail: WidgetDetail? = nil
 }
@@ -200,6 +202,18 @@ struct WidgetFormat {
     if d > 0 { return h > 0 && !coarse ? s("durationShort.daysHours", ["d": "\(d)", "h": "\(h)"]) : s("durationShort.days", ["d": "\(d)"]) }
     if h > 0 { return m > 0 && !coarse ? s("durationShort.hoursMinutes", ["h": "\(h)", "m": "\(m)"]) : s("durationShort.hours", ["h": "\(h)"]) }
     return s("durationShort.minutes", ["m": "\(m)"])
+  }
+
+  /// Reset-time color (`resetTimeLevel` in `@cindy/maker-shared/quota-level`): only for quota that
+  /// will go unused, a day or less to go is yellow, six hours or less red. Counted from now, so a
+  /// widget that has not been refreshed still turns red on time.
+  func resetLevel(_ source: WidgetSource) -> String {
+    guard source.unusedAtReset == true, let resetsAtMs = source.resetsAtMs else { return "normal" }
+    let leftHours = (resetsAtMs - now.timeIntervalSince1970 * 1000) / 3_600_000
+    if leftHours <= 0 { return "normal" }
+    if leftHours <= 6 { return "error" }
+    if leftHours <= 24 { return "warn" }
+    return "normal"
   }
 
   /// Age of the quota readings; nil when fresh enough not to mention.

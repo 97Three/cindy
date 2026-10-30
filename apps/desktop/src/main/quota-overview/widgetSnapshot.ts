@@ -57,6 +57,7 @@ export function buildUsageWidgetSnapshot(
       when: cell.when,
       resetsAtMs: cell.resetsAtMs ?? null,
       ...(cell.stale ? { stale: true } : {}),
+      ...(cell.unusedAtReset ? { unusedAtReset: true } : {}),
       ...(detail ? {
         detail: {
           title: detail.title,

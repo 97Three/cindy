@@ -40,6 +40,9 @@ export interface MobileUsageWidgetSource {
   resetsAtMs: number | null;
   /** Last reading of a computer that is offline now; `when` says how old it is. */
   stale?: boolean;
+  /** Will reset with quota unused at the current pace: the widget colors the reset time by how
+   * soon that is (a day or less yellow, six hours or less red). */
+  unusedAtReset?: boolean;
   /** The panel's detail ring, drawn when the widget has a single source. */
   detail?: MobileUsageWidgetDetail;
 }

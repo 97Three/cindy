@@ -41,3 +41,38 @@ export function quotaLevelFromSeverity(severity: string | null | undefined): Quo
 export function strongerQuotaLevel(...levels: QuotaLevel[]): QuotaLevel {
   return levels.reduce<QuotaLevel>((max, level) => (RANK[level] > RANK[max] ? level : max), 'normal');
 }
+
+/**
+ * Reset-time color on the tube surfaces (Mac panel, iPhone widgets): a window longer than a day
+ * that will not be used up at the current pace, so what is left goes to waste at the reset. It is
+ * independent of the liquid color: a yellow tube can still reset with a quarter unused.
+ * A day or less to go is yellow, six hours or less is red (owner decision 2026-10-31).
+ */
+export const QUOTA_RESET_WARN_MS = 24 * 60 * 60_000;
+export const QUOTA_RESET_CRIT_MS = 6 * 60 * 60_000;
+/** Shorter windows (the 5-hour session) always reset within the warning span, so they never color. */
+export const QUOTA_RESET_MIN_WINDOW_MS = 24 * 60 * 60_000;
+
+export function resetTimeLevel(leftMs: number, unusedAtReset: boolean): QuotaLevel {
+  if (!unusedAtReset || !Number.isFinite(leftMs) || leftMs <= 0) return 'normal';
+  if (leftMs <= QUOTA_RESET_CRIT_MS) return 'crit';
+  if (leftMs <= QUOTA_RESET_WARN_MS) return 'warn';
+  return 'normal';
+}
+
+/**
+ * Whether a window will still have quota left at its reset at the current pace: what was used
+ * over the elapsed part, extended to the reset, stays under 100%.
+ */
+export function willLeaveQuotaUnused(window: {
+  usedPercent: number;
+  windowMs: number;
+  leftMs: number;
+}): boolean {
+  const { usedPercent, windowMs, leftMs } = window;
+  if (!(windowMs > QUOTA_RESET_MIN_WINDOW_MS) || !(leftMs > 0) || leftMs >= windowMs) return false;
+  if (usedPercent >= 100) return false;
+  if (usedPercent <= 0) return true;
+  const elapsedMs = windowMs - leftMs;
+  return usedPercent + (usedPercent / elapsedMs) * leftMs < 100;
+}

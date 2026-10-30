@@ -14,6 +14,9 @@ import {
   QUOTA_CRIT_REMAINING_PERCENT,
   QUOTA_WARN_REMAINING_PERCENT,
   quotaLevelFromRemaining,
+  resetTimeLevel,
+  willLeaveQuotaUnused,
+  type QuotaLevel,
 } from '@cindy/maker-shared/quota-level';
 import {
   type MenubarColor,
@@ -299,6 +302,10 @@ function clamp(value: number, min: number, max: number): number {
 /** The shared quota rule (`@cindy/maker-shared/quota-level`) in the panel's level names. */
 function levelOf(remaining: number): MenubarLevel {
   const level = quotaLevelFromRemaining(remaining);
+  return level === 'crit' ? 'error' : level;
+}
+
+function panelLevel(level: QuotaLevel): MenubarLevel {
   return level === 'crit' ? 'error' : level;
 }
 
@@ -610,6 +617,14 @@ class Builder {
     return this.visible.map((source) => this.cell(source, source === recommended, roomy));
   }
 
+  /** A period quota that the daily burn will not use up before it resets; a wallet never resets. */
+  private quotaUnusedAtReset(source: MenubarBalanceInput): boolean {
+    const resetsAtMs = source.quota?.resetsAtMs ?? null;
+    if (resetsAtMs === null || source.burnPerDay === null || !(source.available > 0)) return false;
+    const leftMs = resetsAtMs - this.input.nowMs;
+    return leftMs > 0 && source.available > source.burnPerDay * (leftMs / DAY_MS);
+  }
+
   /** A quota counts down to its reset like a subscription; a wallet says how long it lasts. */
   private balanceWhen(source: MenubarBalanceInput, days: number | null, roomy: boolean): string {
     const resetsAtMs = source.quota?.resetsAtMs ?? null;
@@ -643,18 +658,22 @@ class Builder {
       const days = source.burnPerDay && source.burnPerDay > 0 ? Math.floor(source.available / source.burnPerDay) : null;
       const fill = source.fullAmount && source.fullAmount > 0 ? clamp(source.available / source.fullAmount, 0, 1) : source.available > 0 ? 1 : 0;
       const amount = this.balanceMoney(source.available, source.currency);
+      const level = balanceLevel(source);
+      const unusedAtReset = this.quotaUnusedAtReset(source);
+      const quotaLeftMs = (source.quota?.resetsAtMs ?? this.input.nowMs) - this.input.nowMs;
       return {
         ...base,
         name: this.t('balance.short'),
         value: amount,
         valueUnit: null,
         valueLabel: null,
-        level: balanceLevel(source),
+        level,
         fill,
         reserve: false,
         when: this.balanceWhen(source, days, roomy),
-        whenLevel: 'normal',
+        whenLevel: panelLevel(resetTimeLevel(quotaLeftMs, unusedAtReset)),
         resetsAtMs: source.quota?.resetsAtMs ?? null,
+        ...(unusedAtReset ? { unusedAtReset: true } : {}),
         accessibilityLabel: source.quota
           ? this.t('a11y.quota', { amount })
           : days === null
@@ -694,8 +713,11 @@ class Builder {
       const duration = this.shortDuration(limit.window.resetsAtMs - this.input.nowMs);
       when = roomy ? this.t('cell.resetsIn', { duration }) : duration;
     }
-    // Numbers keep their ink; the liquid alone carries the quota color (owner decision 2026-10-31).
-    const whenLevel: MenubarLevel = 'normal';
+    // The number keeps its ink (the liquid shows how much is left); the reset time colors only
+    // when a long window will reset with quota still unused at the current pace (2026-10-31).
+    const unusedAtReset = seenAtMs === null && limit.window.resetsAtMs !== null
+      && willLeaveQuotaUnused({ usedPercent: 100 - remaining, windowMs: limit.window.windowMinutes * 60_000, leftMs: limit.leftMs });
+    const whenLevel = panelLevel(resetTimeLevel(limit.leftMs, unusedAtReset));
     return {
       ...base,
       name,
@@ -708,6 +730,7 @@ class Builder {
       when,
       whenLevel,
       resetsAtMs: seenAtMs !== null ? null : limit.window.resetsAtMs,
+      ...(unusedAtReset ? { unusedAtReset: true } : {}),
       ...(seenAtMs !== null ? { stale: true } : {}),
       accessibilityLabel: reserve
         ? this.t('a11y.reserve', { name: `${source.brand} ${name}` })

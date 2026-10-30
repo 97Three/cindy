@@ -147,7 +147,7 @@ struct SingleSourceView: View {
         if !detail.legend.isEmpty {
           DetailLegend(detail: detail).padding(.top, 10)
         }
-        SourceWhen(text: resetLine, level: source.level, size: 11).padding(.top, 4)
+        SourceWhen(text: resetLine, level: format.resetLevel(source), size: 11).padding(.top, 4)
         Spacer(minLength: 8)
         MonthCard(snapshot: format.snapshot, format: format)
       }
@@ -164,7 +164,7 @@ struct SingleSourceView: View {
           Spacer(minLength: 6)
           if !detail.legend.isEmpty { DetailLegend(detail: detail, vertical: true) }
           Spacer(minLength: 6)
-          SourceWhen(text: resetLine, level: source.level, size: 11)
+          SourceWhen(text: resetLine, level: format.resetLevel(source), size: 11)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
       }

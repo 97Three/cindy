@@ -162,6 +162,32 @@ describe('buildMenubarView', () => {
     expect(view.sources[0].name).toBe('Studio');
   });
 
+  // Owner rule 2026-10-31: the reset time colors only when a long window will reset with quota
+  // unused at the current pace — a day or less yellow, six hours or less red; numbers keep ink.
+  it('colors the reset time when a long window will reset with quota unused', () => {
+    const week = (id: string, used: number, leftMs: number, extra: Partial<MenubarSubscriptionInput> = {}) =>
+      codex(id, used, { windows: [{ kind: 'week', usedPercent: used, resetsAtMs: NOW + leftMs, windowMinutes: 10_080 }], ...extra });
+    const view = buildMenubarView(input([
+      week('soon', 20, 5 * HOUR),
+      week('tomorrow', 20, 20 * HOUR),
+      week('later', 20, 2 * DAY),
+      week('pace', 90, 20 * HOUR),
+      week('low', 75, 5 * HOUR),
+      codex('session', 20, { windows: [{ kind: 'session', usedPercent: 20, resetsAtMs: NOW + HOUR, windowMinutes: 300 }] }),
+    ]));
+    const levels = Object.fromEntries(view.sources.map((cell) => [cell.id, [cell.whenLevel, cell.unusedAtReset ?? false]]));
+    expect(levels).toEqual({
+      soon: ['error', true],
+      tomorrow: ['warn', true],
+      later: ['normal', true],
+      // 90% used over ~6 days runs out before the reset: nothing goes to waste.
+      pace: ['normal', false],
+      // A yellow liquid still resets with a quarter unused at this pace: use it now.
+      low: ['error', true],
+      session: ['normal', false],
+    });
+  });
+
   it('shows an offline computer’s last reading with its age and never recommends it', () => {
     const offline = codex('alpha', 10, {
       id: 'remote:dev-2:openai', device: { id: 'dev-2', name: 'Studio' }, lastSeenAtMs: NOW - 3 * HOUR,
