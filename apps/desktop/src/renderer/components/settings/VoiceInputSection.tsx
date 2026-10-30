@@ -33,6 +33,7 @@ import {
   type VoiceInputDictionaryEntrySource,
   type VoiceInputLanguage,
 } from '@/hooks/useVoiceInputSettings';
+import { VOICE_INPUT_EXTRA_LANGUAGES } from '../../../shared/voiceInputData';
 import { getComposerSendShortcutPreference } from '@/hooks/useComposerSendShortcutPreference';
 import { useVoiceInputModelSelection } from '@/hooks/useVoiceInputModelSelection';
 import { useVoiceInputUsageStats } from '@/hooks/useVoiceInputUsageStats';
@@ -79,7 +80,13 @@ import {
 import type { VoiceInputConnectionTestFailureReason } from '../../../shared/voiceInputConnectionTest';
 
 const log = createLogger('VoiceInputSection');
-const LANGUAGE_OPTIONS: ReadonlyArray<VoiceInputLanguage> = ['auto', ...SUPPORTED_LOCALES];
+const LANGUAGE_OPTIONS: ReadonlyArray<VoiceInputLanguage> = [
+  'auto',
+  ...SUPPORTED_LOCALES,
+  ...VOICE_INPUT_EXTRA_LANGUAGES,
+];
+const isExtraVoiceInputLanguage = (language: VoiceInputLanguage): boolean =>
+  (VOICE_INPUT_EXTRA_LANGUAGES as readonly string[]).includes(language);
 const AUTO_MICROPHONE_VALUE = '__auto__';
 const DICTIONARY_FILTERS = ['all', 'automatic', 'manual'] as const;
 
@@ -1735,7 +1742,9 @@ export function VoiceInputSection() {
         label:
           language === 'auto'
             ? t('settings.voiceInput.language.options.auto')
-            : t(`settings.language.options.${language}`),
+            : isExtraVoiceInputLanguage(language)
+              ? t(`settings.voiceInput.language.options.${language}`)
+              : t(`settings.language.options.${language}`),
         description: t(`settings.voiceInput.language.optionDescriptions.${language}`),
       })),
     [t],

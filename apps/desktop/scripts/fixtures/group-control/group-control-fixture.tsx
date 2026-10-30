@@ -21,6 +21,7 @@ interface GroupData {
   processOtherOwner?: boolean;
   /** Controlled receipts for the real renderer send/settle layout regression. */
   sendStatus?: boolean;
+  sharePending?: boolean;
   workState?: 'thinking' | 'reading-file' | 'testing' | 'waiting' | 'stopping' | 'unknown';
   workRemote?: boolean;
   workParallel?: boolean;
@@ -360,6 +361,7 @@ void mountPage({
           ownedBots: async () => ({ ok: true, bots: [] }),
           manage: forbid('maker.chatServer.manage'),
           ...(data.threadPanel ? { thread, followThread } : {}),
+          ...(data.sharePending ? { shareToMain: () => new Promise(() => {}) } : {}),
         },
         updateBotGroup: forbid('maker.updateBotGroup'),
       },
