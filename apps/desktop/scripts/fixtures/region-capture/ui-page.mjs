@@ -324,8 +324,9 @@ export default {
       await (await button('regionScreenshot.save')).click();
       await page.waitForFunction(() => window.captureQa.saved?.length > 0);
       const clip = await page.evaluate(() => ({ saved: Array.from(window.captureQa.saved), format: window.captureQa.format }));
-      // Decode the exported bytes in a fresh detached media element. Electron
-      // does not support BrowserContext.newPage(); no preview element/blob is reused.
+      // Decode the saved bytes with a fresh image/video element and Blob URL,
+      // independently of the preview's URL, element and decoded state. Electron
+      // contexts cannot create browser tabs through Target.createTarget.
       const decoded = await page.evaluate(async ({ saved, format }) => {
         saved = new Uint8Array(saved);
         const url = URL.createObjectURL(new Blob([saved], { type: format === 'gif' ? 'image/gif' : 'video/webm' }));

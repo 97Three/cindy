@@ -1,11 +1,12 @@
 import { outboundFetch } from '../maker-host/outbound-fetch.js';
 import { assertSessionCreationCurrent, currentSessionCreationSignal } from '../localDb/sessionRuntimeCleanup.js';
+import { resumeInterruptedScheduleRun } from '../scheduler-host/index.js';
 import { readTaskDeliveryNote } from '../bot-autonomy/hub.js';
 import { setVoiceTaskDispatch, setVoiceCallMemoryReader } from '../voice-conversation/taskBridge.js';
 import { buildBotMemoryScopeKey, SessionCreationCleanupPendingError } from '@cindy/maker-core';
 import { createOrcaWorkerProjectHandlers } from './orcaWorkerProjectHandlers';
 import { getTeamByWorkerSession } from '../localDb/orcaTeamStore';
-import { readWorkerProjectContext, createWorkerWorktree, rememberWorkerProject, probeWorkerProject, resolveWorkerWorktreeSource, getWorkerOwnedWorktree } from './orcaWorkerProject';
+import { readWorkerProjectContext, createWorkerWorktree, rememberWorkerProject, probeWorkerProject, resolveWorkerWorktreeSourceSelection, getWorkerOwnedWorktree } from './orcaWorkerProject';
 import type { WorkerWorktreeRequest } from '../../shared/orca-worker-project';
 import { captureAgentRequest as captureRequest, ownerChannelInputEvidence, type CapturedAgentRequest } from './forwardedRequest.js';
 import { readChannelToolScope } from '../im/shared/channelToolScope.js';
@@ -743,6 +744,7 @@ import {
   getRemoteNewMakerDefaults,
   getRemoteNewMakerDefaultsByVendor,
   getWorkerDefaultsFromNewMaker,
+  getWorkerCreationSelection,
   getSelectedNewMakerRoute,
   getWorkerPermissionModeFromCreationPrefs,
   type ProviderModelMemorySnapshot,
@@ -901,7 +903,7 @@ import { dbToMakerAgentKind, makerToDbAgentKind } from '../../shared/agentKindCo
 import { normalizeSessionContextWindowBoundsRoute } from '../../shared/sessionContextWindowBounds.js';
 import { readWorkflowProgressForSession } from '../workflow-progress/reader.js';
 import { readSessionBackgroundTaskOutputTail } from '../background-task-output/reader.js';
-import { AgentInputCoordinator } from './agent-input-coordinator.js';
+import { AgentInputCoordinator, markManualSchedulerContinuation } from './agent-input-coordinator.js';
 import { bindSilentStopContinuationGeneration } from './silentStopContinuationBinding.js';
 import { notePromptPredictionSessionStopped } from './promptPredictionStopLedger.js';
 import {
@@ -1140,7 +1142,7 @@ import {
   takeOverLocalAgentVisibleSession,
 } from '../local-agent/visibleSessions.js';
 import { ingestChatImageFromPath } from '../cindy-media/chatAttachments.js';
-import { UI_ACTION_TRIGGER_PREFIX } from '@cindy/maker-shared/synthetic-trigger';
+import { UI_ACTION_TRIGGER_PREFIX, CONTINUE_AFTER_APP_EXIT_PROMPT } from '@cindy/maker-shared/synthetic-trigger';
 import {
   createContextOverflowRollover,
   canContinueContextRecovery,
@@ -2781,9 +2783,11 @@ interface OrcaCollabService {
     | { ok: false; errorCode: string; message: string }
   >;
   createWorker: (params: {
+    /** Host-only marker set at the MCP adapter; never accepted from its schema. */
+    useCreationPrefs?: boolean;
     leadSessionId: string;
     role: string;
-    agent: AgentKind;
+    agent?: AgentKind;
     model?: string;
     providerId?: string;
     effort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
@@ -2800,6 +2804,10 @@ interface OrcaCollabService {
   }) => Promise<
     | {
         ok: true;
+        worktreeSource?: import('../../shared/orca-worker-project').WorkerWorktreeSourceSelection;
+        resolved?: Extract<import('./orcaWorkerCreationService').OrcaWorkerCreationResult, { ok: true }>['resolved'];
+        defaults?: import('./orcaWorkerDefaults').WorkerDefaultsResolution;
+        executionDeviceId?: string;
         workerId: string;
         workerSessionId: string;
         workingDir?: string;
@@ -3460,6 +3468,9 @@ const ghostSetupInteractionBridge = initGhostSetupInteractionBridge({
       request?: GhostSetupInteractionSnapshot;
     };
     if (typeof value.sessionId !== 'string') return;
+    // Setup waits are part of hasPendingAgentInteractionForSession, but bypass the router.
+    // Refresh after the coordinator marks a terminal snapshot complete (before its UI grace).
+    botGroupChatServiceHolder?.refreshPendingInteraction(value.sessionId);
     if (channel === MAKER_PUSH.INTERACTION_REQUEST && value.request?.kind === 'plugin_setup') {
       if (!shouldNotifyAgentIslandForSession(value.sessionId)) return;
       if (value.request.terminal === true) {
@@ -6481,6 +6492,7 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
   installDesktopInteractionListener(session);
   installInteractionLifecycleObserver(session, {
     onStart: (request, route) => {
+      botGroupChatServiceHolder?.refreshPendingInteraction(session.id);
       ghostSessionTap.interactionObserver.onStart(request, route);
       void botDelegationServiceHolder?.handleInteractionStart(session.id, request).catch((error) => {
         log.warn('failed to project child interaction to requesting Bot', {
@@ -6491,6 +6503,7 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
       });
     },
     onEnd: (request, route) => {
+      botGroupChatServiceHolder?.refreshPendingInteraction(session.id);
       ghostSessionTap.interactionObserver.onEnd(request, route);
       void botDelegationServiceHolder?.handleInteractionEnd(session.id, request).catch((error) => {
         log.warn('failed to clear child interaction for requesting Bot', {
@@ -6998,7 +7011,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   initRenameSessionsConfirm(renameSessionsConfirmBridge);
 
   // Worker 创建偏好与模型默认值同样以 renderer localStorage 为真源。main 只保留
-  // 权限模式镜像，供 Orca UI / MCP 创建路径读取。
+  // 权限与当前账号本机路线镜像，供 Orca UI / MCP 创建路径读取。
   ipcMain.on(
     MAKER_SEND.SYNC_WORKER_CREATION_PREFS,
     createWorkerCreationPrefsSyncHandler({
@@ -7006,6 +7019,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         assertTrustedAppRendererEvent(event as Parameters<typeof assertTrustedAppRendererEvent>[0]),
       setWorkerPermissionMode: (workerPermissionMode) =>
         setWorkerCreationPrefsCache({ workerPermissionMode }),
+      getActiveOwner: getActiveDataOwnerPushStamp,
+      isBoundaryPending: isAppSessionBoundaryPending,
+      setSelection: (selection, ownerStamp) => setWorkerCreationPrefsCache({
+        workerPermissionMode: getWorkerPermissionModeFromCreationPrefs(), selection, ownerStamp,
+      }),
     }),
   );
 
@@ -16399,6 +16417,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       };
     },
     getWorkerDefaults: getWorkerDefaultsFromNewMaker,
+    getCreationSelection: () => isAppSessionBoundaryPending() ? null : getWorkerCreationSelection(getActiveDataOwnerPushStamp()),
     getWorkerPermissionMode: getWorkerPermissionModeFromCreationPrefs,
     resolveWorkerWorkingDir: async (dir, lead) => {
       let resolved: string;
@@ -16415,7 +16434,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       );
       return resolved;
     },
-    resolveWorkerWorktreeSource,
+    resolveWorkerWorktreeSource: (directory, source, leadDirectory) =>
+      resolveWorkerWorktreeSourceSelection(directory, source, undefined, leadDirectory),
     getWorkerWorktree: getWorkerOwnedWorktree,
     createWorkerWorktree,
     discardWorkerWorktree,
@@ -17890,6 +17910,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     moveWorkerQueuedMessage: (params) => orcaTeamService.moveWorkerQueuedMessage(params),
     startTeam: ({ leadSessionId, workerPermissionMode }) => startOrcaTeamForCaller(leadSessionId, workerPermissionMode),
     createWorker: async (params) => {
+      params = { ...params, useCreationPrefs: true };
       try {
         await assertLeadCollabProjectEnabled(params.leadSessionId);
         return await orcaLifecycleService.createWorker(params);
@@ -21695,16 +21716,81 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         // 排队可取消时旧中断提示必须能恢复；accepted 但仍可能 cancelled-before-dispatch
         // 时也不能提前 ack。续跑项本身由 coordinator 插到队首（普通输入仍 FIFO）。
         let duplicate = false;
-        const projection = inputCoordinator.enqueue(sid, queued, {
-          ...(opts && typeof opts === 'object' ? (opts as { sendAtMs?: number }) : undefined),
-          // 本机与远控用户显式输入可放行崩溃恢复暂停，避免「继续任务」再次排进暂停队列。
-          // 远端 Orca 派活也经此 IPC。来源盖章会剥掉 wire 的 origin，因此从规范化远控载荷
-          // 读取自动投递意图，只用于收紧恢复暂停，不授予来源身份或权限；本机仍按显式输入处理。
-          resumeRestorePausedQueue: !(deviceLinkInvoke && isAutomaticInputOriginKind(parsed.origin?.kind)),
-          onDuplicate: () => {
-            duplicate = true;
-          },
-        });
+        const enqueueInput = (input: AgentInputQueuedMessage) => {
+          assertCurrentInputGeneration();
+          if (inputOwner !== getCurrentDbClientSnapshot()) throwIpcError('PRECONDITION_FAILED', 'Account changed before input');
+          assertRemoteInputClearNotInFlight(sid, deviceLinkInvoke);
+          return inputCoordinator.enqueue(sid, input, {
+            ...(opts && typeof opts === 'object' ? (opts as { sendAtMs?: number }) : undefined),
+            // 本机与远控用户显式输入可放行崩溃恢复暂停，避免「继续任务」再次排进暂停队列。
+            // 远端 Orca 派活也经此 IPC。来源盖章会剥掉 wire 的 origin，因此从规范化远控载荷
+            // 读取自动投递意图，只用于收紧恢复暂停，不授予来源身份或权限；本机仍按显式输入处理。
+            resumeRestorePausedQueue: !(deviceLinkInvoke && isAutomaticInputOriginKind(parsed.origin?.kind)),
+            onDuplicate: () => {
+              duplicate = true;
+            },
+          });
+        };
+        let projection: ReturnType<typeof enqueueInput> | undefined;
+        if (queued.text === CONTINUE_AFTER_APP_EXIT_PROMPT
+          && !(deviceLinkInvoke && isAutomaticInputOriginKind(parsed.origin?.kind))) {
+          assertCurrentInputGeneration();
+          if (inputOwner !== getCurrentDbClientSnapshot()) throwIpcError('PRECONDITION_FAILED', 'Account changed before input');
+          let didEnqueue!: () => void;
+          const enqueued = new Promise<void>((resolve) => { didEnqueue = resolve; });
+          const resumed = await resumeInterruptedScheduleRun(sid, async (req) => {
+            assertCurrentInputGeneration();
+            const clientId = queued.clientId;
+            // Match normal scheduled input: Continue's UI default is false,
+            // but an interrupted scheduled turn inherits the saved plan mode.
+            // The runner still rechecks durable/live/queued values at dispatch.
+            const stored = req.inheritTargetPlanMode ? await getSessionFsSnapshot(sid) : null;
+            const continuation = markManualSchedulerContinuation({
+              ...queued, origin: req.origin,
+              createOpts: {
+                ...queued.createOpts,
+                ...(stored ? { planMode: stored.planModeEnabled === true } : {}),
+              },
+            });
+            if (req.onDiscarded) schedulerQueuedPromptDiscardWatchers.set(clientId, req.onDiscarded);
+            if (req.onPreparing) schedulerQueuedPromptPreparations.set(clientId, {
+              onPreparing: req.onPreparing, onPreparationFailed: req.onPreparationFailed,
+            });
+            orcaInterAgentDispatcher.registerQueuedOrcaInterAgentAcceptedCallback(
+              clientId,
+              () => req.onAccepted({ permissionMode: continuation.createOpts.permissionMode, planMode: continuation.createOpts.planMode }),
+              req.onAcceptedRollback,
+            );
+            try {
+              projection = enqueueInput(continuation);
+              // UI Continue may retry an existing queue head without retaining
+              // this input. Only a retained item can own the claimed run; throw
+              // through the existing preparation rollback before acknowledging.
+              if (!inputCoordinator.hasQueuedItemWhere(sid, (pending) =>
+                pending.clientId === clientId && pending.origin?.kind === 'scheduler'
+                && pending.origin.runId === req.origin.runId)) {
+                throwIpcError('PRECONDITION_FAILED', 'Interrupted scheduled continuation was not queued; please continue again');
+              }
+              didEnqueue();
+              return { clientId };
+            } catch (error) {
+              schedulerQueuedPromptDiscardWatchers.delete(clientId);
+              schedulerQueuedPromptPreparations.delete(clientId);
+              orcaInterAgentDispatcher.discardQueuedOrcaInterAgentAcceptedCallback(clientId);
+              throw error;
+            }
+          });
+          if (resumed) {
+            // IPC acknowledges the original input at enqueue, not at turn end.
+            // Early preparation failures must not silently send an untracked turn.
+            const completion = resumed.completion.then(() => {
+              if (!projection) throw new Error('Interrupted scheduled run could not be queued; please continue again');
+            });
+            void completion.catch((error) => log.warn('manual scheduled continuation failed', { sessionId: sid, error: String(error) }));
+            await Promise.race([enqueued, completion]);
+          }
+        }
+        projection ??= enqueueInput(queued);
         if (duplicate) {
           if (attachmentOwnerId) {
             await materialized.cleanupBeforeAcceptance?.();
