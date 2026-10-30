@@ -4402,18 +4402,19 @@ describe('Chat Server directed sends', () => {
   let service: BotGroupChatService;
   let responseMode: 'all' | 'mentioned';
   let nextSendId: number;
+  let mentionAudiences = false, allowAllBots = false;
   let members: Array<{ id: string; kind: string; state: string }>;
   beforeEach(() => {
     vi.useFakeTimers();
-    fixture.packaged = true; responseMode = 'all'; nextSendId = 0;
+    fixture.packaged = true; responseMode = 'all'; nextSendId = 0; mentionAudiences = false; allowAllBots = false;
     fixture.profiles = [{ id: 'local-bot', displayName: 'Bot', status: 'active' }];
     members = [{ id: selfId, kind: 'human', state: 'joined' },
       { id: botId, kind: 'bot', state: 'joined' }, { id: humanId, kind: 'human', state: 'joined' }];
     fixture.handle.mockImplementation((route, method) => {
-      if (route === '/me') return { body: { actor: { id: selfId } } };
+      if (route === '/me') return { body: { actor: { id: selfId }, capabilities: mentionAudiences ? { groupMentionAudiences: 1 } : {} } };
       if (route === '/actors') return { body: [{ id: botId, kind: 'bot', externalId: 'local-bot', name: 'Bot' }] };
       if (route.endsWith('/members')) return { body: members };
-      if (route.endsWith('/snapshot')) return { body: { room: { id: roomId, kind: 'group', response_mode: responseMode }, members, messages: [], cursor: '0' } };
+      if (route.endsWith('/snapshot')) return { body: { room: { id: roomId, kind: 'group', response_mode: responseMode, allow_mention_all_bots: allowAllBots }, members, messages: [], cursor: '0' } };
       if (route.endsWith('/messages') && method === 'POST') return { body: { id: 'posted-message' } };
       return { body: [] };
     });
@@ -4422,10 +4423,43 @@ describe('Chat Server directed sends', () => {
   });
   afterEach(() => { service.dispose(); vi.useRealTimers(); vi.clearAllMocks(); });
   const posts = () => fixture.handle.mock.calls.filter(([route, method]) => route.endsWith('/messages') && method === 'POST');
-  const send = (entry: string, mentions = { all: false, botIds: ['local-bot'] }) => {
+  const send = (entry: string, mentions: { all: boolean; allBots?: boolean; botIds: string[] } = { all: false, botIds: ['local-bot'] }) => {
     const input = { groupId: roomId, text: '@Bot hello', clientId: `directed-send-${++nextSendId}`, mentions };
     return entry === 'thread' ? service.chatServer!.reply({ ...input, rootId }) : service.sendMessage(input);
   };
+
+  // User rule: human and teammate broadcasts must remain distinct on both send routes.
+  it.each(['main', 'thread'])('uses the owner-enabled teammate audience independently in %s', async entry => {
+    mentionAudiences = true;
+    expect(await send(entry, { all: false, allBots: true, botIds: [] })).toMatchObject({ ok: false, errorCode: 'ALL_BOTS_MENTION_DISABLED' });
+    expect(posts()).toEqual([]);
+    expect(await send(entry, { all: true, botIds: [] })).toMatchObject({ ok: true });
+    expect(posts().at(-1)![2]).toMatchObject({ mentions: [humanId], mentionAudience: 'humans' });
+    allowAllBots = true;
+    expect(await send(entry, { all: false, allBots: true, botIds: [] })).toMatchObject({ ok: true });
+    expect(posts().at(-1)![2]).toMatchObject({ mentions: [botId], mentionAudience: 'bots' });
+  });
+
+  // Unit: a lost committed receipt must remain recoverable after the owner closes broadcasts.
+  it('retries a posted teammate broadcast unchanged after its setting is disabled', async () => {
+    mentionAudiences = true; allowAllBots = true;
+    const response = fixture.handle.getMockImplementation()!;
+    let loseReply = true;
+    fixture.handle.mockImplementation((route, method, body) => {
+      if (route.endsWith('/messages') && method === 'POST' && loseReply) {
+        loseReply = false; throw new Error('lost receipt');
+      }
+      return response(route, method, body);
+    });
+    const input = { groupId: roomId, rootId, text: '@All teammates', clientId: 'retry-broadcast',
+      mentions: { all: false, allBots: true, botIds: [] } };
+    expect(await service.chatServer!.reply(input)).toMatchObject({ ok: false });
+    const first = posts()[0]![2];
+    allowAllBots = false;
+    expect(await service.chatServer!.reply(input)).toMatchObject({ ok: true });
+    expect(posts()).toHaveLength(2);
+    expect(posts()[1]![2]).toEqual(first);
+  });
 
   it('maps each owned Chat Server actor back to its local teammate for entry points outside group settings', async () => {
     const result = await service.chatServer!.ownedBots();
@@ -4468,8 +4502,7 @@ describe('Chat Server directed sends', () => {
     for (const all of [false, true]) {
       for (const targets of [[botId], ['local-bot'], [humanId], [selfId], [selfId, humanId, 'local-bot', botId]]) {
         expect(await send(entry, { all, botIds: targets })).toMatchObject({ ok: true });
-        const ids = all ? [botId, humanId]
-          : [...new Set(targets.map(target => target === 'local-bot' ? botId : target))].filter(target => target !== selfId);
+        const ids = [...new Set([...targets.map(target => target === 'local-bot' ? botId : target), ...(all ? [humanId] : [])])].filter(target => target !== selfId);
         expect(posts().at(-1)![2]).toMatchObject({ mentions: ids,
           ...(entry === 'thread' ? { threadRootId: rootId } : {}) });
       }
@@ -4483,7 +4516,7 @@ describe('Chat Server directed sends', () => {
         const before = posts().length;
         expect(await send(entry, mentions)).toMatchObject({ ok: true });
         expect(posts()).toHaveLength(before + 1);
-        expect(posts().at(-1)![2].mentions).toEqual(mentions.all ? [botId, humanId] : []);
+        expect(posts().at(-1)![2].mentions).toEqual(mentions.all ? [humanId] : []);
       }
     }
   });

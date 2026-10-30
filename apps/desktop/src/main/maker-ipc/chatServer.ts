@@ -27,7 +27,7 @@ import { mergeChatReplyAttachments } from './chatServerReplyAttachments.js';
 import { prepareChatReplyImages } from './chatServerReplyImages.js';
 import { chatServerWorkspaces } from './chatServerWorkspaces.js';
 import { buildPlanStepBrief, draftPlanSteps, type PlanStepDraft } from './botGroupDivision.js';
-import { splitBotGroupRelaySteps } from '@cindy/maker-shared/botGroupMentions';
+import { botGroupMentionAudience, splitBotGroupRelaySteps } from '@cindy/maker-shared/botGroupMentions';
 import { chatMigrationReceipts } from './chatMigrationReceipts.js';
 import { chatLocalHistory } from './chatLocalHistory.js';
 import { chatSendJournal } from './chatSendJournal.js';
@@ -46,7 +46,7 @@ import { UI_ACTION_TRIGGER_PREFIX } from '../../shared/interruptedTurn.js';
 import { untrustedJsonBlock } from '../../shared/untrustedPrompt.js';
 import {
   BOT_GROUP_ATTACHMENTS_MAX, BOT_GROUP_CLIENT_ID, isBotGroupNoReplyText,
-  type BotGroupRuntimeFailureCode,
+  type BotGroupRuntimeFailureCode, type BotGroupMention,
   readImportedBotGroupRuntimeFailureCode,
   readBotGroupExecutionFailure, type BotGroupExecutionFailureView,
   buildBotGroupThreadShareCard, botGroupThreadShareOperationId, readBotGroupThreadShareCard,
@@ -77,18 +77,18 @@ interface Message {
   content: Array<{ type: string; text?: string; fallback?: string; namespace?: string; schemaRevision?: number; data?: Record<string, unknown>; mediaId?: string; caption?: string }>;
   origin?: string; createdAt: string; deleted: boolean; threadRootId: string | null; revision?: number;
   /** Actor IDs this message names. */
-  mentions?: string[];
+  mentions?: string[]; mentionAudience?: 'humans' | 'bots' | 'everyone';
 }
 interface Room {
   id: string; name: string; topic: string; description: string; response_mode: 'all' | 'mentioned'; speaking_mode: 'auto' | 'sequential';
-  created_at: string; updated_at: string; revision: number; archived: boolean; dissolved_at?: string | null; organizer_id?: string | null; kind?: string;
+  allow_mention_all_bots?: boolean; created_at: string; updated_at: string; revision: number; archived: boolean; dissolved_at?: string | null; organizer_id?: string | null; kind?: string;
 }
 /** `reads`: this reader's read position per Thread (`thread_key` = root ID, `main` for the main timeline); older servers omit it. */
 interface Snapshot { room: Room; members: Member[]; messages: Message[]; cursor: string; mentionReadIds?: string[]; reads?: Array<{ thread_key: string; read_seq: string; following?: boolean; muted?: boolean }> }
 interface SavedChatSend {
   snapshot: Snapshot; plans: ServerPlan[]; members: Member[];
   quote: (BotGroupQuoteView & { recipientActorId?: string }) | null;
-  mentions: { all: boolean; botIds: string[] };
+  mentions: BotGroupMention;
   shouldPlan: boolean; route: string; body: unknown; attachments: BotGroupAttachment[];
 }
 interface Execution {
@@ -376,6 +376,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
   let supportsDissolve = false;
   let supportsListRemoval = false;
   let supportsMemberAvatar = false;
+  let supportsMentionAudiences = false;
   const personalList = createConversationListState();
   const attentionGroups = new Set<string>();
   const clearGroupAttention = (roomId: string) => {
@@ -930,12 +931,13 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       const profileRevision = localProfilesRevision;
       profiles = await getDbClient().drizzle.select().from(botProfiles).where(undefined);
       localProfilesRead = profileRevision;
-      const me = await request<{ actor: Actor; deviceId?: string | null; capabilities?: { groupDiscussionParity?: number; groupSingleSpeaker?: number; companionHome?: boolean; directRoomClaim?: boolean; groupLifecycleVersion?: number; conversationListStateVersion?: number; groupMemberAvatar?: number; workAvailabilityVersion?: number; workNotificationsVersion?: number } }>('/me'); selfId = me.actor.id;
+      const me = await request<{ actor: Actor; deviceId?: string | null; capabilities?: { groupDiscussionParity?: number; groupSingleSpeaker?: number; companionHome?: boolean; directRoomClaim?: boolean; groupLifecycleVersion?: number; conversationListStateVersion?: number; groupMemberAvatar?: number; groupMentionAudiences?: number; workAvailabilityVersion?: number; workNotificationsVersion?: number } }>('/me'); selfId = me.actor.id;
       personalMaskTools = (me.capabilities as { personalMaskTools?: number } | undefined)?.personalMaskTools === 1;
       personalMask = (me.capabilities as { personalMask?: number } | undefined)?.personalMask === 1;
       supportsDissolve = me.capabilities?.groupLifecycleVersion === 1;
       supportsListRemoval = me.capabilities?.conversationListStateVersion === 1;
       supportsMemberAvatar = me.capabilities?.groupMemberAvatar === 1;
+      supportsMentionAudiences = me.capabilities?.groupMentionAudiences === 1;
       groupDiscussionParity = me.capabilities?.groupDiscussionParity === 1;
       singleSpeaker = me.capabilities?.groupSingleSpeaker === 1;
       // The read-only probe covers ordinary and member-joined queues only. AI reply work and
@@ -1390,7 +1392,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     return { id: m.id, maskAttribution: m.maskAttribution, sequence: Number(m.seq), serverSequence: m.seq, deleted: m.deleted, kind: planCard ? 'plan' : 'message', authorKind: legacy?.authorKind === 'system' ? 'system' : m.author.kind === 'human' ? 'user' : 'bot',
       isSelf: m.authorId === selfId, threadRootId: m.threadRootId, replyCount: m.replyCount ?? 0, reactions: m.reactions ?? [], ...(quote ? { quote } : {}), ...(task ? { task } : {}),
       authorBotId: localBot(m.authorId)?.id ?? m.authorId, authorName: legacy?.authorKind === 'system' && typeof legacy.authorName === 'string' ? legacy.authorName : member ? memberName(member, ownerMembers) : m.author.name, content: displayText(m),
-      mentions: { all: false, botIds: (m.mentions ?? []).map(actorId => localBot(actorId)?.id ?? actorId) }, noticeCode: null, planId: typeof planCard?.data?.planId === 'string' ? planCard.data.planId : null, files: [], attachments: [], createdAt: Date.parse(m.createdAt) };
+      mentions: { all: m.mentionAudience === 'humans' || m.mentionAudience === 'everyone', ...(m.mentionAudience === 'bots' || m.mentionAudience === 'everyone' ? { allBots: true } : {}), botIds: (m.mentions ?? []).map(actorId => localBot(actorId)?.id ?? actorId) }, noticeCode: null, planId: typeof planCard?.data?.planId === 'string' ? planCard.data.planId : null, files: [], attachments: [], createdAt: Date.parse(m.createdAt) };
   }
   /**
    * When the newest (up to 99) messages from someone else arrived, oldest first: Bots and other
@@ -1747,7 +1749,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     const lastView = last ? messageView(last, s.members, ownerMembers) : null;
     // The sidebar never resolves shares: it names the sharer and never quotes the card's text.
     const lastIsShare = !!last && !!readBotGroupThreadShareCard(last);
-    return { conversationKind: direct ? 'direct' : 'group', serverBacked: true, reactionRevision: reactionRevisions.get(roomId)?.room ?? runtimeReactionRevision, reactionRevisions: { ...reactionRevisions.get(roomId)?.messages }, supportsGroupLeave: !direct, supportsDissolve: !direct && supportsDissolve, supportsListRemoval, supportsMemberAvatar: !direct && supportsMemberAvatar, dissolvedAt: s.room.dissolved_at ?? null, migrationPending: [...upgradeErrors.keys()].some(source => upgradedGroups.get(source) === roomId), archived: s.room.archived, selfActorId: selfId, topic: s.room.topic, description: s.room.description, revision: s.room.revision, canInvite: !direct && !s.room.dissolved_at && s.members.some(m => m.ownerActorId === selfId && m.state === 'joined' && ['owner', 'admin'].includes(m.role)), canStopAll: !direct && singleSpeaker && !!managementActor(s), ...(!direct && singleSpeaker ? { singleSpeaker: true, supportsDivision: true } : {}), id: s.room.id, name: direct ? s.members.filter(m => m.state === 'joined' && m.id !== selfId).map(member => memberName(member, [])).join(', ') || s.room.name : s.room.name, replyMode: s.room.response_mode, speakingMode: s.room.speaking_mode,
+    return { conversationKind: direct ? 'direct' : 'group', serverBacked: true, reactionRevision: reactionRevisions.get(roomId)?.room ?? runtimeReactionRevision, reactionRevisions: { ...reactionRevisions.get(roomId)?.messages }, supportsGroupLeave: !direct, supportsDissolve: !direct && supportsDissolve, supportsListRemoval, supportsMemberAvatar: !direct && supportsMemberAvatar, supportsMentionAudiences: !direct && supportsMentionAudiences, allowMentionAllBots: !direct && s.room.allow_mention_all_bots === true, dissolvedAt: s.room.dissolved_at ?? null, migrationPending: [...upgradeErrors.keys()].some(source => upgradedGroups.get(source) === roomId), archived: s.room.archived, selfActorId: selfId, topic: s.room.topic, description: s.room.description, revision: s.room.revision, canInvite: !direct && !s.room.dissolved_at && s.members.some(m => m.ownerActorId === selfId && m.state === 'joined' && ['owner', 'admin'].includes(m.role)), canStopAll: !direct && singleSpeaker && !!managementActor(s), ...(!direct && singleSpeaker ? { singleSpeaker: true, supportsDivision: true } : {}), id: s.room.id, name: direct ? s.members.filter(m => m.state === 'joined' && m.id !== selfId).map(member => memberName(member, [])).join(', ') || s.room.name : s.room.name, replyMode: s.room.response_mode, speakingMode: s.room.speaking_mode,
       teammateActivity: teammateChatActivity({ executions, plans: serverPlans, planning: !!deciding,
         archived: s.room.archived, lastMessageAt: last ? Date.parse(last.createdAt) : 0 }),
       members: s.members.filter(m => m.state === 'joined').map(m => {
@@ -2765,8 +2767,8 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     return chatGroupFailure(error instanceof z.ZodError ? new Error('INVALID_PARAMS') : error);
   });
   /** A message that names nobody needs no member read: its mention list is empty either way. */
-  const namesNobody = (mentions: { all: boolean; botIds: string[] }) => !mentions.all && !mentions.botIds.length;
-  async function mentionIds(roomId: string, mentions: { all: boolean; botIds: string[] }, rootId: string) {
+  const namesNobody = (mentions: BotGroupMention) => !mentions.all && !mentions.allBots && !mentions.botIds.length;
+  async function mentionIds(roomId: string, mentions: BotGroupMention, rootId: string) {
     const [members, root] = await Promise.all([
       api<Member[]>(`/conversations/${roomId}/members`), readMessage(roomId, rootId),
     ]);
@@ -2775,11 +2777,11 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     return resolveMentions(members, withReplyRecipient(members, mentions, target));
   }
   /** Only the server-read author can become an implicit recipient, never names in quoted text. */
-  function withReplyRecipient(members: Member[], mentions: { all: boolean; botIds: string[] }, target?: string) {
-    return target && members.some(member => member.id === target && member.state === 'joined')
+  function withReplyRecipient(members: Member[], mentions: BotGroupMention, target?: string) {
+    return !mentions.all && !mentions.allBots && target && members.some(member => member.id === target && member.state === 'joined')
       ? { ...mentions, botIds: [...new Set([...mentions.botIds, target])] } : mentions;
   }
-  function resolveMentions(members: Member[], mentions: { all: boolean; botIds: string[] }) {
+  function resolveMentions(members: Member[], mentions: BotGroupMention) {
     const joined = members.filter(m => m.state === 'joined');
     // A stale explicit target must never become an unaddressed message. Check
     // every pick, including mixed valid/stale picks, before expanding Everyone.
@@ -2788,8 +2790,10 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       if (!member) throw new Error('MENTION_UNAVAILABLE');
       return member.id;
     });
-    const recipients = mentions.all ? [...joined.map(m => m.id), ...named] : named;
-    return [...new Set(recipients.filter(target => target !== selfId))];
+    const recipients = [...named, ...joined.filter(m => (mentions.all && m.kind === 'human') || (mentions.allBots && m.kind === 'bot')).map(m => m.id)];
+    const resolved = [...new Set(recipients.filter(target => target !== selfId))];
+    // Old servers have no broadcast marker: keep an empty human broadcast directed.
+    return mentions.all && !resolved.length && !supportsMentionAudiences ? [selfId] : resolved;
   }
   const result = async <T>(fn: () => Promise<T>) => {
     try { return { ok: true as const, ...await fn() }; }
@@ -2891,7 +2895,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       const actorAction = z.object({ actorId: id });
       const action = z.discriminatedUnion('type', [
         z.object({ type: z.literal('read'), messageId: id, conversationKind: z.literal('direct').optional() }).strict(),
-        z.object({ type: z.literal('update'), name: z.string().trim().min(1).max(40), topic: z.string().max(250), description: z.string().max(2000), responseMode: z.enum(['all', 'mentioned']).optional(), speakingMode: z.enum(['auto', 'sequential']).optional(), expectedRevision: z.number().int().positive() }).strict(),
+        z.object({ type: z.literal('update'), name: z.string().trim().min(1).max(40), topic: z.string().max(250), description: z.string().max(2000), responseMode: z.enum(['all', 'mentioned']).optional(), speakingMode: z.enum(['auto', 'sequential']).optional(), allowMentionAllBots: z.boolean().optional(), expectedRevision: z.number().int().positive() }).strict(),
         actorAction.extend({ type: z.literal('avatar'), avatar: z.discriminatedUnion('type', [
           z.object({ type: z.literal('keep') }).strict(), z.object({ type: z.literal('reset') }).strict(),
           z.object({ type: z.literal('set'), data: z.instanceof(Uint8Array), mimeType: z.string() }).strict(),
@@ -2961,6 +2965,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       }
       const { type, ...payload } = action;
       const route = type === 'update' || type === 'archive' ? '' : type === 'member' ? '/members' : type === 'botAccess' ? '/bot-access' : `/${type}`;
+      if (action.type === 'update' && action.allowMentionAllBots !== undefined && !supportsMentionAudiences) throw new Error('CHAT_UNAVAILABLE');
       const asManager = type === 'update' || type === 'archive' || type === 'transfer' || (type === 'member' && !['leave', 'invite'].includes(action.action));
       const s = await groupSnapshot(target);
       if (action.type === 'transfer') {
@@ -3010,10 +3015,12 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     }),
     reply: input => result(async () => {
       const i = z.object({ groupId: id, rootId: id, text: z.string().trim().min(1).max(8000), clientId: operationId,
-        mentions: z.object({ all: z.boolean(), botIds: z.array(z.string()).max(100) }) }).parse(input);
+        mentions: z.object({ all: z.boolean(), allBots: z.boolean().optional(), botIds: z.array(z.string()).max(100) }) }).parse(input);
       i.groupId = await groupRoom(i.groupId);
       // Include the caller's intent: editing a failed send must not reuse old recipients.
       const key = JSON.stringify(i);
+      if (!postedThreadRecipients.has(key) && i.mentions.allBots
+        && (!supportsMentionAudiences || !(await recentSnapshot(i.groupId)).room.allow_mention_all_bots)) throw new Error('ALL_BOTS_MENTION_DISABLED');
       const recipients = postedThreadRecipients.get(key) ?? await mentionIds(i.groupId, i.mentions, i.rootId);
       postedThreadRecipients.set(key, recipients);
       if (postedThreadRecipients.size > 128) postedThreadRecipients.delete(postedThreadRecipients.keys().next().value!);
@@ -3021,6 +3028,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       try {
         posted = await api<{ id: string }>(`/conversations/${i.groupId}/messages`, 'POST', {
           operationId: i.clientId, threadRootId: i.rootId, content: [{ type: 'text', text: i.text }], mentions: recipients,
+          ...(supportsMentionAudiences && botGroupMentionAudience(i.mentions) ? { mentionAudience: botGroupMentionAudience(i.mentions) } : {}),
         });
       } catch (error) {
         if (error instanceof ChatResponseError && error.status >= 400 && error.status < 500 && error.status !== 408) postedThreadRecipients.delete(key);
@@ -3097,7 +3105,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
    * author leaves, so the server returns the stored message instead of an operation conflict.
    */
   const postedQuotes = new Map<string, { quote: BotGroupQuoteView & { recipientActorId?: string };
-    mentions: { all: boolean; botIds: string[] }; recipients: string[] }>();
+    mentions: BotGroupMention; recipients: string[] }>();
   /**
    * A sidebar summary. The room list carries each room's change head, which every message,
    * execution, plan and membership change advances; a room whose head, revision and local state
@@ -3117,7 +3125,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
   const sendMessage: BotGroupChatService['sendMessage'] = (input, origin) => safe(async () => {
     const started = Date.now();
     const i = z.object({ conversationKind: z.literal('direct').optional(), groupId: id, text: z.string().max(8000), clientId: z.string().min(8).max(160),
-      mentions: z.object({ all: z.boolean(), botIds: z.array(z.string()) }), division: z.boolean().optional(), attachments: z.array(z.unknown()).optional(),
+      mentions: z.object({ all: z.boolean(), allBots: z.boolean().optional(), botIds: z.array(z.string()) }), division: z.boolean().optional(), attachments: z.array(z.unknown()).optional(),
       quote: z.object({ messageId: id }).strict().optional() }).parse(input);
     const journalKey = JSON.stringify([i.groupId, i.clientId, origin?.controllerDeviceId ?? null]);
     const signature = createHash('sha256').update(JSON.stringify({ ...i, attachments: undefined })).digest('hex');
@@ -3151,6 +3159,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     const membersRead = recovered ? Promise.resolve(recovered.members) : namesNobody(i.mentions) && !i.quote ? undefined : api<Member[]>(`/conversations/${i.groupId}/members`);
     for (const read of [snapshotMembers, quoteRead, plansRead, membersRead]) read?.catch(() => undefined);
     const s = await snapshotRead;
+    if (!recovered && i.mentions.allBots && (direct || !supportsMentionAudiences || !s.room.allow_mention_all_bots)) throw new Error('ALL_BOTS_MENTION_DISABLED');
     // Read before preparing attachments: an unavailable quote must not stage files.
     const quote = recovered ? recovered.quote : i.quote ? knownQuote?.quote ?? await quoteRead! : null;
     const members = membersRead ? await membersRead : [];
@@ -3165,15 +3174,16 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     const settleQueue = singleSpeaker && i.division && openPlan?.kind === 'talk' && openPlan.status === 'waiting' && mayAdd ? openPlan : undefined;
     if (i.division && openPlan && !proposed && !settleQueue) throw new Error('PLAN_OPEN');
     // Reply mode decides whether an unaddressed message wakes anyone (single-speaker servers apply it too).
-    const canTrigger = !direct && (i.division || s.room.response_mode !== 'mentioned' || !namesNobody(i.mentions));
+    const namedBot = i.mentions.botIds.some(target => s.members.some(m => m.kind === 'bot' && (m.id === target || localBot(m.id)?.id === target)));
+    const canTrigger = !direct && (i.division || i.mentions.allBots || namedBot || (namesNobody(i.mentions) && s.room.response_mode !== 'mentioned'));
     // Words for a card under way reach its current step only when they would wake anyone (§4.0,
     // §7.4); a queue waiting for 继续 gives way to a new request instead.
-    const commentPlan = canTrigger && openPlan && openPlan.status !== 'proposed' && !(singleSpeaker && openPlan.kind === 'talk' && openPlan.status === 'waiting') && !i.mentions.botIds.length && !i.mentions.all && mayAdd ? openPlan : undefined;
+    const commentPlan = canTrigger && openPlan && openPlan.status !== 'proposed' && !(singleSpeaker && openPlan.kind === 'talk' && openPlan.status === 'waiting') && !i.mentions.botIds.length && !i.mentions.all && !i.mentions.allBots && mayAdd ? openPlan : undefined;
     // Single-speaker servers queue turns themselves; only a 分工, or words about your proposed card,
     // wait for the arrangement. A 分工 that writes out its steps needs no helper model.
     const shouldPlan = recovered?.shouldPlan ?? (!direct && (singleSpeaker
       ? i.division || (canTrigger && proposed && namesNobody(i.mentions) && !!deps.decidePlan)
-      : canTrigger && !!deps.decidePlan && (i.division || (!i.mentions.botIds.length && (!proposed || !i.mentions.all)))
+      : canTrigger && !!deps.decidePlan && (i.division || (!i.mentions.botIds.length && (!proposed || (!i.mentions.all && !i.mentions.allBots))))
         && (!openPlan || proposed)));
     const prepared = !recovered && i.attachments?.length ? await deps.prepareAttachments?.({ groupId: i.groupId, attachments: i.attachments, controllerDeviceId: origin?.controllerDeviceId }) : undefined;
     if (!recovered && i.attachments?.length && (!prepared || !prepared.ok)) {
@@ -3194,7 +3204,8 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       const route = recovered?.route ?? `/conversations/${i.groupId}/${commentPlan ? `plans/${commentPlan.id}/messages` : 'messages'}`;
       const body = recovered?.body ?? {
         operationId: i.clientId, content: [ ...(quote ? [buildBotGroupQuoteCard(quote)] : []), ...(i.text ? [{ type: 'text', text: i.text }] : []),
-          ...uploaded ], mentions, deferExecution: shouldPlan, ...(!direct && groupDiscussionParity ? { mentionsAll: i.mentions.all, planningMode: i.division || proposed ? 'explicit' : 'auto' } : {}),
+          ...uploaded ], mentions, deferExecution: shouldPlan,
+          ...(!direct && supportsMentionAudiences && botGroupMentionAudience(i.mentions) ? { mentionAudience: botGroupMentionAudience(i.mentions) } : {}), ...(!direct && groupDiscussionParity ? { mentionsAll: i.mentions.allBots === true, planningMode: i.division || proposed ? 'explicit' : 'auto' } : {}),
       };
       if (!recovered) sendJournal.save(journalKey, signature, { snapshot: s, plans, members, quote, mentions: i.mentions,
         shouldPlan: !!shouldPlan, route, body, attachments: prepared?.ok ? prepared.attachments : [] }, i.groupId);
@@ -3305,7 +3316,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       // clientId identifies one immutable send; annotation burn-in can regenerate
       // attachment names/URLs while the controller is retrying its lost receipt.
       const identity = z.object({ conversationKind: z.literal('direct').optional(), groupId: id, clientId: z.string().min(1).max(200), text: z.string(),
-        mentions: z.object({ all: z.boolean(), botIds: z.array(z.string()) }), division: z.boolean().optional(),
+        mentions: z.object({ all: z.boolean(), allBots: z.boolean().optional(), botIds: z.array(z.string()) }), division: z.boolean().optional(),
         quote: z.object({ messageId: z.string() }).optional() }).safeParse(input);
       if (!identity.success) return sendMessage(input, origin);
       const key = createHash('sha256').update(JSON.stringify([identity.data, origin?.controllerDeviceId ?? null])).digest('hex');
@@ -3325,7 +3336,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     },
     updateGroup: input => safe(async () => {
       const i = z.object({ groupId: id, name: z.string().min(1).max(40).optional(), replyMode: z.enum(['all', 'mentioned']).optional(),
-        speakingMode: z.enum(['auto', 'sequential']).optional(), organizerBotId: z.string().nullable().optional(), projectDir: z.string().max(4096).nullable().optional(), autoContinue: z.boolean().optional(), expectedRevision: z.number().int().positive().optional() }).parse(input);
+        speakingMode: z.enum(['auto', 'sequential']).optional(), allowMentionAllBots: z.boolean().optional(), organizerBotId: z.string().nullable().optional(), projectDir: z.string().max(4096).nullable().optional(), autoContinue: z.boolean().optional(), expectedRevision: z.number().int().positive().optional() }).parse(input);
       i.groupId = await resolveGroup(i.groupId);
       // Local only, so saved before any server read: a handoff deciding meanwhile must already see it.
       if (i.autoContinue !== undefined) workspaces().save(i.groupId, { projectDir: null, plans: {}, ...workspaces().read(i.groupId), autoContinue: i.autoContinue });
@@ -3334,8 +3345,9 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       let projectDir = i.projectDir;
       if (projectDir) { const checked = await deps.validateProjectDir?.(projectDir); if (!checked?.ok) throw new Error('INVALID_DIRECTORY'); projectDir = checked.dir; }
       const organizerId = i.organizerBotId ? actors.find(a => a.externalId === i.organizerBotId)?.id ?? id.parse(i.organizerBotId) : i.organizerBotId;
-      if (i.name !== undefined || i.replyMode !== undefined || i.speakingMode !== undefined || organizerId !== undefined) await api(`/conversations/${i.groupId}`, 'PATCH', { operationId: randomUUID(), expectedRevision: i.expectedRevision ?? s.room.revision,
-        name: i.name, responseMode: i.replyMode, speakingMode: i.speakingMode, organizerId }, managementActor(s));
+      if (i.allowMentionAllBots !== undefined && !supportsMentionAudiences) throw new Error('CHAT_UNAVAILABLE');
+      if (i.allowMentionAllBots !== undefined || i.name !== undefined || i.replyMode !== undefined || i.speakingMode !== undefined || organizerId !== undefined) await api(`/conversations/${i.groupId}`, 'PATCH', { operationId: randomUUID(), expectedRevision: i.expectedRevision ?? s.room.revision,
+        name: i.name, responseMode: i.replyMode, speakingMode: i.speakingMode, organizerId, allowMentionAllBots: i.allowMentionAllBots }, managementActor(s));
       if (projectDir !== undefined) workspaces().save(i.groupId, { ...workspaces().read(i.groupId) ?? { plans: {} }, projectDir });
       changed(i.groupId);
       // Turned on while a step waits for 继续: go on now rather than at the next change.

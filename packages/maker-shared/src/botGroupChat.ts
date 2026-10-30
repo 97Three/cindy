@@ -114,7 +114,10 @@ export function readImportedBotGroupRuntimeFailureCode(message: {
 }
 
 export interface BotGroupMention {
+  /** Broadcast to human members; personal AI replies retain the human's identity. */
   all: boolean;
+  /** Independent companion broadcast, subject to the group's owner-controlled setting. */
+  allBots?: boolean;
   botIds: string[];
 }
 
@@ -458,6 +461,9 @@ export interface BotGroupRoundView {
 }
 
 export interface BotGroupSummary {
+  /** Owner-controlled companion broadcast; absent on old servers/hosts. */
+  supportsMentionAudiences?: boolean;
+  allowMentionAllBots?: boolean;
   /** Public roster state, optional for older hosts. */
   teammateActivity?: { phase: string };
   /** Explicit direct-message landing; group management remains unavailable. */
@@ -569,6 +575,7 @@ export type BotGroupErrorCode =
   | 'MEMBER_LIMIT'
   | 'MEMBER_UNAVAILABLE'
   | 'MENTION_UNAVAILABLE'
+  | 'ALL_BOTS_MENTION_DISABLED'
   | 'HOST_NOT_READY'
   /** An explicit 安排分工 while a plan is running or waiting. */
   | 'PLAN_OPEN'
@@ -596,6 +603,7 @@ export interface BotGroupCreateInput {
 }
 
 export interface BotGroupUpdateInput {
+  allowMentionAllBots?: boolean;
   groupId: string;
   /** Optional optimistic precondition for server-backed settings. */
   expectedRevision?: number;
@@ -849,7 +857,7 @@ export interface ChatInvitePreview {
 }
 export type ChatGroupAction =
   | { type: 'read'; messageId: string; conversationKind?: 'direct' }
-  | { type: 'update'; name: string; topic: string; description: string; expectedRevision: number; responseMode?: BotGroupReplyMode; speakingMode?: BotGroupSpeakingMode }
+  | { type: 'update'; name: string; topic: string; description: string; expectedRevision: number; responseMode?: BotGroupReplyMode; speakingMode?: BotGroupSpeakingMode; allowMentionAllBots?: boolean }
   | { type: 'nickname'; actorId: string; nickname: string | null }
   | { type: 'avatar'; actorId: string; avatar: { type: 'keep' | 'reset' } | { type: 'set'; data: Uint8Array; mimeType: string } }
   | { type: 'member'; actorId: string; action: 'invite' | 'leave' | 'remove' | 'ban' | 'unban' | 'role'; role?: 'admin' | 'member' }
