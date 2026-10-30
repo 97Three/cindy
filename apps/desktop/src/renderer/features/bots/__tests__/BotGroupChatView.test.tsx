@@ -8,7 +8,7 @@ import { MarkdownMermaidBlock } from '@/components/chat/MarkdownMermaidBlock';
 import { prepareShareMessageClone, queryShareableMessageIds } from '@/lib/shareConversationImage';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { clearDraft, getDraft } from '@/lib/composerDraftStore';
+import { captureDraftDiscardToken, clearDraft, getAllDraftAttachmentUrls, getDraft, isDraftDiscardTokenCurrent, saveDraft } from '@/lib/composerDraftStore';
 import { FeatureSidebarSlotProvider, useFeatureContentHeader } from '../../feature-context';
 import { markBotRead, getBotLastReadAt, botGroupReadKey, resetBotReadStateForTests } from '../botReadState';
 import { botGroupAttachmentScope, botGroupThreadDraftKey } from '../botGroupAttachments';
@@ -1582,6 +1582,32 @@ describe('BotGroupChatView', () => {
     await waitFor(() => expect(mocks.getBotGroup).toHaveBeenCalledTimes(2));
     act(() => mocks.pushes.forEach((push) => push({ groupId: 'g1', change: 'deleted' })));
     expect(await screen.findByText('bots.groupChat.unavailableTitle')).toBeTruthy();
+  });
+
+  // #8084 review: deleted rooms left their new thread trays in the media live set.
+  // Unit: real group view, one saved thread image, authoritative deletion/access loss.
+  it.each(['deleted', 'hidden', 'NOT_FOUND', 'PERMISSION_DENIED'] as const)('discards thread attachment drafts after %s', async boundary => {
+    const scope = botGroupThreadDraftKey('g1', 'u1');
+    const url = 'cindy-media://blobs/deleted-thread.png';
+    saveDraft(scope, { text: null, attachments: [{ id: 'deleted-thread', name: 'photo.png', ext: '.png',
+      category: 'image', mimeType: 'image/png', size: 12, path: '', url }] });
+    const token = captureDraftDiscardToken(scope);
+    const view = renderView();
+    await screen.findByText('周六 8:10 有票');
+    if (boundary === 'NOT_FOUND' || boundary === 'PERMISSION_DENIED') {
+      mocks.getBotGroup.mockResolvedValue({ ok: false, errorCode: boundary, message: '' });
+      act(() => mocks.pushes.forEach(push => push({ groupId: 'g1', change: 'messages' })));
+    } else {
+      act(() => mocks.pushes.forEach(push => push(boundary === 'deleted'
+        ? { groupId: 'g1', change: 'deleted' }
+        : { groupId: 'g1', change: 'list', listState: { hidden: true, revision: 1 } })));
+    }
+    await screen.findByText('bots.groupChat.unavailableTitle');
+    expect(getDraft(scope)).toBeUndefined();
+    expect(isDraftDiscardTokenCurrent(token)).toBe(false);
+    expect(getAllDraftAttachmentUrls()).not.toContain(url);
+    view.unmount();
+    expect(getDraft(scope)).toBeUndefined();
   });
 
   describe('failed timeline read recovery', () => {

@@ -104,6 +104,10 @@ import {
 } from './botGroupPresentation';
 import { botGroupApi } from './botGroupStore';
 import { botGroupSendSignature, enqueueBotGroupSend, registerBotGroupComposer } from './botGroupOutbox';
+import {
+  getBotGroupThreadReplyAttempt, setBotGroupThreadReplyAttempt, updateBotGroupThreadReplyAttempt,
+  useBotGroupThreadReplyAttempt, type BotGroupThreadReplyAttempt,
+} from './botGroupThreadReplies';
 import { GroupMaskIndicator } from './GroupMaskControls';
 import { useGroupMask } from './groupMaskPresentation';
 import { useBotGroupMentionPicker } from './useBotGroupMentionPicker';
@@ -225,12 +229,14 @@ export function BotGroupComposer({
 }) {
   const { t } = useTranslation();
   const thread = mode === 'thread';
+  const threadAttempt = useBotGroupThreadReplyAttempt(thread ? draftKey : null);
   const groupMask = useGroupMask(groupId);
-  const [text, setText] = useState(() => botGroupDraftText(getDraft(draftKey)?.text));
+  const [text, setText] = useState(() => threadAttempt?.sending ? '' : botGroupDraftText(getDraft(draftKey)?.text));
   const [error, setError] = useState('');
   const [stopping, setStopping] = useState(false);
   /** Thread send in flight; group sends are owned by the outbox. */
-  const [sending, setSending] = useState(false);
+  const [groupSending, setSending] = useState(false);
+  const sending = thread ? threadAttempt?.sending === true : groupSending;
   /** 「分工」 tag from 「+」→「安排分工」: this message goes to the organizer for a plan. */
   const [division, setDivision] = useState(false);
   const divisionRef = useRef(division);
@@ -246,7 +252,7 @@ export function BotGroupComposer({
     text,
     onTextChange: (value) => {
       // A 话题 reply is a new attempt as soon as its text changes (even if typed back the same).
-      if (thread && attemptRef.current && attemptRef.current.text !== value.trim()) attemptRef.current = null;
+      if (thread && threadAttempt && threadAttempt.text !== value.trim()) setBotGroupThreadReplyAttempt(draftKey, null);
       setText(value);
     },
     members,
@@ -263,16 +269,14 @@ export function BotGroupComposer({
   const focusInputOnMenuCloseRef = useRef(false);
   const sendingRef = useRef(false);
   const stoppingRef = useRef(false);
-  /** Thread retry identity: text and targets resolved against the original roster. */
-  const attemptRef = useRef<{
-    text: string;
-    clientId: string;
-    attachmentSignature: string;
-    prepared?: readonly AttachedFile[];
-    /** 话题 replies keep the targets resolved on the first attempt, with the roster of that moment. */
-    mentions?: BotGroupMention;
-    roster?: readonly BotGroupMemberView[];
-  } | null>(null);
+
+  // A reply can settle in a different mounted composer after the panel was reopened.
+  useEffect(() => {
+    if (!threadAttempt?.errorKey) return;
+    if (!textRef.current) mention.setTracked([...threadAttempt.tracked]);
+    setText(current => current || threadAttempt.draft);
+    setError(t(threadAttempt.errorKey));
+  }, [threadAttempt?.clientId, threadAttempt?.errorKey]);
 
   const activeMembers = useMemo(() => members.filter(isActiveBotGroupMember), [members]);
 
@@ -325,23 +329,23 @@ export function BotGroupComposer({
    * someone else gets a new clientId.
    */
   const sendThreadReply = async () => {
-    if (!canSend || sendingRef.current || !sendReply) return;
+    if (!canSend || sendingRef.current || getBotGroupThreadReplyAttempt(draftKey)?.sending || !sendReply) return;
     groupMask?.participate();
     const files = attachmentState.attachments;
     const attachmentSignature = botGroupAttachmentSignature(files);
-    const previous = attemptRef.current;
-    const attempt: NonNullable<typeof attemptRef.current> =
-      previous?.mentions && previous.roster && previous.text === trimmed
+    const previous = getBotGroupThreadReplyAttempt(draftKey);
+    const attempt: BotGroupThreadReplyAttempt =
+      previous && previous.text === trimmed
       && previous.attachmentSignature === attachmentSignature
       && sameBotGroupMentions(mention.resolve(text, previous.roster), previous.mentions)
         ? previous
         : {
-            text: trimmed, clientId: crypto.randomUUID(), attachmentSignature,
-            mentions: mention.resolve(text), roster: members,
+            text: trimmed, draft: text, clientId: crypto.randomUUID(), attachmentSignature, files,
+            mentions: mention.resolve(text), roster: members, tracked: mention.tracked, sending: true,
           };
-    attemptRef.current = attempt;
+    setBotGroupThreadReplyAttempt(draftKey, { ...attempt, sending: true, errorKey: undefined });
     const draft = text;
-    const mentions = attempt.mentions!;
+    const mentions = attempt.mentions;
     const tracked = mention.tracked;
     sendingRef.current = true;
     setSending(true);
@@ -349,25 +353,29 @@ export function BotGroupComposer({
     setText('');
     mention.reset();
     const owner = getDataOwnerGeneration();
-    const fail = (message: string) => {
+    const fail = (errorKey: string) => {
       onSendSettled?.(attempt.clientId, { ok: false });
       if (!textRef.current) mention.setTracked(tracked);
       setText((current) => (current ? current : draft));
-      setError(message);
+      setError(t(errorKey));
+      const saved = getDraft(draftKey);
+      if (!botGroupDraftText(saved?.text)) saveDraft(draftKey, {
+        ...saved, text: draft ? botGroupDraftDoc(draft) : null, attachments: saved?.attachments ?? [...files],
+      });
+      updateBotGroupThreadReplyAttempt(draftKey, attempt.clientId, { errorKey });
     };
     try {
       const prepared = attempt.prepared ?? (files.length
         ? await materializeAnnotatedAttachmentsForSend(files, attachmentScope, { burnFailure: 'abort' }) ?? [] : []);
-      attempt.prepared = prepared;
       if (!isDataOwnerGenerationCurrent(owner) || !isDraftDiscardTokenCurrent(discardTokenRef.current)) return;
+      updateBotGroupThreadReplyAttempt(draftKey, attempt.clientId, { prepared });
       onSendStart?.({ clientId: attempt.clientId, text: attempt.text, mentions,
         attachments: prepared.map(botGroupAttachmentPreview), quote: null });
       const result = await sendReply({ text: attempt.text, clientId: attempt.clientId, mentions,
         ...(prepared.length ? { attachments: toBotGroupAttachmentInputs(prepared) } : {}),
       });
-      if (!isDataOwnerGenerationCurrent(owner)) return;
-      if (!result.ok) { fail(t(chatErrorKey(result.errorCode))); return; }
-      attemptRef.current = null;
+      if (!isDataOwnerGenerationCurrent(owner) || !isDraftDiscardTokenCurrent(discardTokenRef.current)) return;
+      if (!result.ok) { fail(chatErrorKey(result.errorCode)); return; }
       // A file added by an earlier asynchronous picker while sending stays in the next draft.
       const sentFiles = new Map(files.map(file => [file.id, file]));
       const keepFile = (file: AttachedFile) => {
@@ -380,14 +388,17 @@ export function BotGroupComposer({
       // Closing the panel during upload already saved its tray; settle that draft as well.
       const saved = getDraft(draftKey);
       if (saved && isDraftDiscardTokenCurrent(discardTokenRef.current)) {
-        saveDraft(draftKey, { ...saved, attachments: saved.attachments.filter(keepFile) });
+        saveDraft(draftKey, { ...saved, text: botGroupDraftText(saved.text) === draft ? null : saved.text,
+          attachments: saved.attachments.filter(keepFile) });
       }
+      setBotGroupThreadReplyAttempt(draftKey, null);
       onSendSettled?.(attempt.clientId, { ok: true, messageId: result.messageId });
       onSent?.();
     } catch (error) {
-      if (isDataOwnerGenerationCurrent(owner)) fail(t(isAnnotationBurnInError(error)
-        ? 'chat.media.annotateBurnFailedNotSent' : 'bots.groupChat.server.requestFailed'));
+      if (isDataOwnerGenerationCurrent(owner) && isDraftDiscardTokenCurrent(discardTokenRef.current)) fail(isAnnotationBurnInError(error)
+        ? 'chat.media.annotateBurnFailedNotSent' : 'bots.groupChat.server.requestFailed');
     } finally {
+      updateBotGroupThreadReplyAttempt(draftKey, attempt.clientId, { sending: false });
       sendingRef.current = false;
       setSending(false);
     }
@@ -748,7 +759,7 @@ export function BotGroupComposer({
             <span className="inline-flex rounded-full" onMouseDown={keepBotGroupComposerInputFocus(textareaRef)}>
               <Tip text={actionLabel}>
                 <SendButton
-                  disabled={showStop ? stopping : !canSend}
+                  disabled={showStop ? stopping : sending || !canSend}
                   isStreaming={showStop}
                   ariaLabel={actionLabel}
                   onClick={() => void (showStop ? stop() : send())}

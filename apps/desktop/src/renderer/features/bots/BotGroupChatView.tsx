@@ -45,7 +45,7 @@ import {
   isDataOwnerPushCurrent,
 } from '@/contexts/dataOwnerGeneration';
 import { useAttachments } from '@/hooks/useAttachments';
-import { discardDraft } from '@/lib/composerDraftStore';
+import { discardDraftTree } from '@/lib/composerDraftStore';
 import {
   classifyUnclassifiedDroppedItems,
   getDroppedFileItems,
@@ -377,6 +377,7 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
           // It must never restore a conversation whose access was just revoked.
           version += 1;
           hasTimeline = false;
+          discardDraftTree(botGroupAttachmentScope(groupId));
           discardOutbox();
           setState({ kind: 'missing' });
         } else {
@@ -471,7 +472,7 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
           queued = null;
           clearRetry();
           // Unsent attachments go with the group (staged copies included).
-          discardDraft(botGroupAttachmentScope(groupId));
+          discardDraftTree(botGroupAttachmentScope(groupId));
           discardOutbox();
           setState({ kind: 'missing' });
           // The authoritative hide can unmount the drawer before its IPC reply.
