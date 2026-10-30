@@ -517,8 +517,12 @@ export class Scheduler extends EventEmitter {
       // 老任务均已转换完，该逻辑只剩误伤，故移除。
       let current = sch;
       let next: number | undefined;
+      // A claimed Once with unfinished work waits for explicit Continue. Do
+      // not recreate its initial prompt while preserving the active schedule
+      // and original lastFiredAt ownership used by recovery completion.
+      const unfinishedOnce = await this.hasUnfinishedOnceClaim(current);
       try {
-        next = computeNextFireAt(current, now);
+        next = unfinishedOnce ? undefined : computeNextFireAt(current, now);
         this.invalidScheduleIds.delete(current.id);
       } catch (err) {
         // 旧版本曾接受 parseInt 可部分解析的畸形 cron（例如 `5abc * * * *`）。
@@ -551,10 +555,17 @@ export class Scheduler extends EventEmitter {
     }
     // 刚做完全量加载,视作一次已完成的 DB 同步。
     this.lastDbSyncAt = now;
-    this.tickHandle = setInterval(() => {
+    const tickHandle = setInterval(() => {
+      if (this.tickHandle !== tickHandle) return;
       this.tick().catch((err) => this.logger?.error?.('scheduler tick error', err));
     }, this.tickIntervalMs);
+    this.tickHandle = tickHandle;
     this.started = true;
+  }
+
+  private async hasUnfinishedOnceClaim(schedule: Schedule): Promise<boolean> {
+    return !schedule.manual && !schedule.recurring && schedule.nextFireAt === undefined &&
+      schedule.lastFiredAt === undefined && await this.storage.hasUnfinishedRuns(schedule.id);
   }
 
   async stop(options?: { interrupted?: boolean }): Promise<void> {
@@ -635,6 +646,9 @@ export class Scheduler extends EventEmitter {
   // the real interval, then call tick() directly with a fake clock. Production code should
   // rely on the interval scheduled in start(); use runNow() (not tick) for force-fire.
   async tick(): Promise<void> {
+    // stop clears this existing interval identity; a restart installs another.
+    // A late callback/snapshot must never acquire work for the new lifecycle.
+    const tickHandle = this.tickHandle;
     const now = this.clock.now();
     // 挂起唤醒防误杀:tick 间隔出现大缺口说明进程刚从系统睡眠恢复。同机共库的
     // 实例一起睡一起醒,此刻所有 in-flight 心跳都停留在睡前——立刻清扫会把对方
@@ -652,6 +666,7 @@ export class Scheduler extends EventEmitter {
       this.lastDbSyncAt = now;
       try {
         const actives = await this.storage.listActive();
+        if (this.tickHandle !== tickHandle) return;
         const previousSchedules = new Map(this.activeSchedules);
         this.activeSchedules.clear();
         const activeIds = new Set(actives.map((sch) => sch.id));
@@ -675,11 +690,14 @@ export class Scheduler extends EventEmitter {
       // 顺路做运行期僵尸清扫:另一实例崩溃留下的 'running' 行不再等谁重启才收尾,
       // 本实例在心跳过期后就地改写 interrupted 并广播 'changed' 刷 UI。
       // excludeRunIds 兜底排除本进程 in-flight(即使自家心跳续期停摆也绝不自伤)。
+      if (this.tickHandle !== tickHandle) return;
       await this.sweepStaleRunningRuns(now);
     }
+    if (this.tickHandle !== tickHandle) return;
     // 补排重试要排在挑选 due 之前:本次刚补上的 nextFireAt 若已到期,同一个 tick 就能
     // 把它捞进 due,不必再等一整个 tick 间隔。
     await this.retryPendingReplans(now);
+    if (this.tickHandle !== tickHandle) return;
     const due: Schedule[] = [];
     for (const sch of this.activeSchedules.values()) {
       if (sch.nextFireAt !== undefined && sch.nextFireAt <= now && !this.inflightByschedule.has(sch.id)) {
@@ -708,7 +726,7 @@ export class Scheduler extends EventEmitter {
     }
     // 调用 async fireOne 会在返回 promise 前同步登记 attempt；先构造 promises 再记 gate
     // 日志，日志里的 inFlightRuns 就同时包含本 tick 刚占槽的 run，不再出现 0/1 却 gated。
-    const firePromises = toFire.map((schedule) => this.fireOne(schedule));
+    const firePromises = toFire.map((schedule) => this.fireOne(schedule, tickHandle));
     this.syncWaitingSchedules(gatedSchedules);
     if (gated > 0 && now - this.lastGateLogAt >= GATE_LOG_THROTTLE_MS) {
       this.lastGateLogAt = now;
@@ -731,7 +749,8 @@ export class Scheduler extends EventEmitter {
   }
 
   /** 并发登记包装:同步注册/释放让 tick 的槽位计算无超发窗口(见字段注释)。 */
-  private async fireOne(schedule: Schedule): Promise<void> {
+  private async fireOne(schedule: Schedule, tickHandle: ReturnType<typeof setInterval> | null): Promise<void> {
+    if (this.tickHandle !== tickHandle) return;
     const runId = this.generateId();
     const now = this.clock.now();
     this.beginInflightAttempt({
@@ -1979,6 +1998,7 @@ export class Scheduler extends EventEmitter {
       // 必须用无上限的状态查询:listRuns 带展示上限,活跃 claim run 被更新的
       // runNow/终态行挤出窗口会漏判并误补排(codex review P2)。
       if (await this.storage.hasRunningRuns(scheduleId)) return;
+      if (await this.hasUnfinishedOnceClaim(schedule)) return;
       // manual / 已消耗的一次性任务 computeNextFireAt 返回 undefined → 与 start()
       // 归一同款:保持无排期,不强行续命。
       const next = computeNextFireAt(schedule, now);

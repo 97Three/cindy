@@ -75,6 +75,10 @@ class InMemoryStorage implements ScheduleStorage {
       (r) => r.status === 'running' && (scheduleId === undefined || r.scheduleId === scheduleId),
     );
   }
+  async hasUnfinishedRuns(scheduleId: string): Promise<boolean> {
+    return [...this.runs.values()].some((r) => r.scheduleId === scheduleId &&
+      (r.status === 'running' || r.status === 'interrupted'));
+  }
   async deleteRun(id: string, options?: { excludeBotSchedules?: boolean }): Promise<ScheduleRun | null> {
     const ex = this.runs.get(id);
     if (!ex || (options?.excludeBotSchedules && this.schedules.get(ex.scheduleId)?.source === 'bot')) return null;
@@ -143,6 +147,41 @@ it('preserves interrupted runs on app exit instead of recording a provider-close
   reject(new Error('scheduler session ended without a terminal event (closed)'));
   await pending;
   expect(h.storage.runs.get(runId)?.status).toBe('interrupted');
+});
+
+// discussion_r4420812417 / unit: a DB snapshot that returns after stop must not
+// create another run, even when the same engine has already started again.
+it.each([false, true])('drops an old tick after stop (restarted=%s)', async (restarted) => {
+  const h = makeHarness();
+  await h.scheduler.start();
+  await h.scheduler.create({ ...baseInput, intervalMs: 90_000 });
+  let release!: () => void;
+  let entered!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const ready = new Promise<void>((resolve) => { entered = resolve; });
+  const list = h.storage.listActive.bind(h.storage);
+  vi.spyOn(h.storage, 'listActive').mockImplementationOnce(async () => {
+    const snapshot = await list();
+    entered();
+    await held;
+    return snapshot;
+  });
+  h.clock.advance(90_000);
+  const tick = h.scheduler.tick();
+  try {
+    await ready;
+    await h.scheduler.stop({ interrupted: true });
+    if (restarted) await h.scheduler.start();
+    release();
+    await tick;
+    expect(h.fireCalls).toHaveLength(0);
+    expect(h.storage.runs.size).toBe(0);
+    expect(h.scheduler.getRuntimeSnapshot().inFlightRuns).toHaveLength(0);
+  } finally {
+    release();
+    await tick;
+    await h.scheduler.stop();
+  }
 });
 
 // discussion_r4419551671: previous exit tests held the runner, not its terminal
@@ -352,6 +391,27 @@ it.each(['none', 'read-rejected', 'schedule-missing', 'pre-enqueue-rejected', 'f
   await h.scheduler.stop();
 });
 
+// discussion_r4420812422 / unit: live/stale claims must not be revived by
+// startup or the periodic sweep while the user has not chosen Continue.
+it.each(['running', 'interrupted'] as const)('keeps an unfinished Once idle through startup and sweeps (%s)', async (status) => {
+  const h = makeHarness();
+  const schedule = await h.scheduler.create({ ...baseInput, recurring: false, intervalMs: 90_000 });
+  await h.storage.claimDueFire(schedule.id, schedule.nextFireAt!);
+  await h.storage.insertRun({ id: 'original-once', scheduleId: schedule.id, sessionId: 'original-task',
+    firedAt: h.clock.now(), heartbeatAt: h.clock.now(), status });
+  await h.scheduler.start();
+  try {
+    for (let step = 0; step < 10; step++) {
+      h.clock.advance(30_000);
+      await h.scheduler.tick();
+    }
+    expect(h.fireCalls).toHaveLength(0);
+    expect(h.storage.runs.size).toBe(1);
+    expect(h.storage.runs.get('original-once')?.status).toBe('interrupted');
+    expect(await h.storage.get(schedule.id)).toMatchObject({ status: 'active', nextFireAt: undefined });
+  } finally { await h.scheduler.stop(); }
+});
+
 // Recovery completes the original trigger: automatic Once expires and automatic
 // intervals start at completion; runNow retains its independent schedule slot.
 it.each([
@@ -381,6 +441,14 @@ it.each([
   const restarted = makeHarness({ storage, clock });
   await restarted.scheduler.start();
   const nextBefore = (await storage.get(schedule.id))!.nextFireAt;
+  if (!recurring) {
+    // discussion_r4420812422: before the user clicks Continue, startup/tick
+    // must not send the initial Once prompt again. Recovery retains the run.
+    clock.advance(600_000);
+    await restarted.scheduler.tick();
+    expect(restarted.fireCalls).toHaveLength(0);
+    expect(storage.runs.get(interrupted.runId)?.status).toBe('interrupted');
+  }
   clock.advance(30_000);
   const resumed = await restarted.scheduler.resumeInterruptedRun('original-task');
   await resumed!.completion;

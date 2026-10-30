@@ -1248,6 +1248,15 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     return Boolean(row);
   }
 
+  async hasUnfinishedRuns(scheduleId: string): Promise<boolean> {
+    const [row] = await this.getDb()
+      .select({ id: scheduleRuns.id })
+      .from(scheduleRuns)
+      .where(and(eq(scheduleRuns.scheduleId, scheduleId), inArray(scheduleRuns.status, ['running', 'interrupted'])))
+      .limit(1);
+    return Boolean(row);
+  }
+
   async markRunningAsInterrupted(
     staleBefore: number,
     excludeRunIds?: readonly string[],
