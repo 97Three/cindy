@@ -9,12 +9,11 @@ import { parseBlobUrl, resolveSafe } from './blobStore';
 import type { LedgerDb } from './ledger';
 import { sniffMediaMime } from './sniffMediaMime';
 import {
-  fitGhostModelImages,
   GHOST_MODEL_IMAGE_BUDGET_BYTES,
+  GHOST_MODEL_IMAGE_MAX_BYTES,
 } from '../cindy-brain/ghostModelImages';
-import { compressInlineImage } from '../mcp-integrations/inlineImageCompressor';
+import { prepareInlineImagePreview } from '../mcp-integrations/inlineImageCompressor';
 
-const MAX_IMAGE_BYTES = 48 * 1024 * 1024;
 type InspectionContext = { sessionId: string; isCurrent: () => boolean };
 type Preview = { url: string; image_index: number };
 type ModelImage = { data: string; mimeType: string };
@@ -63,7 +62,7 @@ async function readMedia(url: string, limit: number, hash: string): Promise<Buff
     if (!stat.isFile() || stat.size < 1 || stat.size > limit) {
       throw new InspectionError(
         'MEDIA_PREVIEW_TOO_LARGE',
-        '媒体不是普通文件或超过预览读取上限；原始成果不受影响。',
+        '媒体不是普通文件或超过预览读取上限；原始成果不受影响，可用 resolve_local_path 获取路径后自行分析。',
       );
     }
     const bytes = Buffer.alloc(stat.size + 1);
@@ -134,26 +133,22 @@ export async function inspectMedia(
         'inspect 只返回图片预览。视频请用 resolve_local_path 获取本机路径，再自行选择查看或分析方式。',
       );
     }
-    const buffer = await readMedia(request.url, MAX_IMAGE_BYTES, parsed.hash);
+    const buffer = await readMedia(request.url, GHOST_MODEL_IMAGE_MAX_BYTES, parsed.hash);
     await assertAuthorized();
     const mime = sniffMediaMime(buffer, declaredMime);
     if (!mime?.startsWith('image/'))
       throw new InspectionError('MEDIA_TYPE_UNSUPPORTED', '媒体内容不是受支持的图片。');
-    const fitted = await fitGhostModelImages(
-      [{ data: buffer.toString('base64'), mimeType: mime }],
-      compressInlineImage,
-      budget,
-    );
-    if (!fitted.images.length)
+    const preview = await prepareInlineImagePreview(buffer, mime, { targetBytes: budget });
+    if (!preview)
       throw new InspectionError(
         'MEDIA_PREVIEW_UNAVAILABLE',
-        '图片无法解码或压缩到预览大小；原始成果不受影响。',
+        '图片超过预览像素上限、无法解码或压缩到预览大小；原始成果不受影响，可用 resolve_local_path 获取路径后自行分析。',
       );
     await assertAuthorized();
     return {
       ok: true,
       previews: [{ url: request.url, image_index: 0 }],
-      modelImages: fitted.images,
+      modelImages: [{ data: preview.buffer.toString('base64'), mimeType: preview.mime }],
     };
   } catch (error) {
     const known = error instanceof InspectionError;

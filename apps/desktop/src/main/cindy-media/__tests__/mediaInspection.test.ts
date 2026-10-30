@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
+import sharp from 'sharp';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as schema from '../../localDb/schema';
@@ -11,6 +12,7 @@ import { setCurrentDbClient, clearCurrentDbClient } from '../../localDb/client/c
 import { resolveSafe } from '../blobStore';
 import { inspectMedia, previewGeneratedImages } from '../mediaInspection';
 import * as compressor from '../../mcp-integrations/inlineImageCompressor';
+import { GHOST_MODEL_IMAGE_MAX_BYTES } from '../../cindy-brain/ghostModelImages';
 
 // Production inspectMedia + real ledger queries/files. Existing generation tests
 // never decoded the returned URL. Unit tier: scope revocation must drop pixels;
@@ -56,15 +58,62 @@ afterEach(async () => {
 });
 
 describe('current-task media inspection', () => {
+  // Review #7970: a valid large PNG bypassed the model-image input bound and
+  // copied/decoded its full source repeatedly. Existing tests only used tiny images.
+  // Unit: oversize bytes/pixels must omit previews, retain the paid URL, and allow path analysis.
+  it.each(['bytes', 'pixels'] as const)(
+    'omits %s-heavy previews while retaining the generated result',
+    async (kind) => {
+      const bytes =
+        kind === 'bytes'
+          ? Buffer.concat([PNG, Buffer.alloc(GHOST_MODEL_IMAGE_MAX_BYTES)])
+          : await sharp({ create: { width: 4096, height: 4097, channels: 3, background: 'white' } })
+              .png()
+              .toBuffer();
+      const url = await media(bytes);
+      const result = await previewGeneratedImages({ ok: true, xdt_image_urls: [url] }, context);
+      expect(result).toMatchObject({
+        ok: true,
+        xdt_image_urls: [url],
+        preview_errors: expect.any(Array),
+      });
+      expect(result.modelImages).toHaveLength(0);
+      expect(result.previews).toHaveLength(0);
+    },
+  );
+  it('returns a decodable thumbnail within the inline budget for a valid dense image', async () => {
+    const raw = Buffer.alloc(128 * 128 * 3);
+    let seed = 1;
+    for (let i = 0; i < raw.length; i++) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      raw[i] = seed >>> 24;
+    }
+    const source = await sharp(raw, { raw: { width: 128, height: 128, channels: 3 } })
+      .png()
+      .toBuffer();
+    const url = await media(source);
+    const result = await inspectMedia({ url }, context, 10_000);
+    expect(source.length).toBeGreaterThan(10_000);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.errorCode);
+    const thumbnail = Buffer.from(result.modelImages[0].data, 'base64');
+    expect(thumbnail.length).toBeLessThanOrEqual(10_000);
+    expect(await sharp(thumbnail).metadata()).toMatchObject({
+      width: 128,
+      height: 128,
+      format: 'webp',
+    });
+    expect(result.previews).toEqual([{ url, image_index: 0 }]);
+  });
   it.each(['owner', 'clear', 'ref'] as const)(
     'drops the whole batch after %s changes while the second preview is compressed',
     async (change) => {
       const urls = await Promise.all(
         [1, 2].map((value) => media(Buffer.concat([PNG, Buffer.alloc(100_000, value)]))),
       );
-      const compress = compressor.compressInlineImage;
+      const compress = compressor.prepareInlineImagePreview;
       let calls = 0;
-      vi.spyOn(compressor, 'compressInlineImage').mockImplementation(async (...args) => {
+      vi.spyOn(compressor, 'prepareInlineImagePreview').mockImplementation(async (...args) => {
         const result = await compress(...args);
         if (++calls === 2) {
           if (change === 'owner') state.owner = 'next';
@@ -141,9 +190,9 @@ describe('current-task media inspection', () => {
     'drops image pixels after %s changes during compression',
     async (change) => {
       const url = await media(Buffer.concat([PNG, Buffer.alloc(200_000)]));
-      const compress = compressor.compressInlineImage;
+      const compress = compressor.prepareInlineImagePreview;
       const compressSpy = vi
-        .spyOn(compressor, 'compressInlineImage')
+        .spyOn(compressor, 'prepareInlineImagePreview')
         .mockImplementation(async (...args) => {
           const result = await compress(...args);
           if (change === 'owner') state.owner = 'next';
