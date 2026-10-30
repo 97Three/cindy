@@ -235,6 +235,7 @@ document.open/write/close，由新页面重新连接。不要让旧页未确定�
 | 必须做到 | 原因和写法 |
 | --- | --- |
 | 每个页面只创建一个 App | 所有交互共用该实例；替换文档前关闭旧实例 |
+| 直接导入 Cindy 提供的 SDK | 写 `import { App } from '@modelcontextprotocol/ext-apps'`；不写 importmap，不从 CDN 或其他地址加载 SDK |
 | 页面不接触凭证 | 经 main.js 的 cindy.fetch 代发，不将 token 放进 HTML、日志或结果 |
 | 表单走桥接 | 拦截点击和 Enter，不使用原生 action 提交 |
 | 数据用 textContent | 后端模板转义动态值，不把用户数据拼进脚本或事件属性 |
@@ -245,10 +246,9 @@ document.open/write/close，由新页面重新连接。不要让旧页未确定�
 | 支持浅色和深色 | 从 getHostContext 取主题，监听 onhostcontextchanged，不写死白底黑字 |
 | 明确结果归属 | content/structuredContent 给 AI；页面专用内容放根 _meta |
 
-使用 `new App(info, capabilities, {autoResize:true})` 自动报告尺寸；通过
-`app.getHostContext()` 应用主题和 styles.variables。不要固定页面宽度，表单
-在窄屏下可换行。全屏、文件下载等能力先探测，不能把桌面成功当成所有查看端都支持。
-完整方法示例和不支持时的处理见参考页。
+使用 `new App(info, capabilities, {autoResize:true})` 自动报告尺寸，通过
+`app.getHostContext()` 取主题和 styles.variables。表单应能适应窄屏。
+全屏、下载等能力先探测，不能把桌面成功当成所有查看端都支持，详见参考页。
 
 打包后实际打开页面：检查首屏只请求一次；查询不清掉表单输入；按 Enter 和点击
 都只保存一次；HTTP 401/500 显示错误；取消后按钮恢复；重复编号不会新增记录；

@@ -124,6 +124,7 @@ resource_link，不能让页面直接请求接口或把令牌拼进图片 URL。
 | 现象 | 先检查 |
 | --- | --- |
 | 标准 import 无法解析 | 执行端及查看端版本是否支持宿主 SDK；不要改用任意 CDN 绕过 |
+| 页面自带 importmap 或从 CDN 加载 SDK，被拦截或加载失败 | 删掉自带映射和外部 SDK 加载，直接写 `import { App } from '@modelcontextprotocol/ext-apps'`，SDK 由 Cindy 提供 |
 | 页面一直等初始结果 | 是否在加载器之后再次等待 ontoolresult；数据应已在首屏 HTML 中 |
 | MCP_APP_TOOL_NOT_VISIBLE | 工具是否在清单中对 app 可见，名字是否一致 |
 | fetch ok:true 但业务失败 | 检查 HTTP status，非 2xx 不当成功 |

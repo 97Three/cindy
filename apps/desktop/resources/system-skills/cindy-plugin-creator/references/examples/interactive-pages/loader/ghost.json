@@ -10,7 +10,7 @@
   "tools": [
     {
       "name": "open_view",
-      "description": "按意图打开页面",
+      "description": "按意图打开页面。生成的页面直接写 import { App } from '@modelcontextprotocol/ext-apps'；不要写 importmap，不要从 CDN 或其他地址加载 SDK，SDK 由 Cindy 提供。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -25,7 +25,7 @@
     },
     {
       "name": "show_page",
-      "description": "显示 AI 生成的完整 MCP Apps HTML 页面",
+      "description": "显示 AI 生成的完整 MCP Apps HTML 页面。生成的页面直接写 import { App } from '@modelcontextprotocol/ext-apps'；不要写 importmap，不要从 CDN 或其他地址加载 SDK，SDK 由 Cindy 提供。",
       "parameters": {
         "type": "object",
         "properties": {
