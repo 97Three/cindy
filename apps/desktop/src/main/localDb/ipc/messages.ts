@@ -7,6 +7,7 @@
  */
 
 import { ipcMain, BrowserWindow } from 'electron';
+import { supplementalConversationEstimates } from '@cindy/maker-shared/usage-cost-details';
 import {
   and,
   asc,
@@ -58,7 +59,8 @@ import {
   mergeDismissedIntoErrorContent,
 } from '../../../shared/interruptedTurn.js';
 import { resolveStaleCodexSubscriptionValueEstimate } from '../../../shared/codexSubscriptionValue.js';
-import { normalizeTurnUsageDetails } from '../../../shared/turnUsageDetails.js';
+import { buildTurnUsageDetails, normalizeTurnUsageDetails } from '../../../shared/turnUsageDetails.js';
+import { readSessionCostDetails } from '../../usage/sessionCostDetails.js';
 import {
   addCompatibleRegionalMoney,
   asValueEstimateMoney,
@@ -255,6 +257,7 @@ export interface EstimatedSessionValueEntry {
  * scoped; callers use this value only to produce a user-facing round total.
  */
 export interface PriorUserRoundCost {
+  additionalCosts?: RegionalMoney[];
   money: RegionalMoney | null;
   costUsd: number;
   hasEstimatedValue: boolean;
@@ -666,7 +669,7 @@ export function registerMessageIpc(
     },
   );
 
-  ipcMain.handle('local-db:messages:estimatedSessionValue', async (_e, sessionId: unknown) => {
+  ipcMain.handle('local-db:messages:estimatedSessionValue', async (_e, sessionId: unknown, options?: { includeBreakdown?: boolean; clientId?: unknown }) => {
     const sid = requireString(sessionId, 'sessionId');
     const db = getDbClient().drizzle;
 
@@ -696,6 +699,9 @@ export function registerMessageIpc(
     const totalValueMoney = addCompatibleRegionalMoney(entries.map((entry) => entry.money));
     const hasCompleteUsdProjection = entries.every((entry) => typeof entry.costUsd === 'number');
     return {
+      ...(options?.includeBreakdown === true ? { costBreakdown: await readSessionCostDetails(
+        getDbClient(), sid, options.clientId === undefined ? undefined : requireString(options.clientId, 'clientId'),
+      ) } : {}),
       totalValueMoney,
       ...(hasCompleteUsdProjection
         ? {
@@ -1103,7 +1109,6 @@ export async function commitMessageDeletion(
   preview: string | null;
 }> {
   const now = Date.now();
-  const db = getDbClient().drizzle;
   const result = await getDbClient().tx('message.delete', {
     sessionId,
     clientIds,
@@ -2024,7 +2029,13 @@ export function extractEstimatedSessionValueEntries(
     } catch {
       continue;
     }
-    if (meta?.turnCostIsEstimate !== true) continue;
+    if (meta?.turnCostIsEstimate !== true) {
+      const estimate = addCompatibleRegionalMoney((normalizeTurnUsageDetails(meta?.turnUsageDetails)?.perModelCost ?? [])
+        .filter(item => item.money.kind === 'value-estimate').map(item => item.money));
+      if (estimate?.amount) entries.push({ clientId: row.clientId, money: estimate,
+        ...(estimate.currency === 'USD' ? { costUsd: estimate.amount } : {}) });
+      continue;
+    }
     const structured = normalizeRegionalMoney(meta.turnCost);
     if (structured && structured.amount > 0) {
       const recomputed =
@@ -2267,11 +2278,15 @@ export async function readPriorUserRoundCost(
     );
 
   const values: RegionalMoney[] = [];
+  const additionalCosts: RegionalMoney[] = [];
   const mediaCosts = parseAgentMetaRecord(boundary.agentMeta)?.mediaCosts;
   if (Array.isArray(mediaCosts)) {
     for (const value of mediaCosts) {
       const cost = normalizeRegionalMoney(value);
-      if (cost?.kind === 'actual-cost' && cost.amount > 0) values.push(cost);
+      if (cost?.kind === 'actual-cost' && cost.amount > 0) {
+        values.push(cost);
+        additionalCosts.push(cost);
+      }
     }
   }
   const estimatedCurrencies = new Set<RegionalMoney['currency']>();
@@ -2287,6 +2302,10 @@ export async function readPriorUserRoundCost(
     const rawSegment = structured ?? legacy;
     const isEstimate = rawSegment?.kind === 'value-estimate' || meta?.turnCostIsEstimate === true;
     const segment = rawSegment && isEstimate ? asValueEstimateMoney(rawSegment) : rawSegment;
+    for (const estimate of supplementalConversationEstimates(meta)) {
+      values.push(estimate);
+      estimatedCurrencies.add(estimate.currency);
+    }
     if (!segment || segment.amount <= 0) continue;
     values.push(segment);
     if (isEstimate) estimatedCurrencies.add(segment.currency);
@@ -2297,6 +2316,7 @@ export async function readPriorUserRoundCost(
     money,
     costUsd: money?.currency === 'USD' ? money.amount : 0,
     hasEstimatedValue,
+    ...(additionalCosts.length ? { additionalCosts } : {}),
   };
 }
 
@@ -2313,6 +2333,10 @@ export async function readPriorUserRoundCost(
  * agent_meta blobs on every history page.
  */
 async function hydrateLegacyUserTurnCosts(history: Message[]): Promise<Message[]> {
+  const needsAdditionalSnapshot = history.some(message => message.role === 'assistant' &&
+    (message.agentMeta?.userTurnCost || message.agentMeta?.userTurnCostUsd) &&
+    !normalizeTurnUsageDetails(message.agentMeta?.turnUsageDetails)?.billingSource &&
+    !normalizeTurnUsageDetails(message.agentMeta?.turnUsageDetails)?.additionalCosts);
   const legacyClientIds = new Set(
     history.flatMap((message) => {
       const agentMeta = message.agentMeta;
@@ -2328,7 +2352,7 @@ async function hydrateLegacyUserTurnCosts(history: Message[]): Promise<Message[]
         : [];
     }),
   );
-  if (legacyClientIds.size === 0) return history;
+  if (legacyClientIds.size === 0 && !needsAdditionalSnapshot) return history;
 
   const sessionId = history[0]?.sessionId;
   if (!sessionId) return history;
@@ -2403,17 +2427,23 @@ async function hydrateLegacyUserTurnCosts(history: Message[]): Promise<Message[]
     .orderBy(asc(messages.createdAt), asc(messageRowid));
 
   const totalsByClientId = new Map<string, PriorUserRoundCost>();
+  const additionalByClientId = new Map<string, RegionalMoney[]>();
+  let additionalCosts: RegionalMoney[] = [];
   let hasRealUserBoundary = false;
   let costUsd = 0;
   let hasEstimatedValue = false;
   for (const row of rows) {
     if (row.role === 'user' && !isAutoResumeUserMessage(row.agentMeta)) {
       hasRealUserBoundary = true;
-      costUsd = 0;
+      const recorded = parseAgentMetaRecord(row.agentMeta)?.mediaCosts;
+      additionalCosts = Array.isArray(recorded) ? recorded.map(normalizeRegionalMoney)
+        .filter((value): value is RegionalMoney => !!value && value.amount > 0) : [];
+      costUsd = additionalCosts.filter(value => value.currency === 'USD').reduce((sum, value) => sum + value.amount, 0);
       hasEstimatedValue = false;
       continue;
     }
     if (row.role !== 'assistant') continue;
+    if (additionalCosts.length) additionalByClientId.set(row.clientId, additionalCosts);
     const meta = parseAgentMetaRecord(row.agentMeta);
     const segmentCost = meta?.turnCostUsd;
     if (
@@ -2439,6 +2469,13 @@ async function hydrateLegacyUserTurnCosts(history: Message[]): Promise<Message[]
   for (let index = 0; index < history.length; index++) {
     const message = history[index];
     const agentMeta = message.agentMeta;
+    const additional = additionalByClientId.get(message.clientId);
+    if (additional && agentMeta && !normalizeTurnUsageDetails(agentMeta.turnUsageDetails)?.additionalCosts) {
+      hydrated ??= history.slice();
+      hydrated[index] = { ...message, agentMeta: { ...agentMeta,
+        turnUsageDetails: buildTurnUsageDetails({ ...normalizeTurnUsageDetails(agentMeta.turnUsageDetails), additionalCosts: additional }) ?? undefined,
+      } };
+    }
     if (
       message.role !== 'assistant' ||
       !agentMeta ||
@@ -2457,7 +2494,7 @@ async function hydrateLegacyUserTurnCosts(history: Message[]): Promise<Message[]
     hydrated[index] = {
       ...message,
       agentMeta: {
-        ...agentMeta,
+        ...(hydrated[index].agentMeta ?? agentMeta),
         ...(total.money ? { userTurnCost: total.money } : {}),
         userTurnCostUsd: total.costUsd,
         userTurnCostIsEstimate: total.hasEstimatedValue,

@@ -10,6 +10,7 @@ import { MAX_HISTORY_SCAN_ROWS, type HistoryPageShape } from '../historyViewRead
 import { historyViewLeaves, type HistoryViewPage, type HistoryDetailPage, type HistoryMessageSource } from '@cindy/maker-shared/message-window';
 import type { DbClient } from '../../client/DbClient';
 import { captureMediaUserTurn, refreshMediaUserTurnCost } from '../../../usage/mediaTurnCost';
+import { readSessionCostDetails } from '../../../usage/sessionCostDetails';
 
 const h = vi.hoisted(() => ({
   db: null as ReturnType<typeof drizzle> | null,
@@ -93,7 +94,6 @@ import {
   findForkParentSessionId,
   findPendingForkOrigin,
   getMessageDeletionTarget,
-  commitMessageDeletion,
   markLatestAgentHandoffConsumed,
   readPriorUserRoundCost,
   registerMessageIpc,
@@ -1463,6 +1463,7 @@ describe('media user-round costs', () => {
     const db = {
       drizzle: h.db,
       queryOne: async (query: string, params: unknown[] = []) => sqlite.prepare(query).get(...params),
+      query: async (query: string, params: unknown[] = []) => sqlite.prepare(query).all(...params),
       exec: async (query: string, params: unknown[] = []) => sqlite.prepare(query).run(...params),
     } as unknown as DbClient;
     return { sqlite, db };
@@ -1488,6 +1489,41 @@ describe('media user-round costs', () => {
     expect((await refreshMediaUserTurnCost(db, 's1', 'user'))?.clientId).toBe('final');
   });
 
+  // Integration: real SQLite projection, same model on different channels and a
+  // late fee. Protects against cumulative totals and subsequent rounds being billed twice.
+  it('reads model/channel details from the owning round and refreshes mixed subscription value once', async () => {
+    const { sqlite, db } = fixture();
+    const estimate = { ...actual(2), kind: 'value-estimate', approximate: true };
+    insertCostMessage(sqlite, { id: 'user', role: 'user', createdAt: 1, agentMeta: {
+      mediaCosts: [actual(.75)], mediaCostDetails: [{ model: 'extra-model', category: 'additional',
+        billingSource: 'cindy-ai', money: actual(.75) }],
+    } });
+    insertCostMessage(sqlite, { id: 'answer', role: 'assistant', createdAt: 2, agentMeta: {
+      turnCost: actual(1), userTurnCostUsd: 999, turnUsageDetails: {
+        inputTokens: 100, perModelCost: [
+          { model: 'same-model', billingSource: 'subscription', money: estimate },
+          { model: 'same-model', billingSource: 'cindy-ai', money: actual(1) },
+        ],
+      },
+    } });
+    insertCostMessage(sqlite, { id: 'next', role: 'user', createdAt: 3 });
+    insertCostMessage(sqlite, { id: 'other', role: 'assistant', createdAt: 4, agentMeta: { turnCost: actual(5) } });
+    const rows = await readSessionCostDetails(db, 's1', 'answer');
+    expect(rows.map(row => [row.model, row.billingSource, row.money.amount]))
+      .toEqual([['extra-model', 'cindy-ai', .75], ['same-model', 'subscription', 2], ['same-model', 'cindy-ai', 1]]);
+    for (let i = 0; i < 2; i++) {
+      expect(await refreshMediaUserTurnCost(db, 's1', 'user')).toMatchObject({
+        clientId: 'answer', userTurnMoney: { amount: 3.75 }, userTurnCostIsEstimate: true,
+        turnUsageDetails: { additionalCosts: [actual(.75)] },
+      });
+    }
+    expect(await readSessionCostDetails(db, 'other-session')).toEqual([]);
+    sqlite.prepare("UPDATE messages SET rewind_at = 5 WHERE id = 'answer'").run();
+    expect(await readSessionCostDetails(db, 's1', 'answer')).toEqual([]);
+    sqlite.prepare('UPDATE sessions SET cleared_at = 4').run();
+    expect(await readSessionCostDetails(db, 's1')).toEqual([]);
+  });
+
   it('projects media-only responses without inventing a chat segment price and ignores clear/rewind', async () => {
     const { sqlite, db } = fixture();
     insertCostMessage(sqlite, { id: 'user', role: 'user', createdAt: 10, agentMeta: { mediaCosts: [actual(0.75)] } });
@@ -1505,5 +1541,19 @@ describe('media user-round costs', () => {
     sqlite.prepare('UPDATE sessions SET cleared_at = 10').run();
     expect(await captureMediaUserTurn(db, 's1')).toBeNull();
     expect(await refreshMediaUserTurnCost(db, 's1', 'user')).toBeNull();
+  });
+
+  it('hydrates historical additional fees for the message footer without rewriting billing', async () => {
+    const { sqlite } = fixture();
+    insertCostMessage(sqlite, { id: 'user', role: 'user', createdAt: 1,
+      agentMeta: { mediaCosts: [actual(.75)] } });
+    const original = { turnCost: actual(1), userTurnCost: actual(1.75) };
+    insertCostMessage(sqlite, { id: 'answer', role: 'assistant', createdAt: 2, agentMeta: original });
+    registerMessageIpc();
+    const rows = await h.handlers.get('local-db:messages:list')!({}, 's1', { limit: 10 }) as Array<{ id: string; agentMeta: unknown }>;
+    expect(rows.find(row => row.id === 'answer')?.agentMeta).toMatchObject({
+      ...original, turnUsageDetails: { additionalCosts: [actual(.75)] },
+    });
+    expect(JSON.parse((sqlite.prepare("SELECT agent_meta FROM messages WHERE id = 'answer'").get() as { agent_meta: string }).agent_meta)).toEqual(original);
   });
 });
