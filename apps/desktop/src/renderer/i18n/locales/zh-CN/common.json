@@ -13838,6 +13838,20 @@
       }
     },
     "draft": {
+      "directoryRecovery": {
+        "required": "部分关联目录需要重新授权，请依次重新选择全部 {{count}} 个关联目录",
+        "changed": "关联目录已变化，请检查后重新选择全部 {{count}} 个关联目录",
+        "unavailable": "关联目录无法访问，请检查目录或系统权限，也可返回编辑后移除该目录",
+        "selecting": "正在重新选择目录 {{index}}/{{count}}：{{directory}}",
+        "cancelled": "已取消重新选择，提示词和关联目录已保留",
+        "mismatch": "所选目录与原目录不同，原目录列表未更改",
+        "failed": "未能完成目录重新选择，提示词和关联目录已保留",
+        "ready": "目录已重新选择，请再次发送任务",
+        "readyGoal": "目录已重新选择，请再次创建目标",
+        "reselect": "重新选择目录",
+        "cancel": "取消重新选择",
+        "edit": "返回编辑"
+      },
       "createSessionFailed": "创建任务失败，请重试",
       "piRemoteUnsupported": "Pi 仅在本地运行，无法使用 SSH 远程主机。请切换到 Claude 或 Codex 来使用该主机。",
       "localWorktreeCleanupPending": "上一次本地 worktree 任务仍待回收，请等待清理完成后再试。",
