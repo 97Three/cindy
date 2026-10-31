@@ -789,22 +789,11 @@ Host receipt 的 `simulatorPreviousRelId` 只允许这对 ID 和 root 路径，�
 技能随应用内置 bundle 升级，不另建安装或权限流程。
 `forgeGuide.ts` 从这些 Markdown 构造兼容的 `FORGE_GUIDE`，供旧 `ghost_forge_guide`
 调用按原章节号读取。不要在 TypeScript、工具描述或界面文案中另存一套编写流程。
-修改随包 Skill 字节时同步递增 `BUILT_IN_SKILLS_BUNDLE_VERSION`。
+修改随包 Skill 字节时同步递增 `BUILT_IN_SKILLS_BUNDLE_VERSION`。改动其中的《页面生成手册》
+（`PAGE-GENERATION.md`）时，还要在对应客户端上线前把新手册发布到各区域 CDN，用法与发版前检查见
+[`media-storage-and-protocols.md`](media-storage-and-protocols.md) 的页面生成手册一条。
 **手册过期 = AI 按旧规则写出过不了校验的插件包**（校验拒装只是兜底，用户体验是“AI
 反复打包反复被拒”）。
-
-随包的《页面生成手册》（`references/examples/interactive-pages/PAGE-GENERATION.md`）另按
-发版版本号发布到 `{cdnBaseUrl}/plugin-pages/manual/{version}/`（正文与
-`manifest.json` `{schemaVersion, version, sha256, size}`），供业务后端里生成页面的模型按
-客户端版本取用；相对路径由 `apps/desktop/src/shared/pluginPageManual.mjs` 统一定义，客户端
-运行时拼地址时复用同一份。发布由 `scripts/publish-page-manual.mjs` 完成：版本号、区域和 commit
-都取自 `package-desktop.mjs` 产出的 `build-info.json`，`--region` 必填且须与之一致；手册字节
-取自构建 commit（checkout 不是构建 commit 或文件有未提交改动时失败），构建 commit 里没有该文件时
-跳过。发布目标与其它 desktop 发布脚本一样取自环境变量或发版机的 `release-regions.json`。
-同版本路径不可覆盖：远端已有相同内容则复用，不同内容则失败。`--dry-run` 不连 OSS、不访问
-网络，`--check-cdn` 只读核对。该脚本由外部发布套件在**上传安装包之后、发布 canary update
-manifest 之前**按同一区域调用（mac 双架构各调一次，脚本幂等）：
-`node scripts/publish-page-manual.mjs --build-info=release/artifacts/<region>/<version>/<platform-arch>/build-info.json --region=<region>`。
 
 `ghost_forge_pack` 的边界严格止于校验和生成 `.cindy` 产物；打包成功不构成安装依据，
 不得顺带安装、更新或启用插件。安装由用户导入本地包、明确要求当前 Agent 调用独立的

@@ -1,18 +1,15 @@
 // 页面生成手册发布脚本（scripts/publish-page-manual.mjs）的单测。
 //
 // 测试价值
-// - 生产入口与可观察结果：调用 CLI 实际使用的 runPublishPageManual(argv, deps)；断言
-//   发布计划里的 OSS key / CDN 地址 / manifest 字节、跳过与报错语义，以及注入的 OSS
-//   客户端收到（或没收到）哪些写入。
-// - 规则依据：版本化 CDN 路径一经发布不可变（apps/desktop/scripts/ci/lib.mjs 的
-//   immutable 守卫约定）；发布入口必须显式指定区域且不跨区兜底
-//   （docs/product-rules/region-and-editions.md §2.2、scripts/shared/oss.mjs）。
-// - 现有覆盖缺口：新脚本；publish-wallpaper-videos.mjs 与 oss.mjs 均无测试。
-// - 最小失败输入：同版本远端已有不同 sha256；--region 与 build-info.region 不一致；
-//   本次构建未内置手册。
-// - tier：unit。临时目录 + 内存 fake OSS 客户端 / fetch，git 读取与发版机配置注入，
-//   不连网、不读凭证。
-// - 实测耗时：node --test scripts/__tests__/publish-page-manual.test.mjs 约 0.1 秒。
+// - 生产入口与可观察结果：调用 CLI 实际使用的 runPublishPageManual(argv, deps)；断言按内容
+//   寻址的 OSS key / CDN 地址、跳过与报错语义、注入的 OSS 客户端收到（或没收到）的写入，
+//   以及 --check-cdn 的核对结论。
+// - 规则依据：客户端按内置手册的 sha256 拼地址，同一 key 只能有一种内容；发布入口必须显式
+//   指定区域且不跨区兜底（docs/product-rules/region-and-editions.md §2.2、scripts/shared/oss.mjs）。
+// - 现有覆盖缺口：新脚本；参照的 publish-wallpaper-videos.mjs 与 oss.mjs 均无测试。
+// - 最小失败输入：远端已有同 key 对象；缺失或拼错的区域 / 模式参数；CDN 返回 404 或内容不符。
+// - tier：unit。临时目录 + 内存 fake OSS 客户端 / fetch，不连网、不读凭证。
+// - 实测耗时：node --test scripts/__tests__/publish-page-manual.test.mjs 约 0.2 秒。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -23,20 +20,22 @@ import path from 'node:path';
 import { runPublishPageManual } from '../publish-page-manual.mjs';
 import { PLUGIN_PAGE_MANUAL_SKILL_PATH } from '../../apps/desktop/src/shared/pluginPageManual.mjs';
 
-const COMMIT = 'a'.repeat(40);
 const MANUAL = '# Cindy 交互页面生成手册\n\n测试内容\n';
 const MANUAL_SHA = createHash('sha256').update(MANUAL).digest('hex');
+const RELATIVE = `plugin-pages/manual/${MANUAL_SHA}.md`;
 
-function fixture({ region = 'global', version = '1.2.3', commitSha = COMMIT, withManual = true } = {}) {
+function fixture({ withManual = true, endpoint } = {}) {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'publish-page-manual-'));
   if (withManual) {
     const manual = path.join(repoRoot, 'apps/desktop/resources/system-skills', PLUGIN_PAGE_MANUAL_SKILL_PATH);
     fs.mkdirSync(path.dirname(manual), { recursive: true });
     fs.writeFileSync(manual, MANUAL);
   }
-  const buildInfo = path.join(repoRoot, 'build-info.json');
-  fs.writeFileSync(buildInfo, JSON.stringify({ version, versionless: version === null, region, commitSha }));
-  return { repoRoot, buildInfo };
+  if (endpoint) {
+    fs.mkdirSync(path.join(repoRoot, 'config'));
+    fs.writeFileSync(path.join(repoRoot, 'config', endpoint.file), JSON.stringify({ cdnBaseUrl: endpoint.cdnBaseUrl }));
+  }
+  return repoRoot;
 }
 
 function deps(repoRoot, overrides = {}) {
@@ -46,18 +45,7 @@ function deps(repoRoot, overrides = {}) {
     repoRoot,
     env: {},
     log: (line) => logs.push(line),
-    git: {
-      head: () => COMMIT,
-      isPathClean: () => true,
-      // 以临时目录模拟「构建 commit 里的文件」。
-      readCommittedFile: (root, commit, relative) => {
-        assert.equal(commit, COMMIT);
-        const file = path.join(root, relative);
-        return fs.existsSync(file) ? fs.readFileSync(file) : null;
-      },
-    },
-    applyReleaseConfig: () => {},
-    resolveOssConfig: () => { throw new Error('dry-run 不应解析 OSS 发布配置'); },
+    resolveOssConfig: () => { throw new Error('只读模式不应解析 OSS 发布配置'); },
     createClient: () => { throw new Error('不应创建 OSS 客户端'); },
     fetch: () => { throw new Error('不应访问网络'); },
     ...overrides,
@@ -96,94 +84,63 @@ function fakeOss(objects = new Map(), { raceOn } = {}) {
 }
 
 // 按 CDN 地址回放 OSS 内容的 fetch；用于发布后的回读校验与 --check-cdn。
-function cdnFetch(oss, cdnBase, prefix) {
+function cdnFetch(objects, cdnBase, prefix) {
   return async (url, init) => {
     assert.equal(init.redirect, 'error');
-    const key = prefix + url.split('?')[0].slice(cdnBase.length);
-    const obj = oss.objects.get(key);
+    const obj = objects.get(prefix + url.split('?')[0].slice(cdnBase.length));
     if (!obj) return new Response('missing', { status: 404 });
-    const type = key.endsWith('.json') ? 'application/json' : 'text/markdown; charset=utf-8';
-    return new Response(obj.body, { status: 200, headers: { 'content-type': type } });
+    return new Response(obj.body, { status: 200, headers: { 'content-type': 'text/markdown; charset=utf-8' } });
   };
 }
 
-test('dry-run 用 build-info 的版本和区域拼出 key、CDN 地址与 manifest，不连 OSS 也不访问网络', async () => {
-  for (const [region, envNames] of [
-    ['global', ['XDT_GLOBAL_OSS_PREFIX', 'XDT_GLOBAL_CDN_BASE_URL']],
-    ['cn', ['XDT_OSS_PREFIX', 'XDT_CDN_BASE_URL']],
-    ['dev', ['XDT_DEVCH_OSS_PREFIX', 'XDT_DEVCH_CDN_BASE_URL']],
+test('dry-run 按手册 sha256 拼出各区域的 key 与 CDN 地址，不连 OSS 也不访问网络', async () => {
+  for (const [region, prefixEnv, cdnEnv] of [
+    ['global', 'XDT_GLOBAL_OSS_PREFIX', 'XDT_GLOBAL_CDN_BASE_URL'],
+    ['cn', 'XDT_OSS_PREFIX', 'XDT_CDN_BASE_URL'],
+    ['dev', 'XDT_DEVCH_OSS_PREFIX', 'XDT_DEVCH_CDN_BASE_URL'],
   ]) {
-    const { repoRoot, buildInfo } = fixture({ region });
-    const d = deps(repoRoot, { env: { [envNames[0]]: `pfx-${region}/`, [envNames[1]]: `https://cdn-${region}.test/cindy/` } });
-    const result = await runPublishPageManual([`--build-info=${buildInfo}`, `--region=${region}`, '--dry-run'], d);
+    const d = deps(fixture(), { env: { [prefixEnv]: `pfx-${region}/`, [cdnEnv]: `https://cdn-${region}.test/cindy/` } });
+    const result = await runPublishPageManual([`--region=${region}`, '--dry-run'], d);
     assert.equal(result.status, 'dry-run', region);
-    assert.deepEqual(result.objects.map((o) => o.key), [
-      `pfx-${region}/plugin-pages/manual/1.2.3/PAGE-GENERATION.md`,
-      `pfx-${region}/plugin-pages/manual/1.2.3/manifest.json`,
-    ]);
-    assert.equal(result.objects[0].url, `https://cdn-${region}.test/cindy/plugin-pages/manual/1.2.3/PAGE-GENERATION.md`);
-    assert.equal(result.objects[0].sha256, MANUAL_SHA);
-    assert.deepEqual(JSON.parse(result.objects[1].body.toString('utf8')), {
-      schemaVersion: 1,
-      version: '1.2.3',
-      sha256: MANUAL_SHA,
-      size: Buffer.byteLength(MANUAL),
-    });
+    assert.equal(result.manual.sha256, MANUAL_SHA, region);
+    assert.equal(result.manual.key, `pfx-${region}/${RELATIVE}`, region);
+    assert.equal(result.manual.url, `https://cdn-${region}.test/cindy/${RELATIVE}`, region);
   }
 });
 
-test('本次构建未内置手册时跳过并打印原因，不连 OSS', async () => {
-  const { repoRoot, buildInfo } = fixture({ withManual: false });
-  const d = deps(repoRoot);
-  const result = await runPublishPageManual([`--build-info=${buildInfo}`, '--region=global'], d);
+test('仓库里没有手册时跳过并打印原因，不连 OSS', async () => {
+  const d = deps(fixture({ withManual: false }));
+  const result = await runPublishPageManual(['--region=global'], d);
   assert.equal(result.status, 'skipped');
   assert.equal(d.logs.length, 1);
   assert.match(d.logs[0], /跳过.*PAGE-GENERATION\.md/);
 });
 
-test('参数、区域与构建一致性不符时拒绝发布', async () => {
-  const cases = [
-    ['缺少 --region', {}, (b) => [`--build-info=${b}`], /--region/],
-    ['非法区域', {}, (b) => [`--build-info=${b}`, '--region=eu'], /--region/],
-    ['区域与 build-info 不一致', { region: 'cn' }, (b) => [`--build-info=${b}`, '--region=global'], /build-info\.region/],
-    ['无版本构建', { version: null }, (b) => [`--build-info=${b}`, '--region=global'], /版本/],
-    ['拼错的 --dryrun 不能落到真实发布', {}, (b) => [`--build-info=${b}`, '--region=global', '--dryrun'], /未知参数/],
-    ['同时 --dry-run 与 --check-cdn', {}, (b) => [`--build-info=${b}`, '--region=global', '--dry-run', '--check-cdn'], /不能同时/],
-    // 错的 checkout 里没有手册时也必须失败，不能当成「本次构建没有手册」跳过。
-    ['checkout 与构建 commit 不一致', { commitSha: 'b'.repeat(40), withManual: false }, (b) => [`--build-info=${b}`, '--region=global'], /commit/],
-  ];
-  for (const [name, fixtureOptions, argv, error] of cases) {
-    const { repoRoot, buildInfo } = fixture(fixtureOptions);
-    await assert.rejects(runPublishPageManual(argv(buildInfo), deps(repoRoot)), error, name);
+test('区域与模式参数不合法时拒绝执行', async () => {
+  for (const [name, argv, error] of [
+    ['缺少 --region', [], /--region/],
+    ['非法区域', ['--region=eu'], /--region/],
+    ['拼错的 --dryrun 不能落到真实发布', ['--region=global', '--dryrun'], /未知参数/],
+    ['同时 --dry-run 与 --check-cdn', ['--region=global', '--dry-run', '--check-cdn'], /不能同时/],
+  ]) {
+    await assert.rejects(runPublishPageManual(argv, deps(fixture())), error, name);
   }
-  const { repoRoot, buildInfo } = fixture();
-  await assert.rejects(
-    runPublishPageManual([`--build-info=${buildInfo}`, '--region=global', '--dry-run'], deps(repoRoot, {
-      git: { ...deps(repoRoot).git, isPathClean: () => false },
-    })),
-    /未提交/,
-    '手册有未提交改动',
-  );
 });
 
-test('发布遵守不可变路径：已存在同指纹复用，不同指纹拒绝覆盖', async () => {
+test('发布：同一 key 已有相同内容时不再上传，内容不符时拒绝覆盖', async () => {
   const prefix = 'cindy';
   const cdnBase = 'https://cdn.test/cindy';
-  const mdKey = `${prefix}/plugin-pages/manual/1.2.3/PAGE-GENERATION.md`;
-  const manifestKey = `${prefix}/plugin-pages/manual/1.2.3/manifest.json`;
-  const other = Buffer.from('# 另一份手册\n');
-  const cases = [
-    ['远端不存在：先传正文再写 manifest，带禁止覆盖头', new Map(), {}, null, [mdKey, manifestKey]],
-    ['远端同指纹：不重复上传', new Map([[mdKey, { body: Buffer.from(MANUAL), meta: { sha256: MANUAL_SHA } }]]), {}, null, [manifestKey]],
-    ['远端缺 meta 但内容相同：下载比对后复用', new Map([[mdKey, { body: Buffer.from(MANUAL) }]]), {}, null, [manifestKey]],
-    ['并发写入后 409：重新比对同指纹则复用', new Map(), { raceOn: mdKey }, null, [manifestKey]],
-    ['远端不同指纹：拒绝覆盖', new Map([[mdKey, { body: other, meta: { sha256: sha(other) } }]]), {}, /不同/, []],
-    ['远端缺 meta 且内容不同：拒绝覆盖', new Map([[mdKey, { body: other }]]), {}, /不同/, []],
-  ];
-  for (const [name, objects, ossOptions, error, expectedPuts] of cases) {
-    const { repoRoot, buildInfo } = fixture();
+  const key = `${prefix}/${RELATIVE}`;
+  const other = Buffer.from('# 被改过\n');
+  for (const [name, objects, ossOptions, error, expectedPuts] of [
+    ['远端不存在：上传一次，带不可变缓存与禁止覆盖头', new Map(), {}, null, [key]],
+    ['远端已有相同内容：不调用 put', new Map([[key, { body: Buffer.from(MANUAL), meta: { sha256: MANUAL_SHA } }]]), {}, null, []],
+    ['远端缺 meta 但内容相同：下载比对后不调用 put', new Map([[key, { body: Buffer.from(MANUAL) }]]), {}, null, []],
+    ['并发写入后 409：重新比对相同则视为已发布', new Map(), { raceOn: key }, null, []],
+    ['远端内容与 key 不符：拒绝覆盖', new Map([[key, { body: other }]]), {}, /不符/, []],
+  ]) {
     const oss = fakeOss(objects, ossOptions);
-    const d = deps(repoRoot, {
+    const d = deps(fixture(), {
       resolveOssConfig: (region) => {
         assert.equal(region, 'global');
         return { prefix, cdnBase };
@@ -192,44 +149,35 @@ test('发布遵守不可变路径：已存在同指纹复用，不同指纹拒�
         assert.equal(region, 'global');
         return oss;
       },
-      fetch: cdnFetch(oss, cdnBase, prefix),
+      fetch: cdnFetch(oss.objects, cdnBase, prefix),
     });
-    const run = runPublishPageManual([`--build-info=${buildInfo}`, '--region=global'], d);
+    const run = runPublishPageManual(['--region=global'], d);
     if (error) await assert.rejects(run, error, name);
     else assert.equal((await run).status, 'published', name);
     assert.deepEqual(oss.puts.map((p) => p.key), expectedPuts, name);
     for (const put of oss.puts) {
-      assert.equal(put.options.headers['x-oss-forbid-overwrite'], 'true', name);
-      assert.equal(put.options.headers['Cache-Control'], 'public, max-age=31536000, immutable', name);
-      assert.equal(put.options.meta.sha256, sha(put.body), name);
+      assert.deepEqual(put.options.headers, {
+        'Content-Type': 'text/markdown; charset=utf-8',
+        'Cache-Control': 'public, max-age=31536000, immutable',
+        'x-oss-forbid-overwrite': 'true',
+      }, name);
+      assert.equal(put.options.meta.sha256, MANUAL_SHA, name);
     }
   }
 });
 
-test('--check-cdn 只读核对 CDN 上的正文与 manifest', async () => {
-  const cdnBase = 'https://cdn.test/cindy';
-  const { repoRoot, buildInfo } = fixture();
-  const seeded = fakeOss();
-  const publishDeps = deps(repoRoot, {
-    resolveOssConfig: () => ({ prefix: 'p', cdnBase }),
-    createClient: () => seeded,
-    fetch: cdnFetch(seeded, cdnBase, 'p'),
-  });
-  await runPublishPageManual([`--build-info=${buildInfo}`, '--region=global'], publishDeps);
-
-  const env = { XDT_GLOBAL_CDN_BASE_URL: cdnBase };
-  const ok = await runPublishPageManual([`--build-info=${buildInfo}`, '--region=global', '--check-cdn'], deps(repoRoot, {
-    env,
-    fetch: cdnFetch(seeded, cdnBase, 'p'),
-  }));
-  assert.equal(ok.status, 'verified');
-
-  seeded.objects.set('p/plugin-pages/manual/1.2.3/PAGE-GENERATION.md', { body: Buffer.from('# 被改过\n') });
-  await assert.rejects(
-    runPublishPageManual([`--build-info=${buildInfo}`, '--region=global', '--check-cdn'], deps(repoRoot, {
-      env,
-      fetch: cdnFetch(seeded, cdnBase, 'p'),
-    })),
-    /CDN/,
-  );
+test('--check-cdn 只读核对：一致通过，404 或内容不符失败；未配置变量时读端点清单', async () => {
+  const cdnBase = 'https://hotfix.test/cindy';
+  const repoRoot = fixture({ endpoint: { file: 'endpoint.global.json', cdnBaseUrl: cdnBase } });
+  for (const [name, objects, error] of [
+    ['一致', new Map([[RELATIVE, { body: Buffer.from(MANUAL) }]]), null],
+    ['404', new Map(), /HTTP 404/],
+    ['内容不符', new Map([[RELATIVE, { body: Buffer.from('# 旧手册\n') }]]), /不一致/],
+  ]) {
+    const run = runPublishPageManual(['--region=global', '--check-cdn'], deps(repoRoot, {
+      fetch: cdnFetch(objects, `${cdnBase}/`, ''),
+    }));
+    if (error) await assert.rejects(run, error, name);
+    else assert.equal((await run).status, 'verified', name);
+  }
 });
