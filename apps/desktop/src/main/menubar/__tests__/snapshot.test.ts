@@ -251,8 +251,8 @@ describe('buildMenubarView', () => {
       ],
     });
     const view = buildMenubarView(input([idle, burst], { locale: 'zh-CN' }));
-    expect(view.sources.find((cell) => cell.id === 'alpha')).toMatchObject({ value: '100', when: '4天22时后重置' });
-    expect(view.sources.find((cell) => cell.id === 'beta')).toMatchObject({ value: '60', when: '3天后重置', whenLevel: 'normal' });
+    expect(view.sources.find((cell) => cell.id === 'alpha')).toMatchObject({ value: '100', when: '4天22时' });
+    expect(view.sources.find((cell) => cell.id === 'beta')).toMatchObject({ value: '60', when: '3天', whenLevel: 'normal' });
   });
 
   it('keeps the detail page on the window that limits the account when the tube shows the weekly one', () => {

@@ -3,8 +3,8 @@
  * iPhone widgets, the Desktop usage card, chip and model picker, and the mobile model picker
  * and session menu. One rule, so a window never reads yellow in one place and red in another.
  *
- * Judged on what is left in the tightest window: 30% or less is `warn` (yellow), 10% or less
- * is `crit` (red). A provider's own verdict can only raise the level: a warning is at least
+ * Judged on what is left in the window a surface shows: 30% or less is `warn` (yellow), 10% or
+ * less is `crit` (red). A provider's own verdict can only raise the level: a warning is at least
  * `warn`, an exceeded or rejected limit is `crit`.
  */
 

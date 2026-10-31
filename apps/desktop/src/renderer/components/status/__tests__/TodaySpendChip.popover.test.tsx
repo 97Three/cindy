@@ -738,7 +738,7 @@ describe('TodaySpendChip Claude subscription popover', () => {
 
     render(<TodaySpendChip vendorKey="codex" providerId="openai" modelId="gpt-5.6-sol" sessionId="session-codex" />);
 
-    const trigger = screen.getByRole('button', { name: '打开 Codex 用量页面' });
+    const trigger = screen.getByTestId('task-usage-trigger');
     expect(Array.from(trigger.querySelectorAll('[class*="quota-bar-crit"]')).map((el) => el.textContent)).toEqual(['5%']);
     expect(Array.from(trigger.querySelectorAll('[class*="quota-bar-warn"]')).map((el) => el.textContent)).toEqual(['25%']);
   });
