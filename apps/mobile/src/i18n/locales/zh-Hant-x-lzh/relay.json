@@ -5,7 +5,7 @@
     "official": "{{appName}} 官方中繼",
     "switchToOfficial": "歸官方中繼",
     "officialHint": "諸裝置經 {{appName}} 官方中繼相連。欲改用自建中繼，於中繼所在之機示其加入 QR 碼，以手機相機掃之而入。",
-    "selfHostedHint": "諸裝置經自建中繼 {{address}} 相連；登入、模型等仍用 {{appName}} 官方服務。",
+    "selfHostedHint": "諸裝置經自建中繼 {{address}} 相連；登入、模型與共事等仍用 {{appName}} 官方服務。",
     "removedHint": "此手機已被移出中繼，或中繼已停。可歸官方中繼，或於機上重入。",
     "credentialMissingHint": "此手機上不見中繼憑證。請於機上重入，或歸官方中繼。",
     "confirmTitle": "歸官方中繼乎？",

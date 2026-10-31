@@ -240,6 +240,7 @@
     "estimateTooManyFiles": "案中文件逾 {{limit, number}} 个，不可拷贝。请改录文件较少之案。"
   },
   "sharedTask": {
+    "officialRelayNote": "君今用自家中继，共事之内容仍经 Cindy 官方中继。",
     "selfJoin": "此共事乃君所发起，无须加入。请自「吾所发起」启之",
     "manageSharing": "共事之管",
     "manageMembers": "理成员…",
@@ -341,6 +342,7 @@
     "closeAllDescription": "诸宾皆不能再访问，差事纪录仍留。"
   },
   "providerShare": {
+    "officialRelayNote": "君今用自家中继，供方分享之内容仍经 Cindy 官方中继。",
     "owned": {
       "title": "吾所分享之供方"
     },
@@ -5744,7 +5746,7 @@
         "current": "今用",
         "ownerName": "此机",
         "unavailable": "须登录 Cindy 名籍，且系统钥匙圈可用，方能用自家中继。",
-        "limits": "用自家中继时，手机系统推播、供方分享与共事暂不可用。",
+        "limits": "用自家中继时，手机系统推播暂不可用；供方分享与共事仍经 Cindy 官方中继。",
         "actions": {
           "join": "入他处中继",
           "useOfficial": "归官方中继",
@@ -5960,7 +5962,7 @@
           "switchFromHost": "此机之中继将停，已入之设备将断线。",
           "switchFromMember": "此机将退出「{{name}}」，此后欲再入，须对方重生加入链接。",
           "switchConfirm": "易之",
-          "switchFromOfficial": "设备之间远程操控将改经「{{name}}」转送。用自家中继时，手机系统推播、供方分享与共事暂不可用。"
+          "switchFromOfficial": "设备之间远程操控将改经「{{name}}」转送。用自家中继时，手机系统推播暂不可用；供方分享与共事仍经 Cindy 官方中继。"
         },
         "dialog": {
           "steps": {
