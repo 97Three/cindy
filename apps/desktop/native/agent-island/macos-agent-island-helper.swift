@@ -4708,6 +4708,7 @@ final class TrackingView: NSView {
   var dragActive = false
   var dragMode: String?
   var onHover: ((Bool, Bool) -> Void)?
+  private var resizeCursorShown = false
   private var lastMenuBar = false
   private var lastPanel = false
 
@@ -4755,13 +4756,20 @@ final class TrackingView: NSView {
     let point = convert(event.locationInWindow, from: nil)
     if isResizeHit(point, edge: .left) {
       agentIslandFrameResizeCursor(edge: .left).set()
+      resizeCursorShown = true
       return
     }
     if isResizeHit(point, edge: .right) {
       agentIslandFrameResizeCursor(edge: .right).set()
+      resizeCursorShown = true
       return
     }
-    // Transparent carrier areas pass clicks to the window below; leave its cursor alone.
+    // Only undo the resize cursor this view set; otherwise a transparent carrier area passes
+    // clicks to the window below, so leave that window's cursor (e.g. an I-beam) alone.
+    if resizeCursorShown {
+      resizeCursorShown = false
+      NSCursor.arrow.set()
+    }
     guard visualRect().contains(point) else {
       return
     }
@@ -5655,7 +5663,7 @@ final class AgentIslandController {
       event: "drag-finish",
       interaction: interaction,
       frame: panel.frame,
-      contentWidth: currentContentWidth(frame: panel.frame, layout: lastLayout),
+      contentWidth: displayedContentWidth(),
       screenPoint: screenPoint,
       force: true
     )
@@ -5667,7 +5675,7 @@ final class AgentIslandController {
     eventSink(["type": "drag", "active": false])
     emitLayoutPreference(
       frame: panel.frame,
-      contentWidth: currentContentWidth(frame: panel.frame, layout: lastLayout),
+      contentWidth: displayedContentWidth(),
       force: true,
       snapCenter: interaction.mode == .move
     )
@@ -5720,9 +5728,6 @@ final class AgentIslandController {
       interaction: interaction
     )
     cancelPendingCarrierFrame()
-    if panel.frame != interaction.startFrame {
-      applyInteractiveFrame(interaction.startFrame)
-    }
     pushDragCursor(for: interaction)
     refreshInteractionPoller()
     lastDragDebugTime = 0
@@ -6017,6 +6022,16 @@ final class AgentIslandController {
       && abs(target.minY - frame.minY) < 0.5
       && abs(target.width - frame.width) < 0.5
       && abs(target.height - frame.height) < 0.5
+  }
+
+  // The island's own width. Unlike currentContentWidth(frame:), it stays correct while the
+  // panel still has the shared carrier size, e.g. a resize edge pressed but never dragged.
+  private func displayedContentWidth() -> CGFloat {
+    constrainedContentWidth(
+      lastLayout.width,
+      expanded: lastLayout.expanded,
+      fixedCenterX: panel.frame.midX
+    )
   }
 
   private func currentContentWidth(frame: NSRect, layout: AgentIslandLayout) -> CGFloat {
@@ -6512,7 +6527,7 @@ final class AgentIslandController {
       height: Double(panel.frame.height),
       displayId: frame.displayId,
       displayBounds: frame.displayBounds,
-      contentWidth: Double(currentContentWidth(frame: panel.frame, layout: lastLayout))
+      contentWidth: Double(displayedContentWidth())
     )
   }
 
