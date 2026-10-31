@@ -4,7 +4,7 @@
 //
 // 业务后端里生成交互页面的模型需要读 PAGE-GENERATION.md。手册随客户端内置 Skill 发版，
 // 这里把仓库当前的手册按客户端版本号与 sha256 上传：
-//   {cdnBaseUrl}/plugin-pages/manual/<版本号>/<sha256>.md
+//   {cdnBaseUrl}/mcp-apps/manual/<版本号>/<sha256>.md
 // 客户端用 app.getVersion() 和内置手册的 sha256 拼出同一地址（路径约定见
 // apps/desktop/src/shared/pluginPageManual.mjs），所以每个发版版本都须在对应客户端上线前
 // 发布到每个区域，并用 --check-cdn 核对。

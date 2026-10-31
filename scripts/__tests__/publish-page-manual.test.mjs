@@ -28,7 +28,7 @@ const MANUAL = '# Cindy 交互页面生成手册\n\n测试内容\n';
 const MANUAL_SHA = createHash('sha256').update(MANUAL).digest('hex');
 const VERSION = '0.1.122-beta';
 const COMMIT = 'a'.repeat(40);
-const RELATIVE = `plugin-pages/manual/${VERSION}/${MANUAL_SHA}.md`;
+const RELATIVE = `mcp-apps/manual/${VERSION}/${MANUAL_SHA}.md`;
 
 function fixture({ withManual = true, endpoint } = {}) {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'publish-page-manual-'));

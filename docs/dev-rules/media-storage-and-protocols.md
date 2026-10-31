@@ -145,8 +145,8 @@
   静态缩略图复用现有 `thumbnails/`，当前随包预览资源合计约 0.55 MiB。
   清单见 Desktop 的 `src/shared/wallpaper-video-manifest.json`。
 - 《Cindy MCP Apps 页面生成手册》（内置 Skill 的 `cindy-plugin-creator/references/examples/interactive-pages/PAGE-GENERATION.md`）
-  按「版本号 + 内容」寻址发布：对象名为 `plugin-pages/manual/<版本号>/<sha256>.md`，客户端用 `app.getVersion()`
-  与内置手册的 sha256 拼 `{cdnBaseUrl}/plugin-pages/manual/<版本号>/<sha256>.md` 交给业务后端。版本号便于排查
+  按「版本号 + 内容」寻址发布：对象名为 `mcp-apps/manual/<版本号>/<sha256>.md`，客户端用 `app.getVersion()`
+  与内置手册的 sha256 拼 `{cdnBaseUrl}/mcp-apps/manual/<版本号>/<sha256>.md` 交给业务后端。版本号便于排查
   对应哪个客户端；sha256 保证同一版本号打出不同手册（重新出包、各区域从不同提交出包）时不会悄悄对错文件。
   路径约定只在 `apps/desktop/src/shared/pluginPageManual.mjs` 定义；手册在 `.gitattributes` 固定 LF，保证各平台
   打包出同一份字节、同一个 sha256。仓库 `apps/desktop/package.json` 的版本是占位的 0.0.0，打包时才临时写入真实

@@ -27,11 +27,11 @@ export function assertPluginPageManualVersion(version) {
   }
 }
 
-/** 手册相对 CDN 根 / OSS 前缀的路径：`plugin-pages/manual/<版本号>/<sha256>.md`。 */
+/** 手册相对 CDN 根 / OSS 前缀的路径：`mcp-apps/manual/<版本号>/<sha256>.md`。 */
 export function pluginPageManualCdnPath(version, sha256) {
   assertPluginPageManualVersion(version);
   if (typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sha256)) {
     throw new Error(`页面手册路径需要小写十六进制 sha256，收到: ${String(sha256)}`);
   }
-  return `plugin-pages/manual/${version}/${sha256}.md`;
+  return `mcp-apps/manual/${version}/${sha256}.md`;
 }
