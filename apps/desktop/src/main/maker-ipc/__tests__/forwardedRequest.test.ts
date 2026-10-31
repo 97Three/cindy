@@ -42,14 +42,23 @@ describe('host-owned forwarded request', () => {
   });
 
   // Unit, protocol compatibility: old receivers only recognize the original five
-  // envelope dialects. Existing locale round-trips only exercise a new receiver.
-  // Minimal failure: send one owner quotation from a French host to an old host.
-  // Standalone Windows run: 4.6s wall time (Vitest reports 3.34s), 2026-10-31.
+  // envelope dialects. Freeze the English wire text from 050886c543; comparing
+  // against today's English formatter would miss catalog drift on both sides.
+  // Minimal failure: change an English prefix, then send from a French host to an old host.
+  // Windows run: 4.93s wall time (Vitest reports 3.61s), 2026-10-31.
   it.each(['fr', 'es', 'de', 'pt-PT', 'pt-BR'] as const)('sends %s receipts in the legacy English dialect', locale => {
     const source = { userText: 'Review only; do not publish.' };
     const supplement = 'Inspect the changes.';
-    expect(formatForwardedRequest(source, supplement, locale)).toBe(formatForwardedRequest(source, supplement, 'en'));
-    expect(formatForwardedRequest({ userText: null }, supplement, locale)).toBe(formatForwardedRequest({ userText: null }, supplement, 'en'));
+    expect(formatForwardedRequest(source, supplement, locale)).toBe([
+      '[Source] The host preserved the user’s original words as request background, without changes. The current request is in the Agent supplement.',
+      'User’s original words:"Review only; do not publish."',
+      'Agent supplement:"Inspect the changes."',
+    ].join('\n'));
+    expect(formatForwardedRequest({ userText: null }, supplement, locale)).toBe([
+      '[Source] No verifiable original user text was found.',
+      'User’s original words:""',
+      'Agent supplement:"Inspect the changes."',
+    ].join('\n'));
   });
 
   it('still verifies a persisted French receipt without accepting edited owner text', () => {
