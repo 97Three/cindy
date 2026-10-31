@@ -97,13 +97,13 @@
 ## 5. 规则
 
 - **凭证**：页面拿不到任何凭证。需要用户身份的请求走工具，由插件代发、Cindy 注入凭证。页面直接 `fetch` 只能访问插件声明的 `connectDomains`，不带凭证，对方需返回 `Access-Control-Allow-Origin: *`；外部图片、样式要在 `resourceDomains` 声明。
-- **局部更新**：换内容用 `load_view` 片段 + 容器 `innerHTML`（只接可信、已转义的片段），或用 `api_read` 拿 JSON 后改 DOM。片段里的脚本不执行，事件用常驻脚本绑定（推荐事件委托）。不重连，输入和状态保留。
+- **局部更新**：换内容用 `load_view` 片段 + 容器 `innerHTML`（只接可信、已转义的片段），或用 `api_read` 拿 JSON 后改 DOM。片段里的脚本不执行，事件用常驻脚本绑定。不重连，输入和状态保留。
 - **整页替换的边界**：整份文档只在加载器首屏，以及 AI 调用的整页工具（`open_view`、`import_file`、`show_page`）打开新卡片时替换。标准工具里没有向页面返回完整文档的工具；**不要把 `load_view` 片段 `document.write` 进页面**。整页替换后新文档重连，旧请求和审批作废、迟到回复丢弃，已被 Cindy 接收的 `sendMessage` 照常发送。
-- **表单**：用 `<form>`，在 `submit` 里先 `preventDefault()` 再调工具；点按钮和回车都会触发 submit。原生 `action` 提交不可用；宿主会兜底拦下没处理的提交和 `form.submit()`，但仍必须写 `preventDefault()`。等待时禁用按钮，失败保留输入。
+- **表单**：用 `<form>`，在 `submit` 里先 `preventDefault()` 再调工具；点按钮和回车都会触发 submit。原生 `action` 提交不可用；宿主会兜底拦下没处理的提交和 `form.submit()`（`method="dialog"` 保留原生关闭），但仍必须写 `preventDefault()`。等待时禁用按钮，失败保留输入。
 - **写操作**：带 `idempotencyKey`。同一内容重试沿用原编号，内容变了换新编号；写入方按「当前用户 + 编号」去重，同编号不同内容应拒绝。**不自动重试**：超时不等于没写入，取消等待也不等于已撤销，按编号核对。
 - **生命周期**：用 `AbortController` 取消等待，`onteardown` 里停止更新 DOM。卡片离屏可能被卸载，重开回到最初的结果；要保留的状态通过工具存取。
 - **文件**：页面拿不到本机路径，只能读取本卡已授权文件的只读地址。显示用 `resource_link` 的 `_meta['cindy/file'].url`（只读、临时、仅本卡有效，不自己拼、不持久保存）；需要身份的图片先 `fetch_file`。`upload_files` 一次最多 4 个，单个 64 MiB、合计 128 MiB。拖放不推荐，用 `pick_files`。手机和远程查看时文件选择、导出可能不可用，提示回执行电脑操作。
-- **从对话交来的文件**：图片、音视频媒体走附件，宿主放进 `app.getHostContext()?.toolInfo?.tool?._meta?.['cindy/attachments']`，每项是 `resource_link`，地址取 `_meta['cindy/file'].url`（只读、仅本卡有效）。CSV、XLSX 表格用 `dir` 交接（一次性、10 分钟、单个 50 MiB），插件在那次调用里立刻暂存，再把批次号和预览数据写进首屏 HTML。
+- **从对话交来的文件**：图片、音视频媒体走附件，宿主放进 `app.getHostContext()?.toolInfo?.tool?._meta?.['cindy/attachments']`，每项是 `resource_link`，地址取 `_meta['cindy/file'].url`。CSV、XLSX 表格用 `dir` 交接（一次性、10 分钟、单个 50 MiB），插件在那次调用里立刻暂存，再把批次号和预览数据写进首屏 HTML。
 
   ```js
   const links = app.getHostContext()?.toolInfo?.tool?._meta?.['cindy/attachments'] ?? [];
