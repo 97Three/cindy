@@ -629,8 +629,8 @@ class Builder {
   private balanceWhen(source: MenubarBalanceInput, days: number | null, roomy: boolean): string {
     const resetsAtMs = source.quota?.resetsAtMs ?? null;
     if (resetsAtMs !== null) {
-      const duration = this.shortDuration(resetsAtMs - this.input.nowMs);
-      return roomy ? this.t('cell.resetsIn', { duration }) : duration;
+      // Just the duration under a tube, as on the iPhone widgets (owner decision 2026-10-31).
+      return this.shortDuration(resetsAtMs - this.input.nowMs);
     }
     return days === null ? '' : this.t(roomy ? 'cell.lastsDays' : 'cell.lastsDaysShort', { n: days });
   }
@@ -710,8 +710,7 @@ class Builder {
     if (seenAtMs !== null) {
       when = this.ago(seenAtMs);
     } else if (limit.window.resetsAtMs !== null) {
-      const duration = this.shortDuration(limit.window.resetsAtMs - this.input.nowMs);
-      when = roomy ? this.t('cell.resetsIn', { duration }) : duration;
+      when = this.shortDuration(limit.window.resetsAtMs - this.input.nowMs);
     }
     // The number keeps its ink (the liquid shows how much is left); the reset time colors only
     // when a long window will reset with quota still unused at the current pace (2026-10-31).

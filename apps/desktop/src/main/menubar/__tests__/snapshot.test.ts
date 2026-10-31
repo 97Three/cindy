@@ -115,7 +115,7 @@ describe('buildMenubarView', () => {
       burnPerDay: null, observedAtMs: NOW, currency: 'USD', quota: { resetsAtMs: NOW + 20 * DAY + 3 * HOUR, todaySpend: 3.62, dailyLimitEnabled },
     };
     const view = buildMenubarView(input([quota], { locale: 'zh-CN' }));
-    expect(view.sources[0]).toMatchObject({ when: '20天3时后重置' });
+    expect(view.sources[0]).toMatchObject({ when: '20天3时' });
     expect(view.sources[0].fill).toBeCloseTo(0.9998);
     expect(view.headlinePrimary).toBe('Cindy 本期配额还能用。');
     expect(view.details.cindy).toMatchObject({ title: 'Cindy 本期配额', action: { kind: 'open-settings' } });
@@ -225,7 +225,7 @@ describe('buildMenubarView', () => {
       ],
     });
     const view = buildMenubarView(input([claude], { locale: 'zh-CN' }));
-    expect(view.sources[0]).toMatchObject({ value: '90', when: '6天7时后重置', whenLevel: 'normal' });
+    expect(view.sources[0]).toMatchObject({ value: '90', when: '6天7时', whenLevel: 'normal' });
     // Plenty left: the headline does not narrate a reset.
     expect(view.headlineSecondary).toBeNull();
   });
@@ -266,7 +266,7 @@ describe('buildMenubarView', () => {
       windows: [{ kind: 'session', usedPercent: 92, resetsAtMs: NOW + 3 * HOUR + 5 * 60_000, windowMinutes: 300 }],
     });
     const view = buildMenubarView(input([low, codex('beta', 20)]));
-    expect(view.sources.find((cell) => cell.id === 'alpha')).toMatchObject({ when: 'Resets in 3h 5m', whenLevel: 'normal', level: 'error' });
+    expect(view.sources.find((cell) => cell.id === 'alpha')).toMatchObject({ when: '3h 5m', whenLevel: 'normal', level: 'error' });
     expect(view.headlineSecondary).toBe('alpha resets in 3h 5m.');
     expect(view.headlineAlert).toBe(true);
   });
