@@ -3677,7 +3677,8 @@
           "contextWindowInvalid": "A janela de contexto deve ser um número inteiro positivo válido (separadores entre grupos de dígitos são permitidos)",
           "requestPathInvalid": "Comece o caminho exato da requisição com uma única /. Não use fragmentos nem segmentos de caminho . e ..; codifique espaços e caracteres inseguros com codificação percentual.",
           "modelRequired": "Adicione pelo menos um modelo",
-          "oauthInvalid": "Configuração OAuth incompleta: todos os campos são obrigatórios e ambos os endpoints devem ser URLs https seguras"
+          "oauthInvalid": "Configuração OAuth incompleta: todos os campos são obrigatórios e ambos os endpoints devem ser URLs https seguras",
+          "baseUrlRequired": "Informe a URL base deste ambiente de execução ou restaure o protocolo padrão."
         },
         "toast": {
           "created": "Provedor adicionado",
@@ -10602,8 +10603,10 @@
       },
       "mention": {
         "all": "Todos",
-        "allHint": "Todos respondem",
-        "label": "Mencionar um colega"
+        "allHint": "Apenas pessoas",
+        "label": "Mencionar um colega",
+        "allBots": "Todos os colegas",
+        "allBotsHint": "Apenas colegas"
       },
       "composer": {
         "label": "Mensagem da conversa em grupo",
@@ -10715,7 +10718,7 @@
         "speakingMode": "Ordem de fala",
         "speakingModeAuto": "Automática",
         "speakingModeSequential": "Um de cada vez",
-        "speakingModeAutoNote": "Sem menções ou com @Everyone: pensam simultaneamente na primeira passagem e depois respondem um por um. Os colegas mencionados respondem na ordem das menções.",
+        "speakingModeAutoNote": "Sem menções ou com @Todos os colegas: primeiro pensam ao mesmo tempo, depois respondem um por um. Quando mencionados, seguem a ordem das menções.",
         "speakingModeSequentialNote": "Um colega fala por vez, e cada um vê as respostas anteriores.",
         "speakingModeSaveFailed": "Não foi possível salvar a ordem de fala. Tente novamente.",
         "setOrganizer": "Tornar organizador",
@@ -10729,7 +10732,9 @@
         "projectDirClear": "Limpar pasta",
         "projectDirNote": "Os colegas trabalham aqui quando dividem o trabalho. Você pode deixar em branco para que usem a pasta desta conversa em grupo. Se você escolher um projeto git, cada divisão de trabalho recebe um novo worktree e uma nova branch, mantendo seu código intacto.",
         "autoContinueSaveFailed": "Não foi possível salvar as transições entre etapas. Tente novamente.",
-        "projectDirSaveFailed": "Não foi possível salvar a pasta do projeto. Verifique se a pasta ainda existe e tente novamente."
+        "projectDirSaveFailed": "Não foi possível salvar a pasta do projeto. Verifique se a pasta ainda existe e tente novamente.",
+        "allowMentionAllBots": "Permitir @todos os colegas",
+        "allowMentionAllBotsHint": "Só o proprietário do grupo pode alterar. Todos os colegas podem responder; cuidado em grupos grandes. Não afeta a IA que responde em seu nome."
       },
       "errors": {
         "memberLimit": "Uma conversa em grupo precisa de 2 a 6 colegas",
@@ -10753,7 +10758,8 @@
         "quoteUnavailable": "A mensagem citada foi excluída ou não está mais visível. A citação foi removida. Envie novamente.",
         "lifecycleUnavailable": "O servidor ou computador atual ainda não oferece suporte a esta ação.",
         "groupDissolved": "Este grupo foi dissolvido. Você ainda pode ler o histórico disponível.",
-        "lastOwner": "Transfira a propriedade ou dissolva este grupo antes de sair."
+        "lastOwner": "Transfira a propriedade ou dissolva este grupo antes de sair.",
+        "allBotsMentionDisabled": "O proprietário do grupo ainda não ativou @Todos os colegas."
       },
       "organizer": "Organizador",
       "plan": {
@@ -13897,6 +13903,42 @@
       "closeDescription": "Esta conversa de acompanhamento será interrompida e seu histórico será excluído. A tarefa principal continua em execução.",
       "closeConfirm": "Fechar e excluir",
       "closeFailed": "Não foi possível fechar a conversa paralela. Tente novamente."
+    },
+    "teammateProcess": {
+      "record": "Atividade",
+      "operations": "Registro de atividades",
+      "elapsed": "Trabalhando há {{duration}}",
+      "took": "Levou {{duration}}",
+      "processing": "Trabalhando",
+      "worked": "Atividade",
+      "thinking": "Pensando",
+      "thought": "Pensou",
+      "failed_one": "{{count}} chamada falhou",
+      "failed_other": "{{count}} chamadas falharam",
+      "separator": ", ",
+      "actions": {
+        "running": {
+          "read": "Lendo arquivos",
+          "edit": "Editando arquivos",
+          "search": "Pesquisando",
+          "web": "Consultando a Web",
+          "command": "Executando comandos",
+          "tools": "Usando ferramentas",
+          "delegate": "Delegando trabalho",
+          "plan": "Atualizando o plano"
+        },
+        "done": {
+          "read": "Arquivos lidos",
+          "edit": "Arquivos editados",
+          "search": "Pesquisa concluída",
+          "web": "Web consultada",
+          "command": "Comandos executados",
+          "tools": "Ferramentas usadas",
+          "delegate": "Trabalho delegado",
+          "plan": "Plano atualizado"
+        }
+      },
+      "failed_many": "{{count}} chamadas falharam"
     }
   },
   "ccAgent": {
