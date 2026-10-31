@@ -617,14 +617,6 @@ class Builder {
     return this.visible.map((source) => this.cell(source, source === recommended, roomy));
   }
 
-  /** A period quota that the daily burn will not use up before it resets; a wallet never resets. */
-  private quotaUnusedAtReset(source: MenubarBalanceInput): boolean {
-    const resetsAtMs = source.quota?.resetsAtMs ?? null;
-    if (resetsAtMs === null || source.burnPerDay === null || !(source.available > 0)) return false;
-    const leftMs = resetsAtMs - this.input.nowMs;
-    return leftMs > 0 && source.available > source.burnPerDay * (leftMs / DAY_MS);
-  }
-
   /** A quota counts down to its reset like a subscription; a wallet says how long it lasts. */
   private balanceWhen(source: MenubarBalanceInput, days: number | null, roomy: boolean): string {
     const resetsAtMs = source.quota?.resetsAtMs ?? null;
@@ -658,22 +650,19 @@ class Builder {
       const days = source.burnPerDay && source.burnPerDay > 0 ? Math.floor(source.available / source.burnPerDay) : null;
       const fill = source.fullAmount && source.fullAmount > 0 ? clamp(source.available / source.fullAmount, 0, 1) : source.available > 0 ? 1 : 0;
       const amount = this.balanceMoney(source.available, source.currency);
-      const level = balanceLevel(source);
-      const unusedAtReset = this.quotaUnusedAtReset(source);
-      const quotaLeftMs = (source.quota?.resetsAtMs ?? this.input.nowMs) - this.input.nowMs;
       return {
         ...base,
         name: this.t('balance.short'),
         value: amount,
         valueUnit: null,
         valueLabel: null,
-        level,
+        level: balanceLevel(source),
         fill,
         reserve: false,
         when: this.balanceWhen(source, days, roomy),
-        whenLevel: panelLevel(resetTimeLevel(quotaLeftMs, unusedAtReset)),
+        // A Cindy period quota is a budget, not a subscription to use up: no "use it" reminder.
+        whenLevel: 'normal',
         resetsAtMs: source.quota?.resetsAtMs ?? null,
-        ...(unusedAtReset ? { unusedAtReset: true } : {}),
         accessibilityLabel: source.quota
           ? this.t('a11y.quota', { amount })
           : days === null

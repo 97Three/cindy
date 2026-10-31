@@ -186,6 +186,13 @@ describe('buildMenubarView', () => {
       low: ['error', true],
       session: ['normal', false],
     });
+    // The Cindy period quota is a budget: plenty left hours before its reset is not a reminder.
+    const quota: MenubarSourceInput = {
+      kind: 'balance', id: 'cindy', logoSvg: MENUBAR_CINDY_LOGO, available: 38_000, fullAmount: 40_000, burnPerDay: 16,
+      observedAtMs: NOW, currency: 'USD', quota: { resetsAtMs: NOW + 5 * HOUR, todaySpend: null },
+    };
+    expect(buildMenubarView(input([quota])).sources[0]).toMatchObject({ whenLevel: 'normal' });
+    expect(buildMenubarView(input([quota])).sources[0].unusedAtReset).toBeUndefined();
   });
 
   it('shows an offline computer’s last reading with its age and never recommends it', () => {

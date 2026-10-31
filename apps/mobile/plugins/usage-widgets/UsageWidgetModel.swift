@@ -286,6 +286,40 @@ enum WidgetText {
       "noSources": "還沒有帶餘量的帳號", "valueBasis": "訂閱等值", "valueBasisLong": "訂閱等值估算", "reset": "已重置",
       "todayNone": "今天還沒有用量", "resetsIn": "{{duration}}後重置", "other": "其他",
     ],
+    "ja": [
+      "quotaName": "サブスクの残り", "quotaDescription": "各サブスクリプションの残りと、いつ満タンに戻るか。",
+      "usageName": "毎日の使用量", "usageDescription": "今日の使用量と、最近の日ごとの推移。",
+      "emptyTitle": "残りをまだ取得できていません", "emptyBody": "Cindy を開いてコンピュータに接続すると、各サブスクリプションの残りがここに表示されます。",
+      "emptyUsageTitle": "使用量をまだ取得できていません", "emptyUsageBody": "Cindy を開いてコンピュータに接続すると、毎日の使用量がここに表示されます。",
+      "updateTitle": "コンピュータの Cindy を更新してください", "updateBody": "更新すると、残りと毎日の使用量がここに表示されます。",
+      "noSources": "残量を表示できるアカウントがまだありません", "valueBasis": "サブスク換算", "valueBasisLong": "サブスク換算（見積もり）",
+      "reset": "リセット済み", "todayNone": "今日の使用量はまだありません", "resetsIn": "{{duration}}後にリセット", "other": "その他",
+      "today": "今日", "dailyAverage": "1 日平均", "paid": "支払額", "tokenUnit": "token",
+      "monthScopeAll": "直近 30 日 · すべてのデバイス", "monthScopeLocal": "直近 30 日 · このコンピュータ",
+      "scopeAll": "すべてのデバイス", "scopeLocal": "このコンピュータ",
+      "harness.claude-code": "Claude Code", "harness.codex": "Codex", "harness.pi": "Pi",
+      "updatedJustNow": "たった今更新", "updatedMinutes": "{{n}} 分前に更新", "updatedHours": "{{n}} 時間前に更新",
+      "updatedDays": "{{n}} 日前に更新",
+      "durationShort.daysHours": "{{d}}日{{h}}時間", "durationShort.days": "{{d}}日", "durationShort.hoursMinutes": "{{h}}時間{{m}}分",
+      "durationShort.hours": "{{h}}時間", "durationShort.minutes": "{{m}}分",
+    ],
+    "ko": [
+      "quotaName": "구독 남은 양", "quotaDescription": "구독마다 얼마나 남았는지, 언제 다시 채워지는지.",
+      "usageName": "일일 사용량", "usageDescription": "오늘 사용량과 최근 며칠의 추이.",
+      "emptyTitle": "아직 남은 양을 읽지 못했어요", "emptyBody": "Cindy를 열고 컴퓨터에 연결하면 구독마다 얼마나 남았는지 여기에 표시돼요.",
+      "emptyUsageTitle": "아직 사용량을 읽지 못했어요", "emptyUsageBody": "Cindy를 열고 컴퓨터에 연결하면 일일 사용량이 여기에 표시돼요.",
+      "updateTitle": "컴퓨터의 Cindy를 업데이트해 주세요", "updateBody": "업데이트하면 남은 양과 일일 사용량이 여기에 표시돼요.",
+      "noSources": "남은 양을 보여 줄 계정이 아직 없어요", "valueBasis": "구독 환산", "valueBasisLong": "구독 환산 추정",
+      "reset": "초기화됨", "todayNone": "오늘 사용량이 아직 없어요", "resetsIn": "{{duration}} 후 초기화", "other": "기타",
+      "today": "오늘", "dailyAverage": "하루 평균", "paid": "실제 결제", "tokenUnit": "token",
+      "monthScopeAll": "최근 30일 · 모든 기기", "monthScopeLocal": "최근 30일 · 이 컴퓨터",
+      "scopeAll": "모든 기기", "scopeLocal": "이 컴퓨터",
+      "harness.claude-code": "Claude Code", "harness.codex": "Codex", "harness.pi": "Pi",
+      "updatedJustNow": "방금 업데이트", "updatedMinutes": "{{n}}분 전 업데이트", "updatedHours": "{{n}}시간 전 업데이트",
+      "updatedDays": "{{n}}일 전 업데이트",
+      "durationShort.daysHours": "{{d}}일 {{h}}시간", "durationShort.days": "{{d}}일", "durationShort.hoursMinutes": "{{h}}시간 {{m}}분",
+      "durationShort.hours": "{{h}}시간", "durationShort.minutes": "{{m}}분",
+    ],
     "en": [
       "quotaName": "Subscription quota", "quotaDescription": "What each subscription has left and when it refills.",
       "usageName": "Daily usage", "usageDescription": "Today's usage and the trend of recent days.",
@@ -308,6 +342,8 @@ enum WidgetText {
   private static func language(_ locale: Locale) -> String {
     let id = locale.identifier
     if id.hasPrefix("zh") { return id.contains("Hant") || id.contains("TW") || id.contains("HK") ? "zh-Hant" : "zh-Hans" }
+    if id.hasPrefix("ja") { return "ja" }
+    if id.hasPrefix("ko") { return "ko" }
     return "en"
   }
 
