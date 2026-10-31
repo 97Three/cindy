@@ -37,7 +37,18 @@ async function verifyLoaderMain(main) {
   const fragment = await call('load_view', { intent: 'form', fields: { title: '<img onerror=bad>' } });
   assert.ok(fragment._meta.view.html.includes('&lt;img onerror=bad&gt;'));
   assert.ok(!fragment._meta.view.html.includes('<script'));
-  assert.ok((await call('load_view', { intent: 'unknown' }))._meta.view.html.includes('未识别'));
+  // Regression: a natural-language first intent must open a usable default page.
+  for (const tool of ['open_view', 'load_view']) {
+    const fallback = await call(tool, { intent: '请打开一个可以查看和编辑记录的页面' });
+    assert.notEqual(fallback.isError, true);
+    assert.ok(fallback._meta.view.html.includes('<h1>Overview</h1>'));
+    assert.ok(fallback._meta.view.html.includes('已按总览打开'));
+  }
+  for (const [intent, title] of [['items', 'Items'], ['form', 'Form'], ['chart', 'Chart'], ['overview', 'Overview']]) {
+    const view = await call('load_view', { intent });
+    assert.ok(view._meta.view.html.includes('<h1>' + title + '</h1>'));
+    assert.ok(!view._meta.view.html.includes('已按总览打开'));
+  }
   const request = { path: '/api/records', body: { title: 'record' }, idempotencyKey: 'one' };
   assert.equal((await call('api_write', request)).structuredContent.id, 'R-1');
   assert.equal((await call('api_write', request)).structuredContent.id, 'R-1');

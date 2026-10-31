@@ -555,7 +555,7 @@ function scaffoldFiles(input: ForgeScaffoldInput): Record<string, string | Buffe
     const example = JSON.parse(interactiveExampleManifest) as {
       minCindyVersion: string; tools: unknown[]; mcpApps: unknown;
     };
-    // SDK 示例最低版本暂定 0.1.123-beta，发布版本待核定；不降低作者声明的更高版本。
+    // SDK 示例最低版本为 0.1.122-beta；不降低作者声明的更高版本。
     // 这里只提升生成骨架的要求，不改变已有插件的通用打包门槛。
     if ((compareCindyVersions(input.minCindyVersion, example.minCindyVersion) ?? -1) < 0)
       manifest.minCindyVersion = example.minCindyVersion;
@@ -611,8 +611,8 @@ export async function scaffoldGhostDir(
 ): Promise<ForgeScaffoldResult> {
   if (input.withUi !== undefined && typeof input.withUi !== 'boolean')
     return { ok: false, errorCode: 'INVALID_INPUT', message: 'withUi 必须是布尔值' };
-  if (input.withUi && (compareCindyVersions(input.minCindyVersion, PLUGIN_UI_MIN_CINDY_VERSION) ?? -1) < 0)
-    return { ok: false, errorCode: 'INVALID_INPUT', message: `交互页面要求 minCindyVersion >= ${PLUGIN_UI_MIN_CINDY_VERSION}` };
+  if (input.withUi && (input.minCindyVersion === '0.0.0' || compareCindyVersions(input.minCindyVersion, PLUGIN_UI_MIN_CINDY_VERSION) === null))
+    return { ok: false, errorCode: 'INVALID_INPUT', message: 'minCindyVersion 必须是有效且非 0.0.0 的 Cindy 版本' };
   const template = input.template;
   if (!FORGE_SCAFFOLD_TEMPLATES.includes(template)) {
     return { ok: false, errorCode: 'INVALID_INPUT', message: `不认识的模板:${String(template)}` };

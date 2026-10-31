@@ -2637,13 +2637,13 @@ export function getCindyGhostsMcpDeps(
           declaredMinCindyVersion &&
           (declaredMinCindyVersion === '0.0.0' ||
             !(request.withUi
-              ? (compareCindyVersions(declaredMinCindyVersion, PLUGIN_UI_MIN_CINDY_VERSION) ?? -1) >= 0
+              ? compareCindyVersions(declaredMinCindyVersion, PLUGIN_UI_MIN_CINDY_VERSION) !== null
               : stableCindyVersionPattern.test(declaredMinCindyVersion)))
         ) {
           return {
             ok: false,
             errorCode: 'INVALID_INPUT',
-            message: request.withUi ? `交互页面要求 minCindyVersion >= ${PLUGIN_UI_MIN_CINDY_VERSION}` : 'minCindyVersion 必须是插件实际依赖的首个 Cindy 正式版本（major.minor.patch）',
+            message: request.withUi ? 'minCindyVersion 必须是有效且非 0.0.0 的 Cindy 版本' : 'minCindyVersion 必须是插件实际依赖的首个 Cindy 正式版本（major.minor.patch）',
           };
         }
         const currentCindyVersion = hostDeps.getAppVersion?.().trim();

@@ -3,14 +3,14 @@
   "id": "interactive-loader",
   "name": "动态页面示例",
   "version": "1.0.0",
-  "minCindyVersion": "0.1.123-beta",
+  "minCindyVersion": "0.1.122-beta",
   "entry": "main.js",
   "command": "interactive-loader",
   "whenToUse": "需要查看和编辑记录、显示交互表单时使用",
   "tools": [
     {
       "name": "open_view",
-      "description": "按意图打开页面。生成的页面直接写 import { App } from '@modelcontextprotocol/ext-apps'；不要写 importmap，不要从 CDN 或其他地址加载 SDK，SDK 由 Cindy 提供。",
+      "description": "按意图打开页面。intent 是用户意图的简短描述；示例后端只识别 items、form、chart、overview，其余按总览处理。生成的页面直接写 import { App } from '@modelcontextprotocol/ext-apps'；不要写 importmap，不要从 CDN 或其他地址加载 SDK，SDK 由 Cindy 提供。",
       "parameters": {
         "type": "object",
         "properties": {

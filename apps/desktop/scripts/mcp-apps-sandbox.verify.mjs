@@ -184,7 +184,7 @@ try {
       }
       const tool=(await connection.tools()).find(tool=>tool.name===(authorMode==='loader'?'open_view':authorMode==='files'?'open_showcase':authorMode?'open_view':independent?'open_metrics':'draft_form'));
       if(process.env.CINDY_MCP_APP_TEST_HOST_SDK==='1' && process.env.CINDY_MCP_APP_TEST_REMOTE!=='1') tool._meta['cindy/attachments']=[{type:'resource_link',name:'fixture.txt',uri:'library:fixture.txt'}];
-      const args=authorMode==='loader'?{intent:'overview'}:independent?{threshold:75}:{title:'AI draft',body:'Review before creating'};
+      const args=authorMode==='loader'?{intent:'请打开一个可以查看和编辑记录的页面'}:independent?{threshold:75}:{title:'AI draft',body:'Review before creating'};
       const result=pluginMode?await executePlugin(tool.name,args):await client.callTool({name:tool.name,arguments:args});
       let record={version:1,serverId:'example',serverRevision:appServerRevision(config),resourceUri:tool._meta.ui.resourceUri,tool,arguments:args,result:authorMode==='loader'?pluginAppResult(result):result};
       if(authorMode==='loader'){assert.ok(result._meta.view.html.includes('<style>'));assert.deepEqual(Object.keys(pluginModelResult(result)),['content']);}
@@ -337,7 +337,8 @@ try {
         stage='loader generated page';
         await wait(()=>inner()?.executeJavaScript("document.querySelector('#connection')?.textContent==='已连接'"));
         assert.equal(loaderCalls.length,1,'first page must not request the view twice');
-        assert.equal(await inner().executeJavaScript("document.querySelector('#content h1').textContent"),'Items');
+        assert.equal(await inner().executeJavaScript("document.querySelector('#content h1').textContent"),'Overview');
+        assert.equal(await inner().executeJavaScript("document.querySelector('#content p').textContent"),'已按总览打开。');
         stage='loader local update preserves input';
         await inner().executeJavaScript("document.querySelector('input').value='保留输入';document.querySelector('#refresh').click()");
         await wait(()=>inner().executeJavaScript("document.querySelectorAll('#items li').length===3"));

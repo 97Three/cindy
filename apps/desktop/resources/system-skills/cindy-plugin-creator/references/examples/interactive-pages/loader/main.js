@@ -41,8 +41,10 @@ async function request(msg, path, method, data, query) {
 
 // 以下是模拟后端：同一份模板生成首屏，后续只返回 #content 的内容。
 function viewFragment(intent, fields = {}) {
-  const title = intent === 'chart' ? 'Chart' : intent === 'form' ? 'Form' : 'Items';
-  const hint = ['items', 'chart', 'form', 'overview'].includes(intent) ? '可查询记录或保存表单。' : '未识别此意图，请选择 Items、Form 或 Chart。';
+  const known = ['items', 'chart', 'form', 'overview'].includes(intent);
+  if (!known) intent = 'overview';
+  const title = intent === 'chart' ? 'Chart' : intent === 'form' ? 'Form' : intent === 'items' ? 'Items' : 'Overview';
+  const hint = known ? '可查询记录或保存表单。' : '已按总览打开。';
   return '<h1>' + title + '</h1><p>' + escapeHtml(hint) + '</p>'
     + '<nav><button data-view="items">Items</button><button data-view="form">Form</button><button data-view="chart">Chart</button></nav>'
     + (intent === 'chart' ? '<svg viewBox="0 0 240 60" role="img" aria-label="三条记录的数值"><path d="M20 50V30M100 50V10M180 50V20" fill="none" stroke="currentColor" stroke-width="24"/></svg>' : '')

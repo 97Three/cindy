@@ -1421,13 +1421,13 @@ describe('scaffoldGhostDir', () => {
   });
 
   // The withUi overlay must preserve each template and execute its example handler.
-  // The old overlay packaged a raw JSON-RPC page; an SDK page must raise a 0.1.122-beta
+  // The old overlay packaged a raw JSON-RPC page; an SDK page must raise a 0.1.121
   // request to its own minimum without lowering newer declarations. Tier: unit.
   // The SDK import guard protects the host-provided module contract in the generated asset.
   it.each((['plain', 'agent-action', 'node-json-rpc', 'node-mcp'] as ForgeScaffoldTemplate[])
     .flatMap(template => [
       { template, withUi: false, minCindyVersion: '1.2.3', expectedMin: '1.2.3' },
-      { template, withUi: true, minCindyVersion: '0.1.122-beta', expectedMin: '0.1.123-beta' },
+      { template, withUi: true, minCindyVersion: '0.1.121', expectedMin: '0.1.122-beta' },
       { template, withUi: true, minCindyVersion: '1.2.3', expectedMin: '1.2.3' },
     ]))(
     '生成 $template 模板（withUi=$withUi，min=$minCindyVersion），随后可以直接打包并通过装入检查',

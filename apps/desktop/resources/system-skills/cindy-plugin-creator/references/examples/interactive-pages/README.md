@@ -2,7 +2,7 @@
 
 先读[编写指南 §4.23](../../plugin-interactive-pages.md)，需要字段或方法时查[参考](REFERENCE.md)。
 这些都是作者源码，不会自动安装或发布。使用标准 SDK 导入，不需要构建 SDK。
-示例最低版本暂定 **0.1.123-beta，发布版本待核定**；0.1.122-beta 不支持宿主 SDK 导入。
+示例最低 Cindy 版本为 **0.1.122-beta**，执行端和查看端都需要支持此版本能力。
 `ghost_forge_scaffold` 的 `withUi: true` 采用 static 示例，自动将最低版本提升到上述要求；
 作者声明的更高版本会保留。四种基础模板的原工具照常可用。
 
@@ -21,7 +21,7 @@ loader 中的模拟后端是 main.js 的 mockBackend、fullPage 和 viewFragment
 
 1. 复制一个目录到自己的源码区，确认运行的 Cindy 支持本章能力。
 2. 调用 `ghost_forge_pack({dir})` 生成包。取得安装指示后再调 `ghost_forge_install({dir})`。
-3. 使用 loader 时说“打开记录页面”；AI 调用 open_view，页面显示 Items。
+3. 使用 loader 时说“打开记录页面”；AI 调用 open_view，未知意图按总览打开。
 4. 查询记录后填写标题，点保存；再切换 Form、Chart。查询不改变输入，保存只更新结果。
 5. static 也由 open_view 打开，完整逻辑只有一个表单和 save_record。
 
@@ -33,6 +33,9 @@ loader 中的模拟后端是 main.js 的 mockBackend、fullPage 和 viewFragment
 loader 默认 `USE_MOCK = true`。接入时改为 false，并一起替换 main.js 的 BASE 和
 ghost.json 的 network.hosts。凭证声明按[§4.7](../../plugin-network.md)添加。
 页面不接触令牌，后端按用户身份检查每次查询和写入。
+
+intent 是用户意图的简短自然语言描述。模拟后端只识别 items、form、chart、overview；
+其余回退到 overview，并提示“已按总览打开”。真实后端可用 LLM 理解自然语言意图。
 
 | 工具 | 后端请求 | 返回 |
 | --- | --- | --- |
