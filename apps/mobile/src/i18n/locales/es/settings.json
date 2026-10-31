@@ -56,7 +56,7 @@
   },
   "language": {
     "title": "Idioma",
-    "hint": "Se utiliza para la interfaz y los informes de errores de IA. Otras respuestas siguen a su mensaje o solicitud de idioma.",
+    "hint": "Se usa en la interfaz y en los informes de errores de IA. Las demás respuestas siguen el idioma de tu mensaje o el que solicites.",
     "options": {
       "system": "Automático (según el sistema)",
       "zh-CN": "简体中文",
