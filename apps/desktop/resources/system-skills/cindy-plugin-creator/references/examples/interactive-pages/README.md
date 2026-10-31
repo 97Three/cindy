@@ -3,8 +3,8 @@
 先读[编写指南 §4.23](../../plugin-interactive-pages.md)，需要字段或方法时查[参考](REFERENCE.md)。
 这些都是作者源码，不会自动安装或发布。使用标准 SDK 导入，不需要构建 SDK。
 示例最低 Cindy 版本为 **0.1.122-beta**，执行端和查看端都需要支持此版本能力。
-`ghost_forge_scaffold` 的 `withUi: true` 采用 static 示例，自动将最低版本提升到上述要求；
-作者声明的更高版本会保留。四种基础模板的原工具照常可用。
+`ghost_forge_scaffold` 的 `withUi: true` 采用 static 示例；省略最低版本时默认为上述要求，
+声明更低版本会被拒绝，更高版本会保留。四种基础模板的原工具照常可用。
 
 | 目录 | 用途 |
 | --- | --- |

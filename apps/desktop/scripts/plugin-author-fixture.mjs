@@ -43,7 +43,10 @@ async function verifyLoaderMain(main) {
     return async (tool, args = {}) => { await handler({ type: 'tool-call', tool, args, callId: 'fixture' }); return reply; };
   }
   const libraryWrites = [];
-  const call = runtime(main, { library: async request => { libraryWrites.push(request); return { ok: true, op: request.op, path: request.path }; } });
+  const call = runtime(main, {
+    library: async request => { libraryWrites.push(request); return { ok: true, op: request.op, path: request.path }; },
+    pick: async () => ({ ok: true, files: [{ name: 'list.csv', ref: 'library:imports/list.csv', size: 12 }] }),
+  });
   assert.ok((await call('open_view', { intent: 'items' }))._meta.view.html.includes('type="module"'));
   const fragment = await call('load_view', { intent: 'form', fields: { title: '<img onerror=bad>' } });
   assert.ok(fragment._meta.view.html.includes('&lt;img onerror=bad&gt;'));
@@ -79,6 +82,12 @@ async function verifyLoaderMain(main) {
   assert.notEqual(exported.isError, true);
   assert.equal(exported.content.find(item => item.type === 'resource_link').uri, 'library:downloads/records.csv');
   assert.equal(libraryWrites.at(-1).path, 'downloads/records.csv');
+  // Offline upload_files must return the same labelled sample batch the manual tells pages to confirm.
+  const picked = await call('pick_files', { accept: ['.csv'] });
+  const staged = await call('upload_files', { files: picked.structuredContent.files.map(file => file.ref), path: '/api/imports/stage' });
+  assert.equal(staged.structuredContent.batchId, 'demo-batch');
+  assert.equal(staged.structuredContent.offline, true);
+  assert.equal((await call('api_write', { path: '/api/imports/confirm', body: { batchId: staged.structuredContent.batchId }, idempotencyKey: 'three' })).structuredContent.status, 'confirmed');
   assert.ok(libraryWrites.at(-1).content.includes('"R-1","record"'));
   const network = []; let response = { ok: true, status: 200, body: '{"items":[]}' };
   const live = runtime(main.replace('const USE_MOCK = true;', 'const USE_MOCK = false;'), {

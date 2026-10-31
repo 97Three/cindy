@@ -552,13 +552,7 @@ const SCAFFOLD_ICON_PNG_BASE64 =
 function scaffoldFiles(input: ForgeScaffoldInput): Record<string, string | Buffer> {
   const manifest = scaffoldManifest(input);
   if (input.withUi) {
-    const example = JSON.parse(interactiveExampleManifest) as {
-      minCindyVersion: string; tools: unknown[]; mcpApps: unknown;
-    };
-    // SDK 示例最低版本为 0.1.122-beta；不降低作者声明的更高版本。
-    // 这里只提升生成骨架的要求，不改变已有插件的通用打包门槛。
-    if ((compareCindyVersions(input.minCindyVersion, example.minCindyVersion) ?? -1) < 0)
-      manifest.minCindyVersion = example.minCindyVersion;
+    const example = JSON.parse(interactiveExampleManifest) as { tools: unknown[]; mcpApps: unknown };
     manifest.tools = [...(manifest.tools as unknown[]), ...example.tools];
     manifest.mcpApps = example.mcpApps;
   }

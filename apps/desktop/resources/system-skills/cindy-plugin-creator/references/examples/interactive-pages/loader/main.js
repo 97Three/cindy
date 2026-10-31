@@ -171,6 +171,11 @@ async function mockBackend(path, method, data, query) {
   }
   throw new InputError('模拟后端未实现此接口。');
 }
+function offlineBatch() {
+  const batch = { batchId: 'demo-batch', offline: true, total: 3, rows: [{ value: 'Record A' }, { value: 'Record B' }], errors: [{ line: 4, message: '缺少标题' }] };
+  batches.set(batch.batchId, batch);
+  return batch;
+}
 // 预览字段：batchId、total、rows（前几行）、errors（[{line,message}]）。取消回到总览，不提交。
 function importPreview(batch) {
   const rows = (batch.rows || []).map(row => '<li>' + escapeHtml(JSON.stringify(row)) + '</li>').join('');
@@ -208,7 +213,8 @@ cindy.onHostMessage(async msg => {
     } else if (msg.tool === 'upload_files') {
       const url = endpoint(a.path, ['/api/imports/stage']);
       if (!Array.isArray(a.files) || !a.files.length || a.files.length > 4 || a.files.some(ref => !selectedFiles.has(ref) || !ref.startsWith('library:'))) throw new InputError('请先选择要上传的文件。');
-      if (USE_MOCK) result = dataResult({ files: a.files, note: '离线模式未上传文件；请接入后端后使用。' });
+      // 离线不上传；返回与 import_file 相同、标明离线的示例批次，页面照常预览和确认。
+      if (USE_MOCK) result = dataResult(offlineBatch());
       else result = dataResult(JSON.parse(checked(await cindy.fetch({ url, method: 'POST', upload: { library: a.files.map(ref => ref.slice(8)), field: 'file', fields: a.fields }, callId: msg.callId })).body));
     } else if (msg.tool === 'fetch_file') {
       const url = endpoint(a.path, ['/api/files']);
@@ -229,8 +235,7 @@ cindy.onHostMessage(async msg => {
       let batch;
       if (USE_MOCK) {
         // 离线模式读不到交接的文件（dir 票据只能交给 uploadDir），页面会明确标出这是示例数据。
-        batch = { batchId: 'demo-batch', offline: true, total: 3, rows: [{ value: 'Record A' }, { value: 'Record B' }], errors: [{ line: 4, message: '缺少标题' }] };
-        batches.set(batch.batchId, batch);
+        batch = offlineBatch();
       } else {
         if (!a.dir_deposit?.token) throw new InputError('请通过 ghost_call.dir 交接单文件后重试。');
         // 在这次模型工具调用里立即消费；不要把 token 留给页面或下一次工具调用。

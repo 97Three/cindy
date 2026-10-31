@@ -1496,9 +1496,12 @@ describe('scaffoldGhostDir', () => {
         expect(results[0].result.structuredContent).toEqual({ title: '用户修改', saved: 1 });
         await handler!({ type: 'tool-call', tool: 'save_record', callId: 'retry', args: { title: '用户修改', idempotencyKey: 'request-1' } });
         expect(results[1].result.structuredContent).toEqual({ title: '用户修改', saved: 1 });
+        // Regression: the scaffolded write must reject a reused request id with different content.
+        await handler!({ type: 'tool-call', tool: 'save_record', callId: 'conflict', args: { title: '另一条', idempotencyKey: 'request-1' } });
+        expect(results[2].result).toMatchObject({ isError: true });
         if (template === 'plain') {
           await handler!({ type: 'tool-call', tool: 'hello', callId: 'original' });
-          expect(results[2].result).toEqual({ message: '插件已经正常工作。' });
+          expect(results[3].result).toEqual({ message: '插件已经正常工作。' });
         }
       } else expect(packed.manifest).not.toHaveProperty('mcpApps');
 
