@@ -3,7 +3,7 @@ import { StrictMode, useState, type ReactNode } from 'react';
 import { act, cleanup, createEvent, fireEvent, render as renderUI, screen, waitFor, within } from '@testing-library/react';
 import { Tooltip } from '@/components/ui/tooltip';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { ChatInviteButton, ChatMessageActions } from '../ChatServerControls';
+import { ChatMessageActions } from '../ChatServerControls';
 import { ChatInviteDialog } from '../ChatInviteDialog';
 import { ChatThreadPanel } from '../ChatThreadPanel';
 import { BotGroupThreadHint } from '../BotGroupThreadHint';
@@ -741,11 +741,10 @@ describe('chat interaction controls', () => {
   });
 
   it('creates and displays a copyable link in Strict Mode', async () => {
-    render(<StrictMode><ChatInviteButton groupId="room" members={[
+    render(<StrictMode><ChatInviteDialog groupId="room" onClose={vi.fn()} members={[
       { botId: 'self', name: 'Alex', avatar: '👤', avatarColor: 'graphite', status: 'active', isSelf: true },
       { botId: 'bot', name: 'Cindy', avatar: '🤖', avatarColor: 'violet', status: 'active' },
     ]} /></StrictMode>);
-    fireEvent.click(screen.getByRole('button', { name: k('invite') }));
     expect((await screen.findByRole('textbox', { name: k('inviteLink') }) as HTMLInputElement).value).toBe('cindy://chat-invite/test');
     expect(mocks.createInvite).toHaveBeenCalledExactlyOnceWith({ groupId: 'room', clientId: expect.any(String) });
     expect(screen.queryByRole('button', { name: k('createLink') })).toBeNull();
@@ -795,10 +794,10 @@ describe('chat interaction controls', () => {
 
   describe('thread @ picker', () => {
     const namesakes = [
-      { botId: 'ann-chris', name: 'Ann', status: 'active' },
-      { botId: 'ann-dana', name: 'Ann', status: 'active' },
-      { botId: 'bo', name: 'Bo', status: 'active' },
-      { botId: 'gone', name: 'Annie', status: 'left' },
+      { botId: 'ann-chris', name: 'Ann', status: 'active' as const, avatar: '', avatarColor: '' },
+      { botId: 'ann-dana', name: 'Ann', status: 'active' as const, avatar: '', avatarColor: '' },
+      { botId: 'bo', name: 'Bo', status: 'active' as const, avatar: '', avatarColor: '' },
+      { botId: 'gone', name: 'Annie', status: 'missing' as const, avatar: '', avatarColor: '' },
     ];
     const renderThread = () => {
       mocks.reply.mockResolvedValue({ ok: true, messageId: 'reply' });
@@ -810,6 +809,21 @@ describe('chat interaction controls', () => {
     const type = (input: HTMLTextAreaElement, value: string, caret = value.length) =>
       fireEvent.change(input, { target: { value, selectionStart: caret, selectionEnd: caret } });
     const labels = () => screen.queryAllByRole('option').map(option => option.textContent);
+
+    // Unit UI regression: the independent bulk entry exists only when the owner enables it.
+    it('offers and sends the separate teammate broadcast only when enabled', async () => {
+      mocks.reply.mockResolvedValue({ ok: true, messageId: 'reply' });
+      const view = render(<ChatThreadPanel group={{ ...group, members: namesakes, supportsMentionAudiences: true, allowMentionAllBots: true }} rootId="root" onClose={vi.fn()} />);
+      const input = screen.getByRole('textbox', { name: k('replyPlaceholder') }) as HTMLTextAreaElement;
+      type(input, '@');
+      fireEvent.click(screen.getByRole('option', { name: /bots.groupChat.mention.allBots.*allBotsHint/ }));
+      fireEvent.click(screen.getByRole('button', { name: k('sendReply') }));
+      await waitFor(() => expect(mocks.reply).toHaveBeenCalledOnce());
+      expect(mocks.reply.mock.calls[0]![0].mentions).toEqual({ all: false, allBots: true, botIds: [] });
+      view.rerender(<ChatThreadPanel group={{ ...group, members: namesakes, supportsMentionAudiences: true, allowMentionAllBots: false }} rootId="root" onClose={vi.fn()} />);
+      type(input, '@');
+      expect(labels().some(label => label?.includes('allBots'))).toBe(false);
+    });
 
     it('opens on @ with the main composer candidates, filters, and picks a namesake by keyboard', async () => {
       const input = renderThread();
@@ -937,7 +951,7 @@ describe('chat interaction controls', () => {
 
     it('names only the picked companion whose name is a Thread 「所有人」 alias', async () => {
       mocks.reply.mockResolvedValue({ ok: true, messageId: 'reply' });
-      const members = [{ botId: 'all-bot', name: 'all', status: 'active' }, { botId: 'bo', name: 'Bo', status: 'active' }];
+      const members = [{ botId: 'all-bot', name: 'all', status: 'active' }, { botId: 'bo', name: 'Bo', status: 'active' as const, avatar: '', avatarColor: '' }];
       render(<ChatThreadPanel group={{ ...group, members } as unknown as BotGroupDetail} rootId="root" onClose={vi.fn()} />);
       const input = screen.getByRole('textbox', { name: k('replyPlaceholder') }) as HTMLTextAreaElement;
       type(input, '@al');
@@ -952,7 +966,7 @@ describe('chat interaction controls', () => {
 
     it('never offers or resolves the current user, as on mobile', async () => {
       mocks.reply.mockResolvedValue({ ok: true, messageId: 'reply' });
-      const members = [{ botId: 'me', name: 'Dash', status: 'active', isSelf: true }, { botId: 'bo', name: 'Bo', status: 'active' }];
+      const members = [{ botId: 'me', name: 'Dash', status: 'active', isSelf: true }, { botId: 'bo', name: 'Bo', status: 'active' as const, avatar: '', avatarColor: '' }];
       render(<ChatThreadPanel group={{ ...group, members } as unknown as BotGroupDetail} rootId="root" onClose={vi.fn()} />);
       const input = screen.getByRole('textbox', { name: k('replyPlaceholder') }) as HTMLTextAreaElement;
       type(input, '@');

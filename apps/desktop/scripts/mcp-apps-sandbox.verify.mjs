@@ -338,15 +338,20 @@ try {
         assert.ok(sdkDispatched.includes('form-enter'));
         stage='host SDK native form no-op';
         const formUrl=inner().url, formRequests=requests;
-        await inner().executeJavaScript('document.querySelector("#native").action='+JSON.stringify(denied)+';document.querySelector("#native").addEventListener("submit",event=>{window.nativeSubmitEvent=event;});document.addEventListener("securitypolicyviolation",event=>{if(event.violatedDirective==="form-action")window.pageState.formBlocked=true;});document.querySelector("#native button").click()');
+        await inner().executeJavaScript('document.querySelector("#native").action='+JSON.stringify(denied)+';document.querySelector("#native").addEventListener("submit",event=>{window.nativeSubmitEvent=event;});window.addEventListener("submit",event=>{window.windowDelegatePrevented=event.defaultPrevented;});document.addEventListener("securitypolicyviolation",event=>{if(event.violatedDirective==="form-action")window.pageState.formBlocked=true;});document.querySelector("#native button").click()');
+        // Codex 4429797202 / Greptile 4429799871: page window delegation runs before the host fallback.
+        assert.equal(await inner().executeJavaScript('window.windowDelegatePrevented'),false);
         assert.equal(await inner().executeJavaScript('window.nativeSubmitEvent.defaultPrevented'),true);
         await inner().executeJavaScript('document.querySelector("#native").submit();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        // Codex 4430107408: method=dialog closes its dialog without navigation, by button or submit().
+        // Codex 4430274397: a control named "method" must not hide the form method.
+        assert.equal(await inner().executeJavaScript('(async()=>{const dialog=document.createElement("dialog"),form=document.createElement("form"),button=document.createElement("button"),clobber=document.createElement("input");form.method="dialog";button.value="ok";clobber.name="method";form.append(clobber,button);dialog.append(form);document.body.append(dialog);const frame=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));dialog.showModal();button.click();await frame();const clicked=!dialog.open&&dialog.returnValue==="ok";dialog.showModal();form.submit();await frame();return clicked&&!dialog.open;})()'),true);
         assert.ok(inner(),'default submission must not replace the App with a CSP error document');
         assert.equal(await inner().executeJavaScript('window.pageState.formBlocked===true'),false);
         assert.equal(inner().url,formUrl,'default submission must not navigate');
         assert.equal(requests,formRequests,'default submission must not send a network request');
         assert.equal((await inner().executeJavaScript('window.sdkApp.callServerTool({name:"echo",arguments:{text:"after-form"}})')).content[0].text,'after-form');
-        console.log('HOST_SDK_FORMS_VERDICT=passed (click, Enter, default submit()/button no-op before CSP, card still usable)');
+        console.log('HOST_SDK_FORMS_VERDICT=passed (click, Enter, window delegation first, default submit()/button no-op before CSP, method=dialog closes, card still usable)');
         stage='host SDK theme update';
         await window.webContents.executeJavaScript('window.testController.context({theme:"light"})');
         await wait(()=>inner().executeJavaScript('window.pageState.theme==="light"'));

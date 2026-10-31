@@ -45,8 +45,15 @@ function environmentPlan(html: string) {
 // navigates to a CSP error document; page handlers still run before this fallback.
 const runtime = `<script data-cindy-runtime>
 (()=>{
- const prevent=event=>{if(!event.defaultPrevented)event.preventDefault();};
- const install=()=>window.addEventListener('submit',prevent);
+ // method=dialog only closes its dialog: no navigation, so no CSP error document.
+ // The prototype getter: a control named "method" shadows form.method.
+ const method=Object.getOwnPropertyDescriptor(HTMLFormElement.prototype,'method').get;
+ const dialog=event=>event.target instanceof HTMLFormElement&&(event.submitter?.hasAttribute('formmethod')?event.submitter.formMethod:Reflect.apply(method,event.target,[]))==='dialog';
+ const prevent=event=>{if(!event.defaultPrevented&&!dialog(event))event.preventDefault();};
+ // Arm during window capture: the fallback is then appended after the page's own
+ // window submit listeners, yet still runs before the browser's default action.
+ const arm=()=>{window.removeEventListener('submit',prevent);window.addEventListener('submit',prevent,{once:true});};
+ const install=()=>window.addEventListener('submit',arm,true);
  const open=Document.prototype.open;
  Document.prototype.open=function(...args){
   const result=Reflect.apply(open,this,args);
@@ -62,7 +69,8 @@ const runtime = `<script data-cindy-runtime>
   };
  }
  // Direct submit() skips the event; requestSubmit() still runs page handlers.
- HTMLFormElement.prototype.submit=function(){};
+ const submit=HTMLFormElement.prototype.submit;
+ HTMLFormElement.prototype.submit=function(){if(Reflect.apply(method,this,[])==='dialog')Reflect.apply(submit,this,[]);};
  install();
 })();
 </script>`;
