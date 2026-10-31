@@ -13,6 +13,8 @@ import { dispatchCredentialSwitchOutcome } from '@/session/credentialSwitchOutco
 import { mobileRuntimeIdentity } from '@/debug/mobileRuntimeIdentity';
 import {
   DeviceLinkClient,
+  RoutedDeviceLinkClient,
+  type DeviceLinkClientOptions,
   createDirectRuntimeBridge,
   isSharedTaskPeer,
   probeSharedTaskHost,
@@ -52,7 +54,7 @@ import {
   suspendRemoteProjectAliases,
   suspendRemoteProjectAliasesForReleasedTopics,
 } from '@/session/remoteProjectAliases';
-import { deviceLinkWsUrl, DEVICE_LINK_API_BASE_URL } from '@/config/env';
+import { deviceLinkWsUrl, DEVICE_LINK_API_BASE_URL, getOfficialDeviceLinkApiBaseUrl } from '@/config/env';
 import { MOBILE_VISUAL_MOCK_ENABLED } from '@/config/env';
 import { useAuth } from '@/auth/AuthContext';
 import { useSelfHostedRelayRouteGeneration } from './selfHostedRelay';
@@ -1015,24 +1017,7 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
     // 这个 client 只服务创建时的那一代路由;路由一变 effect 会重建 client。
     const clientRelayRoute = getSelfHostedRelayRouteGeneration();
     const getAccessToken = auth.getAccessToken;
-    const client = new DeviceLinkClient({
-      directRuntime: directBridge.runtime,
-      getWsUrl: () => deviceLinkWsUrl(),
-      // 自建中转用中转凭证 + CindyRelay,账号 token 绝不发往中转(docs/self-hosted-relay-plan.md §5.2)。
-      // 先等本账号的中转设置读完,避免冷启动先连上官方再切走;取 token 期间路由变了就放弃这一轮,
-      // 不让官方 token 与 CindyRelay 方案、中转地址拼到同一次握手里。
-      getToken: async () => {
-        await waitForSelfHostedRelayRoute();
-        if (getSelfHostedRelayRouteGeneration() !== clientRelayRoute) return null;
-        const relay = getActiveSelfHostedRelay();
-        if (relay) return relay.credential;
-        const token = await getAccessToken();
-        return getSelfHostedRelayRouteGeneration() === clientRelayRoute ? token : null;
-      },
-      authorizationScheme: () => (getActiveSelfHostedRelay() ? 'CindyRelay' : 'Bearer'),
-      // 自建中转的设备签名(docs/self-hosted-relay-plan.md §16);官方中转返回 null。
-      // 收到的消息在分发前核对主人签发的设备证书与帧签名，防止中转替换权限请求的展示内容。
-      frameAuth: currentSelfHostedRelayFrameAuth,
+    const connectionOptions: Omit<DeviceLinkClientOptions, 'getWsUrl' | 'getToken'> = {
       getHello: () => ({
         capabilities: [SHARED_TASK_CAPABILITY],
         deviceName: mobileDeviceName(),
@@ -1064,6 +1049,37 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
         // worktree:create / schedule 等)在 sendInvoke 按 invokeTimeouts 解析规则单独放宽,
         // 与桌面控制端同一张协议契约表,不受此默认值影响。
         requestTimeoutMs: 15_000,
+      },
+    };
+    const client = new RoutedDeviceLinkClient({
+      ...connectionOptions,
+      directRuntime: directBridge.runtime,
+      getWsUrl: () => deviceLinkWsUrl(),
+      // 自建中转用中转凭证 + CindyRelay,账号 token 绝不发往中转(docs/self-hosted-relay-plan.md §5.2)。
+      // 先等本账号的中转设置读完,避免冷启动先连上官方再切走;取 token 期间路由变了就放弃这一轮,
+      // 不让官方 token 与 CindyRelay 方案、中转地址拼到同一次握手里。
+      getToken: async () => {
+        await waitForSelfHostedRelayRoute();
+        if (getSelfHostedRelayRouteGeneration() !== clientRelayRoute) return null;
+        const relay = getActiveSelfHostedRelay();
+        if (relay) return relay.credential;
+        const token = await getAccessToken();
+        return getSelfHostedRelayRouteGeneration() === clientRelayRoute ? token : null;
+      },
+      authorizationScheme: () => (getActiveSelfHostedRelay() ? 'CindyRelay' : 'Bearer'),
+      // 自建中转的设备签名(docs/self-hosted-relay-plan.md §16);官方中转返回 null。
+      // 收到的消息在分发前核对主人签发的设备证书与帧签名，防止中转替换权限请求的展示内容。
+      frameAuth: currentSelfHostedRelayFrameAuth,
+    }, {
+      // 自建中转不转发跨账号帧:共享任务改走这条官方连接,见 @cindy/device-link 的 routedClient。
+      active: () => getActiveSelfHostedRelay() !== null,
+      options: {
+        ...connectionOptions,
+        getWsUrl: () => deviceLinkWsUrl(getOfficialDeviceLinkApiBaseUrl()),
+        getToken: async () => {
+          const token = await getAccessToken();
+          return getSelfHostedRelayRouteGeneration() === clientRelayRoute ? token : null;
+        },
       },
     });
     meterDeviceLinkInvokes(client);
@@ -1103,15 +1119,35 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
       // Only this phone's established connection used the lost route. Keep
       // handshakes and congestion backoff on their existing recovery path.
       if (replaceOldPath && client.getStatus() === 'online') {
-        client.restartConnection('network-path-changed');
+        client.restartConnections('network-path-changed');
       } else {
         client.notifyNetworkChanged({ urgent });
       }
     };
     const offIssue = client.onConnectionIssue(setConnectionIssue);
+    // 走自建中转时共享任务看专用的官方连接;还没连上是「暂时不可用」,不是版本问题。
+    const syncSharedTaskAvailable = () => {
+      const connection = client.crossAccountConnection();
+      setSharedTaskAvailable(connection.getStatus() === 'online' ? connection.hasServerCapability(SHARED_TASK_CAPABILITY) : undefined);
+    };
+    const offCrossAccountStatus = client.onSeparateCrossAccountStatus((next) => {
+      syncSharedTaskAvailable();
+      for (const deviceId of registryRef.current.deviceIds()) {
+        if (!isSharedTaskPeer(deviceId)) continue;
+        if (next === 'online') void rehydrate(deviceId);
+        else {
+          invalidatePeerLinkState(
+            deviceId,
+            openLinkInFlightRef.current,
+            remoteSubscribedTopicsRef.current,
+            noteSessionLiveStreamsInterrupted,
+          );
+        }
+      }
+    });
     const offStatus = client.onStatusChange((next) => {
       setStatus(next);
-      setSharedTaskAvailable(next === 'online' ? client.hasServerCapability(SHARED_TASK_CAPABILITY) : undefined);
+      syncSharedTaskAvailable();
       if (next !== 'online') {
         catalogRefresh.clear();
         openLinkInFlightRef.current.clear();
@@ -1434,7 +1470,7 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
       releaseTopics: releaseHeavyTopics,
       pendingTransitions: () => [...backgroundTransitions.current],
       stop: () => client.stop(),
-      connect: () => client.connectNow('appstate-active', {
+      connect: () => client.connectAllNow('appstate-active', {
         overrideCongestionCooldown: true,
         keepInFlightAttempt: true,
       }),
@@ -1556,6 +1592,7 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
       offPresence();
       offPeerTransportReset();
       offStatus();
+      offCrossAccountStatus();
       offIssue();
       client.stop();
       rosterConsumerRef.current = null;

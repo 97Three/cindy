@@ -245,6 +245,7 @@
     "completeWithSkipped_many": "Copiado, {{count}} itens ignorados"
   },
   "sharedTask": {
+    "officialRelayNote": "Está a utilizar o seu próprio relay. O conteúdo das tarefas partilhadas continua a passar pelo relay da Cindy.",
     "selfJoin": "Iniciou esta tarefa partilhada, por isso não precisa de aderir. Abra-a em «Partilhadas por mim».",
     "manageSharing": "Gerir partilhas",
     "manageMembers": "Gerir membros…",
@@ -346,6 +347,7 @@
     "closeAllDescription": "Os convidados perderão o acesso. O histórico das tarefas é mantido."
   },
   "providerShare": {
+    "officialRelayNote": "Está a utilizar o seu próprio relay. O conteúdo da partilha de fornecedores continua a passar pelo relay da Cindy.",
     "owned": {
       "title": "Fornecedores que partilho"
     },
@@ -5757,7 +5759,7 @@
         "current": "Em utilização",
         "ownerName": "Este computador",
         "unavailable": "Para utilizar o seu próprio relay, inicie sessão na Cindy e certifique-se de que o porta-chaves do sistema está disponível.",
-        "limits": "Enquanto utilizar o seu próprio relay, as notificações push no telemóvel, a partilha de fornecedores e as tarefas partilhadas ficam indisponíveis.",
+        "limits": "Enquanto utilizar o seu próprio relay, as notificações push no telemóvel ficam indisponíveis. A partilha de fornecedores e as tarefas partilhadas continuam a passar pelo relay da Cindy.",
         "actions": {
           "join": "Aderir a outro relay",
           "useOfficial": "Voltar ao relay da Cindy",
@@ -5973,7 +5975,7 @@
           "switchFromHost": "O relay neste computador para e os dispositivos que aderiram são desligados.",
           "switchFromMember": "Este computador sai de {{name}}. Para voltar a aderir mais tarde, o proprietário tem de criar uma nova ligação de adesão.",
           "switchConfirm": "Mudar",
-          "switchFromOfficial": "O controlo remoto entre os seus dispositivos passará por {{name}}. As notificações push no telemóvel, a partilha de fornecedores e as tarefas partilhadas não estão disponíveis enquanto utilizar o seu próprio relay."
+          "switchFromOfficial": "O controlo remoto entre os seus dispositivos passará por {{name}}. As notificações push no telemóvel não estão disponíveis enquanto utilizar o seu próprio relay. A partilha de fornecedores e as tarefas partilhadas continuam a passar pelo relay da Cindy."
         },
         "dialog": {
           "steps": {

@@ -97,12 +97,16 @@ const transport = vi.hoisted(() => {
     onConnectionIssue = () => () => {};
     onFrame(listener: Client['frame']) { this.frame = listener; return () => {}; }
     onReliableFrameBeforeLink = () => () => {};
+    onSeparateCrossAccountStatus = () => () => {};
+    crossAccountConnection() { return this; }
+    connectAllNow(...args: unknown[]) { (this.connectNow as (...input: unknown[]) => void)(...args); }
+    restartConnections(...args: unknown[]) { (this.restartConnection as (...input: unknown[]) => void)(...args); }
   }
   return { Client, clients: [] as Client[] };
 });
 vi.mock('@cindy/device-link', async (importOriginal) => ({
   ...await importOriginal<typeof import('@cindy/device-link')>(),
-  DeviceLinkClient: class extends transport.Client {
+  RoutedDeviceLinkClient: class extends transport.Client {
     constructor() { super(); transport.clients.push(this); }
   },
 }));
@@ -479,14 +483,15 @@ describe('Provider shared-task relay compatibility', () => {
   it('distinguishes an old online relay from disconnection and re-negotiates after upgrade', async () => {
     const client = transport.clients[0];
     expect(context.sharedTaskAvailable).toBeUndefined();
-    await act(async () => client.statusChanged('online'));
+    const transition = (status: DeviceLinkStatus) => act(async () => { client.status = status; client.statusChanged(status); });
+    await transition('online');
     expect(context.sharedTaskAvailable).toBe(false);
-    await act(async () => client.statusChanged('connecting'));
+    await transition('connecting');
     expect(context.sharedTaskAvailable).toBeUndefined();
     client.serverCapabilities = [SHARED_TASK_CAPABILITY];
-    await act(async () => client.statusChanged('online'));
+    await transition('online');
     expect(context.sharedTaskAvailable).toBe(true);
-    await act(async () => client.statusChanged('stopped'));
+    await transition('stopped');
     expect(context.sharedTaskAvailable).toBeUndefined();
   });
 });

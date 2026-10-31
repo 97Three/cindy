@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { AppState, Keyboard, Pressable, StyleSheet, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -12,6 +12,7 @@ import { goBackGuarded } from '@/utils/backGuard';
 import { getMobileAuthOwner, isMobileAuthOwnerCurrent } from '@/auth/authOwnerGeneration';
 import { useDeviceLink } from '@/device-link/DeviceLinkContext';
 import { useSharedTaskApi } from '@/device-link/useSharedTaskApi';
+import { getActiveSelfHostedRelay, subscribeSelfHostedRelayRoute } from '@/device-link/selfHostedRelayRouting';
 import { notifySharedTaskMembershipChanged } from '@/device-link/sharedTaskMembershipSignal';
 import { filterVisibleSharedTasks } from '@/device-link/sharedTaskVisibility';
 import { sharedTaskErrorKey } from '@/device-link/sharedTaskCompatibility';
@@ -38,6 +39,7 @@ export default function SharedSessionScreen() {
   const { isAuthenticated, accountGeneration, user } = useAuth();
   const incomingInvitation = usePendingSharedTaskInvitationIntent();
   const api = useSharedTaskApi();
+  const selfHostedRelay = useSyncExternalStore(subscribeSelfHostedRelayRoute, getActiveSelfHostedRelay, getActiveSelfHostedRelay);
   const confirmation = useSharedTaskConfirmation();
   const link = useDeviceLink();
   const { colors } = useTheme();
@@ -370,6 +372,7 @@ export default function SharedSessionScreen() {
       setJoinedId(undefined); setEnded(false); setState(null); setNotice(''); setLoadError('');
       router.replace('/devices');
     }} /> : link.sharedTaskAvailable !== true ? <Text style={styles.intro}>{t(link.sharedTaskAvailable === false ? 'sharedTask.upgrade' : 'sharedTask.retry')}</Text> : <>
+      {!!selfHostedRelay && <Text style={styles.metadata}>{t('sharedTask.officialRelayNote')}</Text>}
       {!guestId && !management && <View style={styles.tabs}>
         <MainWindowRowButton accessibilityLabel={t(hostContext ? 'sharedTask.tabCurrent' : 'sharedTask.join')} selected={tab === 'current'} style={[styles.tab, tab === 'current' && styles.tabSelected]} onPress={() => { setNotice(''); setTab('current'); }}><Text style={styles.small}>{t(hostContext ? 'sharedTask.tabCurrent' : 'sharedTask.join')}</Text></MainWindowRowButton>
         <MainWindowRowButton accessibilityLabel={t('sharedTask.tabOwned')} selected={tab === 'owned'} style={[styles.tab, tab === 'owned' && styles.tabSelected]} onPress={() => { setNotice(''); setTab('owned'); }}><Text style={styles.small}>{t('sharedTask.tabOwned')}</Text><View style={styles.badge}><Text style={styles.metadata}>{owned.length}</Text></View></MainWindowRowButton>

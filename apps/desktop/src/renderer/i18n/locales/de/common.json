@@ -240,6 +240,7 @@
     "estimateTooManyFiles": "Das Projekt enthält mehr als {{limit, number}} Dateien und kann nicht kopiert werden. Kopiere stattdessen ein Projekt mit weniger Dateien."
   },
   "sharedTask": {
+    "officialRelayNote": "Du nutzt dein eigenes Relay. Inhalte geteilter Aufgaben laufen weiterhin über das Cindy-Relay.",
     "selfJoin": "Du hast diese geteilte Aufgabe gestartet und musst daher nicht beitreten. Öffne sie unter „Von mir geteilt“.",
     "manageSharing": "Freigabe verwalten",
     "manageMembers": "Mitglieder verwalten…",
@@ -341,6 +342,7 @@
     "closeAllDescription": "Gäste verlieren den Zugriff. Der Aufgabenverlauf bleibt erhalten."
   },
   "providerShare": {
+    "officialRelayNote": "Du nutzt dein eigenes Relay. Inhalte von Anbieterfreigaben laufen weiterhin über das Cindy-Relay.",
     "owned": {
       "title": "Von mir geteilte Anbieter"
     },
@@ -5713,7 +5715,7 @@
         "current": "In Verwendung",
         "ownerName": "Dieser Computer",
         "unavailable": "Um dein eigenes Relay zu nutzen, melde dich bei Cindy an und stelle sicher, dass der Systemschlüsselbund verfügbar ist.",
-        "limits": "Solange du dein eigenes Relay nutzt, sind Push-Mitteilungen auf dem Smartphone, Anbieterfreigaben und geteilte Aufgaben nicht verfügbar.",
+        "limits": "Solange du dein eigenes Relay nutzt, sind Push-Mitteilungen auf dem Smartphone nicht verfügbar. Anbieterfreigaben und geteilte Aufgaben laufen weiterhin über das Cindy-Relay.",
         "actions": {
           "join": "Anderem Relay beitreten",
           "useOfficial": "Zurück zum Cindy-Relay wechseln",
@@ -5929,7 +5931,7 @@
           "switchFromHost": "Das Relay auf diesem Computer wird gestoppt und die Verbindung zu den beigetretenen Geräten getrennt.",
           "switchFromMember": "Dieser Computer verlässt {{name}}. Um später erneut beizutreten, muss der Eigentümer einen neuen Beitrittslink erstellen.",
           "switchConfirm": "Wechseln",
-          "switchFromOfficial": "Die Fernsteuerung zwischen deinen Geräten läuft über {{name}}. Push-Benachrichtigungen auf dem Smartphone, das Teilen von Anbietern und gemeinsame Aufgaben sind nicht verfügbar, solange du dein eigenes Relay nutzt."
+          "switchFromOfficial": "Die Fernsteuerung zwischen deinen Geräten läuft über {{name}}. Push-Benachrichtigungen auf dem Smartphone sind nicht verfügbar, solange du dein eigenes Relay nutzt. Das Teilen von Anbietern und gemeinsame Aufgaben laufen weiterhin über das Cindy-Relay."
         },
         "dialog": {
           "steps": {

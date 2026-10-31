@@ -30,10 +30,10 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import { net } from 'electron';
-import type { AttachmentIntegrity } from '@cindy/device-link';
+import { isSharedTaskMediaKey, type AttachmentIntegrity } from '@cindy/device-link';
 
 import { requireAppCapability } from '../appCapabilities.js';
-import { deviceLinkApiFetch } from './deviceLinkApi.js';
+import { deviceLinkApiFetch, officialDeviceLinkApiFetch } from './deviceLinkApi.js';
 import { sharedTaskMediaId } from './sharedTaskMediaContext.js';
 import { describeErrorChain } from '../utils/errorChain.js';
 import { createLogger } from '../logger.js';
@@ -88,9 +88,11 @@ async function presignPut(
   contentType: string,
 ): Promise<PresignPutResponse> {
   requireAppCapability('canUseDeviceLink', 'Device Link requires a Cindy account.');
-  return deviceLinkApiFetch<PresignPutResponse>(PRESIGN_PUT_PATH, {
+  const sharedTaskId = sharedTaskMediaId();
+  const apiFetch = sharedTaskId ? officialDeviceLinkApiFetch : deviceLinkApiFetch;
+  return apiFetch<PresignPutResponse>(PRESIGN_PUT_PATH, {
     method: 'POST',
-    body: { size, ext, contentType, ...(sharedTaskMediaId() ? { sharedTaskId: sharedTaskMediaId() } : {}) },
+    body: { size, ext, contentType, ...(sharedTaskId ? { sharedTaskId } : {}) },
   });
 }
 
@@ -106,10 +108,15 @@ function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
 }
 const REMOVE_REMOTE_TIMEOUT_MS = 15_000;
 
+/** 共享任务附件只存在于官方存储,其余对象跟随当前中转。 */
+function mediaApiFetchFor(key: string): typeof deviceLinkApiFetch {
+  return isSharedTaskMediaKey(key) ? officialDeviceLinkApiFetch : deviceLinkApiFetch;
+}
+
 /** 向 relay server 申请下载预签名(server 校验请求方 == key 内嵌 userId)。 */
 async function presignGet(key: string): Promise<PresignGetResponse> {
   requireAppCapability('canUseDeviceLink', 'Device Link requires a Cindy account.');
-  return deviceLinkApiFetch<PresignGetResponse>(PRESIGN_GET_PATH, {
+  return mediaApiFetchFor(key)<PresignGetResponse>(PRESIGN_GET_PATH, {
     method: 'POST',
     body: { key },
   });
@@ -704,7 +711,7 @@ export async function downloadToFile(
 export async function removeRemote(key: string): Promise<void> {
   try {
     requireAppCapability('canUseDeviceLink', 'Device Link requires a Cindy account.');
-    await deviceLinkApiFetch<{ deleted: boolean }>(DELETE_PATH, {
+    await mediaApiFetchFor(key)<{ deleted: boolean }>(DELETE_PATH, {
       method: 'DELETE',
       body: { key },
       // Best-effort (the OSS lifecycle rule is the backstop): never let an unresponsive relay

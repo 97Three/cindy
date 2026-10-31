@@ -245,6 +245,7 @@
     "completeWithSkipped_many": "Copiado, {{count}} itens ignorados"
   },
   "sharedTask": {
+    "officialRelayNote": "Você está usando seu próprio retransmissor. O conteúdo das tarefas compartilhadas continua passando pelo Retransmissor Cindy.",
     "selfJoin": "Você iniciou esta tarefa compartilhada, então não precisa entrar. Abra-a em “Compartilhadas por mim”.",
     "manageSharing": "Gerenciar compartilhamento",
     "manageMembers": "Gerenciar membros…",
@@ -346,6 +347,7 @@
     "closeAllDescription": "Os convidados perderão o acesso. O histórico das tarefas será mantido."
   },
   "providerShare": {
+    "officialRelayNote": "Você está usando seu próprio retransmissor. O conteúdo do compartilhamento de provedores continua passando pelo Retransmissor Cindy.",
     "owned": {
       "title": "Provedores que compartilho"
     },
@@ -5757,7 +5759,7 @@
         "current": "Em uso",
         "ownerName": "Este computador",
         "unavailable": "Para usar seu próprio retransmissor, entre no Cindy e verifique se o chaveiro do sistema está disponível.",
-        "limits": "Enquanto você usa seu próprio retransmissor, notificações push no celular, compartilhamento de provedores e tarefas compartilhadas ficam indisponíveis.",
+        "limits": "Enquanto você usa seu próprio retransmissor, as notificações push no celular ficam indisponíveis. O compartilhamento de provedores e as tarefas compartilhadas continuam passando pelo Retransmissor Cindy.",
         "actions": {
           "join": "Conectar-se a outro retransmissor",
           "useOfficial": "Voltar ao retransmissor Cindy",
@@ -5973,7 +5975,7 @@
           "switchFromHost": "O retransmissor neste computador será interrompido, e os dispositivos conectados a ele serão desconectados.",
           "switchFromMember": "Este computador sai de {{name}}. Para se conectar novamente mais tarde, o proprietário precisará criar um novo link de conexão.",
           "switchConfirm": "Trocar",
-          "switchFromOfficial": "O controle remoto entre seus dispositivos passará por {{name}}. Notificações push no celular, compartilhamento de provedores e tarefas compartilhadas não ficam disponíveis enquanto você usa seu próprio retransmissor."
+          "switchFromOfficial": "O controle remoto entre seus dispositivos passará por {{name}}. Notificações push no celular não ficam disponíveis enquanto você usa seu próprio retransmissor. O compartilhamento de provedores e as tarefas compartilhadas continuam passando pelo Retransmissor Cindy."
         },
         "dialog": {
           "steps": {

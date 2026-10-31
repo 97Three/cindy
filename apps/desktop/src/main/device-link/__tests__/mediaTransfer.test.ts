@@ -12,7 +12,7 @@
  * 两个 fetch 分开 mock:PUT 与 GET 走的是不同网络栈(undici 不吃系统代理,
  * Electron net 吃),把它们混成一个 mock 就测不出回退是否真的换了栈。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import { PassThrough, Readable, addAbortSignal } from 'node:stream';
 
@@ -68,6 +68,7 @@ import {
   removeRemote,
   __testing,
 } from '../mediaTransfer.js';
+import { setSelfHostedRelaySource } from '../selfHostedRelayRouting.js';
 
 const PUT_PATH = '/api/device-link/media/presign-put';
 const GET_PATH = '/api/device-link/media/presign-get';
@@ -96,6 +97,33 @@ beforeEach(() => {
   renameMock.mockResolvedValue(undefined);
   rmMock.mockResolvedValue(undefined);
   createWriteStreamMock.mockImplementation(() => new PassThrough());
+});
+
+// docs/self-hosted-relay-plan.md §7:共享任务附件的成员授权在官方服务,走自建中转时不能向中转换地址。
+describe('走自建中转时的对象路由', () => {
+  const relay = {
+    baseUrl: 'http://192.168.1.20:47820', credential: 'relay-credential', role: 'member' as const,
+    relayId: 'r', name: 'Home', deviceId: 'pc', signingSeed: 'A'.repeat(43), ownerPublicKey: 'A'.repeat(43),
+  };
+  const lastBaseUrl = () => {
+    const baseUrl = apiFetch.mock.calls.at(-1)?.[1]?.baseUrl;
+    return typeof baseUrl === 'function' ? baseUrl() : baseUrl;
+  };
+  beforeEach(() => {
+    setSelfHostedRelaySource(() => relay);
+    netFetchMock.mockResolvedValue(new Response(new Uint8Array([1]), { status: 200 }));
+  });
+  afterEach(() => setSelfHostedRelaySource(null));
+
+  it('共享任务附件向官方换地址', async () => {
+    await downloadToBuffer('cindy/device-link/shared-task/task-a/member/file.png');
+    expect(lastBaseUrl()).toBe('http://relay.test:3335');
+  });
+
+  it('普通对象跟随当前中转', async () => {
+    await downloadToBuffer('cindy/device-link/account/file.png');
+    expect(lastBaseUrl()).toBe(relay.baseUrl);
+  });
 });
 
 describe('uploadLocalFile — 小文件整体 PUT', () => {
