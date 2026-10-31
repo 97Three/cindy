@@ -7,7 +7,9 @@
 //   {cdnBaseUrl}/plugin-pages/manual/<sha256>.md
 // 客户端用自己内置手册的 sha256 拼出同一地址（路径约定见
 // apps/desktop/src/shared/pluginPageManual.mjs），所以手册改动后须在对应客户端上线前
-// 发布到每个区域，并用 --check-cdn 核对。与 publish-wallpaper-videos.mjs 一样手动执行：
+// 发布到每个区域，并用 --check-cdn 核对。脚本读取当前检出里的手册，所以发布与 --check-cdn
+// 都在本次发版所用的提交（发版分支或 tag 的检出）上执行，不要在最新 main 上执行。
+// 与 publish-wallpaper-videos.mjs 一样手动执行：
 //
 //   node --env-file=<发布配置> scripts/publish-page-manual.mjs --region=cn|global|dev
 //   node scripts/publish-page-manual.mjs --region=global --dry-run    只打印，不连 OSS、不联网
