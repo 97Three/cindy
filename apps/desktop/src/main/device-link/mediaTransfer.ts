@@ -105,13 +105,22 @@ function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   });
 }
 const REMOVE_REMOTE_TIMEOUT_MS = 15_000;
+/**
+ * downloadToFile 的无进展上限:presign、等 OSS 响应头、正文相邻两块数据之间分别计时,
+ * 只约束「没有进展」,不限制整个文件的完成时间,大附件慢速下载照常完成。前两段之和要小于
+ * 控制端发消息的 30s 等待窗口:附件取不到时被控端先以明确的媒体失败回复(手机据此重新
+ * 上传),而不是让控制端超时成「结果未知」后反复重发、在被控端堆积永不结束的下载。
+ */
+const DOWNLOAD_PRESIGN_TIMEOUT_MS = 8_000;
+const DOWNLOAD_STALL_TIMEOUT_MS = 15_000;
 
 /** 向 relay server 申请下载预签名(server 校验请求方 == key 内嵌 userId)。 */
-async function presignGet(key: string): Promise<PresignGetResponse> {
+async function presignGet(key: string, timeoutMs?: number): Promise<PresignGetResponse> {
   requireAppCapability('canUseDeviceLink', 'Device Link requires a Cindy account.');
   return deviceLinkApiFetch<PresignGetResponse>(PRESIGN_GET_PATH, {
     method: 'POST',
     body: { key },
+    ...(timeoutMs ? { timeoutMs } : {}),
   });
 }
 
@@ -654,48 +663,90 @@ export async function downloadToFile(
   onProgress?: (downloadedBytes: number) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const { getUrl } = await presignGet(key);
-  const resp = await net.fetch(getUrl, { method: 'GET', signal });
-  if (!resp.ok) throw Object.assign(new Error(`OSS GET 失败 (${resp.status})`), { code: 'OSS_DOWNLOAD_FAILED', status: resp.status });
-  if (!resp.body) throw Object.assign(new Error('OSS GET 响应无 body'), { code: 'OSS_DOWNLOAD_EMPTY', status: resp.status });
-  const partPath = `${destPath}.${randomUUID()}.part`;
-  const hasher = createHash('sha256');
-  let size = 0;
-  const counter = new Transform({
-    transform(chunk: Buffer, _enc, cb) {
-      size += chunk.length;
-      if (expected && size > expected.size) {
-        cb(new AttachmentIntegrityError('size', '附件下载超出声明大小。'));
-        return;
-      }
-      hasher.update(chunk);
-      onProgress?.(size);
-      cb(null, chunk);
-    },
-  });
+  // 调用方取消与无进展超时共用一个中止信号;只有超时会被改写成 OSS_DOWNLOAD_STALLED。
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) forwardAbort();
+  else signal?.addEventListener('abort', forwardAbort, { once: true });
+  let stalled = false;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  const expectProgressWithin = (ms: number) => {
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => {
+      stalled = true;
+      controller.abort();
+    }, ms);
+  };
+  // presign 与等响应头时网络可能毫无回应;中止后立即放弃,不再等底层请求自己结束。
+  const untilAborted = <T>(promise: Promise<T>) =>
+    new Promise<T>((resolve, reject) => {
+      const onAbort = () => reject(controller.signal.reason);
+      if (controller.signal.aborted) onAbort();
+      else controller.signal.addEventListener('abort', onAbort, { once: true });
+      promise
+        .then(resolve, reject)
+        .finally(() => controller.signal.removeEventListener('abort', onAbort));
+    });
   try {
-    await pipeline(
-      Readable.fromWeb(resp.body as Parameters<typeof Readable.fromWeb>[0]),
-      counter,
-      createWriteStream(partPath, { flags: 'wx' }),
-    );
-    const sha256 = hasher.digest('hex');
-    if (expected && size !== expected.size) {
-      throw new AttachmentIntegrityError(
-        'size',
-        `附件下载不完整:预期 ${expected.size} 字节,实际 ${size} 字节,请重新上传。`,
+    expectProgressWithin(DOWNLOAD_PRESIGN_TIMEOUT_MS);
+    // 请求自身的超时只是兜底回收被放弃的连接,晚于上面的计时触发,用户看到的是明确的超时。
+    const { getUrl } = await untilAborted(presignGet(key, DOWNLOAD_PRESIGN_TIMEOUT_MS + 1_000));
+    expectProgressWithin(DOWNLOAD_STALL_TIMEOUT_MS);
+    const resp = await untilAborted(net.fetch(getUrl, { method: 'GET', signal: controller.signal }));
+    if (!resp.ok) throw Object.assign(new Error(`OSS GET 失败 (${resp.status})`), { code: 'OSS_DOWNLOAD_FAILED', status: resp.status });
+    if (!resp.body) throw Object.assign(new Error('OSS GET 响应无 body'), { code: 'OSS_DOWNLOAD_EMPTY', status: resp.status });
+    expectProgressWithin(DOWNLOAD_STALL_TIMEOUT_MS);
+    const partPath = `${destPath}.${randomUUID()}.part`;
+    const hasher = createHash('sha256');
+    let size = 0;
+    const counter = new Transform({
+      transform(chunk: Buffer, _enc, cb) {
+        expectProgressWithin(DOWNLOAD_STALL_TIMEOUT_MS);
+        size += chunk.length;
+        if (expected && size > expected.size) {
+          cb(new AttachmentIntegrityError('size', '附件下载超出声明大小。'));
+          return;
+        }
+        hasher.update(chunk);
+        onProgress?.(size);
+        cb(null, chunk);
+      },
+    });
+    try {
+      await pipeline(
+        Readable.fromWeb(resp.body as Parameters<typeof Readable.fromWeb>[0]),
+        counter,
+        createWriteStream(partPath, { flags: 'wx' }),
+        { signal: controller.signal },
       );
+      clearTimeout(watchdog);
+      const sha256 = hasher.digest('hex');
+      if (expected && size !== expected.size) {
+        throw new AttachmentIntegrityError(
+          'size',
+          `附件下载不完整:预期 ${expected.size} 字节,实际 ${size} 字节,请重新上传。`,
+        );
+      }
+      if (expected && sha256 !== expected.sha256) {
+        throw new AttachmentIntegrityError(
+          'sha256',
+          '附件完整性校验失败:下载内容与发送端不一致,请重新上传。',
+        );
+      }
+      await rename(partPath, destPath);
+    } catch (error) {
+      clearTimeout(watchdog);
+      await rm(partPath, { force: true }).catch(() => undefined);
+      throw error;
     }
-    if (expected && sha256 !== expected.sha256) {
-      throw new AttachmentIntegrityError(
-        'sha256',
-        '附件完整性校验失败:下载内容与发送端不一致,请重新上传。',
-      );
-    }
-    await rename(partPath, destPath);
   } catch (error) {
-    await rm(partPath, { force: true }).catch(() => undefined);
-    throw error;
+    if (!stalled) throw error;
+    throw Object.assign(new Error('附件下载超时:网络长时间没有响应。'), {
+      code: 'OSS_DOWNLOAD_STALLED',
+    });
+  } finally {
+    clearTimeout(watchdog);
+    signal?.removeEventListener('abort', forwardAbort);
   }
 }
 
