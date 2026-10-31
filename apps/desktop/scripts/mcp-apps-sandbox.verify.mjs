@@ -85,7 +85,7 @@ try {
       else controller.receive(event.data);
     });
     controller.open({platform:'desktop',theme:'light',styles:{variables:{'--color-background-primary':'rgb(248,248,246)','--color-text-primary':'rgb(0,0,0)'}}}).then(doc=>{
-      frame=document.createElement('iframe');frame.sandbox='allow-scripts allow-same-origin';frame.src='cindy-mcp-app://'+doc.viewId+'/sandbox';frame.style='width:700px;height:550px';document.body.appendChild(frame);
+      frame=document.createElement('iframe');frame.sandbox='allow-scripts allow-same-origin allow-forms';frame.src='cindy-mcp-app://'+doc.viewId+'/sandbox';frame.style='width:700px;height:550px';document.body.appendChild(frame);
     });
   `,
     },
@@ -302,10 +302,43 @@ try {
           }
           assert.deepEqual(await inner().executeJavaScript('({inputs:pageState.inputs,results:pageState.results})'),{inputs:0,results:0});
         }
+        stage='host SDK implicit document.write';
+        await inner().executeJavaScript('(async()=>{const r=await window.sdkApp.callServerTool({name:"generate_page",arguments:{page:5}});await window.sdkApp.close();document.write(r._meta.view.html);document.close();})()');
+        await wait(()=>inner()?.executeJavaScript('window.pageState?.page===5&&window.pageState.ready'));
         if(attachment){
           assert.equal(await inner().executeJavaScript('window.sdkApp.getHostContext().toolInfo.tool._meta["cindy/attachments"][0]._meta["cindy/file"].url'),attachment);
           assert.equal(await inner().executeJavaScript('fetch('+JSON.stringify(attachment)+').then(r=>r.text())'),'host-only-file');
         }
+        // G5 regression, integration tier: the generated page's real submit handler
+        // must reach the tool via the SDK, while default submission stays CSP-blocked.
+        stage='host SDK form click';
+        await inner().executeJavaScript('document.querySelector("#bridged input").value="form-click";document.querySelector("#bridged button").click()');
+        await wait(()=>inner().executeJavaScript('window.pageState.formResult==="form-click"'));
+        assert.ok(sdkDispatched.includes('form-click'));
+        assert.equal(await inner().executeJavaScript('window.pageState.defaultPreventedAtHandler'),false,'page submit handler must run before the Host fallback');
+        stage='host SDK form Enter';
+        await inner().executeJavaScript('document.querySelector("#bridged input").value="form-enter";document.querySelector("#bridged input").focus()');
+        // Hidden BrowserWindows do not receive native sendInputEvent key presses on
+        // macOS. CDP dispatches a real browser key event without stealing OS focus.
+        window.webContents.debugger.attach('1.3');
+        try {
+          await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled',{enabled:true});
+          await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:String.fromCharCode(13)});
+          await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+        } finally { window.webContents.debugger.detach(); }
+        await wait(()=>inner().executeJavaScript('window.pageState.formResult==="form-enter"'));
+        assert.ok(sdkDispatched.includes('form-enter'));
+        stage='host SDK native form no-op';
+        const formUrl=inner().url, formRequests=requests;
+        await inner().executeJavaScript('document.querySelector("#native").action='+JSON.stringify(denied)+';document.querySelector("#native").addEventListener("submit",event=>{window.nativeSubmitEvent=event;});document.addEventListener("securitypolicyviolation",event=>{if(event.violatedDirective==="form-action")window.pageState.formBlocked=true;});document.querySelector("#native button").click()');
+        assert.equal(await inner().executeJavaScript('window.nativeSubmitEvent.defaultPrevented'),true);
+        await inner().executeJavaScript('document.querySelector("#native").submit();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        assert.ok(inner(),'default submission must not replace the App with a CSP error document');
+        assert.equal(await inner().executeJavaScript('window.pageState.formBlocked===true'),false);
+        assert.equal(inner().url,formUrl,'default submission must not navigate');
+        assert.equal(requests,formRequests,'default submission must not send a network request');
+        assert.equal((await inner().executeJavaScript('window.sdkApp.callServerTool({name:"echo",arguments:{text:"after-form"}})')).content[0].text,'after-form');
+        console.log('HOST_SDK_FORMS_VERDICT=passed (click, Enter, default submit()/button no-op before CSP, card still usable)');
         stage='host SDK theme update';
         await window.webContents.executeJavaScript('window.testController.context({theme:"light"})');
         await wait(()=>inner().executeJavaScript('window.pageState.theme==="light"'));
@@ -332,13 +365,13 @@ try {
       if(process.env.CINDY_MCP_APP_TEST_BOM==='1')assert.equal(await inner().executeJavaScript('document.compatMode'),'CSS1Compat');
       if(authorMode==='shell'){
         // Integration tier: actual packed shell, production result projection/dispatcher
-        // and iframe without allow-forms. Existing fixed-template examples do not cover
+        // and CSP-blocked default submission. Existing fixed-template examples do not cover
         // first-result HTML or click/Enter interception before native form submission.
         stage='shell initial result';
         await wait(()=>inner()?.executeJavaScript("document.querySelector('#content h1')?.textContent==='工作概览'"));
         assert.equal(shellCalls.length,1,'initial HTML must not require a second backend call');
         assert.equal(await inner().executeJavaScript("!!document.querySelector('#content style') && !!document.querySelector('#content svg')"),true);
-        assert.equal(await window.webContents.executeJavaScript("document.querySelector('iframe').sandbox.contains('allow-forms')"),false);
+        assert.equal(await window.webContents.executeJavaScript("document.querySelector('iframe').sandbox.contains('allow-forms')"),true);
         stage='shell intent';
         await inner().executeJavaScript("document.querySelector('[data-intent=stats]').click()");
         await wait(()=>inner().executeJavaScript("document.querySelector('#content h1')?.textContent==='本周进展'"));

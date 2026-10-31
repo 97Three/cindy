@@ -101,9 +101,9 @@ export async function prepareMcpAppNativeDocument(
       document.csp,
       entries,
     );
-    const html = sdkSource !== undefined
-      ? (await import("@cindy/maker-shared/mcp-app-sdk")).withHostAppSdk(document.html, new URL(HOST_APP_SDK_PATH, resourceUrl).href)
-      : document.html;
+    const html = (await import("@cindy/maker-shared/mcp-app-sdk")).withHostAppSdk(
+      document.html, new URL(HOST_APP_SDK_PATH, resourceUrl).href,
+    );
     resource.write(html);
     const resourceOrigin = new URL(resourceUrl).origin;
     const proxy = new File(directory, "1");

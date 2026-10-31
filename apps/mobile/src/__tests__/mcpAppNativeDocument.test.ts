@@ -48,7 +48,7 @@ import { MCP_APP_STORAGE_BOOTSTRAP, prepareMcpAppNativeDocument } from "../sessi
 const document = {
   viewId: "view",
   html: "<script>window.app=true</script>",
-  csp: "default-src 'none'; script-src 'unsafe-inline'",
+  csp: "default-src 'none'; script-src 'unsafe-inline'; form-action 'none'",
   prefersBorder: true,
 };
 beforeEach(() => {
@@ -81,14 +81,16 @@ it("serves complete App HTML and its exact CSP on a different origin from the tr
   );
   const [resource, proxy] = state.start.mock.calls;
   expect(resource[3]).toBe(document.csp);
+  expect(resource[3]).toContain("form-action 'none'");
   expect(resource[1]).toBe('initialize.html');
   expect(resource[4]).toEqual([["initialize.html", "2", "text/html"], ["resource.html", "0", "text/html"]]);
   expect(
-    state.files.get("file:///cache/mcp-apps/" + "01".repeat(24) + "/0"),
+    state.files.get("file:///cache/mcp-apps/" + "01".repeat(24) + "/0")?.replace(/<script data-cindy-runtime>[\s\S]*?<\/script>/, ""),
   ).toBe(document.html);
   expect(proxy[4]).toEqual([["proxy.html", "1", "text/html"]]);
   expect(proxy[3]).toContain("frame-src " + new URL(view.resourceUrl).origin);
   expect(proxy[3]).toContain("connect-src 'none'");
+  expect(proxy[3]).toContain("form-action 'none'");
   const html = state.files.get(
     "file:///cache/mcp-apps/" + "01".repeat(24) + "/1",
   )!;
@@ -203,6 +205,6 @@ it('routes the executor SDK in the App origin and cleans it up with the View', a
 it('ignores malformed optional SDK metadata on the phone', async () => {
   const view = await prepareMcpAppNativeDocument({ ...document, sdk: { source: 7 } } as never, 'native-key');
   expect(state.start.mock.calls[0][4]).toEqual([['initialize.html', '2', 'text/html'], ['resource.html', '0', 'text/html']]);
-  expect(state.files.get('file:///cache/mcp-apps/' + '01'.repeat(24) + '/0')).toBe(document.html);
+  expect(state.files.get('file:///cache/mcp-apps/' + '01'.repeat(24) + '/0')?.replace(/<script data-cindy-runtime>[\s\S]*?<\/script>/, '')).toBe(document.html);
   await view.close();
 });

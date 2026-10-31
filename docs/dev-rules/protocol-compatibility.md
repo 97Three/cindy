@@ -588,6 +588,12 @@ SDK 重新读取并恢复草稿；再次发送必须重新经过完整倒计时�
 
 ## MCP Apps
 
+页面 iframe 沙箱允许 `allow-scripts allow-same-origin allow-forms`；`allow-forms` 仅让 submit 事件分发，
+页面在监听器中 `preventDefault()` 后通过工具桥接提交；宿主在 window 冒泡阶段取消尚未取消的默认提交，
+并令直接 `form.submit()` 不执行。前置代码在显式 open 和隐式 write/writeln 替换文档后恢复监听。Desktop（本机与远程）和 Mobile
+始终保留 CSP `form-action 'none'`，禁止任何地址的原生表单提交，不新增网络出口。
+旧执行端和旧查看端没有该沙箱能力，依赖 submit 事件的插件需声明 `minCindyVersion: 0.1.122-beta`，两端升级。
+
 McpAppDocument 增量增加可选的 sdk: { source }，由执行电脑从与 AppBridge 同版本的
 官方依赖提供，仅 HTML 使用裸模块名且未自带映射时随临时 View 转发，不写入卡片。新查看端按原 CSP 在页面同源地址提供 SDK；
 旧查看端忽略此字段，旧 Host 缺字段时保留原文档行为，自带 SDK 的页面继续工作。

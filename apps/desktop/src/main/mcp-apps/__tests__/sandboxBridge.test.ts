@@ -24,6 +24,8 @@ function fixture() {
 }
 it('ignores forged App requests and Host responses from the Renderer, relaying only the inner window', () => {
   const f = fixture();
+  // G5: only add form events; top-navigation and popups remain sandboxed.
+  expect(f.frame.setAttribute).toHaveBeenCalledWith('sandbox', 'allow-scripts allow-same-origin allow-forms');
   const receive = f.handlers.get('message')!;
   const call = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'credentialed-tool' } };
   receive({ source: f.parent, data: call });

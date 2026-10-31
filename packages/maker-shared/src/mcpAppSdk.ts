@@ -32,7 +32,6 @@ function importsSdk(source: string, module: boolean): boolean {
 
 function sdkPlan(html: string) {
   // Ordinary pages keep their exact bytes and never pay for HTML parsing.
-  if (!html.includes(moduleName)) return;
   // A byte-order mark is an encoding marker, not text before the doctype.
   const offset = html.startsWith('\ufeff') ? 1 : 0;
   const document = parse(html.slice(offset), { sourceCodeLocationInfo: true });
@@ -71,24 +70,52 @@ function sdkPlan(html: string) {
     if ('childNodes' in node) node.childNodes.forEach(visit);
   };
   visit(document);
-  return imported && !authoredSdk ? { insertion, authoredMap } : undefined;
+  return { insertion, authoredMap, imported, authoredSdk };
 }
 
 /** Only HTML requesting the bare SDK module needs the executor's optional asset. */
-export function needsHostAppSdk(html: string): boolean { return !!sdkPlan(html); }
+export function needsHostAppSdk(html: string): boolean { const plan = sdkPlan(html); return plan.imported && !plan.authoredSdk; }
 
-/** Page preparation lives outside the chat contract's startup dependency graph. */
+// The default form action is always disabled by CSP. Cancel it before Chromium
+// navigates to a CSP error document; page handlers still run before this fallback.
+const runtime = `<script data-cindy-runtime>
+(()=>{
+ const prevent=event=>{if(!event.defaultPrevented)event.preventDefault();};
+ const install=()=>window.addEventListener('submit',prevent);
+ const open=Document.prototype.open;
+ Document.prototype.open=function(...args){
+  const result=Reflect.apply(open,this,args);
+  if(this===document&&args.length<3)install();
+  return result;
+ };
+ for(const method of ['write','writeln']){
+  const write=Document.prototype[method];
+  Document.prototype[method]=function(...args){
+   const result=Reflect.apply(write,this,args);
+   if(this===document)install();
+   return result;
+  };
+ }
+ // Direct submit() skips the event; requestSubmit() still runs page handlers.
+ HTMLFormElement.prototype.submit=function(){};
+ install();
+})();
+</script>`;
+
+/** Prepare the App environment outside the chat contract's startup dependency graph. */
 export function withHostAppSdk(html: string, sdkUrl: string): string {
   if (!new URL(sdkUrl).hostname) throw new Error('MCP_APP_SDK_URL_REQUIRED');
-  const plan = sdkPlan(html);
-  if (!plan) return html;
-  const { insertion, authoredMap } = plan;
-  if (authoredMap) {
-    const value = { ...authoredMap.value, imports: {
-      ...(authoredMap.value.imports as Record<string, unknown> | undefined), [moduleName]: sdkUrl,
-    } };
-    return html.slice(0, authoredMap.start) + JSON.stringify(value).replace(/</g, '\\u003c') + html.slice(authoredMap.end);
+  const { insertion, authoredMap, imported, authoredSdk } = sdkPlan(html);
+  let prefix = runtime;
+  if (imported && !authoredSdk) {
+    if (authoredMap) {
+      const value = { ...authoredMap.value, imports: {
+        ...(authoredMap.value.imports as Record<string, unknown> | undefined), [moduleName]: sdkUrl,
+      } };
+      html = html.slice(0, authoredMap.start) + JSON.stringify(value).replace(/</g, '\\u003c') + html.slice(authoredMap.end);
+    } else {
+      prefix += '<script type="importmap">' + JSON.stringify({ imports: { [moduleName]: sdkUrl } }) + '</script>';
+    }
   }
-  const map = '<script type="importmap">' + JSON.stringify({ imports: { [moduleName]: sdkUrl } }) + '</script>';
-  return html.slice(0, insertion) + map + html.slice(insertion);
+  return html.slice(0, insertion) + prefix + html.slice(insertion);
 }

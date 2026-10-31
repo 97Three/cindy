@@ -3,7 +3,7 @@ export function mcpAppDirectSandboxDocument(resourceUrl: string, bridgeUrl: stri
   const encode = (value: string) => JSON.stringify(value).replace(/</g, '\\u003c');
   return `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden}</style></head><body><script>
 const frame=document.createElement('iframe');
-frame.setAttribute('sandbox','allow-scripts allow-same-origin');
+frame.setAttribute('sandbox','allow-scripts allow-same-origin allow-forms');
 frame.setAttribute('allow',"camera 'none'; microphone 'none'; geolocation 'none'; clipboard-write 'none'");
 frame.style.cssText='border:0;width:100%;height:100%;display:block';
 let after=0,stopped=false,generation=0,initialized=false,initializationTimer,handshakeDelivery;

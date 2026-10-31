@@ -1,12 +1,13 @@
 /** Integration-only complete documents: no SDK bundling, credentials, or external network. */
 export function hostSdkFixture() {
   function generated(page) {
-    return '<!doctype html><html><head><title>Generated App</title></head><body><h1>Page '+page+'</h1><button id="next">Next page</button><script type="module">'+
+    return '<!doctype html><html><head><title>Generated App</title></head><body><h1>Page '+page+'</h1><button id="next">Next page</button><form id="bridged"><input name="text"><button type="submit">Send</button></form><form id="native" method="post"><button type="submit">Native</button></form><script type="module">'+
       'import { App } from "@modelcontextprotocol/ext-apps";'+
       'const app=new App({name:"Generated",version:"1"});window.sdkApp=app;window.pageState={page:'+page+',inputs:0,results:0};'+
       'app.ontoolinput=()=>window.pageState.inputs++;app.ontoolresult=()=>window.pageState.results++;'+
       'app.onteardown=async()=>{window.pageState.tornDown=true;return {};};app.onhostcontextchanged=()=>{window.pageState.theme=app.getHostContext().theme;};'+
       'app.connect().then(()=>{window.pageState.ready=true;window.pageState.theme=app.getHostContext().theme;});'+
+      'document.querySelector("#bridged").addEventListener("submit",async event=>{window.pageState.defaultPreventedAtHandler=event.defaultPrevented;event.preventDefault();const text=new FormData(event.currentTarget).get("text");const result=await app.callServerTool({name:"echo",arguments:{text}});window.pageState.formResult=result.content[0].text;});'+
       'document.querySelector("#next").onclick=async()=>{const r=await app.callServerTool({name:"generate_page",arguments:{page:'+(page+1)+'}});await app.close();document.open();document.write(r._meta.view.html);document.close();};'+
       '</script></body></html>';
   }

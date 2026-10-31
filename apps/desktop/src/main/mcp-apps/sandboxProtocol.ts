@@ -61,7 +61,7 @@ export function supplyMcpAppDocument(
   dispose?: () => void,
 ): void {
   documents.set(document.viewId, {
-    html: document.sdk ? withHostAppSdk(document.html, 'cindy-mcp-app://' + document.viewId + '-view' + HOST_APP_SDK_PATH) : document.html,
+    html: withHostAppSdk(document.html, 'cindy-mcp-app://' + document.viewId + '-view' + HOST_APP_SDK_PATH),
     fileKey: randomUUID(), document, owner: getCurrentDbClientSnapshot(), caller, dispose,
     bridge: invoke ? { key: randomUUID(), invoke } : undefined,
   });
