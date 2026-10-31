@@ -147,7 +147,8 @@
 - 《页面生成手册》（内置 Skill 的 `cindy-plugin-creator/references/examples/interactive-pages/PAGE-GENERATION.md`）
   沿用壁纸的按内容寻址发布：对象名为 `plugin-pages/manual/<sha256>.md`，客户端用内置手册的 sha256 拼
   `{cdnBaseUrl}/plugin-pages/manual/<sha256>.md` 交给业务后端，路径约定只在
-  `apps/desktop/src/shared/pluginPageManual.mjs` 定义。手册改动后、对应客户端上线前，在每个区域手动执行
+  `apps/desktop/src/shared/pluginPageManual.mjs` 定义；手册在 `.gitattributes` 固定 LF，保证各平台打包出同一份字节、
+  同一个 sha256。手册改动后、对应客户端上线前，在每个区域手动执行
   `node --env-file=<发布配置> scripts/publish-page-manual.mjs --region=global|cn|dev`（区域必填，仓库没有手册时
   跳过）；`--dry-run` 不连 OSS、不联网，只打印 key、sha256 与 CDN 地址。**发版前检查项**：
   `node scripts/publish-page-manual.mjs --check-cdn --region=global` 与 `--region=cn` 都通过，即当前手册已在
