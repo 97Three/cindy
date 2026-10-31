@@ -3677,7 +3677,8 @@
           "contextWindowInvalid": "La fenêtre de contexte doit être un entier positif valide (séparateurs autorisés entre les groupes de chiffres)",
           "requestPathInvalid": "Commencez le chemin de requête exact par un seul /. N'utilisez pas de fragments ni de segments de chemin . et .. ; encodez en pourcentage les espaces et les caractères non sûrs.",
           "modelRequired": "Ajoutez au moins un modèle",
-          "oauthInvalid": "Configuration OAuth incomplète : tous les champs sont obligatoires et les deux endpoints doivent être des URL https sécurisées"
+          "oauthInvalid": "Configuration OAuth incomplète : tous les champs sont obligatoires et les deux endpoints doivent être des URL https sécurisées",
+          "baseUrlRequired": "Renseignez l’URL de base de cet environnement d’exécution ou rétablissez son protocole par défaut."
         },
         "toast": {
           "created": "Fournisseur ajouté",
@@ -10602,8 +10603,10 @@
       },
       "mention": {
         "all": "Tout le monde",
-        "allHint": "Tout le monde répond",
-        "label": "Mentionner un coéquipier"
+        "allHint": "Personnes uniquement",
+        "label": "Mentionner un coéquipier",
+        "allBots": "Tous les coéquipiers",
+        "allBotsHint": "Coéquipiers uniquement"
       },
       "composer": {
         "label": "Message de la conversation de groupe",
@@ -10715,7 +10718,7 @@
         "speakingMode": "Ordre de parole",
         "speakingModeAuto": "Automatique",
         "speakingModeSequential": "Un à la fois",
-        "speakingModeAutoNote": "Sans mention ou avec @Tout le monde : réflexion simultanée au premier passage, puis réponses une par une. Les coéquipiers mentionnés répondent dans l'ordre des mentions.",
+        "speakingModeAutoNote": "Sans mention ou avec @Tous les coéquipiers : réflexion simultanée, puis réponses une par une. Sinon, les réponses suivent l’ordre des mentions.",
         "speakingModeSequentialNote": "Un seul coéquipier parle à la fois, et chacun voit les réponses précédentes.",
         "speakingModeSaveFailed": "Impossible d'enregistrer l'ordre de parole. Réessayez.",
         "setOrganizer": "Nommer organisateur",
@@ -10729,7 +10732,9 @@
         "projectDirClear": "Effacer le dossier",
         "projectDirNote": "Les coéquipiers travaillent ici lorsqu'ils se répartissent le travail. Vous pouvez laisser ce champ vide : ils utiliseront alors le dossier propre à cette conversation de groupe. Si vous choisissez un projet git, chaque répartition du travail obtient un nouveau worktree et une nouvelle branche, afin que votre propre code reste intact.",
         "autoContinueSaveFailed": "Impossible d'enregistrer le passage entre étapes. Réessayez.",
-        "projectDirSaveFailed": "Impossible d'enregistrer le dossier du projet. Vérifiez que le dossier existe toujours, puis réessayez."
+        "projectDirSaveFailed": "Impossible d'enregistrer le dossier du projet. Vérifiez que le dossier existe toujours, puis réessayez.",
+        "allowMentionAllBots": "Autoriser @tous les coéquipiers",
+        "allowMentionAllBotsHint": "Seul le propriétaire du groupe peut le modifier. Tous les coéquipiers peuvent répondre : prudence en grand groupe. Sans effet sur l’IA qui répond pour vous."
       },
       "errors": {
         "memberLimit": "Une conversation de groupe nécessite de 2 à 6 coéquipiers",
@@ -10753,7 +10758,8 @@
         "quoteUnavailable": "Le message cité a été supprimé ou n'est plus visible. La citation a été retirée. Renvoyez le message.",
         "lifecycleUnavailable": "Le serveur ou l'ordinateur actuel ne prend pas encore en charge cette action.",
         "groupDissolved": "Ce groupe a été dissous. Vous pouvez toujours lire l'historique disponible.",
-        "lastOwner": "Transférez la propriété ou dissolvez ce groupe avant de le quitter."
+        "lastOwner": "Transférez la propriété ou dissolvez ce groupe avant de le quitter.",
+        "allBotsMentionDisabled": "Le propriétaire du groupe n’a pas encore activé @Tous les coéquipiers."
       },
       "organizer": "Organisateur",
       "plan": {
@@ -13897,6 +13903,42 @@
       "closeDescription": "Ce suivi va s'arrêter et son historique sera supprimé. La tâche principale continue de s'exécuter.",
       "closeConfirm": "Fermer et supprimer",
       "closeFailed": "Impossible de fermer la conversation annexe. Veuillez réessayer."
+    },
+    "teammateProcess": {
+      "record": "Activité",
+      "operations": "Journal d’activité",
+      "elapsed": "En cours depuis {{duration}}",
+      "took": "Durée : {{duration}}",
+      "processing": "En cours",
+      "worked": "Activité",
+      "thinking": "Réflexion en cours",
+      "thought": "Réflexion",
+      "failed_one": "{{count}} appel a échoué",
+      "failed_other": "{{count}} appels ont échoué",
+      "separator": ", ",
+      "actions": {
+        "running": {
+          "read": "Lecture des fichiers",
+          "edit": "Modification des fichiers",
+          "search": "Recherche en cours",
+          "web": "Consultation du Web",
+          "command": "Exécution des commandes",
+          "tools": "Utilisation des outils",
+          "delegate": "Délégation du travail",
+          "plan": "Mise à jour du plan"
+        },
+        "done": {
+          "read": "Fichiers lus",
+          "edit": "Fichiers modifiés",
+          "search": "Recherche effectuée",
+          "web": "Web consulté",
+          "command": "Commandes exécutées",
+          "tools": "Outils utilisés",
+          "delegate": "Travail délégué",
+          "plan": "Plan mis à jour"
+        }
+      },
+      "failed_many": "{{count}} appels ont échoué"
     }
   },
   "ccAgent": {

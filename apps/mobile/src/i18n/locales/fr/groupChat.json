@@ -34,8 +34,10 @@
   },
   "mention": {
     "all": "Tout le monde",
-    "allHint": "Tout le monde répond",
-    "label": "Mentionner un coéquipier"
+    "allHint": "Personnes uniquement",
+    "label": "Mentionner un coéquipier",
+    "allBots": "Tous les coéquipiers",
+    "allBotsHint": "Coéquipiers uniquement"
   },
   "composer": {
     "label": "Message de la conversation de groupe",
@@ -233,7 +235,7 @@
     "speakingMode": "Ordre de parole",
     "speakingModeAuto": "Automatique",
     "speakingModeSequential": "Un à la fois",
-    "speakingModeAutoNote": "Sans mention ou avec @Tout le monde : réflexion simultanée au premier passage, puis réponses une par une. Les coéquipiers mentionnés répondent dans l'ordre des mentions.",
+    "speakingModeAutoNote": "Sans mention ou avec @Tous les coéquipiers : réflexion simultanée, puis réponses une par une. Sinon, les réponses suivent l’ordre des mentions.",
     "speakingModeSequentialNote": "Un seul coéquipier parle à la fois, et chacun voit les réponses précédentes.",
     "speakingModeSaveFailed": "Impossible d'enregistrer l'ordre de parole. Réessayez.",
     "setOrganizer": "Nommer organisateur",
@@ -259,7 +261,9 @@
     "cloudStatus": {
       "loading": "Chargement des paramètres…",
       "unavailable": "Impossible de charger les paramètres du groupe. Réessayez."
-    }
+    },
+    "allowMentionAllBots": "Autoriser @tous les coéquipiers",
+    "allowMentionAllBotsHint": "Seul le propriétaire du groupe peut le modifier. Tous les coéquipiers peuvent répondre : prudence en grand groupe. Sans effet sur l’IA qui répond pour vous."
   },
   "errors": {
     "memberLimit": "Une conversation de groupe nécessite de 2 à 6 coéquipiers",
@@ -283,7 +287,8 @@
     "quoteUnavailable": "Le message cité a été supprimé ou n'est plus visible. La citation a été retirée. Renvoyez le message.",
     "lifecycleUnavailable": "Le serveur ou l'ordinateur actuel ne prend pas encore en charge cette action.",
     "groupDissolved": "Ce groupe a été dissous. Vous pouvez toujours lire l'historique disponible.",
-    "lastOwner": "Transférez la propriété ou dissolvez ce groupe avant de le quitter."
+    "lastOwner": "Transférez la propriété ou dissolvez ce groupe avant de le quitter.",
+    "allBotsMentionDisabled": "Le propriétaire du groupe n’a pas encore activé @Tous les coéquipiers."
   },
   "followUp": {
     "next": "Plan · Étape suivante",
