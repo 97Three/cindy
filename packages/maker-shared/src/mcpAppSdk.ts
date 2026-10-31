@@ -46,7 +46,9 @@ function environmentPlan(html: string) {
 const runtime = `<script data-cindy-runtime>
 (()=>{
  // method=dialog only closes its dialog: no navigation, so no CSP error document.
- const dialog=event=>(event.submitter?.hasAttribute('formmethod')?event.submitter.formMethod:event.target.method)==='dialog';
+ // The prototype getter: a control named "method" shadows form.method.
+ const method=Object.getOwnPropertyDescriptor(HTMLFormElement.prototype,'method').get;
+ const dialog=event=>event.target instanceof HTMLFormElement&&(event.submitter?.hasAttribute('formmethod')?event.submitter.formMethod:Reflect.apply(method,event.target,[]))==='dialog';
  const prevent=event=>{if(!event.defaultPrevented&&!dialog(event))event.preventDefault();};
  // Arm during window capture: the fallback is then appended after the page's own
  // window submit listeners, yet still runs before the browser's default action.
@@ -68,7 +70,7 @@ const runtime = `<script data-cindy-runtime>
  }
  // Direct submit() skips the event; requestSubmit() still runs page handlers.
  const submit=HTMLFormElement.prototype.submit;
- HTMLFormElement.prototype.submit=function(){if(this.method==='dialog')Reflect.apply(submit,this,[]);};
+ HTMLFormElement.prototype.submit=function(){if(Reflect.apply(method,this,[])==='dialog')Reflect.apply(submit,this,[]);};
  install();
 })();
 </script>`;
