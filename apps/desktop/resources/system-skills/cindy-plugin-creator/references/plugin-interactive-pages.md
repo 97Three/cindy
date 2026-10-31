@@ -27,8 +27,10 @@
 | 包内静态 HTML | 小表单、固定图表，界面和插件一起发布 | static |
 | Cindy 对话中的 AI 生成完整 HTML | 用户临时需要组合界面，数据由既有工具提供 | loader 的 show_page |
 
-推荐由后端生成首屏，之后页面脚本查询 JSON、更新局部。后端模板和 LLM 生成
-都遵守同样的工具、凭证和数据规则，不必每点一次按钮就重新生成界面。
+首屏可以来自后端、包内静态 HTML 或对话 AI；后端是可选的，插件也可以只用自己的存储
+（[library §4.10.1](plugin-files-and-library.md)）和 Cindy 能力自闭环。之后页面脚本
+查询 JSON、更新局部；无论首屏由谁生成，都遵守同样的工具、凭证和数据规则，不必每点
+一次按钮就重新生成界面。
 
 ### 2. 运行完整示例
 
@@ -106,7 +108,7 @@ cindy.send({ type: 'tool-result', callId: msg.callId, ok: true, result: {
 凭证，也不要把不必要的大数据塞进结果。
 
 由 AI 写首屏时使用 show_page({title,html})，返回结构相同。告诉 AI 可用工具、
-参数及本章规则；页面不能创造插件未提供的后端能力。
+参数及本章规则；页面不能创造插件未提供的能力。
 
 ### 5. 加载器显示首屏，生成的页面自己连接
 
@@ -164,7 +166,7 @@ for (const item of result.structuredContent.items) {
 
 使用 `<form>`，在 `submit` 事件里先调用 `preventDefault()`，再调用工具。
 点击提交按钮和在输入框按 Enter 都会自然触发 submit，无需额外处理点击或键盘。
-CSP 的 `form-action 'none'` 禁止原生 action 提交；请求后端必须走工具。
+CSP 的 `form-action 'none'` 禁止原生 action 提交；提交数据必须走工具。
 页面自己的 fetch 不会带 Cindy 保管的凭证。
 
 下面省略了按钮状态和请求编号管理；完整写法见
@@ -185,8 +187,8 @@ form.onsubmit = async event => {
 
 request 包含 `path`、`body` 和 `idempotencyKey`。等待期间禁用重复提交，失败时保留输入。
 
-同一内容重试沿用 request 中的编号；用户改了内容才创建新请求。正式后端按
-“当前用户 + 编号”用数据库唯一约束去重，并拒绝同编号不同内容。
+同一内容重试沿用 request 中的编号；用户改了内容才创建新请求。写入方（插件存储
+或后端）按“当前用户 + 编号”去重，正式后端用数据库唯一约束，并拒绝同编号不同内容。
 **不要自动重试写操作**：超时不等于未写入，应查询结果或用原编号重新提交。
 
 ### 8. 偶尔切换整块内容，保留脚本
@@ -212,6 +214,9 @@ innerHTML 只接转义过动态值的可信模板，不接普通数据。片段�
 
 ### 9. 接上真实后端与文件
 
+不需要业务后端时，main.js 直接把数据存在插件自己的存储里（library，§4.10.1），
+页面写法不变；需要后端数据时再按下面接入。
+
 把示例 `USE_MOCK` 改为 false，同时替换 BASE 和清单里的占位域名。路径由 main.js
 校验：只允许相对路径、固定前缀，不接受完整网址、父目录或编码绕过。后端继续
 验证当前用户对记录的权限，路径白名单不能代替后端鉴权。
@@ -236,10 +241,10 @@ innerHTML 只接转义过动态值的可信模板，不接普通数据。片段�
 | 直接导入 Cindy 提供的 SDK | 写 `import { App } from '@modelcontextprotocol/ext-apps'`；不写 importmap，不从 CDN 或其他地址加载 SDK |
 | 页面不接触凭证 | 经 main.js 的 cindy.fetch 代发，不将 token 放进 HTML、日志或结果 |
 | 表单走桥接 | submit 中先 preventDefault()，再调用工具；不用原生 action |
-| 数据用 textContent | 后端模板转义动态值，不把用户数据拼进脚本或事件属性 |
-| 读写分成两个工具 | 固定方法和后端地址，按相对路径白名单路由 |
+| 数据用 textContent | 生成页面的一方（插件、后端或 AI）转义动态值，不把用户数据拼进脚本或事件属性 |
+| 读写分成两个工具 | main.js 固定读写目标（存储或后端地址），按相对路径白名单路由 |
 | 两个超时均设 30 分钟 | timeout 和 maxTotalTimeout 都设 30 * 60 * 1000，允许等待授权 |
-| 写入使用请求编号 | 后端去重；失败保留编号，不自动重试 |
+| 写入使用请求编号 | 写入方去重；失败保留编号，不自动重试 |
 | 处理取消与卸载 | 用 AbortController 停止等待，关闭后不继续更新 DOM |
 | 支持浅色和深色 | 从 getHostContext 取主题，监听 onhostcontextchanged，不写死白底黑字 |
 | 明确结果归属 | content/structuredContent 给 AI；页面专用内容放根 _meta |
