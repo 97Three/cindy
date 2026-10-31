@@ -24,6 +24,8 @@ function fixture() {
 }
 it('ignores forged App requests and Host responses from the Renderer, relaying only the inner window', () => {
   const f = fixture();
+  // G5: only add form events; top-navigation and popups remain sandboxed.
+  expect(f.frame.setAttribute).toHaveBeenCalledWith('sandbox', 'allow-scripts allow-same-origin allow-forms');
   const receive = f.handlers.get('message')!;
   const call = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'credentialed-tool' } };
   receive({ source: f.parent, data: call });
@@ -61,7 +63,7 @@ it('changes Renderer display state only from the Host poll, never from the App',
   expect(f.parent.postMessage).toHaveBeenCalledExactlyOnceWith(context, '*');
   expect(f.frame.contentWindow.postMessage).toHaveBeenCalledExactlyOnceWith(context, '*');
 });
-it('still relays App readiness and size notifications to the Renderer and Host', () => {
+it('still relays App readiness and size notifications to the Renderer and Host', async () => {
   const f = fixture();
   const messages = [
     { jsonrpc: '2.0', method: 'ui/notifications/initialized' },
@@ -70,6 +72,10 @@ it('still relays App readiness and size notifications to the Renderer and Host',
   for (const message of messages) {
     f.handlers.get('message')!({ source: f.frame.contentWindow, data: message });
     expect(f.parent.postMessage).toHaveBeenCalledWith(message, '*');
+    if (message.method === 'ui/notifications/initialized') {
+      f.pending[1]({ ok: true, json: async () => ({}) });
+      await vi.advanceTimersByTimeAsync(0);
+    }
     expect(JSON.parse(f.fetch.mock.calls.at(-1)![1].body)).toEqual({ op: 'message', message });
   }
   expect(f.parent.postMessage).toHaveBeenCalledTimes(2);
@@ -85,7 +91,7 @@ it('drops in-flight old-document replies before posting to the new frame', async
   const old = { jsonrpc: '2.0', id: 70, error: { code: -1, message: 'old document' } };
   const current = { jsonrpc: '2.0', id: 70, result: { protocolVersion: '2026-01-26' } };
   f.pending[0]({ ok: true, json: async () => [
-    { seq: 1, message: old }, { seq: 2, generation: 1, message: current },
+    { seq: 1, generation: 0, message: old }, { seq: 2, generation: 1, message: current },
   ] });
   for (let index = 0; index < 8; index++) await Promise.resolve();
   expect(f.frame.contentWindow.postMessage).not.toHaveBeenCalledWith(old, '*');
@@ -124,4 +130,77 @@ it('clears a ready replacement deadline and gives the next document a fresh one'
   vi.advanceTimersByTime(44_000);
   expect(f.parent.postMessage).toHaveBeenCalledExactlyOnceWith(
     { jsonrpc: '2.0', method: 'ui/notifications/sandbox-failed' }, '*');
+});
+
+// Codex 4429338500 also applies to concurrent local protocol fetches.
+// Execute the production proxy: defer initialized delivery and let the new
+// initialize overtake it if permitted. Unit tier, no real network/waits.
+it('orders handshake fetches without blocking on outstanding tools', async () => {
+  const f = fixture();
+  const receive = (data: unknown) => f.handlers.get('message')!({ source: f.frame.contentWindow, data });
+  let initialized = false;
+  let acknowledge!: () => void;
+  const current = { jsonrpc: '2.0', id: 72, result: { protocolVersion: '2026-01-26' } };
+  f.fetch.mockImplementation(async (_url, input) => {
+    const { message } = JSON.parse(input.body);
+    if (message?.method === 'ui/notifications/initialized')
+      return new Promise(resolve => { acknowledge = () => {
+        initialized = true; resolve({ ok: true, json: async () => ({}) });
+      }; });
+    if (message?.method === 'ui/initialize') {
+      f.pending[0]({ ok: true, json: async () => [
+        { seq: 1, generation: initialized ? 1 : 0, message: current },
+      ] });
+      return { ok: true, json: async () => ({}) };
+    }
+    return new Promise(() => {});
+  });
+  receive({ jsonrpc: '2.0', id: 50, method: 'tools/call' });
+  receive({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  receive({ jsonrpc: '2.0', id: 51, method: 'tools/call' });
+  receive({ jsonrpc: '2.0', id: 72, method: 'ui/initialize' });
+  acknowledge();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.frame.contentWindow.postMessage).toHaveBeenCalledWith(current, '*');
+  expect(f.fetch.mock.calls.some(([, input]) => JSON.parse(input.body).message?.id === 51)).toBe(false);
+});
+it('reports one sandbox failure and stops messages queued behind a failed handshake', async () => {
+  const f = fixture();
+  const receive = (data: unknown) => f.handlers.get('message')!({ source: f.frame.contentWindow, data });
+  receive({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  receive({ jsonrpc: '2.0', id: 73, method: 'ui/initialize' });
+  receive({ jsonrpc: '2.0', id: 74, method: 'tools/call' });
+  f.parent.postMessage.mockClear();
+  f.pending[1]({ ok: false, json: async () => ({}) });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.parent.postMessage).toHaveBeenCalledExactlyOnceWith(
+    { jsonrpc: '2.0', method: 'ui/notifications/sandbox-failed' }, '*');
+  expect(f.fetch).toHaveBeenCalledTimes(2); // One poll and the failed handshake.
+});
+
+// 4429355993 / 4429359688: remote Desktop must still render legacy Host replies.
+it('delivers replacement replies from a Host without generation fields', async () => {
+  const f = fixture();
+  const receive = (data: unknown) => f.handlers.get('message')!({ source: f.frame.contentWindow, data });
+  receive({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  receive({ jsonrpc: '2.0', id: 75, method: 'ui/initialize' });
+  const current = { jsonrpc: '2.0', id: 75, result: {} };
+  f.pending[0]({ ok: true, json: async () => [{ seq: 1, message: current }] });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.frame.contentWindow.postMessage).toHaveBeenCalledWith(current, '*');
+});
+
+// 4429469516: the Main operation may finish after the proxy has changed documents.
+it('does not report an old link result after document replacement', async () => {
+  const f = fixture();
+  f.pending[0]({ ok: true, json: async () => [
+    { seq: 1, generation: 0, openLink: { id: 'link', url: 'https://example.org/' } },
+  ] });
+  await vi.advanceTimersByTimeAsync(0);
+  const receive = (data: unknown) => f.handlers.get('message')!({ source: f.frame.contentWindow, data });
+  receive({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  receive({ jsonrpc: '2.0', id: 77, method: 'ui/initialize' });
+  f.pending[1]({ ok: true, json: async () => ({}) });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.fetch.mock.calls.some(([, input]) => JSON.parse(input.body).op === 'link-result')).toBe(false);
 });

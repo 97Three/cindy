@@ -23,6 +23,7 @@ export class McpAppController {
   private ready = false;
   private generation = 0;
   private initialized = false;
+  private handshakeDelivery?: Promise<void>;
   private outbound: AppRpc[] = [];
   private initializeId?: string | number;
   private startupTimer?: ReturnType<typeof setTimeout>;
@@ -120,11 +121,24 @@ export class McpAppController {
       this.startupTimer = undefined;
     }
     this.onState(message);
-    void this.invoke(this.sessionId, {
-      op: 'message',
-      viewId: this.document.viewId,
-      message,
-    }).catch((error) => this.fail(error));
+    const viewId = this.document.viewId;
+    const generation = this.generation;
+    const handshake = message.method === 'ui/initialize' || message.method === 'ui/notifications/initialized';
+    const send = async () => {
+      if (this.stopped || (this.closing && message.method)) return;
+      if (!handshake && this.generation !== generation) return;
+      await this.invoke(this.sessionId, { op: 'message', viewId, message });
+    };
+    // device-link invokes may arrive out of order. Finish each handshake delivery
+    // before sending the next; pending tools must not block document replacement.
+    const delivery = this.handshakeDelivery ? this.handshakeDelivery.then(send) : send();
+    if (handshake) {
+      this.handshakeDelivery = delivery;
+      void delivery.then(() => {
+        if (this.handshakeDelivery === delivery) this.handshakeDelivery = undefined;
+      }, () => {});
+    }
+    void delivery.catch((error) => this.fail(error));
   }
 
   async context(context: Record<string, unknown>): Promise<void> {
@@ -175,6 +189,7 @@ export class McpAppController {
           if (event.generation !== undefined && event.generation !== this.generation) continue;
           if (event.openLink) {
             const viewId = this.document.viewId;
+            const currentDocument = () => event.generation === undefined || event.generation === this.generation;
             void (async () => {
               let success = false;
               try {
@@ -190,7 +205,7 @@ export class McpAppController {
                   )
                     throw new Error('MCP_APP_LINK_NOT_AUTHORIZED');
                   // Closing can win while the execution Host checks the current card.
-                  if (!this.closing && !this.stopped && this.document?.viewId === viewId) {
+                  if (!this.closing && !this.stopped && this.document?.viewId === viewId && currentDocument()) {
                     await this.openLink(event.openLink.url);
                     success = true;
                   }
@@ -198,7 +213,7 @@ export class McpAppController {
               } catch {
                 /* Report the failed link action to the Host so its RPC can finish. */
               }
-              if (!this.stopped && this.document?.viewId === viewId)
+              if (!this.stopped && this.document?.viewId === viewId && currentDocument())
                 await this.invoke(this.sessionId, {
                   op: 'link-result',
                   viewId,

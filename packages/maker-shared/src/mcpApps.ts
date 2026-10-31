@@ -135,7 +135,7 @@ export function projectMcpAppContent(content: unknown, marked = false): unknown 
 /** Trusted proxy. No privileged host API; relay only the actual inner window. */
 export const MCP_APP_SANDBOX_SCRIPT = `
 const frame=document.createElement('iframe');
-frame.setAttribute('sandbox','allow-scripts');
+frame.setAttribute('sandbox','allow-scripts allow-forms');
 frame.setAttribute('allow',"camera 'none'; microphone 'none'; geolocation 'none'; clipboard-write 'none'");
 frame.style.cssText='border:0;width:100%;height:100%;display:block';
 let loaded=false;
@@ -164,7 +164,7 @@ window.addEventListener('message',event=>{
     resource.protocol===proxy.protocol&&resource.host===proxy.host)return;
    // URL.origin can be null for Electron's registered custom scheme.
    resourceOrigin=resource.protocol+'//'+resource.host;
-   frame.setAttribute('sandbox','allow-scripts allow-same-origin');frame.src=resource.href;
+   frame.setAttribute('sandbox','allow-scripts allow-same-origin allow-forms');frame.src=resource.href;
   }
   else{frame.srcdoc=message.params.html;}
   loaded=true;

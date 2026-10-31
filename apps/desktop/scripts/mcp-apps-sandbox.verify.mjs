@@ -30,6 +30,9 @@ const assets = http.createServer((req, res) => {
   if (req.url === '/asset.js') {
     res.setHeader('Content-Type', 'text/javascript');
     res.end('window.allowedAssetLoaded=true;');
+  } else if (req.url === '/sdk-external.js') {
+    res.setHeader('Content-Type', 'text/javascript');
+    res.end('import { App } from "@modelcontextprotocol/ext-apps";window.externalSdkLoaded=typeof App==="function";window.externalSdkResolve();');
   } else if (req.url === '/frame') {
     res.setHeader('Content-Type', 'text/html');
     res.end('<!doctype html><body>Declared frame domain</body>');
@@ -53,7 +56,7 @@ const endpoint = await startMockAppServer({
 try {
   if (pluginView) await writeFile(path.join(temporary, 'fixture.txt'), 'host-only-file');
   if (pluginView) {
-    const fixture = hostSdk ? hostSdkFixture() : authorMode ? await authorFixture(authorMode, temporary) : await pluginUiFixture(independent, independent ? allowed : undefined, true);
+    const fixture = hostSdk ? hostSdkFixture(allowed) : authorMode ? await authorFixture(authorMode, temporary) : await pluginUiFixture(independent, independent ? allowed : undefined, true);
     if (bom) fixture.html = String.fromCharCode(0xfeff) + fixture.html;
     await writeFile(path.join(temporary, 'plugin.json'), JSON.stringify(fixture));
   }
@@ -85,7 +88,7 @@ try {
       else controller.receive(event.data);
     });
     controller.open({platform:'desktop',theme:'light',styles:{variables:{'--color-background-primary':'rgb(248,248,246)','--color-text-primary':'rgb(0,0,0)','--color-background-secondary':'rgb(238,238,235)','--color-border-primary':'rgb(160,160,158)'}}}).then(doc=>{
-      frame=document.createElement('iframe');frame.sandbox='allow-scripts allow-same-origin';frame.src='cindy-mcp-app://'+doc.viewId+'/sandbox';frame.style='width:700px;height:550px';document.body.appendChild(frame);
+      frame=document.createElement('iframe');frame.sandbox='allow-scripts allow-same-origin allow-forms';frame.src='cindy-mcp-app://'+doc.viewId+'/sandbox';frame.style='width:700px;height:550px';document.body.appendChild(frame);
     });
   `,
     },
@@ -172,7 +175,7 @@ try {
           sendToGhost:(_id,payload)=>{if(payload.type==='tool-call')sdkDispatched.push(payload.args?.text);handler(payload);return true;}});
         runInNewContext(fixture.main,{setTimeout,cindy:{library:request=>{assert.ok(authorVault);assert.ok(['writeBegin','writeChunk','writeCommit','writeAbort'].includes(request.op));return authorVault[request.op](request);},onHostMessage:fn=>{handler=fn;},send:payload=>payload.type==='tool-progress'?dispatcher.handleToolProgress(ghost.manifest.id,payload):dispatcher.handleToolResult(ghost.manifest.id,payload)}});
         executePlugin=async(name,args,onProgress)=>{const reply=await dispatcher.callGhostTool({ghostId:ghost.manifest.id,tool:name,args,onProgress});assert.equal(reply.ok,true);if(authorMode==='loader'){loaderCalls.push({name,args});return loaderResultOverride??reply.result;}return reply.result;};
-        config={id:'example',url:'',transport:'in-process',plugin:{instance:ghost.manifest.id,revision:'fixture',packageSha256:'fixture',title:ghost.manifest.name,trust:'unverified',domains:independent?[allowed]:[],assertCurrent(){},
+        config={id:'example',url:'',transport:'in-process',plugin:{instance:ghost.manifest.id,revision:'fixture',packageSha256:'fixture',title:ghost.manifest.name,trust:'unverified',domains:independent||process.env.CINDY_MCP_APP_TEST_HOST_SDK==='1'?[allowed]:[],assertCurrent(){},
           createTransport:()=>createPluginAppTransport({instance:ghost.manifest.id,revision:'fixture',tools:ghost.manifest.tools,ui:ghost.manifest.mcpApps?.ui,hosts:ghost.manifest.network?.hosts,assertCurrent(){},readHtml:()=>fixture.html,
             call:(grant,args)=>executePlugin(grant.tool,args,grant.onProgress)})}};
       }
@@ -202,7 +205,7 @@ try {
         host.dispatch=(caller,session,id,message)=>{if(message.method==='tools/call'&&message.params.name==='echo')sdkIds.push({text:message.params.arguments.text,id:message.id});return dispatch(caller,session,id,message);};
       }
       if(process.env.CINDY_MCP_APP_TEST_BOM==='1'){
-        const open=host.open.bind(host);host.open=async(...args)=>{const doc=await open(...args);assert.equal(doc.html.charCodeAt(0),0xfeff);if(process.env.CINDY_MCP_APP_TEST_HOST_SDK!=='1')assert.equal(doc.sdk,undefined);return doc;};
+        const open=host.open.bind(host);host.open=async(...args)=>{const doc=await open(...args);assert.equal(doc.html.charCodeAt(0),0xfeff);assert.equal(typeof doc.sdk?.source,'string');return doc;};
       }
       setMcpAppFileReader((id,token,request)=>host.readPluginFile(id,token,request));
       if(process.env.CINDY_MCP_APP_TEST_METRICS==='1'){
@@ -267,6 +270,7 @@ try {
         await wait(()=>inner()?.executeJavaScript('window.pageState?.ready===true'));
         assert.equal(await inner().executeJavaScript('window.pageState.page'),1);
         assert.equal(await inner().executeJavaScript('window.loaderCompatMode'), 'CSS1Compat');
+        assert.equal(await inner().executeJavaScript('window.computedSdkLoaded&&window.externalSdkLoaded'),true);
         assert.equal(await inner().executeJavaScript('typeof window.App'),'undefined');
         assert.equal(record.sdk,undefined);
         const attachment=process.env.CINDY_MCP_APP_TEST_REMOTE!=='1'
@@ -302,10 +306,43 @@ try {
           }
           assert.deepEqual(await inner().executeJavaScript('({inputs:pageState.inputs,results:pageState.results})'),{inputs:0,results:0});
         }
+        stage='host SDK implicit document.write';
+        await inner().executeJavaScript('(async()=>{const r=await window.sdkApp.callServerTool({name:"generate_page",arguments:{page:5}});await window.sdkApp.close();document.write(r._meta.view.html);document.close();})()');
+        await wait(()=>inner()?.executeJavaScript('window.pageState?.page===5&&window.pageState.ready'));
         if(attachment){
           assert.equal(await inner().executeJavaScript('window.sdkApp.getHostContext().toolInfo.tool._meta["cindy/attachments"][0]._meta["cindy/file"].url'),attachment);
           assert.equal(await inner().executeJavaScript('fetch('+JSON.stringify(attachment)+').then(r=>r.text())'),'host-only-file');
         }
+        // G5 regression, integration tier: the generated page's real submit handler
+        // must reach the tool via the SDK, while default submission stays CSP-blocked.
+        stage='host SDK form click';
+        await inner().executeJavaScript('document.querySelector("#bridged input").value="form-click";document.querySelector("#bridged button").click()');
+        await wait(()=>inner().executeJavaScript('window.pageState.formResult==="form-click"'));
+        assert.ok(sdkDispatched.includes('form-click'));
+        assert.equal(await inner().executeJavaScript('window.pageState.defaultPreventedAtHandler'),false,'page submit handler must run before the Host fallback');
+        stage='host SDK form Enter';
+        await inner().executeJavaScript('document.querySelector("#bridged input").value="form-enter";document.querySelector("#bridged input").focus()');
+        // Hidden BrowserWindows do not receive native sendInputEvent key presses on
+        // macOS. CDP dispatches a real browser key event without stealing OS focus.
+        window.webContents.debugger.attach('1.3');
+        try {
+          await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled',{enabled:true});
+          await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:String.fromCharCode(13)});
+          await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+        } finally { window.webContents.debugger.detach(); }
+        await wait(()=>inner().executeJavaScript('window.pageState.formResult==="form-enter"'));
+        assert.ok(sdkDispatched.includes('form-enter'));
+        stage='host SDK native form no-op';
+        const formUrl=inner().url, formRequests=requests;
+        await inner().executeJavaScript('document.querySelector("#native").action='+JSON.stringify(denied)+';document.querySelector("#native").addEventListener("submit",event=>{window.nativeSubmitEvent=event;});document.addEventListener("securitypolicyviolation",event=>{if(event.violatedDirective==="form-action")window.pageState.formBlocked=true;});document.querySelector("#native button").click()');
+        assert.equal(await inner().executeJavaScript('window.nativeSubmitEvent.defaultPrevented'),true);
+        await inner().executeJavaScript('document.querySelector("#native").submit();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        assert.ok(inner(),'default submission must not replace the App with a CSP error document');
+        assert.equal(await inner().executeJavaScript('window.pageState.formBlocked===true'),false);
+        assert.equal(inner().url,formUrl,'default submission must not navigate');
+        assert.equal(requests,formRequests,'default submission must not send a network request');
+        assert.equal((await inner().executeJavaScript('window.sdkApp.callServerTool({name:"echo",arguments:{text:"after-form"}})')).content[0].text,'after-form');
+        console.log('HOST_SDK_FORMS_VERDICT=passed (click, Enter, default submit()/button no-op before CSP, card still usable)');
         stage='host SDK theme update';
         await window.webContents.executeJavaScript('window.testController.context({theme:"light"})');
         await wait(()=>inner().executeJavaScript('window.pageState.theme==="light"'));
@@ -343,10 +380,18 @@ try {
         await inner().executeJavaScript("document.querySelector('input').value='保留输入';document.querySelector('#refresh').click()");
         await wait(()=>inner().executeJavaScript("document.querySelectorAll('#items li').length===3"));
         assert.equal(await inner().executeJavaScript("document.querySelector('input').value"),'保留输入');
-        stage='loader form click and Enter';
+        stage='loader form submit click and real Enter';
         await inner().executeJavaScript("document.querySelector('#record-form button').click()");
         await wait(()=>inner().executeJavaScript("document.querySelector('#result').textContent==='已保存 R-1'"));
-        await inner().executeJavaScript("document.querySelector('input').value='第二条';document.querySelector('input').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}))");
+        await inner().executeJavaScript("document.querySelector('input').value='第二条';document.querySelector('input').focus()");
+        // Real browser Enter through CDP (hidden windows ignore sendInputEvent on macOS);
+        // implicit submission must reach the page's submit handler, not a synthetic keydown.
+        window.webContents.debugger.attach('1.3');
+        try {
+          await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled',{enabled:true});
+          await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:String.fromCharCode(13)});
+          await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+        } finally { window.webContents.debugger.detach(); }
         await wait(()=>inner().executeJavaScript("document.querySelector('#result').textContent==='已保存 R-2'"));
         assert.equal(loaderCalls.filter(call=>call.name==='api_write').length,2);
         stage='loader fragment and persistent script';
@@ -355,7 +400,16 @@ try {
         await inner().executeJavaScript("document.querySelector('#refresh').click()");
         await wait(()=>inner().executeJavaScript("document.querySelectorAll('#items li').length===3"));
         assert.equal(await inner().executeJavaScript("document.querySelectorAll('script[type=module]').length"),1);
-        assert.equal(await window.webContents.executeJavaScript("document.querySelector('iframe').sandbox.contains('allow-forms')"),false);
+        assert.equal(await window.webContents.executeJavaScript("document.querySelector('iframe').sandbox.contains('allow-forms')"),true);
+        stage='loader native form fallback';
+        const loaderUrl=inner().url, loaderRequests=requests, loaderWrites=loaderCalls.length;
+        // Unhandled submit button and form.submit() must be no-ops: no request, no navigation.
+        await inner().executeJavaScript("(()=>{const form=document.createElement('form');form.action="+JSON.stringify(denied)+";form.method='post';form.innerHTML='<button>native</button>';document.body.append(form);form.querySelector('button').click();form.submit();form.remove();})()");
+        await inner().executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        assert.ok(inner(),'native submission must not replace the page');
+        assert.equal(inner().url,loaderUrl,'native submit must not navigate');
+        assert.equal(requests,loaderRequests,'native submit must not reach the network');
+        assert.equal(loaderCalls.length,loaderWrites,'native submit must not call tools');
         stage='loader themes and narrow screen';
         for(const theme of ['light','dark']){
           const variables=theme==='light'?{'--color-background-primary':'rgb(248,248,246)','--color-background-secondary':'rgb(238,238,235)','--color-text-primary':'rgb(38,38,38)','--color-border-primary':'rgb(160,160,158)'}:{'--color-background-primary':'rgb(31,31,30)','--color-background-secondary':'rgb(44,44,42)','--color-text-primary':'rgb(235,235,232)','--color-border-primary':'rgb(100,100,98)'};
@@ -368,7 +422,7 @@ try {
           if(process.env.CINDY_AUTHOR_SCREENSHOTS){mkdirSync(process.env.CINDY_AUTHOR_SCREENSHOTS,{recursive:true});writeFileSync(process.env.CINDY_AUTHOR_SCREENSHOTS+'/loader-'+theme+'.png',(await window.webContents.capturePage()).toPNG());}
         }
         assert.equal(turns,0);
-        console.log('AUTHOR_APP_VERDICT=passed (loader; first result, generated SDK, JSON preserves inputs, click/Enter, fragment, Light/Dark)');
+        console.log('AUTHOR_APP_VERDICT=passed (loader; first result, generated SDK, JSON preserves inputs, submit click/real Enter, native submit no-op, fragment, Light/Dark)');
         return;
       }
       if(authorMode==='files'){
