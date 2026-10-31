@@ -3642,7 +3642,8 @@
           "contextWindowInvalid": "Das Kontextfenster muss eine gültige positive Ganzzahl sein (Trennzeichen zwischen Zifferngruppen sind zulässig).",
           "requestPathInvalid": "Den exakten Anfragepfad mit einem einzelnen / beginnen. Keine Fragmente oder Pfadsegmente mit . und .. verwenden; Leerzeichen und unsichere Zeichen prozentkodieren.",
           "modelRequired": "Mindestens ein Modell hinzufügen",
-          "oauthInvalid": "Unvollständige OAuth-Konfiguration: Alle Felder sind erforderlich und beide Endpunkte müssen sicher sein https URLs"
+          "oauthInvalid": "Unvollständige OAuth-Konfiguration: Alle Felder sind erforderlich und beide Endpunkte müssen sicher sein https URLs",
+          "baseUrlRequired": "Gib die Basis-URL dieser Laufzeit ein oder setze ihr Protokoll auf den Standard zurück"
         },
         "toast": {
           "created": "Anbieter hinzugefügt",
@@ -10530,7 +10531,9 @@
       "mention": {
         "all": "Alle",
         "allHint": "Alle antworten",
-        "label": "Teammitglied erwähnen"
+        "label": "Teammitglied erwähnen",
+        "allBots": "Alle Teammitglieder",
+        "allBotsHint": "Nur Teammitglieder"
       },
       "composer": {
         "label": "Gruppenchat-Nachricht",
@@ -10655,7 +10658,9 @@
         "projectDirClear": "Ordner entfernen",
         "projectDirNote": "Hier arbeiten Teammitglieder bei der Arbeitsaufteilung. Du kannst das Feld leer lassen, dann nutzen sie den eigenen Ordner dieses Gruppenchats. Wenn du ein Git-Projekt auswählst, erhält jede Arbeitsaufteilung einen neuen Worktree und Branch, damit dein eigener Code unverändert bleibt.",
         "autoContinueSaveFailed": "Die Schrittübergabe konnte nicht gespeichert werden. Versuch es erneut.",
-        "projectDirSaveFailed": "Der Projektordner konnte nicht gespeichert werden. Prüfe, ob der Ordner noch vorhanden ist, und versuch es erneut."
+        "projectDirSaveFailed": "Der Projektordner konnte nicht gespeichert werden. Prüfe, ob der Ordner noch vorhanden ist, und versuch es erneut.",
+        "allowMentionAllBots": "@alle Teammitglieder erlauben",
+        "allowMentionAllBotsHint": "Nur der Gruppenbesitzer kann diese Einstellung ändern. Alle Teammitglieder können antworten; in großen Gruppen mit Bedacht verwenden. KI-Antworten in deinem Namen sind davon unabhängig."
       },
       "errors": {
         "memberLimit": "Ein Gruppenchat braucht 2–6 Teammitglieder",
@@ -10679,7 +10684,8 @@
         "quoteUnavailable": "Die zitierte Nachricht wurde gelöscht oder ist nicht mehr sichtbar. Das Zitat wurde entfernt. Sende erneut.",
         "lifecycleUnavailable": "Der aktuelle Server oder Computer unterstützt diese Aktion noch nicht.",
         "groupDissolved": "Diese Gruppe wurde aufgelöst. Du kannst den verfügbaren Verlauf weiterhin lesen.",
-        "lastOwner": "Übertrage die Inhaberschaft oder löse diese Gruppe auf, bevor du sie verlässt."
+        "lastOwner": "Übertrage die Inhaberschaft oder löse diese Gruppe auf, bevor du sie verlässt.",
+        "allBotsMentionDisabled": "Der Gruppenbesitzer hat @alle Teammitglieder nicht aktiviert."
       },
       "organizer": "Organisator",
       "plan": {
@@ -13780,6 +13786,41 @@
       "closeDescription": "Diese Folgeunterhaltung wird beendet und ihr Verlauf gelöscht. Die Hauptaufgabe läuft weiter.",
       "closeConfirm": "Schließen und löschen",
       "closeFailed": "Der Nebenchat konnte nicht geschlossen werden. Versuch es erneut."
+    },
+    "teammateProcess": {
+      "record": "Aktivität",
+      "operations": "Aktivitätsprotokoll",
+      "elapsed": "In Arbeit seit {{duration}}",
+      "took": "Dauer: {{duration}}",
+      "processing": "In Arbeit",
+      "worked": "Aktivität",
+      "thinking": "Denkt nach",
+      "thought": "Überlegung",
+      "failed_one": "{{count}} Aufruf fehlgeschlagen",
+      "failed_other": "{{count}} Aufrufe fehlgeschlagen",
+      "separator": ", ",
+      "actions": {
+        "running": {
+          "read": "Dateien werden gelesen",
+          "edit": "Dateien werden bearbeitet",
+          "search": "Suche läuft",
+          "web": "Web wird durchsucht",
+          "command": "Befehle werden ausgeführt",
+          "tools": "Werkzeuge werden verwendet",
+          "delegate": "Arbeit wird delegiert",
+          "plan": "Plan wird aktualisiert"
+        },
+        "done": {
+          "read": "Dateien gelesen",
+          "edit": "Dateien bearbeitet",
+          "search": "Suche durchgeführt",
+          "web": "Web durchsucht",
+          "command": "Befehle ausgeführt",
+          "tools": "Werkzeuge verwendet",
+          "delegate": "Arbeit delegiert",
+          "plan": "Plan aktualisiert"
+        }
+      }
     }
   },
   "ccAgent": {

@@ -34,7 +34,9 @@
   "mention": {
     "all": "Alle",
     "allHint": "Alle antworten",
-    "label": "Teammitglied erwähnen"
+    "label": "Teammitglied erwähnen",
+    "allBots": "Alle Teammitglieder",
+    "allBotsHint": "Nur Teammitglieder"
   },
   "composer": {
     "label": "Gruppenchat-Nachricht",
@@ -254,7 +256,9 @@
     "cloudStatus": {
       "loading": "Einstellungen werden geladen…",
       "unavailable": "Die Gruppeneinstellungen konnten nicht geladen werden. Versuch es erneut."
-    }
+    },
+    "allowMentionAllBots": "@alle Teammitglieder erlauben",
+    "allowMentionAllBotsHint": "Nur der Gruppenbesitzer kann diese Einstellung ändern. Alle Teammitglieder können antworten; in großen Gruppen mit Bedacht verwenden. KI-Antworten in deinem Namen sind davon unabhängig."
   },
   "errors": {
     "memberLimit": "Ein Gruppenchat braucht 2–6 Teammitglieder",
@@ -278,7 +282,8 @@
     "quoteUnavailable": "Die zitierte Nachricht wurde gelöscht oder ist nicht mehr sichtbar. Das Zitat wurde entfernt. Sende erneut.",
     "lifecycleUnavailable": "Der aktuelle Server oder Computer unterstützt diese Aktion noch nicht.",
     "groupDissolved": "Diese Gruppe wurde aufgelöst. Du kannst den verfügbaren Verlauf weiterhin lesen.",
-    "lastOwner": "Übertrage die Inhaberschaft oder löse diese Gruppe auf, bevor du sie verlässt."
+    "lastOwner": "Übertrage die Inhaberschaft oder löse diese Gruppe auf, bevor du sie verlässt.",
+    "allBotsMentionDisabled": "Der Gruppenbesitzer hat @alle Teammitglieder nicht aktiviert."
   },
   "followUp": {
     "next": "Plan · Nächster Schritt",
