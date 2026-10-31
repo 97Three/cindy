@@ -1,12 +1,13 @@
+import { TeammateProcessStatus } from '@/features/bots/TeammateProcessStatus';
 import { scrollRangeIntoView } from '@/lib/scrollRangeIntoView';
 import { historyAfter } from './historyAfter';
 import { readMailCard } from '@cindy/maker-shared/ghost-card-form';
 import { animateFocusScroll } from './animateFocusScroll';
-import { simplifyBotRenderItems } from '@/features/bots/botConversationPresentation';
+import { botProcessItems } from '@/features/bots/botConversationPresentation';
 import { isVisibleVoiceCallMessage } from '@/features/bots/voice/voiceCallPresentation';
 import { MessageViewport, type MessageViewportApi } from './MessageViewport';
 import { PAGE_TEXT_NAVIGATION_EVENT } from '@/lib/pageTextAccess';
-export { simplifyBotRenderItems } from '@/features/bots/botConversationPresentation';
+export { botProcessItems, simplifyBotRenderItems } from '@/features/bots/botConversationPresentation';
 import { placeBotTaskCardsAfterIntroduction } from '@cindy/maker-shared/botCollaboration';
 import { describeToolUse, sourcePathCandidatesFromDescriptor } from '@cindy/maker-shared/tool-use-descriptor';
 /**
@@ -442,6 +443,8 @@ import { hasReviewableTurnChanges, type TurnChangeSetSummary } from '../../../sh
 interface MessageStreamProps {
   /** Content before history, sharing its scrolling and measured content height. */
   header?: ReactNode;
+  /** Host forms share the measured scroll area, outside message virtualization. */
+  footer?: ReactNode;
   historyVisibleAfter?: number;
   onAskInSideChat?: (quote: string) => Promise<boolean>;
   /** Active session id — used to reset scroll state on session switch. */
@@ -480,6 +483,8 @@ interface MessageStreamProps {
   botUnreadBoundaryAt?: number | null;
   onBotReadThrough?: (at: number) => void;
   messages: ChatMessage[];
+  /** Persisted row already owned by the live error banner; keep its recovery state there. */
+  activeErrorClientId?: string | null;
   /** The ongoing call appears only in its transcript popover, including history replays. */
   activeVoiceCallId?: string | null;
   /** This task's preparation card is shown in the composer, including after history reload. */
@@ -2957,6 +2962,7 @@ export const WorkGroupRenderItemView = memo(function WorkGroupRenderItemView({
     }
     return {
       kind: 'rendered',
+      prose: child.type === 'message' && child.message.role === 'assistant' && !child.message.systemCardType,
       key: child.key,
       renderNode: () => renderWorkGroupChild(child, context),
     };
@@ -2974,6 +2980,8 @@ export const WorkGroupRenderItemView = memo(function WorkGroupRenderItemView({
       compact={compact}
       deferred={item.deferred}
       fitHeader={Boolean(replyColumnSpacer)}
+      journal={item.teammateJournal}
+      journalTitle={item.isStreaming ? elapsed => <TeammateProcessStatus sessionId={context.sessionId}>{elapsed}</TeammateProcessStatus> : undefined}
     />
   );
   return (
@@ -2994,6 +3002,7 @@ export const WorkGroupRenderItemView = memo(function WorkGroupRenderItemView({
 
 export function MessageStream({
   header,
+  footer,
   onAskInSideChat,
   historyVisibleAfter,
   sessionId,
@@ -3008,6 +3017,7 @@ export function MessageStream({
   botUnreadBoundaryAt = null,
   onBotReadThrough,
   messages,
+  activeErrorClientId = null,
   activeVoiceCallId = null,
   cindyMakeSessionId,
   cindyMakeCompletionInComposer,
@@ -3389,7 +3399,7 @@ export function MessageStream({
       forkOrigin,
     );
     return simplifiedBotConversation
-      ? simplifyBotRenderItems(grouped, isSessionStreaming, visibleGeneratedFileKeys)
+      ? botProcessItems(grouped, isSessionStreaming)
       : grouped;
   }, [
     ungroupedRenderItems,
@@ -6737,6 +6747,7 @@ export function MessageStream({
                           continuationInFlightProjectionCapability
                         }
                         isLastMessage={msg.clientId === lastMessageClientId}
+                        isActiveError={msg.role === 'error' && msg.clientId === activeErrorClientId}
                         localFileRefs={localFileRefs}
                         assistantAvatar={assistantAvatar}
                         simplifiedBotConversation={simplifiedBotConversation}
@@ -6823,6 +6834,7 @@ export function MessageStream({
                     );
                   })}
                 </div>}</MessageViewport>
+                {footer ? <div className="mt-3.5" data-message-stream-footer>{footer}</div> : null}
               </div>
             </div>
 
@@ -6929,6 +6941,7 @@ const MessageItem = memo(function MessageItem({
   isContinuationTurnOwner,
   continuationInFlightProjectionCapability,
   isLastMessage,
+  isActiveError,
   localFileRefs,
   assistantAvatar,
   simplifiedBotConversation,
@@ -6981,6 +6994,7 @@ const MessageItem = memo(function MessageItem({
    *  error-tail-banner: a trailing un-dismissed error row is rendered by the
    *  actionable banner above the composer instead of an inline card. */
   isLastMessage?: boolean;
+  isActiveError?: boolean;
   localFileRefs: readonly KnownLocalFileRef[];
   /** Bot 对话:assistant 气泡左侧的伙伴头像。普通任务不传。 */
   assistantAvatar?: ReactNode;
@@ -7066,6 +7080,7 @@ const MessageItem = memo(function MessageItem({
         return sessionId ? (
           <McpAppCard sessionId={sessionId} clientId={message.clientId}
             title={String(message.systemCardData?.title ?? '')}
+            plugin={message.systemCardData?.plugin}
             fallbackText={String(message.systemCardData?.fallbackText ?? '')} />
         ) : null;
       }
@@ -7169,10 +7184,10 @@ const MessageItem = memo(function MessageItem({
       // error-tail-banner:普通失败行是尾部消息且未被忽略时,由输入框上方的可操作
       // 红条(重试/关闭)独家承载,流内不重复渲染,避免双红条;被忽略或后续有新
       // 消息后回落为流内静态历史卡。
-      if (isLastMessage && !message.errorDismissed) return null;
-      // 历史里的 turn 失败记录(role='error' 持久化行)——静态时间线卡,
-      // live 报错仍走输入框上方的 ErrorBanner,两者不会同时出现
-      // (error 行落库时不广播,只在历史加载路径进入消息流)。
+      if (isActiveError || (isLastMessage && !message.errorDismissed)) return null;
+      // A live error may be followed by hidden or system rows when history is
+      // reloaded. Its exact persisted identity still belongs to the live banner;
+      // unrelated failures remain available as compact history cards.
       return (
         <ErrorMessageCard
           message={message.content}

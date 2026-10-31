@@ -44,6 +44,7 @@ import { Paperclip, Plus, Users, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { AttachmentRejectionStrip, ThumbnailStrip } from '@/components/new-chat/ComposerAttachments';
+import { ComposerCard, COMPOSER_CONTENT_CLASS } from '@/components/new-chat/ComposerCard';
 import { SendButton } from '@/components/new-chat/SendButton';
 import {
   DropdownMenu,
@@ -65,7 +66,6 @@ import type { AttachedFile } from '@/lib/fileTypes';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import {
-  BOT_GROUP_COMPOSER_CARD,
   BOT_GROUP_COMPOSER_COLUMN,
   BOT_GROUP_COMPOSER_DOCK,
   BOT_GROUP_COMPOSER_FOOTER,
@@ -107,7 +107,7 @@ import { useBotGroupMentionPicker } from './useBotGroupMentionPicker';
 const THREAD_ALL_ALIASES = ['所有人', 'all', 'everyone'] as const;
 
 const sameBotGroupMentions = (a: BotGroupMention, b: BotGroupMention) =>
-  a.all === b.all && a.botIds.length === b.botIds.length && a.botIds.every((botId, index) => botId === b.botIds[index]);
+  (a.allBots === true) === (b.allBots === true) && a.all === b.all && a.botIds.length === b.botIds.length && a.botIds.every((botId, index) => botId === b.botIds[index]);
 
 function isComposingKey(event: KeyboardEvent): boolean {
   return event.nativeEvent.isComposing || event.keyCode === 229;
@@ -172,6 +172,7 @@ export function BotGroupComposer({
   disabled = false,
   planState = null,
   divisionSteps = false,
+  allowMentionAllBots = false,
   attachments: attachmentState = NO_ATTACHMENTS,
   attachmentScope = '',
   dragOver = false,
@@ -198,6 +199,7 @@ export function BotGroupComposer({
   planState?: BotGroupComposerPlanState | null;
   /** Server groups: a 分工 that writes out who does what starts as written; otherwise the organizer arranges it (§7.0). */
   divisionSteps?: boolean;
+  allowMentionAllBots?: boolean;
   attachments?: BotGroupComposerAttachments;
   /** Scope for writing annotated images before send (see botGroupAttachmentScope). */
   attachmentScope?: string;
@@ -247,6 +249,7 @@ export function BotGroupComposer({
     members,
     textareaRef,
     allLabels: thread ? threadAllLabels : undefined,
+    allowMentionAllBots,
   });
   const textRef = useRef(text);
   textRef.current = text;
@@ -543,7 +546,7 @@ export function BotGroupComposer({
           </div>
         ) : null}
         {mention.list}
-        <div className={BOT_GROUP_COMPOSER_CARD}>
+        <ComposerCard className={cn(COMPOSER_CONTENT_CLASS, 'gap-2')}>
           {dragOver ? (
             <div
               data-testid="bot-group-drop-hint"
@@ -725,7 +728,7 @@ export function BotGroupComposer({
               </Tip>
             </span>
           </div>
-        </div>
+        </ComposerCard>
       </div>
     </div>
   );

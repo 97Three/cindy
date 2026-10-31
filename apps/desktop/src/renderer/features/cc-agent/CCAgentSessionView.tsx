@@ -1,3 +1,6 @@
+import { McpAppPermissionPrompt } from '@/components/chat/McpAppPermissionPrompt';
+import { PluginUiEnablePrompt } from '@/components/new-chat/PluginUiEnablePrompt';
+import { McpSetupPrompt, useMcpSetupRequest } from '@/components/new-chat/McpSetupPrompt';
 import { deviceDisplayName } from '@/lib/deviceName';
 import { CompanionVoicePanel } from '../bots/voice/CompanionVoicePanel';
 import { visibleVoiceCallMessages } from '../bots/voice/VoiceCallTranscript';
@@ -1871,6 +1874,7 @@ function CCAgentSessionContent({
     errorIsRecoverable,
     errorRetryText,
     errorCanContinue,
+    errorPersistId,
     disposedErrorPersistId,
     credentialSwitchWait,
     continuationInFlightClientId,
@@ -5289,11 +5293,13 @@ function CCAgentSessionContent({
       requestChatTaskFocus(sessionId, clientId);
     }
   }, [pendingQueue, sessionId, setQueueExpanded]);
+  const pendingMcpSetup = useMcpSetupRequest(sessionId ?? null, !remoteDeviceId && !readOnly);
   const messageStreamEl = (
     <BotChatQuoteProvider value={botChatQuote}>
     <MessageReadAloudContext.Provider value={messageReadAloud.value}>
     <MessageStream
       header={messageStreamHeader}
+      footer={pendingMcpSetup ? <McpSetupPrompt key={pendingMcpSetup.requestId} request={pendingMcpSetup} /> : null}
       key={sessionId}
       sessionId={sessionId}
       sessionTitle={session?.title ?? null}
@@ -5314,6 +5320,7 @@ function CCAgentSessionContent({
       botUnreadBoundaryAt={botChatIdentity ? botUnreadBoundaryAt : null}
       onBotReadThrough={viewVisible ? onBotReadThrough : undefined}
       messages={timelineMessages}
+      activeErrorClientId={!readOnly && error ? errorPersistId : null}
       activeVoiceCallId={activeVoiceCallId}
       historyVisibleAfter={session?.source === 'side-chat' ? new Date(session.createdAt).getTime() : undefined}
       onAskInSideChat={!readOnly && canNavigateSession && sessionId && session?.source !== 'side-chat' && session?.source !== 'bot'
@@ -5899,10 +5906,14 @@ function CCAgentSessionContent({
             />
 
             <div
-              className="mx-auto flex flex-col items-center gap-[10px]"
+              className="relative mx-auto flex flex-col items-center gap-[10px]"
               style={{ width: inputWidth }}
               data-chat-composer-stack
             >
+              {!readOnly && sessionId && <McpAppPermissionPrompt sessionId={sessionId} floating />}
+              {!readOnly && !session?.remoteHostId && (
+                <PluginUiEnablePrompt key={`${sessionId}:${remoteDeviceId ?? agentDeviceId ?? 'local'}`} deviceId={remoteDeviceId ?? agentDeviceId ?? undefined} />
+              )}
               {/* FP-7 / F-PERM-2 / F7.4: mutually exclusive prompts.
                  Plan review takes precedence — the SDK won't interleave it with
                  other tool calls, but explicit priority guards against layout
