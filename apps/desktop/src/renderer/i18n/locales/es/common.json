@@ -2440,7 +2440,7 @@
     "language": {
       "title": "Idioma",
       "label": "Idioma de visualización",
-      "hint": "Se utiliza para la interfaz y los informes de errores de IA. Otras respuestas siguen a su mensaje o solicitud de idioma.",
+      "hint": "Se usa en la interfaz y en los informes de errores de IA. Las demás respuestas siguen el idioma de tu mensaje o el que solicites.",
       "ariaLabel": "Selección de idioma de visualización",
       "options": {
         "system": "Automático (según el sistema)",
@@ -2982,9 +2982,9 @@
         "ariaLabel": "Alternar activación rápida por voz"
       },
       "composerLongPress": {
-        "label": "Mantenga presionado al compositor para la entrada de voz",
-        "hint": "Mantenga presionado el botón izquierdo del mouse en el compositor por un momento para iniciar la entrada de voz. Suelte para detener e insertar el texto.",
-        "ariaLabel": "Alternar mantener compositor para entrada de voz"
+        "label": "Mantener pulsado el cuadro de texto para dictar",
+        "hint": "Mantén pulsado el botón izquierdo del ratón en el cuadro de texto un momento para comenzar a dictar. Suéltalo para detener el dictado e insertar el texto.",
+        "ariaLabel": "Activar o desactivar el dictado al mantener pulsado el cuadro de texto"
       },
       "refinement": {
         "enabled": {
@@ -3391,10 +3391,10 @@
         "close": "Cerrar importación de proveedores",
         "fromFile": "Importar desde archivo",
         "fileTooLarge": "El archivo supera los 4 MiB. Reduce su tamaño y vuelve a intentarlo.",
-        "fileInvalid": "Este archivo no es una configuración de importación de proveedor válida. Verifique el formato JSON y los campos de configuración.",
-        "fileReadFailed": "No se pudo importar el archivo. Selecciónelo nuevamente y vuelva a intentarlo.",
-        "loadFailed": "Esta importación de proveedor ya no es válida. Abra el enlace o seleccione el archivo nuevamente.",
-        "confirmFailed": "No se pudo importar el proveedor. Verifique la configuración o el punto final y vuelva a intentarlo.",
+        "fileInvalid": "Este archivo no es una configuración válida para importar proveedores. Revisa el formato JSON y los campos de configuración.",
+        "fileReadFailed": "No se pudo importar el archivo. Selecciónalo de nuevo y vuelve a intentarlo.",
+        "loadFailed": "Esta importación de proveedor ya no es válida. Abre el enlace o selecciona de nuevo el archivo.",
+        "confirmFailed": "No se pudo importar el proveedor. Revisa la configuración o la dirección del servicio y vuelve a intentarlo.",
         "oauthFailed": "Se agregó el proveedor, pero la autorización no finalizó. Intente la autorización nuevamente.",
         "done": "{{name}} fue importado",
         "oauthDone": "{{name}} fue agregado y autorizado",
@@ -3419,33 +3419,33 @@
           "update": "Se actualizará el proveedor existente {{name}}.",
           "replace-key": "Se reemplazará la clave API almacenada localmente para {{name}}."
         },
-        "fileGuideDescription": "Archivos Cindy en formato UTF-8 JSON, hasta 4 MiB.",
-        "fileGuideSteps": "Utilice el ejemplo para completar el nombre del proveedor, el punto final URL, la clave API y los detalles del modelo.",
-        "fileGuidePrivacy": "El ejemplo no contiene ninguna clave real. Mantenga privados los archivos con su clave.",
-        "selectJsonFile": "Elija el archivo JSON",
+        "fileGuideDescription": "Archivos JSON UTF-8 en formato Cindy, de hasta 4 MiB.",
+        "fileGuideSteps": "Usa el ejemplo para completar el nombre del proveedor, la URL del servicio, la clave de API y los datos de los modelos.",
+        "fileGuidePrivacy": "El ejemplo no contiene una clave real. Mantén privados los archivos que contengan tu clave.",
+        "selectJsonFile": "Elegir archivo JSON",
         "downloadExample": "Descargar ejemplo",
         "showFormat": "Ver guía de formato",
         "hideFormat": "Contraer guía de formato",
         "formatStructure": "El archivo contiene un objeto JSON, sin Base64, un enlace de importación o un contenedor adicional. Los campos siguientes describen un proveedor de claves API personalizado. Los nombres de los campos distinguen entre mayúsculas y minúsculas; JSON no permite comentarios.",
-        "formatIdentity": "Requerido. Establezca el tipo en \"personalizado\" y el nombre en el nombre del proveedor que desea mostrar.",
-        "formatAuth": "Requerido. En este ejemplo, establezca el método en \"apiKey\" y reemplace apiKey con la clave de su proveedor.",
-        "formatEndpoint": "Requerido para cada punto final. El protocolo acepta \"openai-chat\", \"openai-responses\", \"anthropic-messages\" y \"google-generative-ai\". Establezca baseUrl en el punto final HTTP(S) completo URL; Se recomienda HTTPS.",
+        "formatIdentity": "Obligatorio. Establece kind en \"custom\" y name en el nombre del proveedor que quieres mostrar.",
+        "formatAuth": "Obligatorio. En este ejemplo, establece method en \"apiKey\" y sustituye apiKey por la clave de tu proveedor.",
+        "formatEndpoint": "Obligatorio para cada endpoint. protocol admite \"openai-chat\", \"openai-responses\", \"anthropic-messages\" y \"google-generative-ai\". Establece baseUrl en la URL HTTP(S) completa del servicio; se recomienda HTTPS.",
         "formatTargets": "Matriz de motor opcional: \"claude-code\", \"codex\" o \"pi\". Omítalo para hacer coincidir los motores por protocolo o especifique los motores explícitamente. Claude Code también admite los protocolos OpenAI y Google. El ejemplo solo habilita Pi.",
-        "formatModels": "Opcional. Utilice cadenas de ID de modelo u objetos con ID (el nombre es opcional). Omita la lista o déjela vacía para recuperar modelos después de la confirmación. Una lista no vacía omite la búsqueda automática.",
+        "formatModels": "Opcional. Usa cadenas con el ID del modelo u objetos con id (name es opcional). Omite la lista o déjala vacía para obtener los modelos tras la confirmación. Una lista no vacía omite la búsqueda automática.",
         "formatMetadata": "Campos opcionales del modelo: group es el grupo del modelo, contextWindow es la longitud del contexto y maxOutputTokens es el límite de salida; ambos se expresan en tokens. Los valores de ejemplo son ilustrativos. Usa las capacidades reales del modelo.",
-        "formatEffort": "Campos de modelo opcionales: los esfuerzos enumeran los niveles de esfuerzo admitidos; defaultEffort selecciona uno de ellos como predeterminado. Elimine ambos campos si no está seguro.",
-        "formatLimits": "Hasta 8 terminales por proveedor y 10 000 modelos por terminal, dentro del límite de archivos de 4 MiB.",
+        "formatEffort": "Campos opcionales del modelo: efforts enumera los niveles de intensidad de razonamiento compatibles; defaultEffort selecciona uno como predeterminado. Si tienes dudas, elimina ambos campos.",
+        "formatLimits": "Hasta 8 endpoints por proveedor y 10 000 modelos por endpoint, dentro del límite de 4 MiB por archivo.",
         "exampleTitle": "Ejemplo de JSON (igual que la descarga)",
-        "fileGuidePrepare": "Prepare su archivo",
+        "fileGuidePrepare": "Preparar el archivo",
         "fileGuideReview": "Vista previa y confirmación",
-        "fileGuideReviewHint": "Importe uno o más proveedores. Revise el archivo primero; No se guarda nada hasta que lo confirmes.",
+        "fileGuideReviewHint": "Importa uno o más proveedores. Revisa primero el archivo; no se guarda nada hasta que confirmes.",
         "formatConversion": "Primero convierta las exportaciones de otros clientes a este formato.",
         "downloadBatchExample": "Descargar ejemplo por lotes",
         "formatBatch": "Para un lote, utilice { \"providers\": [config1, config2] } con la estructura de proveedor único que aparece a continuación para cada entrada. Máximo 50 entradas y 4 MiB en total. Las ranuras para claves integradas y los identificadores explícitos no deben repetirse. Si alguna entrada tiene una estructura no válida, no se crean borradores de importación para el archivo.",
-        "batchTitle": "Proveedores de importación ({{count}})",
+        "batchTitle": "Importar proveedores ({{count}})",
         "batchNote": "Seleccione proveedores para importar juntos. Revise individualmente para actualizar una conexión existente o autorizar. Las entradas guardadas se conservan si falla otra entrada.",
-        "batchImport": "Importar seleccionado ({{count}})",
-        "batchProgress": "{{count}} de {{total}} agregado o actualizado",
+        "batchImport": "Importar seleccionados ({{count}})",
+        "batchProgress": "Agregados o actualizados: {{count}} de {{total}}",
         "batchItem": "Configuración {{index}}",
         "batchReviewOne": "Revisar individualmente",
         "batchStatus": {
@@ -3453,12 +3453,12 @@
           "ready": "Listo para importar",
           "saving": "Importando…",
           "saved": "Importado",
-          "modelsPending": "Importado; reintentar el descubrimiento del modelo en la configuración del proveedor",
+          "modelsPending": "Importado; vuelve a buscar los modelos en la configuración del proveedor",
           "failed": "La importación falló; reintentar o revisar individualmente",
           "manual": "Se requiere confirmación o autorización individual",
           "invalid": "Vista previa no disponible; verifique la configuración o seleccione el archivo nuevamente",
           "skipped": "Saltado; seleccione el archivo nuevamente para importar esta entrada",
-          "authorizationPending": "Conexión agregada; autorización completa en la configuración del proveedor"
+          "authorizationPending": "Conexión agregada; completa la autorización en la configuración del proveedor"
         }
       },
       "order": {
@@ -4997,7 +4997,7 @@
     },
     "auxiliaryModels": {
       "title": "Modelos auxiliares",
-      "description": "Se utiliza para la denominación automática de tareas y el cambio de nombre de IA, sugerencias de mensajes del compositor, ayuda, resúmenes de tareas fijadas, títulos de IM/Feishu y comprobaciones de contexto de grupo, secuencias de comandos de tareas programadas, preguntas y respuestas rápidas del complemento \"seguir el valor predeterminado\" y refinamiento de voz BYOK.",
+      "description": "Se usan para nombrar tareas automáticamente y renombrarlas con IA, sugerir instrucciones en el cuadro de texto, ofrecer ayuda, resumir tareas fijadas, generar títulos de IM / Feishu y comprobar el contexto de grupos, crear scripts de tareas programadas, responder preguntas rápidas de complementos con la opción «usar el modelo predeterminado» y mejorar el texto dictado mediante BYOK.",
       "automatic": "Recomendación automática",
       "customize": "Personalizado",
       "preferred": {
@@ -5006,17 +5006,17 @@
         "ariaLabel": "Elige el modelo auxiliar preferido"
       },
       "fallback1": {
-        "label": "Repliegue 1",
+        "label": "Alternativa 1",
         "description": "Se utiliza si el modelo preferido no está disponible. Opcional.",
-        "ariaLabel": "Elija el primer modelo auxiliar alternativo"
+        "ariaLabel": "Elegir el primer modelo auxiliar alternativo"
       },
       "fallback2": {
-        "label": "Repliegue 2",
+        "label": "Alternativa 2",
         "description": "Se utiliza si los dos primeros modelos no están disponibles. Opcional.",
-        "ariaLabel": "Elija el segundo modelo auxiliar alternativo"
+        "ariaLabel": "Elegir el segundo modelo auxiliar alternativo"
       },
       "emptySlot": "No seleccionado",
-      "customHint": "Los modelos se prueban en el orden elegido y también se realiza una copia de seguridad de la revisión automática cuando los modelos integrados no están disponibles. Los proveedores seleccionados reciben contexto de revisión: mensajes y referencias, detalles de tareas y acciones (incluidas acciones bloqueadas), identidad y permisos, rutas de archivos y sistema operativo.",
+      "customHint": "Los modelos se prueban en el orden elegido y también sirven como alternativa para la revisión automática cuando sus modelos integrados no están disponibles. Los proveedores seleccionados reciben el contexto de revisión: mensajes y referencias, detalles de tareas y acciones (incluidas las bloqueadas), identidad y permisos, rutas de archivos y sistema operativo.",
       "signInHint": "Inicie sesión en Cindy para utilizar las recomendaciones automáticas. Mientras no haya iniciado sesión, elija un modelo configurado de otro proveedor en Personalizado.",
       "chooseAgent": "Elija un Agent",
       "backToAgents": "Volver a la selección Agent",
@@ -5028,8 +5028,8 @@
       "saveFailed": "No se pudo guardar la configuración del modelo auxiliar",
       "chain": {
         "cindyHy3": "Hy3",
-        "cindyDeepseekV4Flash": "Flash DeepSeek v4",
-        "cindyQwen38Flash": "Flash Qwen 3.8"
+        "cindyDeepseekV4Flash": "DeepSeek v4 flash",
+        "cindyQwen38Flash": "Qwen 3.8 Flash"
       }
     },
     "compaction": {
@@ -5108,12 +5108,12 @@
       },
       "backends": {
         "label": "Modelos de backend de visión",
-        "hint": "Elija hasta dos modelos multimodales que conviertan imágenes en texto. El segundo (copia de seguridad) es opcional.",
+        "hint": "Elige hasta dos modelos multimodales para convertir imágenes en texto. El segundo, que se usa como alternativa, es opcional.",
         "primary": "Primaria",
-        "fallback": "Copia de seguridad",
+        "fallback": "Alternativo",
         "unset": "Ninguno seleccionado",
-        "noBackup": "Sin respaldo",
-        "hintSecondary": "El backend principal se utiliza primero. Si falla y se establece una copia de seguridad, se utiliza la copia de seguridad. Si ambos fallan, la imagen no se puede describir y se reemplaza con un aviso de texto."
+        "noBackup": "Sin modelo alternativo",
+        "hintSecondary": "Se usa primero el modelo principal. Si falla y hay un modelo alternativo configurado, se usa este último. Si ambos fallan, la imagen no se puede describir y se sustituye por un aviso de texto."
       }
     },
     "terminalShell": {
@@ -10258,7 +10258,7 @@
       "description": "Elige los modelos que usa este compañero.",
       "primary": "Modelo principal",
       "task": "Modelo de tarea",
-      "inheritPrimary": "Heredar modelo primario",
+      "inheritPrimary": "Heredar modelo principal",
       "inheritingPrimary": "Hereda el modelo principal para las nuevas tareas en segundo plano",
       "restoreDefault": "Restaurar modelo predeterminado"
     },
@@ -13025,7 +13025,7 @@
       "piTransportClosed": "Se interrumpió la conexión con Pi remoto (se cerró el canal SSH). La tarea remota sigue en ejecución: vuelve a conectarte para continuar.",
       "piManagerUnavailable": "El administrador de Pi remoto no está listo. Reintenta en un momento; si sigue fallando, reinstala Pi en Configuración → Equipos remotos.",
       "piBundledNodeMissing": "Falta el entorno de ejecución (Node.js) en el equipo remoto. Expande el equipo en Configuración → Equipos remotos y primero haz clic en Instalar en Claude Code o Codex (incluyen Node.js); luego inicia una tarea de Pi.",
-      "remoteCompactEncryptedContent": "La compactación del contexto falló porque el modelo no pudo leer el historial cifrado. La continuación automática no se completó. Vuelva a intentar intentar la recuperación.",
+      "remoteCompactEncryptedContent": "No se pudo compactar el contexto porque el modelo no pudo leer el historial cifrado. La continuación automática no se completó. Vuelve a intentarlo para tratar de recuperar la sesión.",
       "contextOverflow": "Este mensaje por sí solo supera la ventana de contexto del modelo, por lo que Cindy no puede continuarlo en una sesión nueva de Agent. Acorta el texto de entrada o quita un archivo adjunto grande y vuelve a intentarlo.",
       "attachmentAccessDeniedTitle": "Cindy no puede leer el archivo adjunto original; el mensaje no se envió.",
       "attachmentAccessDeniedRecovery": "Guarda una copia en Descargas o en otra carpeta accesible, quita el archivo adjunto original y agrega la copia con el botón de adjuntar antes de volver a enviar."
@@ -14636,7 +14636,7 @@
       "branchTooltip": "Rama actual: {{branch}}",
       "pr": {
         "status": {
-          "open": "Abrir",
+          "open": "Abierto",
           "draft": "Borrador",
           "merged": "Fusionado",
           "closed": "Cerrado"
@@ -15582,7 +15582,7 @@
       "newIssueAria": "Crear nueva incidencia",
       "statusFilterAria": "Filtro de estado",
       "statusFilter": {
-        "open": "Abrir",
+        "open": "Abiertas",
         "inProgress": "En curso"
       },
       "filterAuthor": "Autor",
@@ -15655,12 +15655,12 @@
       "imageUploadFailed": "Error al subir la imagen"
     },
     "status": {
-      "open": "Abrir",
+      "open": "Abierta",
       "inProgress": "En curso",
-      "closed": "Cerrado",
+      "closed": "Cerrada",
       "openDesc": "Por hacer",
       "inProgressDesc": "En progreso",
-      "closedDesc": "Cerrado",
+      "closedDesc": "Cerrada",
       "badgeAria": "Estado: {{label}}",
       "dropdownAria": "Estado actual: {{label}}, haz clic para cambiarlo",
       "updateFailed": "Error al actualizar el estado"
@@ -17903,7 +17903,7 @@
         "pr": "PR"
       },
       "state": {
-        "open": "Abrir",
+        "open": "Abierto",
         "closed": "Cerrado",
         "merged": "Fusionado",
         "unknown": "Cerrado · estado de fusión sin verificar"

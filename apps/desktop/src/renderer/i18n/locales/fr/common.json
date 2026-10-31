@@ -4997,7 +4997,7 @@
     },
     "auxiliaryModels": {
       "title": "Modèles auxiliaires",
-      "description": "Utilisés pour le nommage automatique des tâches et le renommage par IA, les suggestions de prompt dans la zone de saisie, l'Aide, les résumés des tâches épinglées, les titres IM / Feishu et les vérifications de contexte de groupe, les scripts des tâches planifiées, l'option « suivre le défaut » des questions-réponses rapides des plugins, et l'affinage vocal BYOK.",
+      "description": "Utilisés pour le nommage automatique des tâches et le renommage par IA, les suggestions de prompt dans la zone de saisie, l’Aide, les résumés des tâches épinglées, les titres IM / Feishu et les vérifications de contexte de groupe, les scripts des tâches planifiées, l’option « utiliser le modèle par défaut » des questions-réponses rapides des plugins, et l’amélioration du texte dicté via BYOK.",
       "automatic": "Recommandation automatique",
       "customize": "Personnalisé",
       "preferred": {
@@ -7608,7 +7608,7 @@
         "unchanged": "{{count}} autres autorisations inchangées",
         "noChange": "Aucune modification des autorisations.",
         "pick": "Peut vous demander de choisir des fichiers ou un dossier",
-        "pickDetail": "Cindy ouvre un sélecteur de système lorsque le plugin le demande. Vous décidez quoi partager ; l'annulation ne donne rien au plugin.",
+        "pickDetail": "Cindy ouvre le sélecteur de fichiers du système à la demande du plugin. Vous choisissez ce que vous partagez ; si vous annulez, le plugin ne reçoit rien.",
         "workspace": "Peut demander à créer une entrée de session pour un dossier de projet dans la barre latérale",
         "workspaceDetail": "Lorsqu'il le demande, soit vous choisissez le dossier vous-même, soit vous voyez le chemin complet sur une carte de confirmation avant de décider ; pendant qu'il traite un appel que vous avez lancé, les sous-dossiers du répertoire de travail de la session en cours sont utilisés directement, sans demande supplémentaire. Les dossiers qui ont déjà une session sont réutilisés, et ce qui est créé est une session vide : rien ne démarre tout seul.",
         "sessionContext": "Peut savoir dans quel dossier de projet travaille la session en cours",
@@ -7624,7 +7624,7 @@
         "skillDetail": "Une skill est un fichier d'instructions que l'IA charge et suit comme les siennes, avec toutes vos autorisations, dans Claude Code et Codex, dans tous les projets. Elle n'est pas confinée au bac à sable de ce plugin. Elle reste disponible tant que le plugin est activé et est retirée lorsque le plugin est désactivé ou désinstallé ; désactiver le plugin pour un seul dossier ne la masque pas. Le texte complet de la skill ne peut pas être prévisualisé ici : n'installez que des plugins de confiance.",
         "routineEvents": "Événements de routine",
         "mcpUi": "Afficher des pages interactives dans la conversation",
-        "mcpUiDomains": "Domaines du réseau de pages : {{domains}}",
+        "mcpUiDomains": "Domaines accessibles aux pages : {{domains}}",
         "mcpAppOnly": "Page uniquement",
         "uiPageAccess": "Pages : {{pages}} ; domaines : {{domains}} ; outils disponibles aux pages : {{tools}}"
       },
@@ -11025,7 +11025,7 @@
           "accessChatTitle": "Conversation de groupe uniquement",
           "accessChatHint": "Répond uniquement à partir des messages du groupe. Aucun accès à votre mémoire ni à vos informations privées, et aucun outil.",
           "accessToolsTitle": "Outils et informations",
-          "accessToolsHint": "Peut utiliser les outils existants de {{name}} et vos informations privées. Les résultats sont visibles par tous. Les approbations restent nécessaires ; les actions terminées ne peuvent pas être annulées après la révocation de l’accès.",
+          "accessToolsHint": "Peut utiliser les outils existants de {{name}} et vos informations privées. Les résultats sont visibles par tous. Les règles d’approbation restent applicables ; révoquer l’accès n’annule pas les actions déjà effectuées.",
           "capabilitiesRow": "Outils et accès de {{name}}",
           "accessMenu": "Autorisations ici"
         },
@@ -18887,7 +18887,7 @@
     "title": "Suivi des performances",
     "start": "Commencer l'enregistrement",
     "stop": "Arrêter l'enregistrement",
-    "description": "Enregistrez l'action lente, puis arrêtez-vous. L'enregistrement se termine après 60 secondes. Les traces locales peuvent contenir des chemins et d'autres informations sensibles.",
+    "description": "Lancez l’enregistrement, effectuez l’action lente, puis arrêtez l’enregistrement. Il se termine automatiquement après 60 secondes. Les traces locales peuvent contenir des chemins et d’autres informations sensibles.",
     "localScope": "Cet ordinateur uniquement. Les autres ordinateurs et téléphones ne sont pas enregistrés.",
     "recording": "Enregistrement · {{seconds}} s",
     "saving": "Sauvegarde de l'enregistrement…",
@@ -18895,7 +18895,7 @@
     "previous": "Voir le rapport précédent",
     "previousResult": "Rapport de performance précédent",
     "previousSummary": "Dernier enregistrement : {{time}}, {{seconds}} secondes.",
-    "resultDescription": "Envoyez le rapport de performances complet, les profils CPU, la trace Chromium et votre description pour vous aider à diagnostiquer les ralentissements. Les informations d'identification reconnaissables, les adresses e-mail et autres données sensibles sont supprimées avant le téléchargement. Les fichiers peuvent toujours contenir des chemins locaux et des marqueurs de performances. Les originaux locaux sont conservés pendant 7 jours.",
+    "resultDescription": "Envoyez le rapport de performances complet, les profils CPU, la trace Chromium et votre description pour aider à diagnostiquer les ralentissements. Les identifiants reconnaissables, les adresses e-mail et les autres données sensibles sont masqués avant l’envoi. Les fichiers peuvent encore contenir des chemins locaux et des marqueurs de performances. Les originaux locaux sont conservés pendant 7 jours.",
     "summary": "{{seconds}} secondes enregistrées.",
     "partial": "Certaines données n'ont pas pu être capturées ou étaient limitées. Les preuves disponibles ont été conservées.",
     "note": "Que faisiez-vous ? (facultatif)",

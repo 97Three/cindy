@@ -41,6 +41,24 @@ describe('host-owned forwarded request', () => {
     expect(result.autoReviewUserText).toEqual({ kind: 'agent-request', request: { userText: original, sessionId: 'caller', clientId: 'accepted' } });
   });
 
+  // Unit, protocol compatibility: old receivers only recognize the original five
+  // envelope dialects. Existing locale round-trips only exercise a new receiver.
+  // Minimal failure: send one owner quotation from a French host to an old host.
+  // Standalone Windows run: 4.6s wall time (Vitest reports 3.34s), 2026-10-31.
+  it.each(['fr', 'es', 'de', 'pt-PT', 'pt-BR'] as const)('sends %s receipts in the legacy English dialect', locale => {
+    const source = { userText: 'Review only; do not publish.' };
+    const supplement = 'Inspect the changes.';
+    expect(formatForwardedRequest(source, supplement, locale)).toBe(formatForwardedRequest(source, supplement, 'en'));
+    expect(formatForwardedRequest({ userText: null }, supplement, locale)).toBe(formatForwardedRequest({ userText: null }, supplement, 'en'));
+  });
+
+  it('still verifies a persisted French receipt without accepting edited owner text', () => {
+    // Frozen wire fixture emitted before the compatibility fix, not a model-authored label.
+    const body = `[Source] L'hôte a conservé les mots d'origine de l'utilisateur, sans modification, comme contexte de la demande. La demande actuelle figure dans le complément de l'Agent.\nMots d'origine de l'utilisateur :"Review only; do not publish."\nComplément de l'Agent :"Inspect the changes."`;
+    expect(matchesForwardedRequest({ userText: 'Review only; do not publish.' }, body)).toBe(true);
+    expect(matchesForwardedRequest({ userText: 'Publish now.' }, body)).toBe(false);
+  });
+
   // #6514 applied owner-quotation formatting to scheduled notifications and
   // ordinary task messages. Unit: the production capture must leave both raw.
   it.each([undefined, 'scheduler'])('keeps non-companion messages plain (%s)', async originKind => {
