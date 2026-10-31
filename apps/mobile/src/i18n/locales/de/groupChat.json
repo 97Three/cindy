@@ -33,8 +33,10 @@
   },
   "mention": {
     "all": "Alle",
-    "allHint": "Alle antworten",
-    "label": "Teammitglied erwähnen"
+    "allHint": "Nur Personen",
+    "label": "Teammitglied erwähnen",
+    "allBots": "Alle Teammitglieder",
+    "allBotsHint": "Nur Teammitglieder"
   },
   "composer": {
     "label": "Gruppenchat-Nachricht",
@@ -228,7 +230,7 @@
     "speakingMode": "Sprechreihenfolge",
     "speakingModeAuto": "Automatisch",
     "speakingModeSequential": "Nacheinander",
-    "speakingModeAutoNote": "Keine Erwähnungen oder @Everyone: Im ersten Durchlauf gleichzeitig nachdenken, dann nacheinander antworten. Erwähnte Teammitglieder antworten in der Reihenfolge der Erwähnung.",
+    "speakingModeAutoNote": "Ohne Erwähnung oder mit @Alle Teammitglieder denken alle gleichzeitig und antworten nacheinander. Sonst gilt die Reihenfolge der Erwähnungen.",
     "speakingModeSequentialNote": "Jeweils ein Teammitglied spricht und sieht dabei alle vorherigen Antworten.",
     "speakingModeSaveFailed": "Die Sprechreihenfolge konnte nicht gespeichert werden. Versuch es erneut.",
     "setOrganizer": "Zum Organisator machen",
@@ -254,7 +256,9 @@
     "cloudStatus": {
       "loading": "Einstellungen werden geladen…",
       "unavailable": "Die Gruppeneinstellungen konnten nicht geladen werden. Versuch es erneut."
-    }
+    },
+    "allowMentionAllBots": "@Alle Teammitglieder erlauben",
+    "allowMentionAllBotsHint": "Nur der Gruppeninhaber kann dies ändern. Alle könnten antworten: Vorsicht in großen Gruppen. KI-Antworten in deinem Namen sind unabhängig."
   },
   "errors": {
     "memberLimit": "Ein Gruppenchat braucht 2–6 Teammitglieder",
@@ -278,7 +282,8 @@
     "quoteUnavailable": "Die zitierte Nachricht wurde gelöscht oder ist nicht mehr sichtbar. Das Zitat wurde entfernt. Sende erneut.",
     "lifecycleUnavailable": "Der aktuelle Server oder Computer unterstützt diese Aktion noch nicht.",
     "groupDissolved": "Diese Gruppe wurde aufgelöst. Du kannst den verfügbaren Verlauf weiterhin lesen.",
-    "lastOwner": "Übertrage die Inhaberschaft oder löse diese Gruppe auf, bevor du sie verlässt."
+    "lastOwner": "Übertrage die Inhaberschaft oder löse diese Gruppe auf, bevor du sie verlässt.",
+    "allBotsMentionDisabled": "Der Gruppeninhaber hat @Alle Teammitglieder noch nicht aktiviert."
   },
   "followUp": {
     "next": "Plan · Nächster Schritt",

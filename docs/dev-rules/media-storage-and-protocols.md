@@ -170,6 +170,11 @@ Windows 使用 CF_HDROP，macOS 使用文件 URL 剪贴板，视频／GIF 均按
 
 ## 读取、协议与边界
 
+- 宿主选择的 `userData` 根目录允许通过符号链接或 Windows Junction 重定向。
+  `blobStore` 仅解析这一可信根的真实路径，入仓与受检读取使用相同的物理路径基线；
+  `cindy-media`、作用域、分桶和目标文件内部的链接仍然拒绝，不得对完整 blob 路径
+  直接 `realpath` 后跳过这些检查。回归见 `clientWallpaperMedia.test.ts` 的普通目录／
+  重定向根对照与内部链接拒绝矩阵。
 - 持久地址统一使用 `cindy-media://blobs/<sha256>.<ext>`。路径解析必须走
   `blobStore.resolveSafe` 或现有上层适配器，不根据 URL 字符串手工拼磁盘路径。
 - 客户端壁纸地址为 `cindy-media://client-wallpaper/<sha256>.webp` 或 `.mp4`，

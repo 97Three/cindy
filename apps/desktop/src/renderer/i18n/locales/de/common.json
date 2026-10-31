@@ -3643,7 +3643,7 @@
           "requestPathInvalid": "Den exakten Anfragepfad mit einem einzelnen / beginnen. Keine Fragmente oder Pfadsegmente mit . und .. verwenden; Leerzeichen und unsichere Zeichen prozentkodieren.",
           "modelRequired": "Mindestens ein Modell hinzufügen",
           "oauthInvalid": "Unvollständige OAuth-Konfiguration: Alle Felder sind erforderlich und beide Endpunkte müssen sicher sein https URLs",
-          "baseUrlRequired": "Gib die Basis-URL dieser Laufzeit ein oder setze ihr Protokoll auf den Standard zurück"
+          "baseUrlRequired": "Gib die Basis-URL dieser Laufzeit ein oder stelle ihr Protokoll auf den Standard zurück."
         },
         "toast": {
           "created": "Anbieter hinzugefügt",
@@ -10530,7 +10530,7 @@
       },
       "mention": {
         "all": "Alle",
-        "allHint": "Alle antworten",
+        "allHint": "Nur Personen",
         "label": "Teammitglied erwähnen",
         "allBots": "Alle Teammitglieder",
         "allBotsHint": "Nur Teammitglieder"
@@ -10644,7 +10644,7 @@
         "speakingMode": "Sprechreihenfolge",
         "speakingModeAuto": "Automatisch",
         "speakingModeSequential": "Nacheinander",
-        "speakingModeAutoNote": "Keine Erwähnungen oder @Everyone: Im ersten Durchlauf gleichzeitig nachdenken, dann nacheinander antworten. Erwähnte Teammitglieder antworten in der Reihenfolge der Erwähnung.",
+        "speakingModeAutoNote": "Ohne Erwähnung oder mit @Alle Teammitglieder denken alle gleichzeitig und antworten nacheinander. Sonst gilt die Reihenfolge der Erwähnungen.",
         "speakingModeSequentialNote": "Jeweils ein Teammitglied spricht und sieht dabei alle vorherigen Antworten.",
         "speakingModeSaveFailed": "Die Sprechreihenfolge konnte nicht gespeichert werden. Versuch es erneut.",
         "setOrganizer": "Zum Organisator machen",
@@ -10659,8 +10659,8 @@
         "projectDirNote": "Hier arbeiten Teammitglieder bei der Arbeitsaufteilung. Du kannst das Feld leer lassen, dann nutzen sie den eigenen Ordner dieses Gruppenchats. Wenn du ein Git-Projekt auswählst, erhält jede Arbeitsaufteilung einen neuen Worktree und Branch, damit dein eigener Code unverändert bleibt.",
         "autoContinueSaveFailed": "Die Schrittübergabe konnte nicht gespeichert werden. Versuch es erneut.",
         "projectDirSaveFailed": "Der Projektordner konnte nicht gespeichert werden. Prüfe, ob der Ordner noch vorhanden ist, und versuch es erneut.",
-        "allowMentionAllBots": "@alle Teammitglieder erlauben",
-        "allowMentionAllBotsHint": "Nur der Gruppeninhaber kann dies ändern. Alle Teammitglieder können antworten; in großen Gruppen mit Bedacht verwenden. KI-Antworten in deinem Namen sind davon unabhängig."
+        "allowMentionAllBots": "@Alle Teammitglieder erlauben",
+        "allowMentionAllBotsHint": "Nur der Gruppeninhaber kann dies ändern. Alle könnten antworten: Vorsicht in großen Gruppen. KI-Antworten in deinem Namen sind unabhängig."
       },
       "errors": {
         "memberLimit": "Ein Gruppenchat braucht 2–6 Teammitglieder",
@@ -10685,7 +10685,7 @@
         "lifecycleUnavailable": "Der aktuelle Server oder Computer unterstützt diese Aktion noch nicht.",
         "groupDissolved": "Diese Gruppe wurde aufgelöst. Du kannst den verfügbaren Verlauf weiterhin lesen.",
         "lastOwner": "Übertrage die Inhaberschaft oder löse diese Gruppe auf, bevor du sie verlässt.",
-        "allBotsMentionDisabled": "Der Gruppeninhaber hat @alle Teammitglieder nicht aktiviert."
+        "allBotsMentionDisabled": "Der Gruppeninhaber hat @Alle Teammitglieder noch nicht aktiviert."
       },
       "organizer": "Organisator",
       "plan": {
@@ -13790,23 +13790,23 @@
     "teammateProcess": {
       "record": "Aktivität",
       "operations": "Aktivitätsprotokoll",
-      "elapsed": "Arbeitet seit {{duration}}",
+      "elapsed": "In Bearbeitung seit {{duration}}",
       "took": "Dauer: {{duration}}",
-      "processing": "Arbeitet",
+      "processing": "In Bearbeitung",
       "worked": "Aktivität",
       "thinking": "Denkt nach",
       "thought": "Nachgedacht",
-      "separator": ", ",
       "failed_one": "{{count}} Aufruf fehlgeschlagen",
       "failed_other": "{{count}} Aufrufe fehlgeschlagen",
+      "separator": ", ",
       "actions": {
         "running": {
           "read": "Liest Dateien",
           "edit": "Bearbeitet Dateien",
           "search": "Sucht",
-          "web": "Recherchiert im Web",
+          "web": "Durchsucht das Web",
           "command": "Führt Befehle aus",
-          "tools": "Verwendet Tools",
+          "tools": "Nutzt Werkzeuge",
           "delegate": "Delegiert Arbeit",
           "plan": "Aktualisiert den Plan"
         },
@@ -13814,9 +13814,9 @@
           "read": "Dateien gelesen",
           "edit": "Dateien bearbeitet",
           "search": "Gesucht",
-          "web": "Im Web recherchiert",
+          "web": "Web durchsucht",
           "command": "Befehle ausgeführt",
-          "tools": "Tools verwendet",
+          "tools": "Werkzeuge genutzt",
           "delegate": "Arbeit delegiert",
           "plan": "Plan aktualisiert"
         }
