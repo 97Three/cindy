@@ -55,6 +55,7 @@ async function poll(){
    if(event.openLink){
     let success=false;
     try{await invoke({op:'open-link',linkId:event.openLink.id,url:event.openLink.url});success=true;}catch{}
+    if(event.generation!==undefined&&event.generation!==generation)continue;
     await invoke({op:'link-result',linkId:event.openLink.id,success});
    }else{state(event.message,true);frame.contentWindow.postMessage(event.message,'*');}
   }

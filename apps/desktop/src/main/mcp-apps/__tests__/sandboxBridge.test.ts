@@ -187,3 +187,18 @@ it('delivers replacement replies from a Host without generation fields', async (
   await vi.advanceTimersByTimeAsync(0);
   expect(f.frame.contentWindow.postMessage).toHaveBeenCalledWith(current, '*');
 });
+
+// 4429469516: the Main operation may finish after the proxy has changed documents.
+it('does not report an old link result after document replacement', async () => {
+  const f = fixture();
+  f.pending[0]({ ok: true, json: async () => [
+    { seq: 1, generation: 0, openLink: { id: 'link', url: 'https://example.org/' } },
+  ] });
+  await vi.advanceTimersByTimeAsync(0);
+  const receive = (data: unknown) => f.handlers.get('message')!({ source: f.frame.contentWindow, data });
+  receive({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  receive({ jsonrpc: '2.0', id: 77, method: 'ui/initialize' });
+  f.pending[1]({ ok: true, json: async () => ({}) });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.fetch.mock.calls.some(([, input]) => JSON.parse(input.body).op === 'link-result')).toBe(false);
+});
