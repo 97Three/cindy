@@ -650,8 +650,14 @@ export const ImageLightbox = memo(function ImageLightbox({
     && (activeImage?.payload.media.previewable
       || (activeResolveState?.status === 'ready' && !!activeImage && loadedImageKeys.has(activeImage.key)));
   const pageLabel = lightboxPageLabel(activeIndex, images.length);
-  // 工具栏从打开那一刻就在:原图还在取件时先置灰,就绪即可用,不让工具「晚到」。
-  // 取件结果是 data: 等不可分享地址时才收起分享。
+  // 原图还在取件或解码:底栏整条换成载入提示,不摆一排点不动的按钮。失败(含取件
+  // 结果不可预览)不算载入,仍是置灰按钮 + 页内重试;相册句柄等不靠取件的图不进这里。
+  const activeMedia = activeImage?.payload.media;
+  const activeLoading = !!activeMedia && !activeIsVideo && !activeActionsReady
+    && !!onResolveRemoteMedia && !activeMedia.previewable && isDesktopLocalMediaUrl(activeMedia.url)
+    && activeResolveState?.status !== 'error'
+    && !(activeResolveState?.status === 'ready' && !activeResolveState.media.previewable);
+  // 分享取件结果是 data: 等不可分享地址时才收起。
   const shareVisible = !!onShareImage && !!activeImage && !activeIsVideo
     && (!activeUri || canShareLightboxImage(activeUri));
   const shareEnabled = shareVisible && activeActionsReady;
@@ -1021,6 +1027,20 @@ export const ImageLightbox = memo(function ImageLightbox({
                     </Text>
                   </Pressable>
                 ) : null}
+              </View>
+            </View>
+          ) : activeLoading && (shareVisible || annotateVisible || directSubmitVisible) ? (
+            <View pointerEvents="box-none" style={[styles.actionBar, { bottom: insets.bottom + 12 }]}>
+              <View
+                accessibilityLabel={t('message.lightbox.loadingOriginal')}
+                accessibilityLiveRegion="polite"
+                accessibilityRole="progressbar"
+                accessible
+                style={[styles.actionBarPill, styles.loadingBar]}
+                testID="message.imageLightboxLoadingBar"
+              >
+                <ActivityIndicator color="#ffffff" size="small" />
+                <Text style={styles.pageLabel}>{t('message.lightbox.loadingOriginal')}</Text>
               </View>
             </View>
           ) : shareVisible || annotateVisible || directSubmitVisible ? (
@@ -2238,6 +2258,8 @@ const styles = StyleSheet.create({
     width: StyleSheet.hairlineWidth,
   },
   actionLabelDisabled: { color: DISABLED_ICON_COLOR },
+  // 与按钮栏同高(按钮 48 + 上下留白),载入完成换回按钮时胶囊不跳。
+  loadingBar: { gap: 8, minHeight: 66 },
   stateText: { color: 'rgba(255, 255, 255, 0.85)', fontSize: typeScale.bodySmall, lineHeight: lineHeight.bodySmall },
   retryButton: {
     borderColor: 'rgba(255, 255, 255, 0.5)',
