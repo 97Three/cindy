@@ -314,6 +314,7 @@ const CORE_INVOKE_CHANNELS: readonly string[] = [
   // 因为控制端本地没有远端 session 的 DB、工作目录或 gh 登录态。
   'git-context:get-for-session',
   'git-context:pr-refs:list',
+  'git-context:pr-refs:manage',
   'git-context:pr-status',
   // —— 通用远程资源面——
   // 固定的 manifest / list / get / invoke 入口。业务模块只在被控端 provider
@@ -592,6 +593,11 @@ const EXTENDED_INVOKE_CHANNELS: readonly string[] = [
   // memory, prompts, configuration, or native UI/file mutations.
   'local-db:bots:list',
   'local-db:bots:get',
+  // Same-account opted-in controllers: private topic summaries and idempotent creation.
+  // Existing Bot/root ownership and permission inheritance apply; no sender, UI or shell use.
+  // Older hosts omit dmThreadsSupported; clients keep the canonical chat usable.
+  'local-db:bots:dm-thread:list',
+  'local-db:bots:dm-thread:ensure',
   // 伙伴自主跟进的工作台「一眼」：只读宿主内存状态表的投影（任务标题、等你的一句话摘要、
   // 分钟数、设备名），不含工作目录、提示词、工具入参或代输入值；handler 只放远程可见的伙伴。
   // 放行标准：① 只读 ② 同账号已授权控制端本就能经 maker:list-active / sessions:get-many 看到
