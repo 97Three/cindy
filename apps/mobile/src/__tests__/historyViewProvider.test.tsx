@@ -6,6 +6,7 @@ import {
   DeviceLinkError,
   DEVICE_LINK_CAPABILITY_HISTORY_VIEW_V1,
   SHARED_TASK_CAPABILITY,
+  sharedTaskHostPeer,
   type DeviceLinkClient,
   type DeviceLinkStatus,
   type DeviceView,
@@ -72,6 +73,7 @@ const transport = vi.hoisted(() => {
   class Client {
     status: DeviceLinkStatus = 'online';
     statusChanged: (status: DeviceLinkStatus) => void = () => {};
+    crossAccountStatusChanged: (status: DeviceLinkStatus) => void = () => {};
     presenceChanged: (snapshot: PresenceSnapshot) => void = () => {};
     peerReset: Parameters<DeviceLinkClient['onPeerTransportReset']>[0] = () => {};
     frame: Parameters<DeviceLinkClient['onFrame']>[0] = () => {};
@@ -97,7 +99,7 @@ const transport = vi.hoisted(() => {
     onConnectionIssue = () => () => {};
     onFrame(listener: Client['frame']) { this.frame = listener; return () => {}; }
     onReliableFrameBeforeLink = () => () => {};
-    onSeparateCrossAccountStatus = () => () => {};
+    onSeparateCrossAccountStatus(listener: Client['crossAccountStatusChanged']) { this.crossAccountStatusChanged = listener; return () => {}; }
     crossAccountConnection() { return this; }
     connectAllNow(...args: unknown[]) { (this.connectNow as (...input: unknown[]) => void)(...args); }
     restartConnections(...args: unknown[]) { (this.restartConnection as (...input: unknown[]) => void)(...args); }
@@ -480,6 +482,43 @@ describe('pending probe reply recovery', () => {
 });
 
 describe('Provider shared-task relay compatibility', () => {
+  // PR #8182: only the primary reconnect cleared stale REMOTE_DISABLED and
+  // permanent-close suppression. A real Provider must recover a shared peer
+  // after its official connection reconnects while same-account peers stay put.
+  // Unit: transport events and rejection are injected; no real network/timers.
+  it('recovers shared peers after an official reconnect without clearing same-account verdicts or links', async () => {
+    const client = transport.clients[0];
+    const shared = sharedTaskHostPeer('shared-task', 'host');
+    client.openLink.mockResolvedValue(accepted(supported));
+    await act(async () => {
+      await context.openLink(shared);
+      await context.openLink('other-host');
+      client.presenceChanged({ deviceId: 'disabled-host', deviceName: 'Disabled', platform: 'darwin',
+        appVersion: 'test', online: true, remoteControlEnabled: false, busy: false, lastSeenAt: 1 });
+    });
+    await act(async () => client.crossAccountStatusChanged('connecting'));
+    client.openLink.mockRejectedValueOnce(new DeviceLinkError('REMOTE_DISABLED', 'host disabled'));
+    await act(async () => client.crossAccountStatusChanged('online'));
+    await expect(context.invoke(shared, historyChannel)).rejects.toMatchObject({ code: 'REMOTE_DISABLED' });
+    await act(async () => client.frame({ v: 1, kind: 'link-close', src: shared, dst: 'mobile',
+      payload: { reason: 'toggle-off' } } as Parameters<typeof client.frame>[0]));
+
+    client.openLink.mockClear();
+    await act(async () => {
+      client.crossAccountStatusChanged('connecting');
+      client.crossAccountStatusChanged('online');
+    });
+    expect(client.openLink).toHaveBeenCalledExactlyOnceWith(shared, expect.any(Object));
+    expect(context.getPresenceAvailability('disabled-host')).toBe(false);
+    await act(async () => {
+      expect(await context.invoke(shared, historyChannel)).toBe('history page');
+      expect(await context.invoke('other-host', historyChannel)).toBe('history page');
+    });
+    expect(client.openLink).toHaveBeenCalledTimes(1);
+    expect(client.stop).not.toHaveBeenCalled();
+    expect(client.restartConnection).not.toHaveBeenCalled();
+  });
+
   it('distinguishes an old online relay from disconnection and re-negotiates after upgrade', async () => {
     const client = transport.clients[0];
     expect(context.sharedTaskAvailable).toBeUndefined();

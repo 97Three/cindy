@@ -1132,6 +1132,28 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
     };
     const offCrossAccountStatus = client.onSeparateCrossAccountStatus((next) => {
       syncSharedTaskAvailable();
+      if (next === 'online') {
+        // 共享 peer 没有同账号 presence 广播；官方连接的新代际要解除旧的
+        // disabled / link-close 判定，不能等待自建主连接也重连才恢复。
+        // 只清这条连接的状态，撤权及同账号设备的判定仍由原入口把守。
+        const stalePeers = new Set([
+          ...registryRef.current.deviceIds(),
+          ...presenceAvailableByDeviceRef.current.keys(),
+          ...rehydrateSuppressedDeviceIds,
+        ]);
+        for (const deviceId of stalePeers) {
+          if (!isSharedTaskPeer(deviceId)) continue;
+          markPresenceAvailabilityEpoch(presenceAvailabilityEpochsRef.current, deviceId);
+          publishPresenceAvailabilityMutation(deviceId, (availabilityByDevice) => {
+            if (availabilityByDevice.get(deviceId) === false) {
+              presencePendingRecoveryDeviceIdsRef.current.add(deviceId);
+            }
+            availabilityByDevice.delete(deviceId);
+          });
+          presenceUnavailableVerdictsRef.current.delete(deviceId);
+          rehydrateSuppressedDeviceIds.delete(deviceId);
+        }
+      }
       for (const deviceId of registryRef.current.deviceIds()) {
         if (!isSharedTaskPeer(deviceId)) continue;
         if (next === 'online') void rehydrate(deviceId);

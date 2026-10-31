@@ -372,7 +372,7 @@ export default function SharedSessionScreen() {
       setJoinedId(undefined); setEnded(false); setState(null); setNotice(''); setLoadError('');
       router.replace('/devices');
     }} /> : link.sharedTaskAvailable !== true ? <Text style={styles.intro}>{t(link.sharedTaskAvailable === false ? 'sharedTask.upgrade' : 'sharedTask.retry')}</Text> : <>
-      {!!selfHostedRelay && <Text style={styles.metadata}>{t('sharedTask.officialRelayNote')}</Text>}
+      {!!selfHostedRelay && <Text style={styles.intro}>{t('sharedTask.officialRelayNote')}</Text>}
       {!guestId && !management && <View style={styles.tabs}>
         <MainWindowRowButton accessibilityLabel={t(hostContext ? 'sharedTask.tabCurrent' : 'sharedTask.join')} selected={tab === 'current'} style={[styles.tab, tab === 'current' && styles.tabSelected]} onPress={() => { setNotice(''); setTab('current'); }}><Text style={styles.small}>{t(hostContext ? 'sharedTask.tabCurrent' : 'sharedTask.join')}</Text></MainWindowRowButton>
         <MainWindowRowButton accessibilityLabel={t('sharedTask.tabOwned')} selected={tab === 'owned'} style={[styles.tab, tab === 'owned' && styles.tabSelected]} onPress={() => { setNotice(''); setTab('owned'); }}><Text style={styles.small}>{t('sharedTask.tabOwned')}</Text><View style={styles.badge}><Text style={styles.metadata}>{owned.length}</Text></View></MainWindowRowButton>
