@@ -21,7 +21,7 @@ import { shareSelectionStore, useShareSelectionActive } from '@/components/chat/
 import { getDataOwnerGeneration, isDataOwnerGenerationCurrent, isDataOwnerPushCurrent } from '@/contexts/dataOwnerGeneration';
 import type { BotGroupDetail, BotGroupExecutionFailureView, BotGroupMessageView, ChatServerApi } from '../../../shared/botGroupChat';
 import { resolveBotGroupQuote } from '../../../shared/botGroupChat';
-import { botGroupThreadDraftKey, refreshPendingBotGroupAttachments } from './botGroupAttachments';
+import { botGroupAttachmentPreview, botGroupThreadDraftKey, refreshPendingBotGroupAttachments } from './botGroupAttachments';
 import { refreshBotGroups } from './botGroupStore';
 import { mergeBotGroupMessages, projectBotGroupExecutionFailures } from './botGroupPresentation';
 import { BotGroupComposer, type BotGroupOutgoingMessage, type BotGroupSendOutcome } from './BotGroupComposer';
@@ -560,7 +560,8 @@ export function ChatThreadPanel({ group, rootId, quoteSources = group.messages, 
       setAlsoSend(false);
       // The topic receipt settles its own send; the optional main-chat copy has its own retry.
       if (toMain) void postToMain(result.messageId, true, { ...pendingBotGroupMessage({
-        clientId: input.clientId, text: input.text, mentions: input.mentions, attachments: [], quote: null,
+        clientId: input.clientId, text: input.text, mentions: input.mentions,
+        attachments: (input.attachments ?? []).map(file => botGroupAttachmentPreview({ ...file, ext: file.ext ?? '', size: file.size ?? 0 })), quote: null,
         createdAt: Date.now(), afterSequence: lastRealSequenceRef.current }), id: result.messageId, threadRootId: rootId });
     }
     return result;

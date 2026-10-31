@@ -786,6 +786,7 @@ describe('chat interaction controls', () => {
 
   // Regression: thread mode hid the attachment menu and silently sent text only.
   // Real panel + useAttachments; unit tier, picking a single image is the minimal input.
+  // #8084 / r4429774858: also-send must carry its image before the main share receipt arrives.
   it('sends an image-only thread draft, keeps it on failure and clears it after retry', async () => {
     const image = { id: 'thread-photo', name: 'photo.png', ext: '.png', category: 'image' as const,
       mimeType: 'image/png', size: 12, path: '', url: 'cindy-media://blobs/photo.png' };
@@ -795,7 +796,12 @@ describe('chat interaction controls', () => {
     });
     mocks.reply.mockResolvedValueOnce({ ok: false, errorCode: 'REQUEST_TIMEOUT' })
       .mockResolvedValueOnce({ ok: true, messageId: 'image-reply' });
-    const view = render(<ChatThreadPanel group={group} rootId="root" onClose={vi.fn()} />);
+    let finishShare!: (result: { ok: true; messageId: string }) => void;
+    mocks.shareToMain.mockImplementationOnce(() => new Promise(resolve => { finishShare = resolve; }));
+    const settleShare = vi.fn();
+    const onPostPending = vi.fn(() => settleShare);
+    const view = render(<ChatThreadPanel group={group} rootId="root" onClose={vi.fn()} onPostPending={onPostPending} />);
+    fireEvent.click(screen.getByRole('checkbox', { name: k('thread.alsoSend') }));
     fireEvent.keyDown(screen.getByRole('button', { name: 'bots.groupChat.composer.more' }), { key: 'Enter' });
     expect(await screen.findByRole('menuitem', { name: 'extraDirs.addFiles' })).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: /bots.groupChat.composer.division/ })).toBeNull();
@@ -815,6 +821,13 @@ describe('chat interaction controls', () => {
     await waitFor(() => expect(mocks.reply).toHaveBeenCalledTimes(2));
     expect(mocks.reply.mock.calls[1]![0]).toEqual(original);
     await waitFor(() => expect((send as HTMLButtonElement).disabled).toBe(true));
+    expect(onPostPending).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'image-reply', threadRootId: 'root', content: '',
+      attachments: [expect.objectContaining({ name: image.name, url: image.url, category: 'image' })],
+    }));
+    expect(settleShare).not.toHaveBeenCalled();
+    await act(async () => finishShare({ ok: true, messageId: 'main-share' }));
+    expect(settleShare).toHaveBeenCalledWith('main-share');
   });
 
   // #8084 / r4428010998: existing remount cases start after caching, missing this late result.
