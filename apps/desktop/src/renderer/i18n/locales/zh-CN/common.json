@@ -240,6 +240,7 @@
     "estimateTooManyFiles": "项目文件超过 {{limit, number}} 个，无法复制。请改为复制文件更少的项目。"
   },
   "sharedTask": {
+    "officialRelayNote": "你正在使用自己的中转，共享任务的内容仍经 Cindy 官方中转。",
     "selfJoin": "这是你发起的共享任务，无需加入。请从“我发起的”打开",
     "manageSharing": "共享管理",
     "manageMembers": "管理成员…",
@@ -341,6 +342,7 @@
     "closeAllDescription": "所有访客将无法继续访问，任务记录保留。"
   },
   "providerShare": {
+    "officialRelayNote": "你正在使用自己的中转，供应商分享的内容仍经 Cindy 官方中转。",
     "owned": {
       "title": "我分享的供应商"
     },
@@ -1088,7 +1090,8 @@
     "allow": "允许远程桌面",
     "allowHint": "允许已登录的同账号设备查看和操作这台电脑的所有应用。需同时开启上方的设备控制。",
     "permissionHint": "请在电脑的系统设置中允许屏幕录制和辅助功能，然后重新连接。",
-    "controlUnavailable": "远端电脑暂时无法接受操作，请检查远端控制权限和连接，然后重新连接。",
+    "inputUnsupported": "Cindy 暂不支持这台电脑当前桌面环境的远程键鼠控制。",
+    "controlUnavailable": "远程键鼠控制暂时不可用，请重新连接。",
     "beingControlled": "桌面正在被远程控制",
     "beingViewed": "桌面正在被远程查看",
     "controlledByDevice": "{{name}} 正在远程控制桌面",
@@ -2388,7 +2391,30 @@
         "fr": "Français",
         "de": "Deutsch",
         "pt-PT": "Português (Portugal)",
-        "pt-BR": "Português (Brasil)"
+        "pt-BR": "Português (Brasil)",
+        "classical": "文言"
+      },
+      "classical": {
+        "label": "简繁与文风",
+        "hint": "AI 按所选文风作答；选“照常作答”时界面仍为文言，回答随你的语言",
+        "scriptAriaLabel": "文言简繁",
+        "styleAriaLabel": "AI 作答文风",
+        "script": {
+          "hans": "简体",
+          "hant": "繁體"
+        },
+        "styles": {
+          "prose": "文言（默认）",
+          "tang-poetry": "唐诗",
+          "song-ci": "宋词",
+          "yuan-qu": "元曲",
+          "chu-ci": "楚辞",
+          "parallel-prose": "骈文",
+          "pre-qin": "先秦诸子",
+          "historian": "史传",
+          "ming-qing-essay": "明清小品",
+          "plain": "照常作答"
+        }
       }
     },
     "userProfile": {
@@ -5721,7 +5747,7 @@
         "current": "当前使用",
         "ownerName": "这台电脑",
         "unavailable": "登录 Cindy 账号，并且系统钥匙串可用时，才能使用自己的中转。",
-        "limits": "使用自己的中转时，手机系统推送、供应商分享和共享任务暂不可用。",
+        "limits": "使用自己的中转时，手机系统推送暂不可用；供应商分享和共享任务仍经 Cindy 官方中转。",
         "actions": {
           "join": "加入别的中转",
           "useOfficial": "切回官方中转",
@@ -5937,7 +5963,7 @@
           "switchFromHost": "这台电脑上的中转会停用，已加入它的设备会断开。",
           "switchFromMember": "这台电脑会退出「{{name}}」，之后要再加入，需要对方重新生成加入链接。",
           "switchConfirm": "切换",
-          "switchFromOfficial": "设备之间的远程控制会改经「{{name}}」转发。使用自己的中转时，手机系统推送、供应商分享和共享任务暂不可用。"
+          "switchFromOfficial": "设备之间的远程控制会改经「{{name}}」转发。使用自己的中转时，手机系统推送暂不可用；供应商分享和共享任务仍经 Cindy 官方中转。"
         },
         "dialog": {
           "steps": {
@@ -10489,6 +10515,7 @@
       "header": {
         "stepRunning": "{{name}} 正在做第 {{step}} 步",
         "speaking": "{{name}} 正在说…",
+        "queued": "{{name}} 排队中",
         "planning": "{{name}} 正在安排…"
       },
       "memberCount_one": "{{count}} 位成员",
@@ -10675,6 +10702,9 @@
         "hostNotReady": "Cindy 还在准备中，请稍后重试",
         "planOpen": "正在分工，做完或停止后才能安排新的",
         "planClosed": "这个安排已经结束或更新了",
+        "revisionConflict": "工作状态已变化，未能完成操作",
+        "stopOwnershipUnknown": "部分工作未能停止：无法确认由谁发起",
+        "nothingToStop": "当前没有可停止的工作",
         "invalidAttachment": "附件无法读取，请重新选择后发送。",
         "attachmentUnavailable": "未能从手机取回附件，请检查设备连接后重试。",
         "attachmentTooLarge": "附件超过 100 MB，请选择较小的文件。",

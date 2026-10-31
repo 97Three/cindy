@@ -245,6 +245,7 @@
     "completeWithSkipped_many": "Copiado, {{count}} itens ignorados"
   },
   "sharedTask": {
+    "officialRelayNote": "Está a utilizar o seu próprio relay. O conteúdo das tarefas partilhadas continua a passar pelo relay da Cindy.",
     "selfJoin": "Iniciou esta tarefa partilhada, por isso não precisa de aderir. Abra-a em «Partilhadas por mim».",
     "manageSharing": "Gerir partilhas",
     "manageMembers": "Gerir membros…",
@@ -346,6 +347,7 @@
     "closeAllDescription": "Os convidados perderão o acesso. O histórico das tarefas é mantido."
   },
   "providerShare": {
+    "officialRelayNote": "Está a utilizar o seu próprio relay. O conteúdo da partilha de fornecedores continua a passar pelo relay da Cindy.",
     "owned": {
       "title": "Fornecedores que partilho"
     },
@@ -2453,7 +2455,30 @@
         "fr": "Français",
         "de": "Deutsch",
         "pt-PT": "Português (Portugal)",
-        "pt-BR": "Português (Brasil)"
+        "pt-BR": "Português (Brasil)",
+        "classical": "文言"
+      },
+      "classical": {
+        "label": "Escrita e estilo",
+        "hint": "A IA responde no estilo escolhido. Com «Respostas habituais», a interface mantém-se em chinês clássico e as respostas seguem o seu idioma.",
+        "scriptAriaLabel": "Escrita do chinês clássico",
+        "styleAriaLabel": "Estilo de resposta da IA",
+        "script": {
+          "hans": "简体",
+          "hant": "繁體"
+        },
+        "styles": {
+          "prose": "Prosa clássica (predefinição)",
+          "tang-poetry": "Poesia Tang",
+          "song-ci": "Ci dos Song",
+          "yuan-qu": "Qu dos Yuan",
+          "chu-ci": "Chuci",
+          "parallel-prose": "Prosa paralela",
+          "pre-qin": "Mestres pré-Qin",
+          "historian": "Estilo do Grande Historiador",
+          "ming-qing-essay": "Ensaios Ming–Qing",
+          "plain": "Respostas habituais"
+        }
       }
     },
     "userProfile": {
@@ -5819,7 +5844,7 @@
         "current": "Em utilização",
         "ownerName": "Este computador",
         "unavailable": "Para utilizar o seu próprio relay, inicie sessão na Cindy e certifique-se de que o porta-chaves do sistema está disponível.",
-        "limits": "Enquanto utilizar o seu próprio relay, as notificações push no telemóvel, a partilha de fornecedores e as tarefas partilhadas ficam indisponíveis.",
+        "limits": "Enquanto utilizar o seu próprio relay, as notificações push no telemóvel ficam indisponíveis. A partilha de fornecedores e as tarefas partilhadas continuam a passar pelo relay da Cindy.",
         "actions": {
           "join": "Aderir a outro relay",
           "useOfficial": "Voltar ao relay da Cindy",
@@ -6035,7 +6060,7 @@
           "switchFromHost": "O relay neste computador para e os dispositivos que aderiram são desligados.",
           "switchFromMember": "Este computador sai de {{name}}. Para voltar a aderir mais tarde, o proprietário tem de criar uma nova ligação de adesão.",
           "switchConfirm": "Mudar",
-          "switchFromOfficial": "O controlo remoto entre os seus dispositivos passará por {{name}}. As notificações push no telemóvel, a partilha de fornecedores e as tarefas partilhadas não estão disponíveis enquanto utilizar o seu próprio relay."
+          "switchFromOfficial": "O controlo remoto entre os seus dispositivos passará por {{name}}. As notificações push no telemóvel não estão disponíveis enquanto utilizar o seu próprio relay. A partilha de fornecedores e as tarefas partilhadas continuam a passar pelo relay da Cindy."
         },
         "dialog": {
           "steps": {
@@ -10618,6 +10643,7 @@
       "header": {
         "stepRunning": "{{name}} está no passo {{step}}",
         "speaking": "{{name}} está a responder…",
+        "queued": "{{name}} em espera",
         "planning": "{{name}} está a dividir o trabalho…"
       },
       "memberCount_one": "{{count}} membro",
@@ -10814,6 +10840,9 @@
         "chatUnavailable": "O serviço de conversas está indisponível. Verifique a sua ligação e tente novamente.",
         "importPending": "O histórico do grupo ainda está a sincronizar. Tente novamente mais tarde.",
         "requestTimeout": "O resultado ainda não está confirmado. Atualize para verificar antes de tentar novamente.",
+        "revisionConflict": "O trabalho foi alterado antes de ser possível concluir esta ação.",
+        "stopOwnershipUnknown": "Não foi possível parar parte do trabalho porque não foi possível verificar quem o solicitou.",
+        "nothingToStop": "Não há trabalho em curso para parar.",
         "permissionDenied": "Não tem permissão para gerir este grupo.",
         "serviceError": "O serviço de conversas não conseguiu concluir o pedido. Tente novamente mais tarde.",
         "groupArchived": "Este grupo está arquivado. Esta ação está indisponível.",

@@ -465,6 +465,8 @@ export interface BotGroupRoundView {
 }
 
 export interface BotGroupSummary {
+  /** Execution snapshot already included by server-backed group summaries; absent on older hosts. */
+  round?: BotGroupRoundView;
   /** Owner-controlled companion broadcast; absent on old servers/hosts. */
   supportsMentionAudiences?: boolean;
   allowMentionAllBots?: boolean;
@@ -575,6 +577,8 @@ export type BotGroupErrorCode =
   | 'LAST_OWNER'
   | 'INVALID_PARAMS'
   | 'REVISION_CONFLICT'
+  | 'STOP_OWNERSHIP_UNKNOWN'
+  | 'NOTHING_TO_STOP'
   | 'NOT_FOUND'
   | 'MEMBER_LIMIT'
   | 'MEMBER_UNAVAILABLE'

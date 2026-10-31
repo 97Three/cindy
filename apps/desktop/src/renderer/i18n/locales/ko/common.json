@@ -240,6 +240,7 @@
     "estimateTooManyFiles": "프로젝트 파일이 {{limit, number}}개를 넘어 복사할 수 없습니다. 파일이 더 적은 프로젝트를 복사하세요."
   },
   "sharedTask": {
+    "officialRelayNote": "내 중계를 사용 중입니다. 공유 작업 내용은 계속 Cindy 공식 중계를 거칩니다.",
     "selfJoin": "내가 시작한 공유 작업이므로 참여할 필요가 없습니다. “내가 공유한 항목”에서 여세요.",
     "manageSharing": "공유 관리",
     "manageMembers": "멤버 관리…",
@@ -341,6 +342,7 @@
     "closeAllDescription": "모든 게스트의 접근이 차단됩니다. 작업 기록은 유지됩니다."
   },
   "providerShare": {
+    "officialRelayNote": "내 중계를 사용 중입니다. 제공자 공유 내용은 계속 Cindy 공식 중계를 거칩니다.",
     "owned": {
       "title": "내가 공유한 제공자"
     },
@@ -1088,7 +1090,8 @@
     "allow": "원격 데스크톱 허용",
     "allowHint": "같은 계정의 기기에서 이 컴퓨터의 모든 앱을 보고 조작하도록 허용합니다. 위의 기기 제어도 켜주세요.",
     "permissionHint": "컴퓨터 시스템 설정에서 화면 기록과 손쉬운 사용을 허용한 후 다시 연결하세요.",
-    "controlUnavailable": "원격 컴퓨터에서 입력을 받을 수 없습니다. 제어 권한과 연결을 확인한 다음 다시 연결하세요.",
+    "inputUnsupported": "이 컴퓨터의 현재 데스크톱 환경에서는 Cindy를 통한 원격 키보드 및 마우스 제어가 지원되지 않습니다.",
+    "controlUnavailable": "원격 키보드 및 마우스 제어를 일시적으로 사용할 수 없습니다. 다시 연결해 주세요.",
     "beingControlled": "데스크톱을 원격으로 제어 중",
     "beingViewed": "데스크톱을 원격으로 보는 중",
     "controlledByDevice": "{{name}}에서 데스크톱을 원격으로 제어 중",
@@ -2388,7 +2391,30 @@
         "fr": "Français",
         "de": "Deutsch",
         "pt-PT": "Português (Portugal)",
-        "pt-BR": "Português (Brasil)"
+        "pt-BR": "Português (Brasil)",
+        "classical": "文言"
+      },
+      "classical": {
+        "label": "간체·번체와 문체",
+        "hint": "AI가 선택한 문체로 답합니다. ‘일반 답변’을 고르면 화면은 문언문 그대로 두고 답변은 사용자의 언어를 따릅니다.",
+        "scriptAriaLabel": "문언문 간체·번체",
+        "styleAriaLabel": "AI 답변 문체",
+        "script": {
+          "hans": "简体",
+          "hant": "繁體"
+        },
+        "styles": {
+          "prose": "문언문(기본)",
+          "tang-poetry": "당시",
+          "song-ci": "송사",
+          "yuan-qu": "원곡",
+          "chu-ci": "초사",
+          "parallel-prose": "변문",
+          "pre-qin": "선진 제자",
+          "historian": "사기 문체",
+          "ming-qing-essay": "명청 소품",
+          "plain": "일반 답변"
+        }
       }
     },
     "userProfile": {
@@ -5721,7 +5747,7 @@
         "current": "사용 중",
         "ownerName": "이 컴퓨터",
         "unavailable": "내 중계를 사용하려면 Cindy에 로그인하고 시스템 키체인을 사용할 수 있어야 합니다.",
-        "limits": "내 중계를 사용하는 동안에는 휴대폰 푸시 알림, 제공자 공유, 공유 작업을 사용할 수 없습니다.",
+        "limits": "내 중계를 사용하는 동안에는 휴대폰 푸시 알림을 사용할 수 없습니다. 제공자 공유와 공유 작업은 계속 Cindy 공식 중계를 거칩니다.",
         "actions": {
           "join": "다른 중계에 참여",
           "useOfficial": "공식 중계로 돌아가기",
@@ -5937,7 +5963,7 @@
           "switchFromHost": "이 컴퓨터의 중계가 중지되고, 참여한 기기는 연결이 끊어집니다.",
           "switchFromMember": "이 컴퓨터는 {{name}}에서 나갑니다. 다시 참여하려면 상대방이 새 참여 링크를 만들어야 합니다.",
           "switchConfirm": "전환",
-          "switchFromOfficial": "기기 간 원격 제어가 {{name}}을(를) 거쳐 중계됩니다. 내 중계를 사용하는 동안에는 휴대폰 시스템 알림, 제공자 공유, 공유 작업을 사용할 수 없습니다."
+          "switchFromOfficial": "기기 간 원격 제어가 {{name}}을(를) 거쳐 중계됩니다. 내 중계를 사용하는 동안에는 휴대폰 시스템 알림을 사용할 수 없습니다. 제공자 공유와 공유 작업은 계속 Cindy 공식 중계를 거칩니다."
         },
         "dialog": {
           "steps": {
@@ -10489,6 +10515,7 @@
       "header": {
         "stepRunning": "{{name}} 님이 {{step}}단계 작업 중",
         "speaking": "{{name}} 님이 답하는 중…",
+        "queued": "{{name}} 대기 중",
         "planning": "{{name}} 님이 역할을 나누는 중…"
       },
       "memberCount_one": "멤버 {{count}}명",
@@ -10675,6 +10702,9 @@
         "hostNotReady": "Cindy가 아직 준비 중입니다. 잠시 후 다시 시도하세요",
         "planOpen": "역할 분담이 진행 중입니다. 끝내거나 중지한 뒤 새로 시작하세요",
         "planClosed": "이 계획은 이미 끝났거나 업데이트되었습니다",
+        "revisionConflict": "작업 상태가 변경되어 작업을 완료하지 못했습니다",
+        "stopOwnershipUnknown": "요청자를 확인할 수 없어 일부 작업을 중지하지 못했습니다.",
+        "nothingToStop": "현재 중지할 수 있는 작업이 없습니다.",
         "invalidAttachment": "첨부 파일을 읽을 수 없어요. 다시 선택한 후 보내 주세요.",
         "attachmentUnavailable": "휴대폰에서 첨부 파일을 가져오지 못했어요. 기기 연결을 확인하고 다시 시도해 주세요.",
         "attachmentTooLarge": "첨부 파일이 100 MB를 초과해요. 더 작은 파일을 선택해 주세요.",

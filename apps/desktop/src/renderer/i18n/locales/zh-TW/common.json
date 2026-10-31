@@ -240,6 +240,7 @@
     "estimateTooManyFiles": "專案檔案超過 {{limit, number}} 個，無法複製。請改為複製檔案較少的專案。"
   },
   "sharedTask": {
+    "officialRelayNote": "你正在使用自己的中繼，共享任務的內容仍經 Cindy 官方中繼。",
     "selfJoin": "這是你發起的共享任務，無需加入。請從「我發起的」開啟",
     "manageSharing": "共享管理",
     "manageMembers": "管理成員…",
@@ -341,6 +342,7 @@
     "closeAllDescription": "所有訪客將無法繼續存取，任務記錄保留。"
   },
   "providerShare": {
+    "officialRelayNote": "你正在使用自己的中繼，供應商分享的內容仍經 Cindy 官方中繼。",
     "owned": {
       "title": "我分享的供應商"
     },
@@ -1088,7 +1090,8 @@
     "allow": "允許遠端桌面",
     "allowHint": "允許已登入的同帳號裝置檢視和操作這台電腦的所有應用程式。需同時開啟上方的裝置控制。",
     "permissionHint": "請在電腦的系統設定中允許螢幕錄製和輔助使用，然後重新連線。",
-    "controlUnavailable": "遠端電腦暫時無法接受操作，請檢查遠端控制權限和連線，然後重新連線。",
+    "inputUnsupported": "Cindy 暫不支援這台電腦目前桌面環境的遠端鍵鼠控制。",
+    "controlUnavailable": "遠端鍵鼠控制暫時無法使用，請重新連線。",
     "beingControlled": "桌面正在被遠端控制",
     "beingViewed": "桌面正在被遠端檢視",
     "controlledByDevice": "{{name}} 正在遠端控制桌面",
@@ -2388,7 +2391,30 @@
         "fr": "Français",
         "de": "Deutsch",
         "pt-PT": "Português (Portugal)",
-        "pt-BR": "Português (Brasil)"
+        "pt-BR": "Português (Brasil)",
+        "classical": "文言"
+      },
+      "classical": {
+        "label": "簡繁與文風",
+        "hint": "AI 依所選文風作答；選「照常作答」時介面仍為文言，回答隨你的語言",
+        "scriptAriaLabel": "文言簡繁",
+        "styleAriaLabel": "AI 作答文風",
+        "script": {
+          "hans": "简体",
+          "hant": "繁體"
+        },
+        "styles": {
+          "prose": "文言（預設）",
+          "tang-poetry": "唐詩",
+          "song-ci": "宋詞",
+          "yuan-qu": "元曲",
+          "chu-ci": "楚辭",
+          "parallel-prose": "駢文",
+          "pre-qin": "先秦諸子",
+          "historian": "史傳",
+          "ming-qing-essay": "明清小品",
+          "plain": "照常作答"
+        }
       }
     },
     "userProfile": {
@@ -5721,7 +5747,7 @@
         "current": "目前使用",
         "ownerName": "這台電腦",
         "unavailable": "登入 Cindy 帳號，並且系統鑰匙圈可用時，才能使用自己的中繼。",
-        "limits": "使用自己的中繼時，手機系統推播、供應商分享和共享任務暫不可用。",
+        "limits": "使用自己的中繼時，手機系統推播暫不可用；供應商分享和共享任務仍經 Cindy 官方中繼。",
         "actions": {
           "join": "加入別的中繼",
           "useOfficial": "切回官方中繼",
@@ -5937,7 +5963,7 @@
           "switchFromHost": "這台電腦上的中繼會停用，已加入它的裝置會斷線。",
           "switchFromMember": "這台電腦會退出「{{name}}」，之後要再加入，需要對方重新產生加入連結。",
           "switchConfirm": "切換",
-          "switchFromOfficial": "裝置之間的遠端控制會改經「{{name}}」轉送。使用自己的中繼時，手機系統推播、供應商分享和共享任務暫時無法使用。"
+          "switchFromOfficial": "裝置之間的遠端控制會改經「{{name}}」轉送。使用自己的中繼時，手機系統推播暫時無法使用；供應商分享和共享任務仍經 Cindy 官方中繼。"
         },
         "dialog": {
           "steps": {
@@ -10489,6 +10515,7 @@
       "header": {
         "stepRunning": "{{name}} 正在做第 {{step}} 步",
         "speaking": "{{name}} 正在說…",
+        "queued": "{{name}} 排隊中",
         "planning": "{{name}} 正在安排…"
       },
       "memberCount_one": "{{count}} 位成員",
@@ -10675,6 +10702,9 @@
         "hostNotReady": "Cindy 還在準備中，請稍後重試",
         "planOpen": "正在分工，做完或停止後才能安排新的",
         "planClosed": "這個安排已經結束或更新了",
+        "revisionConflict": "工作狀態已變更，未能完成操作",
+        "stopOwnershipUnknown": "部分工作未能停止：無法確認由誰發起",
+        "nothingToStop": "目前沒有可停止的工作",
         "invalidAttachment": "附件無法讀取，請重新選擇後傳送。",
         "attachmentUnavailable": "未能從手機取回附件，請檢查裝置連線後重試。",
         "attachmentTooLarge": "附件超過 100 MB，請選擇較小的檔案。",

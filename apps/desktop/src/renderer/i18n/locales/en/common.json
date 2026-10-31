@@ -240,6 +240,7 @@
     "estimateTooManyFiles": "The project has more than {{limit, number}} files and cannot be copied. Copy a project with fewer files instead."
   },
   "sharedTask": {
+    "officialRelayNote": "You're using your own relay. Shared task content still goes through the Cindy relay.",
     "selfJoin": "You started this shared task, so you don’t need to join. Open it from “Shared by Me”.",
     "manageSharing": "Manage Sharing",
     "manageMembers": "Manage Members…",
@@ -341,6 +342,7 @@
     "closeAllDescription": "Guests will lose access. Task history is kept."
   },
   "providerShare": {
+    "officialRelayNote": "You're using your own relay. Provider sharing content still goes through the Cindy relay.",
     "owned": {
       "title": "Providers I Share"
     },
@@ -1100,7 +1102,8 @@
     "allow": "Allow remote desktop",
     "allowHint": "Allow your signed-in devices to view and operate all apps on this computer. Also enable device control above.",
     "permissionHint": "On the computer, allow screen recording and accessibility in system settings, then reconnect.",
-    "controlUnavailable": "The remote computer cannot accept input. Check its control permissions and connection, then reconnect.",
+    "inputUnsupported": "This computer’s current desktop environment does not support remote keyboard and mouse control in Cindy.",
+    "controlUnavailable": "Remote keyboard and mouse control is temporarily unavailable. Reconnect to try again.",
     "beingControlled": "Your desktop is being controlled",
     "beingViewed": "Your desktop is being viewed",
     "controlledByDevice": "{{name}} is controlling your desktop",
@@ -2418,7 +2421,30 @@
         "fr": "Français",
         "de": "Deutsch",
         "pt-PT": "Português (Portugal)",
-        "pt-BR": "Português (Brasil)"
+        "pt-BR": "Português (Brasil)",
+        "classical": "文言"
+      },
+      "classical": {
+        "label": "Script and style",
+        "hint": "AI replies in the chosen style. “Usual replies” keeps the Classical Chinese interface while replies follow your language.",
+        "scriptAriaLabel": "Classical Chinese script",
+        "styleAriaLabel": "AI reply style",
+        "script": {
+          "hans": "简体",
+          "hant": "繁體"
+        },
+        "styles": {
+          "prose": "Classical prose (default)",
+          "tang-poetry": "Tang poetry",
+          "song-ci": "Song ci",
+          "yuan-qu": "Yuan qu",
+          "chu-ci": "Chu ci",
+          "parallel-prose": "Parallel prose",
+          "pre-qin": "Pre-Qin masters",
+          "historian": "Grand Historian style",
+          "ming-qing-essay": "Ming–Qing essays",
+          "plain": "Usual replies"
+        }
       }
     },
     "userProfile": {
@@ -5764,7 +5790,7 @@
         "current": "In use",
         "ownerName": "This computer",
         "unavailable": "To use your own relay, sign in to Cindy and make sure the system keychain is available.",
-        "limits": "While you use your own relay, phone push notifications, provider sharing and shared tasks are unavailable.",
+        "limits": "While you use your own relay, phone push notifications are unavailable, and provider sharing and shared tasks still go through the Cindy relay.",
         "actions": {
           "join": "Join another relay",
           "useOfficial": "Switch back to Cindy relay",
@@ -5980,7 +6006,7 @@
           "switchFromHost": "The relay on this computer stops, and devices that joined it disconnect.",
           "switchFromMember": "This computer leaves {{name}}. To join again later, its owner needs to create a new join link.",
           "switchConfirm": "Switch",
-          "switchFromOfficial": "Remote control between your devices will go through {{name}}. Phone push notifications, provider sharing, and shared tasks aren't available while you use your own relay."
+          "switchFromOfficial": "Remote control between your devices will go through {{name}}. Phone push notifications aren't available while you use your own relay, and provider sharing and shared tasks still go through the Cindy relay."
         },
         "dialog": {
           "steps": {
@@ -10535,6 +10561,7 @@
       "header": {
         "stepRunning": "{{name}} is on step {{step}}",
         "speaking": "{{name}} is replying…",
+        "queued": "{{name}} is queued",
         "planning": "{{name}} is splitting the work…"
       },
       "memberCount_one": "{{count}} member",
@@ -10721,6 +10748,9 @@
         "hostNotReady": "Cindy is still getting ready. Try again in a moment.",
         "planOpen": "A work split is underway. Finish or stop it before starting another.",
         "planClosed": "This plan has already ended or been updated.",
+        "revisionConflict": "The work changed before this action could be completed.",
+        "stopOwnershipUnknown": "Could not stop some work because its requester could not be verified.",
+        "nothingToStop": "There is no active work to stop.",
         "invalidAttachment": "This attachment cannot be read. Select it again and send.",
         "attachmentUnavailable": "Could not retrieve the attachment from your phone. Check the device connection and retry.",
         "attachmentTooLarge": "The attachment exceeds 100 MB. Choose a smaller file.",
