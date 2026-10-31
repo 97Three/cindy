@@ -820,12 +820,12 @@ it('keeps initial input and attachment projection across an initialize retry', a
   expect(JSON.stringify(context)).toContain('/__cindy/files/');
 });
 
-// Lead R4: ordinary pages must not acquire a 337KB optional transport field.
-it('does not supply the SDK to an SDK-free BOM page', async () => {
+// #8148: every page receives the optional SDK; the Host never rewrites page bytes.
+it('keeps BOM page bytes while supplying the SDK to a remote viewer', async () => {
   const html = '\ufeff<!doctype html><html><head></head><body>Old page</body></html>';
   const f = await fixture('device:phone', false, html);
   expect(f.document.html).toBe(html);
-  expect(f.document.sdk).toBeUndefined();
+  expect(typeof f.document.sdk?.source).toBe('string');
 });
 
 // Accepted queued input must survive replacement, but preparation has not accepted it yet.

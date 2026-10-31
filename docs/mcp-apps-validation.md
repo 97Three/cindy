@@ -317,3 +317,15 @@ facade 比直接调用增加了约 15.03 / 36.89 ms 的本地平均耗时，包�
 raw 服务器使用三页目录，不能把这组本地测量外推为 SSH、真实网络或数据库性能。
 两项完整沙箱检查均退出 0。真实供应商的 prompt cache 命中率、token 用量和模型决策准确率
 仍未测量，输出对应值为 `null`；本记录只证明实际修改的 MCP／上下文边界，不宣称线上指标通过。
+
+## 宿主页面运行环境（#8148）
+
+所有 MCP App 页面均准备 SDK importmap 与表单前置代码，不解析 JavaScript 来判断是否需要 SDK。
+保留作者映射、BOM/doctype、原 CSP 与双向旧端兼容；远程文档沿用可选 sdk.source 和既有 gzip 协商。
+页面合格但附带 SDK 超预算时省略 SDK 并记录原因，页面仍可打开；依赖该 SDK 的 import 会失败。
+
+验证入口为 `mcp-apps-sandbox.verify.mjs --host-sdk`（并跑 `--remote`、`--bom`）：
+计算 import、外部模块与显式/隐式 document.write 均加载官方 SDK；页面 submit 先处理 click/Enter，
+未处理的默认提交与直接 form.submit 不发请求、不跳转，卡片仍可用。前置代码仅增加 allow-forms，
+form-action none 保留；没有 Swift/Kotlin 改动。预算和旧端回归并入现有 wireBudget、sandboxProtocol、
+mcpApps 与 mcpAppNativeDocument 测试。手机 JS 单测不替代手机真机验收。

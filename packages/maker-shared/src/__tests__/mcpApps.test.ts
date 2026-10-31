@@ -221,9 +221,11 @@ it('keeps other imports in one importmap when adding the host SDK', () => {
 const withoutRuntime = (html: string) => html.replace(/<script data-cindy-runtime>[\s\S]*?<\/script>/, '');
 const sdkUrl = 'https://view.example/__cindy/sdk/ext-apps/app.js';
 const sdkModule = '<script type="module">import { App } from "@modelcontextprotocol/ext-apps";</script>';
-it('leaves SDK-free BOM HTML byte-for-byte intact', () => {
+it('prepares SDK-free BOM pages for later computed imports without changing standards mode', () => {
   const html = '\ufeff<!doctype html><html><head></head><body>Old page</body></html>';
-  expect(withoutRuntime(withHostAppSdk(html, sdkUrl))).toBe(html);
+  const prepared = withHostAppSdk(html, sdkUrl);
+  expect(prepared.startsWith('\ufeff<!doctype html>')).toBe(true);
+  expect(prepared).toContain(sdkUrl);
 });
 it('puts the SDK importmap after the BOM and doctype', () => {
   const html = '\ufeff<!doctype html><html><head>' + sdkModule + '</head></html>';
@@ -243,34 +245,15 @@ it.each([undefined, '/relative.js'])('requires an absolute SDK URL: %s', url => 
   expect(() => Reflect.apply(withHostAppSdk, undefined, [sdkModule, url])).toThrow();
 });
 
-// Greptile 4427568750: template-literal dynamic imports are valid module requests.
-it('supplies the SDK for a template-literal dynamic import', () => {
-  const html = '<script type="module">import(`@modelcontextprotocol/ext-apps`);</script>';
+// Unit: the initial HTML cannot predict generated documents or external modules.
+// The host runtime is available independently of source text or script MIME types.
+it.each([
+  '<head><script type="module">import(["@modelcontextprotocol", "ext-apps"].join("/"))</script></head>',
+  '<head><script type="module" src="https://assets.example/app.js"></script></head>',
+  // Codex 4429721129: inline event handlers can import the SDK without a script element.
+  '<button onclick="import(\'@modelcontextprotocol/ext-apps\')">Load</button>',
+])('prepares the host mapping without inspecting JavaScript: %s', html => {
   expect(withHostAppSdk(html, sdkUrl)).toContain(sdkUrl);
-});
-
-// Codex review on 11284c6a52: HTML executes every JavaScript MIME type essence as a
-// classic script; a type with parameters is a data block the browser never runs.
-it.each([
-  { type: 'application/ecmascript', supplied: true },
-  { type: 'TEXT/X-JAVASCRIPT', supplied: true },
-  { type: 'text/javascript; charset=utf-8', supplied: false },
-])('follows HTML classic script types for dynamic SDK imports: $type', ({ type, supplied }) => {
-  const html = `<script type="${type}">import("@modelcontextprotocol/ext-apps");</script>`;
-  expect(withHostAppSdk(html, sdkUrl).includes(sdkUrl)).toBe(supplied);
-});
-
-// Codex 4427968307: built bundles may mention the package without importing it.
-// Production HTML preparation must leave their bytes (and remote budget) alone.
-// Unit tier: ordinary strings, license comments and source text in templates.
-it.each([
-  'const packageName = "@modelcontextprotocol/ext-apps";',
-  '/* import "@modelcontextprotocol/ext-apps"; */ console.log("bundled");',
-  '// import("@modelcontextprotocol/ext-apps")',
-  'const example = `import "@modelcontextprotocol/ext-apps"`;',
-])('does not supply the SDK for JavaScript text without a module request: %s', source => {
-  const html = '<!doctype html><script type="module">' + source + '</script>';
-  expect(withoutRuntime(withHostAppSdk(html, sdkUrl))).toBe(html);
 });
 
 // Codex 4428250526: the browser accepts prefix importmap entries; overriding one

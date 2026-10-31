@@ -237,7 +237,7 @@ describe('MCP App local protocol isolation', () => {
     expect(resource.status).toBe(200);
     expect(resource.headers.get('Content-Security-Policy')).toContain("connect-src 'none'");
     expect(resource.headers.get('Content-Security-Policy')).toContain("form-action 'none'");
-    expect((await resource.text()).replace(/<script data-cindy-runtime>[\s\S]*?<\/script>/, '')).toBe(document.html);
+    expect((await resource.text()).replace(/<script data-cindy-runtime>[\s\S]*?<\/script>/, '').replace(/<script type="importmap">[\s\S]*?<\/script>/, '')).toBe(document.html);
     const sandbox = await handler(new Request('cindy-mcp-app://' + id + '/sandbox'));
     expect(sandbox.headers.get('Content-Security-Policy')).toContain(
       'frame-src cindy-mcp-app://' + id + '-view',
@@ -385,7 +385,11 @@ it('serves the executor SDK and importmap without widening CSP', async () => {
   const legacyId = mountRemoteAppDocument(document, 'renderer:1');
   const legacy = await handler(new Request('cindy-mcp-app://' + legacyId + '-view/resource'));
   expect(page.headers.get('Content-Security-Policy')).toBe(legacy.headers.get('Content-Security-Policy'));
-  expect((await legacy.text()).replace(/<script data-cindy-runtime>[\s\S]*?<\/script>/, '')).toBe(document.html);
+  const legacyHtml = await legacy.text();
+  expect(legacyHtml).toContain('data-cindy-runtime');
+  expect(legacyHtml).toContain('cindy-mcp-app://' + legacyId + '-view/__cindy/sdk/ext-apps/app.js');
+  expect((await handler(new Request('cindy-mcp-app://' + legacyId + '-view/__cindy/sdk/ext-apps/app.js'))).status).toBe(404);
+  expect(legacyHtml.replace(/<script data-cindy-runtime>[\s\S]*?<\/script>/, '').replace(/<script type="importmap">[\s\S]*?<\/script>/, '')).toBe(document.html);
   const html = await page.text();
   expect(html).toContain('cindy-mcp-app://' + id + '-view/__cindy/sdk/ext-apps/app.js');
   expect(html.indexOf('type="importmap"')).toBeLessThan(html.indexOf('type="module"'));

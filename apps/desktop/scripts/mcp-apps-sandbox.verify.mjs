@@ -30,6 +30,9 @@ const assets = http.createServer((req, res) => {
   if (req.url === '/asset.js') {
     res.setHeader('Content-Type', 'text/javascript');
     res.end('window.allowedAssetLoaded=true;');
+  } else if (req.url === '/sdk-external.js') {
+    res.setHeader('Content-Type', 'text/javascript');
+    res.end('import { App } from "@modelcontextprotocol/ext-apps";window.externalSdkLoaded=typeof App==="function";window.externalSdkResolve();');
   } else if (req.url === '/frame') {
     res.setHeader('Content-Type', 'text/html');
     res.end('<!doctype html><body>Declared frame domain</body>');
@@ -53,7 +56,7 @@ const endpoint = await startMockAppServer({
 try {
   if (pluginView) await writeFile(path.join(temporary, 'fixture.txt'), 'host-only-file');
   if (pluginView) {
-    const fixture = hostSdk ? hostSdkFixture() : authorMode ? await authorFixture(authorMode, temporary) : await pluginUiFixture(independent, independent ? allowed : undefined, true);
+    const fixture = hostSdk ? hostSdkFixture(allowed) : authorMode ? await authorFixture(authorMode, temporary) : await pluginUiFixture(independent, independent ? allowed : undefined, true);
     if (bom) fixture.html = String.fromCharCode(0xfeff) + fixture.html;
     await writeFile(path.join(temporary, 'plugin.json'), JSON.stringify(fixture));
   }
@@ -172,7 +175,7 @@ try {
           sendToGhost:(_id,payload)=>{if(payload.type==='tool-call')sdkDispatched.push(payload.args?.text);handler(payload);return true;}});
         runInNewContext(fixture.main,{setTimeout,cindy:{library:request=>{assert.ok(authorVault);assert.ok(['writeBegin','writeChunk','writeCommit','writeAbort'].includes(request.op));return authorVault[request.op](request);},onHostMessage:fn=>{handler=fn;},send:payload=>payload.type==='tool-progress'?dispatcher.handleToolProgress(ghost.manifest.id,payload):dispatcher.handleToolResult(ghost.manifest.id,payload)}});
         executePlugin=async(name,args,onProgress)=>{const reply=await dispatcher.callGhostTool({ghostId:ghost.manifest.id,tool:name,args,onProgress});assert.equal(reply.ok,true);if(authorMode==='shell'){shellCalls.push({name,args});return shellResultOverride??reply.result;}return reply.result;};
-        config={id:'example',url:'',transport:'in-process',plugin:{instance:ghost.manifest.id,revision:'fixture',packageSha256:'fixture',title:ghost.manifest.name,trust:'unverified',domains:independent?[allowed]:[],assertCurrent(){},
+        config={id:'example',url:'',transport:'in-process',plugin:{instance:ghost.manifest.id,revision:'fixture',packageSha256:'fixture',title:ghost.manifest.name,trust:'unverified',domains:independent||process.env.CINDY_MCP_APP_TEST_HOST_SDK==='1'?[allowed]:[],assertCurrent(){},
           createTransport:()=>createPluginAppTransport({instance:ghost.manifest.id,revision:'fixture',tools:ghost.manifest.tools,ui:ghost.manifest.mcpApps?.ui,hosts:ghost.manifest.network?.hosts,assertCurrent(){},readHtml:()=>fixture.html,
             call:(grant,args)=>executePlugin(grant.tool,args,grant.onProgress)})}};
       }
@@ -202,7 +205,7 @@ try {
         host.dispatch=(caller,session,id,message)=>{if(message.method==='tools/call'&&message.params.name==='echo')sdkIds.push({text:message.params.arguments.text,id:message.id});return dispatch(caller,session,id,message);};
       }
       if(process.env.CINDY_MCP_APP_TEST_BOM==='1'){
-        const open=host.open.bind(host);host.open=async(...args)=>{const doc=await open(...args);assert.equal(doc.html.charCodeAt(0),0xfeff);if(process.env.CINDY_MCP_APP_TEST_HOST_SDK!=='1')assert.equal(doc.sdk,undefined);return doc;};
+        const open=host.open.bind(host);host.open=async(...args)=>{const doc=await open(...args);assert.equal(doc.html.charCodeAt(0),0xfeff);assert.equal(typeof doc.sdk?.source,'string');return doc;};
       }
       setMcpAppFileReader((id,token,request)=>host.readPluginFile(id,token,request));
       if(process.env.CINDY_MCP_APP_TEST_METRICS==='1'){
@@ -267,6 +270,7 @@ try {
         await wait(()=>inner()?.executeJavaScript('window.pageState?.ready===true'));
         assert.equal(await inner().executeJavaScript('window.pageState.page'),1);
         assert.equal(await inner().executeJavaScript('window.loaderCompatMode'), 'CSS1Compat');
+        assert.equal(await inner().executeJavaScript('window.computedSdkLoaded&&window.externalSdkLoaded'),true);
         assert.equal(await inner().executeJavaScript('typeof window.App'),'undefined');
         assert.equal(record.sdk,undefined);
         const attachment=process.env.CINDY_MCP_APP_TEST_REMOTE!=='1'

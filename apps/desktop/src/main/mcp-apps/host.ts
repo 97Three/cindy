@@ -1,4 +1,4 @@
-import { needsHostAppSdk } from '@cindy/maker-shared/mcp-app-sdk';
+import { createLogger } from '../logger.js';
 import { hostAppSdkAsset } from './hostSdk.js';
 import { GHOST_PIPE_CALL_MAX_TOTAL_MS } from '../../shared/ghost.js';
 import { pagePermissionGrants } from './pagePermissions.js';
@@ -393,7 +393,7 @@ export class McpAppsHost {
         throw new Error('MCP_APP_VIEW_LIMIT');
       const viewId = randomUUID();
       const document: McpAppDocument = {
-        ...(needsHostAppSdk(resource.html) ? { sdk: hostAppSdkAsset } : {}),
+        sdk: hostAppSdkAsset,
         viewId,
         html: resource.html,
         csp: policy.header,
@@ -401,10 +401,14 @@ export class McpAppsHost {
         prefersBorder: resource.meta.prefersBorder !== false,
       };
       const remote = caller.startsWith('device:');
-      // SDK-free pages keep their existing budget. A required SDK must travel
-      // with its document; silently dropping it would return an unusable page.
-      if (remote && Buffer.byteLength(JSON.stringify(document)) > MCP_APPS_MAX_REMOTE_BYTES)
-        throw new Error('MCP_APP_RESOURCE_TOO_LARGE');
+      // The optional runtime must not reduce the budget of an installed page.
+      // With no source detection, a missing SDK can only fail that page's import.
+      if (remote && Buffer.byteLength(JSON.stringify(document)) > MCP_APPS_MAX_REMOTE_BYTES) {
+        delete document.sdk;
+        if (Buffer.byteLength(JSON.stringify(document)) > MCP_APPS_MAX_REMOTE_BYTES)
+          throw new Error('MCP_APP_RESOURCE_TOO_LARGE');
+        createLogger('mcp-apps').warn('Host SDK omitted: page fits the remote budget, but page plus SDK exceeds it; bare SDK imports will fail in this View');
+      }
       const transport = new ViewTransport(remote ? MCP_APPS_MAX_REMOTE_BYTES : MCP_APPS_MAX_BYTES, !remote || !config.plugin);
       const context: McpUiHostContext = {
         ...hostContext,

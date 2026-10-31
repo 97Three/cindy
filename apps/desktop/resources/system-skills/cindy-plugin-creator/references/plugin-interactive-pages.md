@@ -1,6 +1,6 @@
 ## 4.23 交互页面 MCP Apps（mcpApps.ui）
 
-宿主 SDK（`@modelcontextprotocol/ext-apps`）及整页替换需要 `0.1.122-beta`，两端升级；每页只建一个 App。
+宿主始终提供 SDK 映射（`@modelcontextprotocol/ext-apps`）和表单兜底；整页替换需两端 `0.1.122-beta`，每页只建一个 App。
 重握手取消旧调用、保留卡片/附件/hostContext；已发数据不重发。
 
 交互页面适合工具结果里的表单、图表和连续操作：模型用 `ghost_call` 打开页面，用户在页面里
