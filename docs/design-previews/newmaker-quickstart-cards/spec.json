@@ -32,7 +32,8 @@
       "fr",
       "de",
       "pt-PT",
-      "pt-BR"
+      "pt-BR",
+      "zh-Hant-x-lzh"
     ]
   },
   "states": [
@@ -156,6 +157,16 @@
           "os": "desktop",
           "mode": "dark",
           "lang": "pt-BR"
+        }
+      },
+      {
+        "id": "en-dark-zh-Hant-x-lzh",
+        "prefs": {
+          "plat": "desk",
+          "region": "na",
+          "os": "desktop",
+          "mode": "dark",
+          "lang": "zh-Hant-x-lzh"
         }
       }
     ],

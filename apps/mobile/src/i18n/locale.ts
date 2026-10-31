@@ -10,7 +10,7 @@
  */
 
 /** UI 支持的具体语言。 */
-export const SUPPORTED_LOCALES = ["zh-CN", "zh-TW", "en", "ja", "ko", "es", "fr", "de", "pt-PT", "pt-BR"] as const;
+export const SUPPORTED_LOCALES = ["zh-CN", "zh-TW", "en", "ja", "ko", "es", "fr", "de", "pt-PT", "pt-BR", "zh-Hant-x-lzh"] as const;
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
 
 /** 用户偏好:'system' = 跟随系统语言,由本模块在运行时解析。 */

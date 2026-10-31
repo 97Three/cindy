@@ -637,7 +637,9 @@ export function queryTodoItems(items: TeammateTodo[], q: TodoListQuery = {}, now
 
 /** Public transcript copy; the model-only delivery carries the stable affair id separately. */
 export function todoActionText(title: string, step: string, locale = 'en'): string {
-  const prefix = locale.startsWith('zh-TW')
+  const prefix = locale === 'zh-Hant-x-lzh'
+    ? '續'
+    : locale.startsWith('zh-TW')
     ? '繼續'
     : locale.startsWith('zh')
       ? '继续'

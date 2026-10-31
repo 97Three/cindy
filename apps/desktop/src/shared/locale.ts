@@ -1,5 +1,5 @@
 /** UI-supported concrete locales. */
-export const SUPPORTED_LOCALES = ['zh-CN', 'zh-TW', 'en', 'ja', 'ko', 'es', 'fr', 'de', 'pt-PT', 'pt-BR'] as const;
+export const SUPPORTED_LOCALES = ['zh-CN', 'zh-TW', 'en', 'ja', 'ko', 'es', 'fr', 'de', 'pt-PT', 'pt-BR', 'zh-Hant-x-lzh'] as const;
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
 
 /** User-facing locale preference. 'system' is resolved by the host process. */
@@ -69,6 +69,10 @@ function matchSupportedLocale(raw: string | undefined | null): SupportedLocale |
 function matchSystemLocale(raw: string | undefined | null): SupportedLocale | null {
   const normalized = normalizeLocaleTag(raw);
   const language = getLanguageCode(raw);
+  // An app locale passed back through this resolver keeps its exact identity;
+  // otherwise the Classical Chinese tag (zh-Hant-x-lzh) would fold into zh-TW.
+  const exact = normalized ? LOCALE_BY_TAG.get(normalized.toLowerCase()) : undefined;
+  if (exact) return exact;
   if (language === 'zh') {
     const intlLocale = normalized ? new Intl.Locale(normalized) : null;
     const script = intlLocale?.script?.toLowerCase() ?? '';

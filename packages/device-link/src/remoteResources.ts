@@ -402,6 +402,9 @@ export function resolveRemoteText(value: RemoteText, locale?: string): string {
   if (!locale || !value.translations || typeof value.translations !== 'object') return value.fallback;
   const exact = value.translations[locale];
   if (typeof exact === 'string' && exact) return exact;
+  // Copy from hosts that predate Classical Chinese falls back to Traditional Chinese.
+  const traditional = locale === 'zh-Hant-x-lzh' ? value.translations['zh-TW'] : undefined;
+  if (typeof traditional === 'string' && traditional) return traditional;
   const language = locale.split('-')[0];
   const translated = value.translations[language];
   return typeof translated === 'string' && translated ? translated : value.fallback;

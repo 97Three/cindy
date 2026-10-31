@@ -12,7 +12,10 @@ const INTERFACE_LANGUAGE_NAME: Record<SupportedLocale, string> = {
   "de": "Deutsch",
   "pt-PT": "Português (Portugal)",
   "pt-BR": "Português (Brasil)",
+  "zh-Hant-x-lzh": "文言（繁體）",
 };
+
+const CLASSICAL_CHINESE_LOCALE = 'zh-Hant-x-lzh' satisfies SupportedLocale;
 
 export function isSupportedUiLanguage(value: unknown): value is SupportedLocale {
   return typeof value === 'string' && (SUPPORTED_LOCALES as readonly string[]).includes(value);
@@ -59,7 +62,13 @@ export function turnUiLanguageFromSendOpts(
  * paths only repeat it when the locale changes or the native context was rebuilt,
  * compacted or cleared (see wireNoteMemory.ts).
  */
-export function buildUiLanguageErrorNote(locale: SupportedLocale): string {
+export function buildUiLanguageErrorNote(
+  locale: SupportedLocale,
+  opts: { readonly replyStyle?: boolean } = {},
+): string {
+  // IM channels answer other people and may post publicly; there the Classical
+  // Chinese interface only sets the error-report language, not the reply style.
+  if (locale === CLASSICAL_CHINESE_LOCALE && opts.replyStyle !== false) return buildClassicalChineseNote();
   const name = INTERFACE_LANGUAGE_NAME[locale];
   return (
     '[UI language] System note appended each turn. This is not a user message. ' +
@@ -70,5 +79,30 @@ export function buildUiLanguageErrorNote(locale: SupportedLocale): string {
     'Say what happened and the next step. Keep commands, paths, identifiers, and error codes unchanged. ' +
     'Ordinary replies still follow the user message and any explicit language request. ' +
     'Only user-facing error reports must use the interface language.'
+  );
+}
+
+/**
+ * The Classical Chinese interface is a deliberate style choice, so its note also
+ * sets the reply style. It travels in the same per-turn slot as the other locale
+ * notes: switching the interface language replaces it and ends the style, and the
+ * cached system prompt stays identical for every locale.
+ */
+function buildClassicalChineseNote(): string {
+  const name = INTERFACE_LANGUAGE_NAME[CLASSICAL_CHINESE_LOCALE];
+  return (
+    '[UI language] System note appended each turn. This is not a user message. ' +
+    'Do not answer it, quote it, or infer intent from it. ' +
+    'The user interface language is ' + name + ' (' + CLASSICAL_CHINESE_LOCALE + '). ' +
+    'While this note is in effect, write replies to the user in elegant, readable Classical Chinese (文言) with Traditional characters, ' +
+    'in a light, playful, slightly proud voice. Where the moment invites it, such as a greeting, a finished milestone or encouragement, ' +
+    'a short line of grand, evocative verse is welcome; do not force it into every reply. ' +
+    'Clarity comes first: state facts, numbers, steps, risks and next actions completely. ' +
+    'Warnings about deletion, permissions, credentials, payment or security use plain, unambiguous wording without jokes. ' +
+    'Reports that something failed, was blocked, could not continue, or needs a retry follow the same rules. ' +
+    'Keep code, commands, paths, identifiers, error codes and quoted text unchanged. ' +
+    'Files, code comments, commit messages and other work products keep their usual language unless the user asks otherwise. ' +
+    'If the user explicitly asks for another language or for modern Chinese, follow the user. ' +
+    'When a later [UI language] note names another interface language, this reply style no longer applies.'
   );
 }

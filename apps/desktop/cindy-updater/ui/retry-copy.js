@@ -63,6 +63,15 @@ const RETRY_COPY = {
     "archive_unavailable": "O arquivo de atualização está ausente ou não pode ser lido. Verifique se há atualizações novamente",
     "spawn_failed": "Não foi possível reiniciar o atualizador. Feche esta janela e verifique se há atualizações novamente"
   },
+  'zh-Hant-x-lzh': {
+    retry: '再試',
+    processes_running: '請先關閉 Cindy 及自安裝目錄執行之他程序，而後再試',
+    updater_busy: '另有更新方行，請闔此視窗，再檢查更新',
+    in_progress: '更新之重試已在進行',
+    unavailable: '此番更新未成，不可重試',
+    archive_unavailable: '更新檔案已不存或不可讀，請再檢查更新',
+    spawn_failed: '未能啟動更新重試，請闔此視窗，再檢查更新',
+  },
   en: {
     retry: 'Retry',
     processes_running:
@@ -102,6 +111,7 @@ const RETRY_COPY = {
 
 globalThis.retryCopy = function retryCopy(language = 'en') {
   const locale = language.toLowerCase();
+  if (/^zh-hant-x-lzh$/.test(locale)) return RETRY_COPY['zh-Hant-x-lzh'];
   if (/^zh-(tw|hk|mo|hant)(-|$)/.test(locale)) return RETRY_COPY['zh-TW'];
   if (locale === 'zh' || locale.startsWith('zh-')) return RETRY_COPY['zh-CN'];
   if (locale.split('-')[0] === 'pt') {

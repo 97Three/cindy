@@ -50,7 +50,10 @@ export function VoiceSpeakerEnrollmentDialog({
   const { t, i18n } = useTranslation();
   const language = i18n.resolvedLanguage || i18n.language;
   // The model covers Chinese and English; other UI locales use English passages.
-  const passageLanguage = language === 'zh-CN' || language === 'zh-TW' ? language : 'en';
+  // Classical Chinese UI reads the modern Traditional passages aloud.
+  const passageLanguage = language === 'zh-Hant-x-lzh'
+    ? 'zh-TW'
+    : language === 'zh-CN' || language === 'zh-TW' ? language : 'en';
   const [clips, setClips] = useState<Array<ArrayBuffer | null>>(() => CLIP_INDEXES.map(() => null));
   const [current, setCurrent] = useState(0);
   const [recording, setRecording] = useState(false);

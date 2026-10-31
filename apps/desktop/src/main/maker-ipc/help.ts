@@ -79,6 +79,7 @@ const LOCALE_NAME: Record<HelpLocale, string> = {
   "de": "German",
   "pt-PT": "European Portuguese",
   "pt-BR": "Brazilian Portuguese",
+  "zh-Hant-x-lzh": "Classical Chinese (文言) in Traditional characters, keeping UI names exactly as shown in the app",
 };
 
 type HelpOneShotTarget = {
@@ -113,7 +114,7 @@ async function isHelpSessionAgentDispatchAllowed(
 }
 
 function normalizeLocale(locale: unknown): HelpLocale {
-  return locale === 'zh-CN' || locale === 'zh-TW' || locale === 'en' || locale === 'ja' || locale === 'ko' || locale === 'es' || locale === 'fr' || locale === 'de' || locale === 'pt-PT' || locale === 'pt-BR'
+  return locale === 'zh-CN' || locale === 'zh-TW' || locale === 'en' || locale === 'ja' || locale === 'ko' || locale === 'es' || locale === 'fr' || locale === 'de' || locale === 'pt-PT' || locale === 'pt-BR' || locale === 'zh-Hant-x-lzh'
     ? locale
     : 'en';
 }

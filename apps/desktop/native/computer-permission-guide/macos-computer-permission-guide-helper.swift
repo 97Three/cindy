@@ -20,6 +20,7 @@ private enum GuideLocale: String {
     case de
     case ptPT = "pt-PT"
     case ptBR = "pt-BR"
+    case lzh = "zh-Hant-x-lzh"
 }
 
 /** Localized native copy selected from the renderer-synchronized app locale. */
@@ -177,6 +178,21 @@ private struct GuideCopy {
                 waiting: "Aguardando você",
                 dragTitle: "Arraste o CuaDriver para {{permission}}",
                 dragHint: "Arrastar"
+            )
+        case .lzh:
+            return GuideCopy(
+                close: "闔",
+                turnThisOn: "啟此項",
+                pointsToSwitch: "指向開關",
+                accessibility: "輔助使用",
+                screenRecording: "螢幕錄製",
+                completeEyebrow: "權柄已備",
+                readyTitle: "Computer Use 已備",
+                step: "啟電腦自動操作",
+                turnOnAppTitle: "於「{{permission}}」中開啟 CuaDriver",
+                waiting: "待君開啟",
+                dragTitle: "將 CuaDriver 拖曳至「{{permission}}」",
+                dragHint: "拖曳"
             )
         case .en:
             return GuideCopy(

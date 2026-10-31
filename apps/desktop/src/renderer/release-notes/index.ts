@@ -96,8 +96,9 @@ export function selectLocalizedContent(
   locale: NoticeLocale,
 ): RawLocalizedContent | null {
   const localized = raw.contentByLocale;
-  if (locale === 'zh-CN' || locale === 'zh-TW') {
-    for (const candidate of [locale, 'zh-CN'] as const) {
+  if (locale === 'zh-CN' || locale === 'zh-TW' || locale === 'zh-Hant-x-lzh') {
+    // Notices are authored in modern Chinese; Classical Chinese UI reads the Traditional edition.
+    for (const candidate of locale === 'zh-Hant-x-lzh' ? [locale, 'zh-TW', 'zh-CN'] as const : [locale, 'zh-CN'] as const) {
       const content = localized?.[candidate];
       if (hasUsableContent(content)) return content;
     }

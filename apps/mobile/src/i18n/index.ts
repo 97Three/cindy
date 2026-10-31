@@ -15,6 +15,7 @@ import frCommon from "./locales/fr";
 import deCommon from "./locales/de";
 import ptPTCommon from "./locales/pt-PT";
 import ptBRCommon from "./locales/pt-BR";
+import lzhCommon from "./locales/zh-Hant-x-lzh";
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import { BRAND_NAME } from "@cindy/maker-shared/branding";
@@ -43,6 +44,7 @@ const resources = {
   "de": { common: deCommon },
   "pt-PT": { common: ptPTCommon },
   "pt-BR": { common: ptBRCommon },
+  "zh-Hant-x-lzh": { common: lzhCommon },
   en: { common: enCommon },
   "zh-CN": { common: zhCNCommon },
   "zh-TW": { common: zhTWCommon },
@@ -55,7 +57,8 @@ void i18n.use(initReactI18next).init({
   resources,
   lng: detectSystemLocale(),
   // 缺 key 回退英文。
-  fallbackLng: { default: [DEFAULT_LOCALE] },
+  // 文言版缺 key 先落繁體,再落英文。
+  fallbackLng: { "zh-Hant-x-lzh": ["zh-TW", DEFAULT_LOCALE], default: [DEFAULT_LOCALE] },
   defaultNS: "common",
   ns: ["common"],
   interpolation: {

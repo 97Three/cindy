@@ -127,9 +127,12 @@ export function MarketInfoEditDialog({
           displayName: displayName.trim(),
           summary: description,
           description,
-          contentLocale: (['zh-CN', 'zh-TW', 'en', 'ja', 'ko'] as readonly string[]).includes(i18n.resolvedLanguage ?? '')
-            ? i18n.resolvedLanguage as SupportedLocale
-            : 'en',
+          // The market only stores modern-language content; Classical Chinese UI writes Traditional Chinese.
+          contentLocale: i18n.resolvedLanguage === 'zh-Hant-x-lzh'
+            ? 'zh-TW'
+            : (['zh-CN', 'zh-TW', 'en', 'ja', 'ko'] as readonly string[]).includes(i18n.resolvedLanguage ?? '')
+              ? i18n.resolvedLanguage as SupportedLocale
+              : 'en',
           tags: categorySlugs,
         },
       });

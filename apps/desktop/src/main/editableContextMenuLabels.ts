@@ -112,4 +112,13 @@ export const EDITABLE_CONTEXT_MENU_LABELS: Record<SupportedLocale, EditableConte
     "pasteAsPlainText": "Colar como texto simples",
     "selectAll": "Selecionar tudo"
   },
+  'zh-Hant-x-lzh': {
+    undo: '復原',
+    redo: '重做',
+    cut: '剪下',
+    copy: '錄之',
+    paste: '貼',
+    pasteAsPlainText: '貼為純文',
+    selectAll: '盡選',
+  },
 };

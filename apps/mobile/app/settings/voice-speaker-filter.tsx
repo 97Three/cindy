@@ -91,7 +91,9 @@ export function VoiceSpeakerFilterScreen({ services = liveServices }: { services
   const { t, i18n } = useTranslation();
   const language = i18n.resolvedLanguage || i18n.language;
   // The model covers Chinese and English; other UI locales use English passages.
-  const passageLanguage = language === 'zh-CN' || language === 'zh-TW' ? language : 'en';
+  // Classical Chinese UI still reads modern Traditional (zh-TW) passages.
+  const passageLanguage =
+    language === 'zh-Hant-x-lzh' ? 'zh-TW' : language === 'zh-CN' || language === 'zh-TW' ? language : 'en';
   const rowStyles = useSettingsRowStyles();
   const styles = useThemedStyles(makeStyles);
   const state = useSyncExternalStore(subscribeMobileSpeakerFilter, getMobileSpeakerFilterSnapshot);

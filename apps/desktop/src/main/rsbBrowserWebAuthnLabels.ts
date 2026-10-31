@@ -114,4 +114,13 @@ export const RSB_BROWSER_WEBAUTHN_LABELS: Record<
     "unknownRelyingParty": "este site",
     "touchIdPromptReason": "verifique sua identidade em $1"
   },
+  'zh-Hant-x-lzh': {
+    title: '擇通行密鑰',
+    message: '擇 {{relyingPartyId}} 所用之通行密鑰',
+    detail: 'Cindy 唯將君之所擇交予驗證器；通行密鑰之私密資訊始終存於驗證器中。',
+    cancel: '罷通行密鑰登入',
+    unknownAccount: '通行密鑰 {{index}}',
+    unknownRelyingParty: '此網站',
+    touchIdPromptReason: '於 $1 驗君之身分',
+  },
 };
