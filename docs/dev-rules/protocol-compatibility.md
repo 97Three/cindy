@@ -406,6 +406,9 @@ stream 匹配后才处理；信令不进入业务可靠 FIFO，也不走直连�
   401 `RELAY_CREDENTIAL_INVALID`，刻意不用 Desktop `serverApiFetch` 会触发刷新/登出 Cindy 账号的三种错误码。
 - hello-ack 的 `capabilities` 为空：客户端据此不发 `notify`、不发 `sharedTask` / `providerShare` 帧；
   中转收到带这两种范围的帧回 `BAD_REQUEST`，不转发。`userId` 为主人账号，`deviceId` 由凭证绑定，不信任自报。
+- 跨账号帧不进自建中转：`RoutedDeviceLinkClient`（`packages/device-link/src/routedClient.ts`）在主连接走自建中转时另开一条
+  `scopedPeersOnly` 的官方连接承载共享任务与供应商分享，同账号路由帧在这条连接的入站边界丢弃。两条连接的状态与恢复互不牵连，
+  host 按 peer 取连接用 `connectionFor` / `crossAccountConnection`。官方线路不启动第二条连接，wire 不变；中转程序无需升级。
 - 官方 REST 同形：`/devices`（GET/PATCH/DELETE）、`/media/presign-put`、`/media/presign-get`、`DELETE /media`。
   媒体地址指向中转自身（带签名、短期有效、一次性上传、支持单段 Range）；`/ice-servers` 返回 404（客户端退回公共 STUN）；
   `/push-token` 返回 204 不保存；`GET /provider-shares` 返回空列表。
@@ -629,6 +632,27 @@ SDK 重新读取并恢复草稿；再次发送必须重新经过完整倒计时�
 锁定编辑；旧手机可能无法操作新增按钮，完整撤销交互需升级查看端。没有新 channel 或原生配置。
 
 ## MCP Apps
+
+页面 iframe 沙箱允许 `allow-scripts allow-same-origin allow-forms`；`allow-forms` 仅让 submit 事件分发，
+页面在监听器中 `preventDefault()` 后通过工具桥接提交；宿主在 window 冒泡监听末尾（含页面自己的 window 监听器之后）取消尚未取消的默认提交，
+并令直接 `form.submit()` 不执行；`method="dialog"` 只关闭对话框、不导航，保留原生行为。前置代码在显式 open 和隐式 write/writeln 替换文档后恢复监听。Desktop（本机与远程）和 Mobile
+始终保留 CSP `form-action 'none'`，禁止任何地址的原生表单提交，不新增网络出口。
+旧执行端和旧查看端没有该沙箱能力，依赖 submit 事件的插件需声明 `minCindyVersion: 0.1.122-beta`，两端升级。
+
+McpAppDocument 增量增加可选的 sdk: { source }，由执行电脑从与 AppBridge 同版本的
+官方依赖提供，随临时 View 转发，不写入卡片。新查看端为所有页面准备表单前置代码和 SDK importmap，
+无须检测初始 HTML 的 JavaScript；作者已有的 imports、前缀及 null 映射优先，BOM/doctype 保持正确位置。
+本机 SDK 从内存按同源地址供给，远程/Mobile 沿用 sdk.source，不新增缓存、操作或传输字段；
+open 结果沿用现有 invokeTransfer gzip 协商，自建中转继续透明转发既有 invoke/invoke-result。
+旧查看端忽略 sdk，旧 Host 缺字段时新查看端照常打开文档；此时 SDK 地址不可用，只使对应 import 失败，
+不影响自带 SDK、作者映射或不用 SDK 的页面。显式或隐式整页替换、外部模块和计算 import 均无需源码探测。
+页面本身的远程预算维持原限制；页面合格但附带 SDK 超限时，仅省略 sdk 并记录明确原因，仍打开页面。
+由于不再检测是否使用 SDK，此取舍优先保证存量页面可用；该 View 若依赖裸 SDK import，导入会失败。
+完整宿主 SDK 能力需执行端和查看端都升级，插件 minCindyVersion 为 0.1.122-beta。
+重复 ui/initialize 仅更换当前 View 的文档代次：取消旧请求、审批并丢弃旧回复，已发出的初始工具输入/结果不重放，未发出的在初始化后送达，
+保留卡片、已授予的附件投影与最新 hostContext；不改变安装批准、持久记录、channel 或手机原生配置。
+新 Host 的每个事件都携带 generation（首份文档为 0）。查看端在转发前按当前代次丢弃途中旧回复；
+事件缺 generation 表示旧执行端，新查看端不按代次过滤、保持旧行为；旧查看端忽略该字段。完整换页隔离仍要求执行端和查看端均升级。
 
 标准 MCP Apps 使用 `io.modelcontextprotocol/ui` 扩展及官方 `2026-01-26` 协议。
 客户端新增独立 `maker:mcp-apps:v1` channel，复用 device-link 的同账号调用与错误协议，
@@ -3830,6 +3854,15 @@ Pi 的原生供应商适配器只暴露获准模型，在打开流前用既有�
 复核当前任务绑定和远程模型范围。访客仍可省略该字段并使用已绑定的唯一来源，提供其他来源时拒绝。
 适配器启动与热刷新保留来源标记；本机普通任务不生成标记，不增加远程授权检查。此扩展不改变跨电脑 wire 格式。
 
+## 任务导入 `session-import`（Remote Resource，2026-10-30）
+
+新增隐藏集合 `session-import`（resourceKind `import`），只对声明 client primitive `session-import` 的控制端返回内容，
+旧控制端拿到 `UNSUPPORTED_CAPABILITY`，电脑详情页的入口只在新版手机出现。资源 `scan` / `scan:force` 返回可导入的任务：
+key、来源、标题、分组名（不含路径，分组键是不透明摘要）、时间、大小与状态位；`job:<requestId>` / `job:latest` 返回导入进度与
+逐项结果。动作 `import`（`input.keys`，最多 400 个）开始导入并以 `navigate` 指向对应 job；`cancel`（`input.requestId`）停止。
+文件路径、来源内部定位信息不出电脑；原文件夹不存在的任务只能在电脑上选新文件夹。桌面、手机与 Agent 同时发起时，
+已在另一次导入里排队或进行中的条目不会重复导入。不改 relay 帧、服务端 schema 或 Mobile 原生配置，自建中转无需适配。
+
 ## 伙伴导入的消息机器人分类
 
 `companion-import` Remote Resource 的 client primitives 可追加 `companion-import-bots-v1`。只有声明它的控制端
@@ -4206,6 +4239,10 @@ contacts 在每次 begin 投递前核对原元素仍连接、仍声明 contacts�
 沿用可选 `requestSource.ownerVerified` 和持久 `autoReviewUserText` 回执，不新增字段或 migration。
 伙伴私信开始携带当前已接受的主人请求；原话与正文包装仍按旧接收端的逐字验证。无原话时不传空回执。
 当前接受的核实回执可继续转交，`agent-request` 与 `delegated-continuation` 的审核投影保持同一原话。
+新增界面语言 `es`、`fr`、`de`、`pt-PT`、`pt-BR` 发出的原话包装沿用英文，避免旧接收端因不认识
+新语言前缀而拒绝逐字验证。读取端继续严格匹配这些语言已经生成的历史包装；不改原话、
+补充正文或核实条件，也不新增 wire 字段。实现见 `shared/forwardedRequest.ts`，回归同时覆盖
+旧端可读的新发送格式、历史法语回执和原话篡改拒绝。
 旧接收端仍可能丢弃核实状态或把接收回复标成私密；完整修复需要执行交接的宿主升级。
 账号、群与 IM 发言人校验、权限档、Plan、输入代次和撤销校验保持不变。
 不改变连接恢复或重放策略；单次派发失败只影响该请求，不重启连接或扩大设备访问。
