@@ -40,13 +40,20 @@ export function VideoDownloadButton({ source, mimeType, active = true, immersive
     setBusy(true);
     setProgress('');
     const meter = createTransferProgressMeter();
-    const inferred = shareMimeForFileName(source.split(/[?#]/, 1)[0]);
+    const sourcePath = source.split(/[?#]/, 1)[0];
+    const inferred = shareMimeForFileName(sourcePath);
     const inlineMime = /^data:(video\/[\w.+-]+);/i.exec(source)?.[1].toLowerCase();
     const mime = mimeType?.split(';', 1)[0].trim().toLowerCase()
       || inlineMime
       || (inferred.startsWith('video/') ? inferred : 'video/mp4');
     const ext = mime === 'video/x-m4v' ? 'm4v' : extOfMime(mime);
     try {
+      // File export cannot turn a streaming playlist into a standalone video.
+      // Keep the existing failure path rather than handing the OS a fake MP4.
+      if (/\.(?:m3u8?|mpd)$/i.test(sourcePath)
+        || /^(?:(?:application|audio|video)\/(?:vnd\.apple\.mpegurl|x-mpegurl|mpegurl)|application\/dash\+xml)$/.test(mime)) {
+        throw new Error('STREAMING_MANIFEST_NOT_DOWNLOADABLE');
+      }
       const local = await downloadRemoteMediaShareTemp(source, mime, `video.${ext === 'img' ? 'mp4' : ext}`,
         controller.signal, (loaded, total) => {
           const sample = meter(loaded, total);

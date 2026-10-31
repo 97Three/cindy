@@ -22,8 +22,8 @@ vi.mock('@/theme', () => ({ useTheme: () => ({ colors: {} }) }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 let root: Root;
 let container: HTMLDivElement;
-function render(source: string | null = 'file:///clip.mov', active = true) {
-  act(() => root.render(el(VideoDownloadButton, { source, active })));
+function render(source: string | null = 'file:///clip.mov', active = true, mimeType?: string) {
+  act(() => root.render(el(VideoDownloadButton, { source, active, mimeType })));
 }
 async function click() { await act(async () => container.querySelector('button')!.click()); }
 beforeEach(() => {
@@ -45,6 +45,22 @@ it('preserves the MIME and extension declared by a data-video source', async () 
   render('data:video/quicktime;base64,AAAA'); await click();
   expect(h.download).toHaveBeenCalledWith('data:video/quicktime;base64,AAAA', 'video/quicktime', 'video.mov', expect.any(AbortSignal), expect.any(Function));
   expect(h.share).toHaveBeenCalledWith('file:///share/video.mov', { mimeType: 'video/quicktime' });
+});
+// Unit #8085 review r4429624618: the OS must not receive a streaming playlist
+// mislabeled as a video file. Existing format tests only cover complete files.
+// The smallest failing input is a playable HLS URL; DASH and MIME-only sources
+// cover the other metadata paths to the same file-export boundary.
+it.each([
+  ['https://media.invalid/stream.M3U8?token=private', undefined],
+  ['https://media.invalid/stream.mpd', undefined],
+  ['https://media.invalid/playback', 'application/vnd.apple.mpegurl; charset=utf-8'],
+])('does not share a streaming manifest as an MP4: %s', async (source, mimeType) => {
+  render(source, true, mimeType); await click();
+  expect(h.download).not.toHaveBeenCalled();
+  expect(h.share).not.toHaveBeenCalled();
+  expect(h.alert).toHaveBeenCalledWith('files.preview.downloadFailed');
+  render('https://media.invalid/clip.mp4'); await click();
+  expect(h.share).toHaveBeenCalledOnce();
 });
 it.each(['hidden', 'source', 'account', 'blur', 'unmount'])('cancels %s exports and ignores late completion', async reason => {
   let finish!: (uri: string) => void;
