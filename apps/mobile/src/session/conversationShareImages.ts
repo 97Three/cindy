@@ -7,6 +7,7 @@ import {
   mobileMarkdownImageUrlForWorkdir,
 } from "@/session/messageMarkdown";
 import { isDirectPreviewableMediaUrl } from "./remoteMedia";
+import { youtubeVideo } from "@cindy/maker-shared/rich-answer";
 import type {
   ConversationShareImage,
   ConversationShareMessage,
@@ -71,6 +72,9 @@ export async function prepareConversationShareImages(
     for (const text of texts) {
       const videos = conversationShareVideoSources(message, text);
       for (const source of videos) {
+        // These URLs are pages handled by VideoSitePreview in the live view.
+        // Keep the export's play-mark placeholder without native decoding.
+        if (youtubeVideo(source)) continue;
         const url = isDirectPreviewableMediaUrl(source) || /^xdt-video:\/\//i.test(source)
           ? source
           : mobileMarkdownImageUrlForWorkdir(source, context.workdir, message.clientId, context.remoteHostId, context.sessionId);

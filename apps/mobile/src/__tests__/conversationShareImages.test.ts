@@ -12,6 +12,29 @@ const image = {
 };
 
 describe("conversation share images", () => {
+  // Unit #8085 review r4429685137: live video-site previews are web pages,
+  // not native media bytes. Exercise the export queue and HTML fallback; the
+  // existing media tests only cover direct files. One page plus one MP4 proves
+  // that skipping web decoding preserves both the placeholder and file covers.
+  it("keeps a YouTube placeholder without sending the page to the video decoder", async () => {
+    const page = "https://youtu.be/glW1pXWebnY";
+    const clip = "https://media.invalid/clip.mp4";
+    const body = "```cindy-ui\n" + [
+      { version: 1, seq: 1, op: "create", id: "site", kind: "video", props: { src: page, caption: "Site video" } },
+      { seq: 2, op: "create", id: "clip", kind: "video", props: { src: clip } },
+    ].map(value => JSON.stringify(value)).join("\n") + "\n```";
+    const load = vi.fn(async () => image);
+    const messages = await prepareConversationShareImages([{ clientId: "v", kind: "assistant", body }], load);
+    expect(load).toHaveBeenCalledExactlyOnceWith(clip, "video");
+    expect(messages[0]?.images?.has(page)).toBe(false);
+    const colors = { ...lightColors, background: lightColors.surface, codeSurface: lightColors.chatCodeSurface,
+      inlineCode: lightColors.chatInlineCodeText, syntax: {} };
+    const html = buildConversationShareHtml({ selectedMessages: messages, allShareableIds: ["v"], colors, contentWidth: 390 });
+    expect(html).toContain("Site video");
+    expect(html.match(/<circle/g)).toHaveLength(2);
+    expect(html).not.toContain(page);
+    expect(html).toContain(image.uri);
+  });
   // Unit regression #8085: image Markdown parsing drops the supported xdt-video
   // scheme. A visible legacy video must reach the video decoder directly.
   it("loads legacy video sources without the image protocol whitelist", async () => {
