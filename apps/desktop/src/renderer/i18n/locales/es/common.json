@@ -3677,7 +3677,8 @@
           "contextWindowInvalid": "La ventana de contexto debe ser un número entero positivo válido (se permiten separadores entre grupos de dígitos)",
           "requestPathInvalid": "Comience la ruta de solicitud exacta con un único /.. No utilice fragmentos ni archivos . y .. segmentos de trayectoria; espacios con codificación porcentual y caracteres inseguros.",
           "modelRequired": "Añade al menos un modelo",
-          "oauthInvalid": "Configuración de OAuth incompleta: todos los campos son obligatorios y ambos puntos finales deben ser seguros https URLs"
+          "oauthInvalid": "Configuración de OAuth incompleta: todos los campos son obligatorios y ambos puntos finales deben ser seguros https URLs",
+          "baseUrlRequired": "Introduce la URL base de este runtime o restablece su protocolo predeterminado"
         },
         "toast": {
           "created": "Proveedor agregado",
@@ -10603,7 +10604,9 @@
       "mention": {
         "all": "todos",
         "allHint": "Todos responden",
-        "label": "Menciona a un compañero"
+        "label": "Menciona a un compañero",
+        "allBots": "Todos los compañeros",
+        "allBotsHint": "Solo compañeros"
       },
       "composer": {
         "label": "Mensaje de chat grupal",
@@ -10729,7 +10732,9 @@
         "projectDirClear": "Quitar carpeta",
         "projectDirNote": "Los compañeros trabajan aquí cuando se reparten el trabajo. Si lo dejas vacío, usarán la carpeta de esta conversación grupal. Si eliges un proyecto de Git, cada encargo tendrá un worktree y una rama nuevos para no modificar tu código.",
         "autoContinueSaveFailed": "No se pudieron guardar las transiciones entre pasos. Inténtalo de nuevo.",
-        "projectDirSaveFailed": "No se pudo guardar la carpeta del proyecto. Asegúrate de que la carpeta aún exista e inténtalo de nuevo."
+        "projectDirSaveFailed": "No se pudo guardar la carpeta del proyecto. Asegúrate de que la carpeta aún exista e inténtalo de nuevo.",
+        "allowMentionAllBots": "Permitir @todos los compañeros",
+        "allowMentionAllBotsHint": "Solo el propietario del grupo puede cambiar esta opción. Todos los compañeros pueden responder; úsala con cuidado en grupos grandes. Las respuestas de la IA en tu nombre son independientes."
       },
       "errors": {
         "memberLimit": "Un chat grupal necesita de 2 a 6 compañeros de equipo",
@@ -10753,7 +10758,8 @@
         "quoteUnavailable": "El mensaje citado fue eliminado o ya no es visible. La cita fue eliminada. Enviar de nuevo.",
         "lifecycleUnavailable": "El servidor o computadora actual aún no admite esta acción.",
         "groupDissolved": "Este grupo ha sido disuelto. Aún puedes leer el historial disponible.",
-        "lastOwner": "Transfiera la propiedad o disuelva este grupo antes de irse."
+        "lastOwner": "Transfiera la propiedad o disuelva este grupo antes de irse.",
+        "allBotsMentionDisabled": "El propietario del grupo no ha habilitado @todos los compañeros."
       },
       "organizer": "Organizador",
       "plan": {
@@ -13897,6 +13903,42 @@
       "closeDescription": "Este seguimiento se detendrá y su historial se eliminará. La tarea principal seguirá ejecutándose.",
       "closeConfirm": "Cerrar y eliminar",
       "closeFailed": "No se pudo cerrar el chat secundario. Inténtalo de nuevo."
+    },
+    "teammateProcess": {
+      "record": "Actividad",
+      "operations": "Registro de actividad",
+      "elapsed": "Trabajando durante {{duration}}",
+      "took": "Duración: {{duration}}",
+      "processing": "Trabajando",
+      "worked": "Actividad",
+      "thinking": "Pensando",
+      "thought": "Reflexión completada",
+      "separator": ", ",
+      "failed_one": "{{count}} llamada fallida",
+      "failed_many": "{{count}} llamadas fallidas",
+      "failed_other": "{{count}} llamadas fallidas",
+      "actions": {
+        "running": {
+          "read": "Leyendo archivos",
+          "edit": "Editando archivos",
+          "search": "Buscando",
+          "web": "Navegando por la web",
+          "command": "Ejecutando comandos",
+          "tools": "Usando herramientas",
+          "delegate": "Delegando trabajo",
+          "plan": "Actualizando el plan"
+        },
+        "done": {
+          "read": "Archivos leídos",
+          "edit": "Archivos editados",
+          "search": "Búsqueda realizada",
+          "web": "Web consultada",
+          "command": "Comandos ejecutados",
+          "tools": "Herramientas utilizadas",
+          "delegate": "Trabajo delegado",
+          "plan": "Plan actualizado"
+        }
+      }
     }
   },
   "ccAgent": {
