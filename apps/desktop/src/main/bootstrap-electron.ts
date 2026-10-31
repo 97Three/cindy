@@ -1182,7 +1182,8 @@ import { handleIncomingCindyFile } from './cindy-brain/openFileInstall.js';
 import { registerCindyFileAssociation } from './cindy-brain/fileAssociation.js';
 import { runPluginStorageSmoke } from './smoke/pluginStorageSmoke.js';
 import { runComputerUseSmokeIfRequested } from './smoke/computerUseSmoke.js';
-import { setMainLocale, t } from './i18n.js';
+import { setMainClassicalStyle, setMainLocale, t } from './i18n.js';
+import { isClassicalReplyStyle } from '@cindy/maker-shared/classical-reply';
 import { requireObject, throwIpcError } from './utils/ipcValidate.js';
 import { pickNativeAtResource } from './nativeAtResourcePicker.js';
 // Scheduler (Phase 3) — 启动单例需要 maker / localDb / mainWindow 都 ready，但
@@ -3161,6 +3162,12 @@ ipcMain.on('app-locale:get-preferred-system-locale-sync', (event) => {
 // --open-folder payload。pull-on-mount 路径专用,take 一次清空,重复调安全。
 // 详见 deepLink.ts 的 pending buffer 段。
 ipcMain.handle('deep-link:take-pending', takePendingDeepLinkFromRenderer);
+
+ipcMain.handle('app-locale:set-classical-style', (_event, style: unknown): { ok: true } => {
+  // Unknown values keep the current style; only catalog ids reach the reply note.
+  if (isClassicalReplyStyle(style)) setMainClassicalStyle(style);
+  return { ok: true };
+});
 
 ipcMain.handle('app-menu:set-locale', (_event, locale: unknown): { ok: true } => {
   const previousLocale = currentApplicationMenuLocale;
