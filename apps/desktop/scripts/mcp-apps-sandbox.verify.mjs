@@ -423,6 +423,20 @@ try {
         assert.equal(inner().url,loaderUrl,'native submit must not navigate');
         assert.equal(requests,loaderRequests,'native submit must not reach the network');
         assert.equal(loaderCalls.length,loaderWrites,'native submit must not call tools');
+        // Regression (review): switching content must keep the unconfirmed write key, so
+        // resubmitting the same content after an unknown outcome cannot create a duplicate.
+        stage='loader write key survives a content switch';
+        await inner().executeJavaScript("document.querySelector('input').value='切换前'");
+        loaderResultOverride={isError:true,content:[{type:'text',text:'写入结果未知'}]};
+        await inner().executeJavaScript("document.querySelector('#record-form button').click()");
+        await wait(()=>inner().executeJavaScript("document.querySelector('#result').textContent==='写入结果未知'"));
+        loaderResultOverride=undefined;
+        await inner().executeJavaScript("document.querySelector('[data-view=form]').click()");
+        await wait(()=>inner().executeJavaScript("document.querySelector('#content h1')?.textContent==='Form'"));
+        await inner().executeJavaScript("document.querySelector('input').value='切换前';document.querySelector('#record-form button').click()");
+        await wait(()=>inner().executeJavaScript("document.querySelector('#result').textContent.startsWith('已保存')"));
+        const switchWrites=loaderCalls.filter(call=>call.name==='api_write');
+        assert.equal(switchWrites.at(-1).args.idempotencyKey,switchWrites.at(-2).args.idempotencyKey,'same content after a switch reuses the write key');
         stage='loader themes and narrow screen';
         for(const theme of ['light','dark']){
           const variables=theme==='light'?{'--color-background-primary':'rgb(248,248,246)','--color-background-secondary':'rgb(238,238,235)','--color-text-primary':'rgb(38,38,38)','--color-border-primary':'rgb(160,160,158)'}:{'--color-background-primary':'rgb(31,31,30)','--color-background-secondary':'rgb(44,44,42)','--color-text-primary':'rgb(235,235,232)','--color-border-primary':'rgb(100,100,98)'};

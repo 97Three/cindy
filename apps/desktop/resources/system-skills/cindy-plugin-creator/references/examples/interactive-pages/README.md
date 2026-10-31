@@ -23,7 +23,7 @@ loader 中的模拟后端是 main.js 的 mockBackend、fullPage 和 viewFragment
 1. 复制一个目录到自己的源码区，确认运行的 Cindy 支持本章能力。
 2. 调用 `ghost_forge_pack({dir})` 生成包。取得安装指示后再调 `ghost_forge_install({dir})`。
 3. 使用 loader 时说“打开记录页面”；AI 调用 open_view，未知意图按总览打开。
-4. 查询记录后填写标题，点保存；再切换 Form、Chart。查询不改变输入，保存只更新结果。
+4. 查询列表后填写标题，点保存；再切换 Form、Chart。查询不改变输入，保存只更新结果。
 5. static 也由 open_view 打开，完整逻辑只有一个表单和 save_record。
 
 浅色、深色由 Host Context 提供；不要另存一份主题。示例文字是中文教材内容，正式

@@ -388,4 +388,5 @@ const uploaded = await cindy.fetch({
 下载成功时从 downloaded.library 取 path、bytes、sha256 和 ref，失败不提供半个文件。
 upload.library 与 upload.hashes 二选一，最多 4 个文件，单件 64 MiB、总量 128 MiB。
 超限返回 TOO_LARGE；下载到 Library 单件上限 8 GiB，仍受磁盘空间约束。
-写请求不自动重试。页面调用及文件预览见[§4.23](plugin-interactive-pages.md)。
+401 时的令牌重试按本章各凭证规则（exchange / OAuth 对写请求也会重试一次）；插件代码不要再自行重试
+有副作用的调用，后端仍按请求编号去重。页面调用及文件预览见[§4.23](plugin-interactive-pages.md)。

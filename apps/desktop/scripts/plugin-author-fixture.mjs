@@ -82,6 +82,12 @@ async function verifyLoaderMain(main) {
   assert.notEqual(exported.isError, true);
   assert.equal(exported.content.find(item => item.type === 'resource_link').uri, 'library:downloads/records.csv');
   assert.equal(libraryWrites.at(-1).path, 'downloads/records.csv');
+  // Regression (review): names the Library path rules reject must fail here, not after the write.
+  const writesBefore = libraryWrites.length;
+  for (const name of ['a'.repeat(65), 'records.', 'con.csv']) {
+    assert.equal((await call('fetch_file', { path: '/api/files/records', name })).isError, true, name);
+  }
+  assert.equal(libraryWrites.length, writesBefore);
   // Offline upload_files must return the same labelled sample batch the manual tells pages to confirm.
   const picked = await call('pick_files', { accept: ['.csv'] });
   const staged = await call('upload_files', { files: picked.structuredContent.files.map(file => file.ref), path: '/api/imports/stage' });

@@ -163,7 +163,7 @@
           },
           "name": {
             "type": "string",
-            "maxLength": 100
+            "maxLength": 64
           }
         },
         "required": ["path", "name"],

@@ -45,11 +45,11 @@ function viewFragment(intent, fields = {}) {
   const known = ['items', 'chart', 'form', 'overview'].includes(intent);
   if (!known) intent = 'overview';
   const title = intent === 'chart' ? 'Chart' : intent === 'form' ? 'Form' : intent === 'items' ? 'Items' : 'Overview';
-  const hint = known ? '可查询记录或保存表单。' : '已按总览打开。';
+  const hint = known ? '可查询列表或保存记录。' : '已按总览打开。';
   return '<h1>' + title + '</h1><p>' + escapeHtml(hint) + '</p>'
     + '<nav><button data-view="items">Items</button><button data-view="form">Form</button><button data-view="chart">Chart</button></nav>'
     + (intent === 'chart' ? '<svg viewBox="0 0 240 60" role="img" aria-label="三条记录的数值"><path d="M20 50V30M100 50V10M180 50V20" fill="none" stroke="currentColor" stroke-width="24"/></svg>' : '')
-    + '<button id="refresh">查询记录</button><ul id="items"></ul>'
+    + '<button id="refresh">查询列表</button><ul id="items"></ul>'
     + '<form id="record-form"><label>标题<input name="title" required maxlength="160" value="' + escapeHtml(fields.title || '') + '"></label><button type="submit">保存记录</button></form>'
     + '<p id="result" role="status"></p>';
 }
@@ -86,7 +86,8 @@ function pageClient() {
         const result = await call('load_view', { intent: button.dataset.view });
         // 只插入可信后端的内容片段，不执行其中的 script。App 和这份脚本常驻。
         content.innerHTML = result._meta.view.html;
-        pendingWrite = undefined; bind();
+        // 保留未确认写入的编号：切回表单提交相同内容时沿用，内容变了才换新编号。
+        bind();
       } catch (error) { connection.textContent = error.message; }
       finally { busy = false; button.disabled = false; }
     };
@@ -218,7 +219,9 @@ cindy.onHostMessage(async msg => {
       else result = dataResult(JSON.parse(checked(await cindy.fetch({ url, method: 'POST', upload: { library: a.files.map(ref => ref.slice(8)), field: 'file', fields: a.fields }, callId: msg.callId })).body));
     } else if (msg.tool === 'fetch_file') {
       const url = endpoint(a.path, ['/api/files']);
-      if (typeof a.name !== 'string' || !/^[a-zA-Z0-9_-][a-zA-Z0-9_.-]{0,99}$/.test(a.name)) throw new InputError('请使用简单文件名。');
+      // 与 Library 路径规则一致：每段最多 64 字符，不以点结尾，不用 Windows 保留名。
+      if (typeof a.name !== 'string' || !/^[a-zA-Z0-9_-][a-zA-Z0-9_.-]{0,63}$/.test(a.name) || a.name.endsWith('.')
+        || /^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(a.name)) throw new InputError('请使用简单文件名。');
       if (USE_MOCK) {
         // 离线示例：把当前记录写成 CSV 放进 Library，页面可显示或用 downloadFile 另存。
         const cell = value => '"' + String(value).replace(/^[=+\-@]/, "'$&").replace(/"/g, '""') + '"';

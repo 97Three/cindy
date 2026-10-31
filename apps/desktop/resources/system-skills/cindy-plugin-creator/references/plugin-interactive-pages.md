@@ -140,8 +140,8 @@ await app.connect();
 
 ### 6. 页面读 JSON，只更新需要的部分
 
-页面首次显示后由自己的脚本接管，这就是常见的 C/S 写法。下面查询记录并更新
-列表，不重新生成整页，也不改表单里的输入。完整实现见
+页面首次显示后由自己的脚本接管，这就是常见的 C/S 写法。下面查询列表并更新
+内容，不重新生成整页，也不改表单里的输入。完整实现见
 [loader/main.js 的 pageClient](examples/interactive-pages/loader/main.js)。
 
 ```js
