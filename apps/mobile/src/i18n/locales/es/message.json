@@ -421,6 +421,7 @@
     "sent": "Enviado",
     "sendFailed": "El mensaje no fue enviado. Tus entradas todavía están aquí.",
     "playVideo": "Reproducir vídeo",
+    "downloadVideo": "Descargar vídeo",
     "openVideoSource": "Abrir vídeo original",
     "calculationUnavailable": "No se puede calcular este valor.",
     "incomplete": "Algunos contenidos no se pudieron mostrar."

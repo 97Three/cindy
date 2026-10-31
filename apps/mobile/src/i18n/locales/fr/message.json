@@ -421,6 +421,7 @@
     "sent": "Soumis",
     "sendFailed": "Le message n'a pas été envoyé. Vos saisies sont conservées.",
     "playVideo": "Lire la vidéo",
+    "downloadVideo": "Télécharger la vidéo",
     "openVideoSource": "Ouvrir la vidéo d'origine",
     "calculationUnavailable": "Impossible de calculer cette valeur.",
     "incomplete": "Une partie du contenu n'a pas pu être affichée."
