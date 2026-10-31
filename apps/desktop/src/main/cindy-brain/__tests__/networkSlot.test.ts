@@ -765,9 +765,10 @@ describe('networkSlot · 响应收敛', () => {
       'TLS_ERROR', '请求失败:HTTPS 证书或加密连接校验失败(CERT_HAS_EXPIRED: certificate has expired)'],
     ['DNS 失败', undiciFailure(coded('ENOTFOUND', 'getaddrinfo ENOTFOUND api.search.brave.com')),
       'DNS_FAILED', '请求失败:域名解析失败(getaddrinfo ENOTFOUND api.search.brave.com)'],
-    ['多地址连接全被拒(AggregateError)', undiciFailure(Object.assign(
-      new AggregateError([coded('ECONNREFUSED', 'connect ECONNREFUSED 10.0.0.1:443')], ''), { code: 'ECONNREFUSED' })),
-    'CONNECTION_REFUSED', '请求失败:连接被拒绝(ECONNREFUSED)'],
+    // 外层 AggregateError 不带 code,只有子错误带:验证会遍历 errors。
+    ['多地址连接全被拒(AggregateError)', undiciFailure(
+      new AggregateError([coded('ECONNREFUSED', 'connect ECONNREFUSED 10.0.0.1:443')], '')),
+    'CONNECTION_REFUSED', '请求失败:连接被拒绝(connect ECONNREFUSED 10.0.0.1:443)'],
     ['读响应时连接断开', new TypeError('terminated', { cause: coded('UND_ERR_SOCKET', 'other side closed') }),
       'CONNECTION_RESET', '请求失败:连接被中断(UND_ERR_SOCKET: other side closed)'],
     ['连接阶段超时', undiciFailure(coded('UND_ERR_CONNECT_TIMEOUT', 'Connect Timeout Error')),
