@@ -206,6 +206,16 @@ describe('buildMenubarView', () => {
     expect(view.sources.find((s) => s.id === 'beta')?.emphasized).toBe(true);
   });
 
+  it('does not call a positive offline reading "used up" when it is the only one', () => {
+    const offline = codex('alpha', 10, {
+      id: 'remote:dev-2:openai', device: { id: 'dev-2', name: 'Studio' }, lastSeenAtMs: NOW - 3 * HOUR,
+    });
+    const view = buildMenubarView(input([offline]));
+    expect(view.headlinePrimary).toBe('Quota not read yet.');
+    expect(view.headlineAlert).toBe(false);
+    expect(view.statusTextByMode.lowest).toBeNull();
+  });
+
   it('says nothing was read instead of "used up" when no level is known', () => {
     const unread = buildMenubarView(input([codex('alpha', 0, { windows: [] })]));
     expect(unread.headlinePrimary).toBe('Quota not read yet.');

@@ -510,11 +510,16 @@ class Builder {
     return this.state(source).remaining;
   }
 
+  /** Remaining quota that can be used from here: an offline computer's last reading cannot. */
+  private usableRemaining(source: MenubarSubscriptionInput): number | null {
+    return source.lastSeenAtMs ? null : this.remaining(source);
+  }
+
   /** The subscription with the most room left, else a balance with money on it. */
   private recommended(): MenubarSourceInput | null {
     // An offline computer's account cannot be used from here until it is back.
     const subscriptions = this.visibleSubscriptions()
-      .filter((source) => !source.lastSeenAtMs && (this.remaining(source) ?? 0) > 0)
+      .filter((source) => (this.usableRemaining(source) ?? 0) > 0)
       .sort(
         (a, b) =>
           (this.remaining(b) ?? 0) - (this.remaining(a) ?? 0)
@@ -528,7 +533,7 @@ class Builder {
   private tightest(): MenubarSubscriptionInput | null {
     return (
       this.visibleSubscriptions()
-        .filter((source) => !source.lastSeenAtMs && (this.remaining(source) ?? 0) > 0)
+        .filter((source) => (this.usableRemaining(source) ?? 0) > 0)
         .sort((a, b) => (this.remaining(a) ?? 0) - (this.remaining(b) ?? 0))[0] ?? null
     );
   }
@@ -563,6 +568,7 @@ class Builder {
     const recommended = this.recommended();
     const groups = this.restores();
     const soon = this.visibleSubscriptions()
+      .filter((source) => !source.lastSeenAtMs)
       .map((source) => ({ source, eta: this.state(source).limit?.etaMs ?? null }))
       .filter((entry): entry is { source: MenubarSubscriptionInput; eta: number } => entry.eta !== null && entry.eta < SOON_MS)
       .sort((a, b) => a.eta - b.eta)[0];
@@ -581,7 +587,7 @@ class Builder {
       // "Used up" is only true when something was actually measured empty.
       const measured =
         this.visible.some((source) => source.kind === 'balance')
-        || this.visibleSubscriptions().some((source) => this.remaining(source) !== null);
+        || this.visibleSubscriptions().some((source) => this.usableRemaining(source) !== null);
       if (!measured) {
         const unread = this.visibleSubscriptions().length > 0;
         return unread
@@ -1132,7 +1138,7 @@ class Builder {
 
   private statusTexts(): Record<MenubarStatusTextMode, string | null> {
     const tightest = this.tightest();
-    const hasSubscriptions = this.visibleSubscriptions().some((source) => this.remaining(source) !== null);
+    const hasSubscriptions = this.visibleSubscriptions().some((source) => this.usableRemaining(source) !== null);
     const scope = this.input.usage.scopes[this.input.settings.scope];
     const today = scope.daily[scope.daily.length - 1];
     const running = this.input.tasks.filter((task) => task.running);
@@ -1180,7 +1186,7 @@ class Builder {
         continue;
       }
       if (source.kind !== 'subscription') continue;
-      const remaining = this.remaining(source);
+      const remaining = this.usableRemaining(source);
       if (remaining === null) continue;
       known += 1;
       if (remaining > QUOTA_CRIT_REMAINING_PERCENT) return false;
