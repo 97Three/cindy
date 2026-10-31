@@ -864,8 +864,8 @@ describe('downloadToFile — 原子完整性校验', () => {
 
 /**
  * 回归(2026-10-31):手机发来的附件取件卡在 presign / OSS 响应上永不结束,被控端一直不回复;
- * 手机 30s 超时后只能当作「结果未知」反复重发,任务的第一条消息始终进不去。无进展必须在
- * 控制端等待窗口内以带码错误结束(上层据此回 DEVICE_LINK_MEDIA_TRANSFER_FAILED),
+ * 手机超时后只能当作「结果未知」反复重发,任务的第一条消息始终进不去。首次数据前必须在
+ * 最短的 15s 等待窗口内以带码错误结束(上层据此回 DEVICE_LINK_MEDIA_TRANSFER_FAILED),
  * 但只要数据还在到,就不能按总耗时截断大附件。
  */
 describe('downloadToFile — 无进展超时', () => {
@@ -875,7 +875,7 @@ describe('downloadToFile — 无进展超时', () => {
 
   it.each([
     ['presign 无响应', 8_000, () => apiFetch.mockImplementationOnce(never)],
-    ['OSS 响应头无响应', 15_000, () => netFetchMock.mockImplementationOnce(never)],
+    ['OSS 响应头无响应', 12_000, () => netFetchMock.mockImplementationOnce(never)],
     [
       '正文传到一半停住',
       15_000,
@@ -893,6 +893,22 @@ describe('downloadToFile — 无进展超时', () => {
     });
     await vi.advanceTimersByTimeAsync(waitMs);
     await settled;
+    expect(renameMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['响应头', '首个正文字节'])('申请地址已耗时后%s停滞,累计等待仍短于手机 15s 窗口', async (phase) => {
+    apiFetch.mockImplementationOnce(() => new Promise((resolve) => {
+      setTimeout(() => resolve({ getUrl: 'https://oss.example/get', expiresAt: 'x' }), 7_000);
+    }));
+    if (phase === '响应头') netFetchMock.mockImplementationOnce(never);
+    else netFetchMock.mockImplementationOnce(() => new Promise((resolve) => {
+      setTimeout(() => resolve({ ok: true, status: 200, body: new ReadableStream() }), 1_000);
+    }));
+    const failed = vi.fn();
+    const download = downloadToFile(KEY, '/tmp/final.bin').catch(failed);
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(failed).toHaveBeenCalledWith(expect.objectContaining({ code: 'OSS_DOWNLOAD_STALLED' }));
+    await download;
     expect(renameMock).not.toHaveBeenCalled();
   });
 

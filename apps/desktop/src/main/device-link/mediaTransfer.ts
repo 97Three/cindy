@@ -108,12 +108,13 @@ function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
 }
 const REMOVE_REMOTE_TIMEOUT_MS = 15_000;
 /**
- * downloadToFile 的无进展上限:presign、等 OSS 响应头、正文相邻两块数据之间分别计时,
- * 只约束「没有进展」,不限制整个文件的完成时间,大附件慢速下载照常完成。前两段之和要小于
- * 控制端发消息的 30s 等待窗口:附件取不到时被控端先以明确的媒体失败回复(手机据此重新
- * 上传),而不是让控制端超时成「结果未知」后反复重发、在被控端堆积永不结束的下载。
+ * 首个正文字节前共用 12s 预算(含 presign、响应头),为手机 enqueue 的默认 15s 窗口
+ * 留出回包时间;presign 自身仍限 8s。收到字节后只按相邻两块数据间的 15s 无进展计时,
+ * 不限制整个文件的完成时间,大附件慢速下载照常完成。附件取不到时回明确的媒体失败,
+ * 避免控制端只拿到「结果未知」并在被控端堆积永不结束的下载。
  */
 const DOWNLOAD_PRESIGN_TIMEOUT_MS = 8_000;
+const DOWNLOAD_START_TIMEOUT_MS = 12_000;
 const DOWNLOAD_STALL_TIMEOUT_MS = 15_000;
 
 /** 共享任务附件只存在于官方存储,其余对象跟随当前中转。 */
@@ -677,12 +678,14 @@ export async function downloadToFile(
   else signal?.addEventListener('abort', forwardAbort, { once: true });
   let stalled = false;
   let watchdog: ReturnType<typeof setTimeout> | undefined;
+  let startWatchdog: ReturnType<typeof setTimeout> | undefined;
+  const abortStalled = () => {
+    stalled = true;
+    controller.abort();
+  };
   const expectProgressWithin = (ms: number) => {
     clearTimeout(watchdog);
-    watchdog = setTimeout(() => {
-      stalled = true;
-      controller.abort();
-    }, ms);
+    watchdog = setTimeout(abortStalled, ms);
   };
   // presign 与等响应头时网络可能毫无回应;中止后立即放弃,不再等底层请求自己结束。
   const untilAborted = <T>(promise: Promise<T>) =>
@@ -695,6 +698,7 @@ export async function downloadToFile(
         .finally(() => controller.signal.removeEventListener('abort', onAbort));
     });
   try {
+    startWatchdog = setTimeout(abortStalled, DOWNLOAD_START_TIMEOUT_MS);
     expectProgressWithin(DOWNLOAD_PRESIGN_TIMEOUT_MS);
     // 请求自身的超时只是兜底回收被放弃的连接,晚于上面的计时触发,用户看到的是明确的超时。
     const { getUrl } = await untilAborted(presignGet(key, DOWNLOAD_PRESIGN_TIMEOUT_MS + 1_000));
@@ -708,7 +712,11 @@ export async function downloadToFile(
     let size = 0;
     const counter = new Transform({
       transform(chunk: Buffer, _enc, cb) {
-        expectProgressWithin(DOWNLOAD_STALL_TIMEOUT_MS);
+        if (chunk.length > 0) {
+          clearTimeout(startWatchdog);
+          startWatchdog = undefined;
+          expectProgressWithin(DOWNLOAD_STALL_TIMEOUT_MS);
+        }
         size += chunk.length;
         if (expected && size > expected.size) {
           cb(new AttachmentIntegrityError('size', '附件下载超出声明大小。'));
@@ -727,6 +735,7 @@ export async function downloadToFile(
         { signal: controller.signal },
       );
       clearTimeout(watchdog);
+      clearTimeout(startWatchdog);
       const sha256 = hasher.digest('hex');
       if (expected && size !== expected.size) {
         throw new AttachmentIntegrityError(
@@ -743,6 +752,7 @@ export async function downloadToFile(
       await rename(partPath, destPath);
     } catch (error) {
       clearTimeout(watchdog);
+      clearTimeout(startWatchdog);
       await rm(partPath, { force: true }).catch(() => undefined);
       throw error;
     }
@@ -753,6 +763,7 @@ export async function downloadToFile(
     });
   } finally {
     clearTimeout(watchdog);
+    clearTimeout(startWatchdog);
     signal?.removeEventListener('abort', forwardAbort);
   }
 }
