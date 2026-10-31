@@ -155,33 +155,33 @@
   "teammateProcess": {
     "record": "Aktivität",
     "operations": "Aktivitätsprotokoll",
-    "elapsed": "In Arbeit seit {{duration}}",
+    "elapsed": "In Bearbeitung seit {{duration}}",
     "took": "Dauer: {{duration}}",
-    "processing": "In Arbeit",
+    "processing": "In Bearbeitung",
     "worked": "Aktivität",
     "thinking": "Denkt nach",
-    "thought": "Überlegung",
+    "thought": "Nachgedacht",
     "failed_one": "{{count}} Aufruf fehlgeschlagen",
     "failed_other": "{{count}} Aufrufe fehlgeschlagen",
     "separator": ", ",
     "actions": {
       "running": {
-        "read": "Dateien werden gelesen",
-        "edit": "Dateien werden bearbeitet",
-        "search": "Suche läuft",
-        "web": "Web wird durchsucht",
-        "command": "Befehle werden ausgeführt",
-        "tools": "Werkzeuge werden verwendet",
-        "delegate": "Arbeit wird delegiert",
-        "plan": "Plan wird aktualisiert"
+        "read": "Liest Dateien",
+        "edit": "Bearbeitet Dateien",
+        "search": "Sucht",
+        "web": "Durchsucht das Web",
+        "command": "Führt Befehle aus",
+        "tools": "Nutzt Werkzeuge",
+        "delegate": "Delegiert Arbeit",
+        "plan": "Aktualisiert den Plan"
       },
       "done": {
         "read": "Dateien gelesen",
         "edit": "Dateien bearbeitet",
-        "search": "Suche durchgeführt",
+        "search": "Gesucht",
         "web": "Web durchsucht",
         "command": "Befehle ausgeführt",
-        "tools": "Werkzeuge verwendet",
+        "tools": "Werkzeuge genutzt",
         "delegate": "Arbeit delegiert",
         "plan": "Plan aktualisiert"
       }

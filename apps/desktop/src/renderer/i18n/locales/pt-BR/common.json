@@ -3678,7 +3678,7 @@
           "requestPathInvalid": "Comece o caminho exato da requisição com uma única /. Não use fragmentos nem segmentos de caminho . e ..; codifique espaços e caracteres inseguros com codificação percentual.",
           "modelRequired": "Adicione pelo menos um modelo",
           "oauthInvalid": "Configuração OAuth incompleta: todos os campos são obrigatórios e ambos os endpoints devem ser URLs https seguras",
-          "baseUrlRequired": "Insira a URL base deste ambiente de execução ou restaure o protocolo padrão"
+          "baseUrlRequired": "Informe a URL base deste ambiente de execução ou restaure o protocolo padrão."
         },
         "toast": {
           "created": "Provedor adicionado",
@@ -10603,7 +10603,7 @@
       },
       "mention": {
         "all": "Todos",
-        "allHint": "Todos respondem",
+        "allHint": "Apenas pessoas",
         "label": "Mencionar um colega",
         "allBots": "Todos os colegas",
         "allBotsHint": "Apenas colegas"
@@ -10718,7 +10718,7 @@
         "speakingMode": "Ordem de fala",
         "speakingModeAuto": "Automática",
         "speakingModeSequential": "Um de cada vez",
-        "speakingModeAutoNote": "Sem menções ou com @Everyone: pensam simultaneamente na primeira passagem e depois respondem um por um. Os colegas mencionados respondem na ordem das menções.",
+        "speakingModeAutoNote": "Sem menções ou com @Todos os colegas: primeiro pensam ao mesmo tempo, depois respondem um por um. Quando mencionados, seguem a ordem das menções.",
         "speakingModeSequentialNote": "Um colega fala por vez, e cada um vê as respostas anteriores.",
         "speakingModeSaveFailed": "Não foi possível salvar a ordem de fala. Tente novamente.",
         "setOrganizer": "Tornar organizador",
@@ -10734,7 +10734,7 @@
         "autoContinueSaveFailed": "Não foi possível salvar as transições entre etapas. Tente novamente.",
         "projectDirSaveFailed": "Não foi possível salvar a pasta do projeto. Verifique se a pasta ainda existe e tente novamente.",
         "allowMentionAllBots": "Permitir @todos os colegas",
-        "allowMentionAllBotsHint": "Só o proprietário do grupo pode alterar esta opção. Todos os colegas podem responder; use com cuidado em grupos grandes. As respostas da IA em seu nome são independentes."
+        "allowMentionAllBotsHint": "Só o proprietário do grupo pode alterar. Todos os colegas podem responder; cuidado em grupos grandes. Não afeta a IA que responde em seu nome."
       },
       "errors": {
         "memberLimit": "Uma conversa em grupo precisa de 2 a 6 colegas",
@@ -10759,7 +10759,7 @@
         "lifecycleUnavailable": "O servidor ou computador atual ainda não oferece suporte a esta ação.",
         "groupDissolved": "Este grupo foi dissolvido. Você ainda pode ler o histórico disponível.",
         "lastOwner": "Transfira a propriedade ou dissolva este grupo antes de sair.",
-        "allBotsMentionDisabled": "O proprietário do grupo não ativou @todos os colegas."
+        "allBotsMentionDisabled": "O proprietário do grupo ainda não ativou @Todos os colegas."
       },
       "organizer": "Organizador",
       "plan": {
@@ -13906,13 +13906,13 @@
     },
     "teammateProcess": {
       "record": "Atividade",
-      "operations": "Registro de atividade",
+      "operations": "Registro de atividades",
       "elapsed": "Trabalhando há {{duration}}",
-      "took": "Duração: {{duration}}",
+      "took": "Levou {{duration}}",
       "processing": "Trabalhando",
       "worked": "Atividade",
       "thinking": "Pensando",
-      "thought": "Reflexão",
+      "thought": "Pensou",
       "failed_one": "{{count}} chamada falhou",
       "failed_other": "{{count}} chamadas falharam",
       "separator": ", ",
@@ -13921,7 +13921,7 @@
           "read": "Lendo arquivos",
           "edit": "Editando arquivos",
           "search": "Pesquisando",
-          "web": "Navegando na Web",
+          "web": "Consultando a Web",
           "command": "Executando comandos",
           "tools": "Usando ferramentas",
           "delegate": "Delegando trabalho",
@@ -13930,10 +13930,10 @@
         "done": {
           "read": "Arquivos lidos",
           "edit": "Arquivos editados",
-          "search": "Pesquisa realizada",
+          "search": "Pesquisa concluída",
           "web": "Web consultada",
           "command": "Comandos executados",
-          "tools": "Ferramentas utilizadas",
+          "tools": "Ferramentas usadas",
           "delegate": "Trabalho delegado",
           "plan": "Plano atualizado"
         }
