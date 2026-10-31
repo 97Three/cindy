@@ -611,8 +611,8 @@ export async function scaffoldGhostDir(
 ): Promise<ForgeScaffoldResult> {
   if (input.withUi !== undefined && typeof input.withUi !== 'boolean')
     return { ok: false, errorCode: 'INVALID_INPUT', message: 'withUi 必须是布尔值' };
-  if (input.withUi && (input.minCindyVersion === '0.0.0' || compareCindyVersions(input.minCindyVersion, PLUGIN_UI_MIN_CINDY_VERSION) === null))
-    return { ok: false, errorCode: 'INVALID_INPUT', message: 'minCindyVersion 必须是有效且非 0.0.0 的 Cindy 版本' };
+  if (input.withUi && (compareCindyVersions(input.minCindyVersion, PLUGIN_UI_MIN_CINDY_VERSION) ?? -1) < 0)
+    return { ok: false, errorCode: 'INVALID_INPUT', message: `交互页面要求 minCindyVersion >= ${PLUGIN_UI_MIN_CINDY_VERSION}` };
   const template = input.template;
   if (!FORGE_SCAFFOLD_TEMPLATES.includes(template)) {
     return { ok: false, errorCode: 'INVALID_INPUT', message: `不认识的模板:${String(template)}` };

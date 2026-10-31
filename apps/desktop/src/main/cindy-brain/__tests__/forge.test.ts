@@ -1421,16 +1421,18 @@ describe('scaffoldGhostDir', () => {
   });
 
   // The withUi overlay must preserve each template and execute its example handler.
-  // The old overlay packaged a raw JSON-RPC page; an SDK page must raise a 0.1.121
-  // request to its own minimum without lowering newer declarations. Tier: unit.
+  // The published UI floor must reject older declarations without creating files,
+  // accept its exact version and preserve newer declarations. Tier: unit.
+  // Regression: the author-example migration must not relax the scaffold input contract.
   // The SDK import guard protects the host-provided module contract in the generated asset.
   it.each((['plain', 'agent-action', 'node-json-rpc', 'node-mcp'] as ForgeScaffoldTemplate[])
     .flatMap(template => [
       { template, withUi: false, minCindyVersion: '1.2.3', expectedMin: '1.2.3' },
-      { template, withUi: true, minCindyVersion: '0.1.121', expectedMin: '0.1.122-beta' },
+      { template, withUi: true, minCindyVersion: '0.1.122-beta', expectedMin: '0.1.122-beta' },
+      { template, withUi: true, minCindyVersion: '0.1.121', expectedMin: null },
       { template, withUi: true, minCindyVersion: '1.2.3', expectedMin: '1.2.3' },
     ]))(
-    '生成 $template 模板（withUi=$withUi，min=$minCindyVersion），随后可以直接打包并通过装入检查',
+    '校验 $template 模板（withUi=$withUi，min=$minCindyVersion），仅为有效版本生成可打包骨架',
     async ({ template, withUi, minCindyVersion, expectedMin }) => {
       const dir = path.join(workDir, template);
       const result = await scaffoldGhostDir(
@@ -1445,6 +1447,15 @@ describe('scaffoldGhostDir', () => {
         },
         { sessionWorkdir: workDir },
       );
+      if (expectedMin === null) {
+        expect(result).toEqual({
+          ok: false,
+          errorCode: 'INVALID_INPUT',
+          message: '交互页面要求 minCindyVersion >= 0.1.122-beta',
+        });
+        expect(fs.existsSync(dir)).toBe(false);
+        return;
+      }
       expect(result, JSON.stringify(result)).toMatchObject({ ok: true, dir, template });
       if (!result.ok) return;
       expect(result.files).toContain('ghost.json');
