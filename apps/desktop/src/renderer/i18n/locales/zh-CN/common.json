@@ -2392,9 +2392,9 @@
         "classical": "文言"
       },
       "classical": {
-        "label": "字形与文风",
+        "label": "简繁与文风",
         "hint": "AI 按所选文风作答；选“照常作答”时界面仍为文言，回答随你的语言",
-        "scriptAriaLabel": "文言字形",
+        "scriptAriaLabel": "文言简繁",
         "styleAriaLabel": "AI 作答文风",
         "script": {
           "hans": "简体",

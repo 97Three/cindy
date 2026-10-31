@@ -72,9 +72,9 @@
       "classical": "文言"
     },
     "classical": {
-      "label": "字体与文风",
+      "label": "简繁与文风",
       "hint": "AI 依所择文风作答；择「照常作答」，则界面仍为文言，回答从君之语",
-      "scriptAriaLabel": "文言字体",
+      "scriptAriaLabel": "文言简繁",
       "styleAriaLabel": "作答文风",
       "script": {
         "hans": "简体",

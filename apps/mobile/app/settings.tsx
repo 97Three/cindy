@@ -115,7 +115,7 @@ import { useGuardedPush } from '@/utils/useGuardedPush';
 
 type UpdatePhase = 'idle' | 'checking' | 'downloading' | 'uptodate' | 'error';
 // 显示语言选项:「跟随系统」在前,英语作为第一个显式语言,其余语言按支持列表顺序排列;
-// 文言等古典版本在菜单里合为一项放最后,选中后下方出现字形与文风两行。
+// 文言等古典版本在菜单里合为一项放最后,选中后下方出现简繁与文风两行。
 const CLASSICAL_OPTION = 'classical';
 type LanguageOption = LocalePreference | typeof CLASSICAL_OPTION;
 const LANGUAGE_OPTIONS: readonly LanguageOption[] = [
