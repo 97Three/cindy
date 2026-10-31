@@ -497,19 +497,28 @@ describe('Provider shared-task relay compatibility', () => {
         appVersion: 'test', online: true, remoteControlEnabled: false, busy: false, lastSeenAt: 1 });
     });
     await act(async () => client.crossAccountStatusChanged('connecting'));
+    const beforeDisabled = context.presenceVersion;
     client.openLink.mockRejectedValueOnce(new DeviceLinkError('REMOTE_DISABLED', 'host disabled'));
     await act(async () => client.crossAccountStatusChanged('online'));
+    expect(context.presenceVersion).toBeGreaterThan(beforeDisabled);
     await expect(context.invoke(shared, historyChannel)).rejects.toMatchObject({ code: 'REMOTE_DISABLED' });
     await act(async () => client.frame({ v: 1, kind: 'link-close', src: shared, dst: 'mobile',
       payload: { reason: 'toggle-off' } } as Parameters<typeof client.frame>[0]));
 
     client.openLink.mockClear();
+    const recovering = deferredAccept();
+    client.openLink.mockReturnValueOnce(recovering.promise);
+    const beforeReconnect = context.presenceVersion;
     await act(async () => {
       client.crossAccountStatusChanged('connecting');
       client.crossAccountStatusChanged('online');
     });
+    // Consumers must learn that the old false verdict was cleared before any
+    // successful host response can publish its own reachability notification.
+    expect(context.presenceVersion).toBeGreaterThan(beforeReconnect);
     expect(client.openLink).toHaveBeenCalledExactlyOnceWith(shared, expect.any(Object));
     expect(context.getPresenceAvailability('disabled-host')).toBe(false);
+    await act(async () => recovering.resolve(accepted(supported)));
     await act(async () => {
       expect(await context.invoke(shared, historyChannel)).toBe('history page');
       expect(await context.invoke('other-host', historyChannel)).toBe('history page');

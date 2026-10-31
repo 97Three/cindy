@@ -119,9 +119,9 @@ describe('mobile optimistic composer while session is not ready', () => {
     expect(helper).toContain('const after = availabilityByDevice.get(deviceId) ?? null;');
     expect(helper).toContain('if (before !== after) setPresenceVersion((version) => version + 1);');
     expect(source).not.toContain('presenceAvailableByDeviceRef.current.set');
-    expect((source.match(
-      /publishPresenceAvailabilityMutation\(deviceId, \(availabilityByDevice\) =>/g,
-    ) ?? [])).toHaveLength(5);
+    // Transport notification behavior is exercised through the real Provider in
+    // historyViewProvider.test.tsx, including a reconnect before its reply arrives.
+    // The number of mutation callers is not a stable cross-file contract.
     expect(source).toContain('connectionEpochRef.current = ++nextDeviceLinkConnectionEpoch;');
     expect(source).toContain('setConnectionEpoch(connectionEpochRef.current);');
     expect(source).toContain('setPresenceVersion((n) => n + 1);\n      const presence = updatePresenceAvailability(');

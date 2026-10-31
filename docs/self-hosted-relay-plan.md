@@ -681,7 +681,7 @@ App 内不加扫码组件：加一个会改变原生指纹，需要冷更。
 
 - **连接**：`RoutedDeviceLinkClient`（`packages/device-link/src/routedClient.ts`）。主连接走自建中转时，另开一条 `scopedPeersOnly` 的官方连接，带 peer 的调用按 `isScopedPeer` 路由，host 仍只面对一个 client。官方线路下不启动第二条连接，调用全部落回基类，wire 不变。
 - **安全边界**：这条连接只处理官方中转改写过范围的跨账号帧。官方中转要求分享者 `remoteControlEnabled = true` 才放行受邀者，所以同账号设备能看到本机在线；同账号路由帧在客户端入站边界丢弃，`link-open` 回 `link-close('toggle-off')`，不能借此绕过用户选择的线路。设备签名与直连不在这条连接上启用，自建模式下供应商分享只走官方中转，不走点对点直连。
-- **接口与附件**：账号 token 只发往官方地址。共享任务接口与附件走官方（`isSharedTaskMediaKey`、`officialDeviceLinkApiFetch`、Mobile `deviceLinkMediaApiBaseUrl`），其余对象跟随当前中转。
+- **接口与附件**：账号 token 只发往官方地址。共享任务接口与附件走官方（`isSharedTaskMediaKey`、`officialDeviceLinkApiFetch`、Mobile `deviceLinkMediaApiBaseUrl`），其余对象跟随当前中转。邀请链接的生成与解析也固定当前账号所在的官方服务，不能把 fragment 中的邀请凭据交给自建中转站点；Mobile 回归见 `sharedTaskFlow.test.tsx`。
 - **自建中转程序与服务端**：都不改。中转继续拒绝跨账号帧，客户端不再把这类帧发给它，已部署的旧版本不用升级；官方路由按账号、设备与授权判断，这条普通连接满足现有条件（已核对 `cindy-server/device-link-server`）。
 - **故障半径三问**：① 故障层级是单条连接；② 动作只作用于这条连接承载的 peer，主连接与专线的状态、连接问题、控制端清理（`deactivateAllControllers` 的 `scope`）、重开循环、订阅重放和超时确认各管各的，host 的整体恢复入口是 `restartConnections` / `connectAllNow`；③ 覆盖同账号与跨账号控制端并存的用例（`routedClient.test.ts`、`dispatchWeakNetwork.test.ts`）。中转移除本设备（4410）只停主连接，共享继续。
 - **入口提示**：`OwnRelayCrossAccountNotice` 放在开启、加入、管理共享任务与生成、申请分享的入口；Mobile 放在共享任务页。专线未连上时报连接失败，不再显示「需要更新」。
