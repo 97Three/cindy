@@ -1090,6 +1090,7 @@
     "allow": "许远程桌面",
     "allowHint": "许已登门之同名籍设备，览并操作此机之一切应用程序。须并启上方之设备控制。",
     "permissionHint": "请于此机之系统设置中许屏幕录制与辅助使用，而后重连。",
+    "inputUnsupported": "Cindy 暂不支持此机目前桌面环境的远程键鼠控制。",
     "controlUnavailable": "远方之机暂不能受操作，请察远程控制权限与连接，而后重连。",
     "beingControlled": "桌面方受远程控制",
     "beingViewed": "桌面方受远程查看",
@@ -10514,6 +10515,7 @@
       "header": {
         "stepRunning": "{{name}} 方行第 {{step}} 步",
         "speaking": "{{name}} 方言…",
+        "queued": "{{name}} 候次",
         "planning": "{{name}} 方筹划…"
       },
       "memberCount_one": "{{count}} 人",
