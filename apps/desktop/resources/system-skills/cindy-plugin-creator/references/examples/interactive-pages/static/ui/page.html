@@ -30,7 +30,7 @@ app.ontoolresult = result => {
 app.onhostcontextchanged = () => theme(app.getHostContext() ?? {});
 app.onteardown = async () => { controller.abort(); return {}; };
 const form = document.querySelector('#form');
-const submit = async event => {
+form.onsubmit = async event => {
   event.preventDefault();
   if (button.disabled || !form.reportValidity()) return;
   const title = document.querySelector('#title').value;
@@ -46,9 +46,6 @@ const submit = async event => {
   } catch (error) { status.textContent = error.message; }
   finally { button.disabled = false; }
 };
-form.addEventListener('submit', submit);
-button.addEventListener('click', submit);
-form.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.isComposing) submit(event); });
 try { await app.connect(); theme(app.getHostContext() ?? {}); button.disabled = false; }
 catch { status.textContent = '无法连接，请检查 Cindy 版本。'; }
 </script>

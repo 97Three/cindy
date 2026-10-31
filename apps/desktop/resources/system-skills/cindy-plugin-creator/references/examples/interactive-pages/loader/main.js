@@ -104,7 +104,7 @@ function pageClient() {
     };
     const form = content.querySelector('#record-form');
     if (form) {
-    const submit = async event => {
+    form.onsubmit = async event => {
       event.preventDefault();
       if (busy || !form.reportValidity()) return;
       const body = Object.fromEntries(new FormData(form));
@@ -118,9 +118,6 @@ function pageClient() {
       } catch (error) { content.querySelector('#result').textContent = error.message; }
       finally { busy = false; button.disabled = false; }
     };
-    form.onsubmit = submit;
-    form.querySelector('button').onclick = submit;
-    form.onkeydown = event => { if (event.key === 'Enter' && !event.isComposing) submit(event); };
     }
     const confirm = content.querySelector('#confirm-import');
     if (confirm) {

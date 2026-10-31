@@ -162,28 +162,28 @@ for (const item of result.structuredContent.items) {
 
 ### 7. 表单和写操作
 
-表单只能经工具桥接。Cindy 页面 sandbox 没有 `allow-forms`，CSP 也设置了
-`form-action 'none'`；原生提交无法向业务接口发送请求。页面自己的 fetch 不会
-带 Cindy 保管的凭证。正规流程是：拦截提交 → `app.callServerTool` → `api_write`
-→ main.js 的 `cindy.fetch` → 后端。移植其他宿主的页面时，检查并改写原生表单。
+使用 `<form>`，在 `submit` 事件里先调用 `preventDefault()`，再调用工具。
+点击提交按钮和在输入框按 Enter 都会自然触发 submit，无需额外处理点击或键盘。
+CSP 的 `form-action 'none'` 禁止原生 action 提交；请求后端必须走工具。
+页面自己的 fetch 不会带 Cindy 保管的凭证。
 
-在脚本中同时处理提交按钮点击与输入框 Enter，调用 `preventDefault()`，再调用
-同一个保存函数；不要依赖已被 sandbox 拦住的原生提交流程。保存函数检查表单
-有效性、禁用重复点击，失败时保留输入。完整可运行写法见
+下面省略了按钮状态和请求编号管理；完整写法见
 [静态表单](examples/interactive-pages/static/ui/page.html)。
 
 ```js
-const request = {
-  path: '/api/records', body: { title: input.value },
-  idempotencyKey: crypto.randomUUID()
+form.onsubmit = async event => {
+  event.preventDefault();
+  try {
+    const result = await app.callServerTool({ name: 'api_write', arguments: request }, {
+      timeout: 30 * 60 * 1000, maxTotalTimeout: 30 * 60 * 1000
+    });
+    if (result.isError) throw new Error('保存失败，请核对结果后重试。');
+    status.textContent = '已保存';
+  } catch (error) { status.textContent = error.message; }
 };
-const result = await app.callServerTool({ name: 'api_write', arguments: request }, {
-  timeout: 30 * 60 * 1000, maxTotalTimeout: 30 * 60 * 1000,
-  onprogress: progress => { status.textContent = progress.message ?? '处理中…'; }
-});
-if (result.isError) throw new Error('保存失败，请核对结果后重试。');
-status.textContent = '已保存';
 ```
+
+request 包含 `path`、`body` 和 `idempotencyKey`。等待期间禁用重复提交，失败时保留输入。
 
 同一内容重试沿用 request 中的编号；用户改了内容才创建新请求。正式后端按
 “当前用户 + 编号”用数据库唯一约束去重，并拒绝同编号不同内容。
@@ -236,7 +236,7 @@ document.open/write/close，由新页面重新连接。不要让旧页未确定�
 | 每个页面只创建一个 App | 所有交互共用该实例；替换文档前关闭旧实例 |
 | 直接导入 Cindy 提供的 SDK | 写 `import { App } from '@modelcontextprotocol/ext-apps'`；不写 importmap，不从 CDN 或其他地址加载 SDK |
 | 页面不接触凭证 | 经 main.js 的 cindy.fetch 代发，不将 token 放进 HTML、日志或结果 |
-| 表单走桥接 | 拦截点击和 Enter，不使用原生 action 提交 |
+| 表单走桥接 | submit 中先 preventDefault()，再调用工具；不用原生 action |
 | 数据用 textContent | 后端模板转义动态值，不把用户数据拼进脚本或事件属性 |
 | 读写分成两个工具 | 固定方法和后端地址，按相对路径白名单路由 |
 | 两个超时均设 30 分钟 | timeout 和 maxTotalTimeout 都设 30 * 60 * 1000，允许等待授权 |
