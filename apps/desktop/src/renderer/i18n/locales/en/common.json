@@ -17567,9 +17567,8 @@
       "name": "Follow assigned sessions (built-in)",
       "hint": "Follow assigned sessions when they stall, need you, fail, reach a usage limit or finish."
     },
-    "builtinTodoCheck": {
-      "name": "Daily todo check (built-in)",
-      "hint": "Looks for new todos in connected sources on weekdays at 9:00 and stays quiet when there is nothing new. Turned on or off from the glance; it can only be paused or resumed."
+    "todoCheck": {
+      "name": "Daily todo check"
     },
     "builtinNightlyLearning": {
       "name": "Nightly learning (built-in)",

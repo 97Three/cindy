@@ -17601,9 +17601,8 @@
       "name": "Zugewiesene Sitzungen verfolgen (integriert)",
       "hint": "Verfolge zugewiesene Sitzungen, wenn sie stocken, dich brauchen, fehlschlagen, ein Nutzungslimit erreichen oder fertig sind."
     },
-    "builtinTodoCheck": {
-      "name": "Tägliche To-do-Prüfung (integriert)",
-      "hint": "Sucht werktags um 9:00 Uhr in verbundenen Quellen nach neuen To-dos und bleibt still, wenn es nichts Neues gibt. Wird in der Übersicht ein- oder ausgeschaltet; kann nur pausiert oder fortgesetzt werden."
+    "todoCheck": {
+      "name": "Tägliche To-do-Prüfung"
     },
     "builtinNightlyLearning": {
       "name": "Nächtliches Lernen (integriert)",
