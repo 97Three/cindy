@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { isSharedTaskPeer } from '@cindy/device-link';
 import { withTransientRemoteRetry } from '@cindy/maker-shared/device-link-contract';
-import { CONTROLLED_MODEL_CATALOG_CHANNEL, CONTROLLED_MODEL_CATALOG_CHANGED, type ControlledModelLocation } from '../../shared/controlledModelCatalog';
+import { CONTROLLED_MODEL_CATALOG_CHANNEL, CONTROLLED_MODEL_CATALOG_CHANGED, readControlledFavoriteSource, type ControlledModelLocation } from '../../shared/controlledModelCatalog';
 import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts/dataOwnerGeneration';
 import { extractIpcError } from '@/utils/ipcError';
 import { evictControlledDeviceProviders, refreshControlledDeviceProviders } from './useDeviceProviders';
@@ -57,7 +57,10 @@ export function useControlledModelLocations(deviceId: string | null | undefined,
         let locations = value.locations.filter((entry): entry is ControlledModelLocation =>
           !!entry && typeof entry === 'object'
           && typeof entry.agentDeviceId === 'string' && entry.agentDeviceId.length > 0
-          && typeof entry.name === 'string');
+          && typeof entry.name === 'string').map(entry => {
+            const favoriteSource = readControlledFavoriteSource(entry.favoriteSource, entry.agentDeviceId);
+            return { agentDeviceId: entry.agentDeviceId, name: entry.name, ...(favoriteSource ? { favoriteSource } : {}) };
+          });
         if (value.status === 'degraded') {
           // Only device discovery failed. Shares in this response remain authoritative.
           // Retain display names, never cached authorization or models; host reads still

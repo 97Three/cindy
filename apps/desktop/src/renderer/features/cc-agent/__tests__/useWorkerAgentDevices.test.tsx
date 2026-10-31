@@ -257,15 +257,16 @@ describe('useWorkerAgentDevices', () => {
   // The old tests below exercise only the legacy-host fallback.
   it('uses B sources including self and B-only shares, and clears revoked sources without falling back to A', async () => {
     let push!: (event: { deviceId: string; channel: string }) => void;
+    const favoriteSource = { shareId: 'only-host', memberId: 'member-b', providerId: 'shared', owner: { region: 'global' } };
     const invoke = vi.fn().mockResolvedValue({ locations: [
       { agentDeviceId: 'self-pc', name: 'A' },
-      { agentDeviceId: 'share:only-host', name: 'B share' },
+      { agentDeviceId: 'share:only-host', name: 'B share', favoriteSource },
     ] });
     vi.stubGlobal('electronAPI', { deviceLink: { invoke, onRemotePush: (listener: typeof push) => { push = listener; return () => {}; } } });
     const { result } = renderHook(() => useWorkerAgentDevices({ controlledDeviceId: 'host', leadAgentDeviceId: 'self-pc' }));
     await act(async () => {});
     expect(result.current).toEqual({ catalogHostDeviceId: 'host', leadAgentDeviceId: 'self-pc', devices: [
-      { deviceId: 'self-pc', name: 'A' }, { deviceId: 'share:only-host', name: 'B share' },
+      { deviceId: 'self-pc', name: 'A' }, { deviceId: 'share:only-host', name: 'B share', favoriteSource },
     ] });
     expect(invoke).toHaveBeenCalledWith('host', 'maker:model-catalog:read', [{ op: 'locations' }]);
     await act(async () => { push({ deviceId: 'unrelated', channel: 'maker:provider:changed' }); });

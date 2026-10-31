@@ -2163,6 +2163,18 @@ function forwardPush(channel: string, payload: unknown, ownerStamp?: PushOwnerSt
     return [...new Set([...ordinary, ...shared])];
   };
   const dsts = targetsFor(false);
+  // Background catalog readers have no sessions subscription and must not
+  // acquire one (that changes control intent). Send only empty invalidations
+  // over their already-accepted same-account link; no payload or new link.
+  if ((channel === 'maker:provider:changed' || channel === 'maker:agents:changed')
+    && activeClient.getStatus() === 'online' && readDeviceLinkSettings().remoteControlEnabled) {
+    for (const dst of acceptedLinkControllers) {
+      if (dsts.includes(dst) || isProviderSharePeer(dst) || isSharedTaskPeer(dst)
+        || isControllerRevoked(dst)
+        || !subscriptions.controllerSupports(dst, DEVICE_LINK_CAPABILITY_BACKGROUND_LINK_V1)) continue;
+      sendPushBestEffort(dst, channel, {}, ownerStamp);
+    }
+  }
   // The active registry describes peer topic intent, not whether this host can
   // currently write to the relay. During host-side reconnects sendPush is a
   // silent no-op, so route queueable pushes through the offline backlog instead.
@@ -2464,7 +2476,7 @@ function truncateRemoteString(value: string, state: TruncationState): string {
  */
 function syncForwarding(): void {
   setBroadcastTapListener(
-    subscriptions.isEmpty() && !subscriptions.hasRememberedTopics()
+    subscriptions.isEmpty() && !subscriptions.hasRememberedTopics() && acceptedLinkControllers.size === 0
       ? null
       : forwardPush,
   );

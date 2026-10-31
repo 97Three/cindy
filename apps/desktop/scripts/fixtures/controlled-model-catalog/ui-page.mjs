@@ -13,6 +13,7 @@ export default {
     default: { about: 'A controls B: choose A, B-only share, then B private source' },
     local: { about: 'Local catalog still includes private sources without remote reads' },
     worker: { about: 'Worker uses B-only share; creation returns the actual share ID' },
+    favorites: { about: 'B-only share favorites read and write B without any membership on A' },
   },
   async check(page, ui) {
     if (ui.case === 'worker') {
@@ -34,6 +35,27 @@ export default {
       assert.equal(await list.getByText('B Main Model', { exact: true }).count(), 0);
       assert.deepEqual(await page.evaluate(() => window.catalogAcceptance.calls), []);
       await ui.capture('local-private-models');
+      return;
+    }
+    if (ui.case === 'favorites') {
+      await page.getByRole('button', { name: 'Shared · B-only share', exact: true }).click();
+      const model = list.getByRole('option').filter({ hasText: 'Shared Model' }).first();
+      await model.hover();
+      await model.getByRole('button', { name: await ui.t('newChat.modelSelector.unified.addFavorite'), exact: true }).click();
+      await page.waitForFunction(() => window.catalogAcceptance.favorites().length === 1);
+      const saved = await page.evaluate(() => window.catalogAcceptance.favorites()[0]);
+      assert.equal(saved.providerId, 'provider-share-favorite:["b-only","b-member","shared","global"]');
+      await page.getByRole('button', { name: await ui.t('newChat.modelSelector.unified.railFavorites'), exact: true }).click();
+      await list.getByText('Shared Model', { exact: true }).waitFor();
+      await ui.capture('host-share-favorite');
+      await list.getByText('Shared Model', { exact: true }).click();
+      await page.waitForFunction(() => window.catalogAcceptance.selected()?.agentDevice?.deviceId === 'share:b-only');
+      assert.equal((await page.evaluate(() => window.catalogAcceptance.selected())).providerId, 'shared');
+      await list.getByRole('button', { name: await ui.t('newChat.modelSelector.unified.removeFavorite'), exact: true }).click();
+      await page.waitForFunction(() => window.catalogAcceptance.favorites().length === 0);
+      const calls = await page.evaluate(() => window.catalogAcceptance.calls);
+      assert.ok(calls.every(call => call.host === 'device-b'));
+      assert.deepEqual(calls.filter(call => call.channel === 'maker:model-favorites:apply').map(call => call.args[0].kind), ['add', 'remove']);
       return;
     }
     for (const step of [

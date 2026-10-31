@@ -9,6 +9,7 @@
  */
 import { useMemo } from 'react';
 import { useControlledModelLocations } from './useControlledModelLocations';
+import type { ControlledModelFavoriteSource } from '../../shared/controlledModelCatalog';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useSelectableDevices } from '@/hooks/useControllableDevices';
@@ -23,7 +24,7 @@ export interface ModelRouteDevices {
   catalogHostDeviceId?: string;
   /** 面板默认选中、并按它读模型目录的 Lead 位置；null = 任务所在电脑。 */
   leadAgentDeviceId: string | null;
-  devices: readonly { deviceId: string; name: string }[] | undefined;
+  devices: readonly { deviceId: string; name: string; favoriteSource?: ControlledModelFavoriteSource }[] | undefined;
 }
 
 export function useModelRouteDevices(input: {
@@ -45,7 +46,9 @@ export function useModelRouteDevices(input: {
     if (controlledDeviceId === undefined || sshRemote) return { leadAgentDeviceId: lead, devices: undefined };
     if (controlledDeviceId) {
       if (hostLocations !== undefined) {
-        const devices = hostLocations.map(({ agentDeviceId, name }) => ({ deviceId: agentDeviceId, name }));
+        const devices = hostLocations.map(({ agentDeviceId, name, favoriteSource }) => ({
+          deviceId: agentDeviceId, name, ...(favoriteSource ? { favoriteSource } : {}),
+        }));
         for (const id of [lead, pending]) {
           if (id && !devices.some(device => device.deviceId === id)) {
             devices.push({ deviceId: id, name: shareDevices.find(device => device.deviceId === id)?.name ?? id });

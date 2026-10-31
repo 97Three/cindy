@@ -98,7 +98,7 @@ import {
   useDeviceProviders,
 } from '@/hooks/useDeviceProviders';
 import { useDevicesProviders } from '@/hooks/useDevicesProviders';
-import { modelCatalogKey } from '../../../shared/controlledModelCatalog';
+import { modelCatalogKey, type ControlledModelFavoriteSource } from '../../../shared/controlledModelCatalog';
 import { RemoteSourceMark } from '@/components/icons/RemoteSourceMark';
 import { buildUnifiedRail, remoteAgentProviders } from './unifiedModelSelection';
 import {
@@ -679,7 +679,7 @@ export interface RemoteAgentRelocation {
  */
 export interface RemoteAgentSelectorOptions {
   /** 可以运行 Agent 的其他电脑(已配对、在线);不含任务所在电脑。 */
-  devices: readonly { deviceId: string; name: string }[];
+  devices: readonly { deviceId: string; name: string; favoriteSource?: ControlledModelFavoriteSource }[];
   /** 当前的 Agent 所在电脑(已建任务按下一条消息时的位置);null = 任务所在电脑。 */
   selectedDeviceId: string | null;
   /**
@@ -1594,6 +1594,10 @@ function ModelSelectorContentView({
   // 栏位要同时列出本机与各台电脑的供应商,而列表此刻只装着其中一份目录:本机格与远程格
   // 各自按**自己的**目录与可见性派生,不借用正在浏览的那一份。
   const remoteAgentDevices = remoteAgent?.devices;
+  const routedFavoriteSources = useMemo(() => remoteAgent?.catalogHostDeviceId
+    ? new Map((remoteAgentDevices ?? []).flatMap(device => device.favoriteSource
+      ? [[device.deviceId, device.favoriteSource] as const] : []))
+    : undefined, [remoteAgentDevices, remoteAgent?.catalogHostDeviceId]);
   const remoteAgentDeviceIds = useMemo(
     () => (remoteAgentDevices ?? []).map((device) => device.deviceId),
     [remoteAgentDevices],
@@ -3605,6 +3609,7 @@ function ModelSelectorContentView({
                     labelOf: remoteAgentLabelOf,
                     // 远程收藏按任务所在电脑共享(§1.5):被控电脑上的任务读写那台的收藏,本机任务读写本机。
                     ...(homeDeviceId ? { favoritesDeviceId: homeDeviceId } : {}),
+                    shareFavoriteSources: routedFavoriteSources,
                     homeDeviceId: homeDeviceId ?? selfDeviceId,
                     unavailableDeviceIds: remoteAgentUnavailableDeviceIds,
                     onSelectDeviceFavorite: selectDeviceFavorite,

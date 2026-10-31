@@ -10442,7 +10442,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     locations: () => {
       const owner = getCurrentDbClientSnapshot();
       if (controlledLocationsRead?.owner === owner) return controlledLocationsRead.promise;
-      const promise = readWorkerAgentLocations().finally(() => {
+      const promise = readWorkerAgentLocations({ favoriteSources: true }).finally(() => {
         if (controlledLocationsRead?.promise === promise) controlledLocationsRead = undefined;
       });
       controlledLocationsRead = { owner, promise };
