@@ -46,7 +46,10 @@ function environmentPlan(html: string) {
 const runtime = `<script data-cindy-runtime>
 (()=>{
  const prevent=event=>{if(!event.defaultPrevented)event.preventDefault();};
- const install=()=>window.addEventListener('submit',prevent);
+ // Arm during window capture: the fallback is then appended after the page's own
+ // window submit listeners, yet still runs before the browser's default action.
+ const arm=()=>{window.removeEventListener('submit',prevent);window.addEventListener('submit',prevent,{once:true});};
+ const install=()=>window.addEventListener('submit',arm,true);
  const open=Document.prototype.open;
  Document.prototype.open=function(...args){
   const result=Reflect.apply(open,this,args);

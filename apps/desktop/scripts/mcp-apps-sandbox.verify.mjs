@@ -334,7 +334,9 @@ try {
         assert.ok(sdkDispatched.includes('form-enter'));
         stage='host SDK native form no-op';
         const formUrl=inner().url, formRequests=requests;
-        await inner().executeJavaScript('document.querySelector("#native").action='+JSON.stringify(denied)+';document.querySelector("#native").addEventListener("submit",event=>{window.nativeSubmitEvent=event;});document.addEventListener("securitypolicyviolation",event=>{if(event.violatedDirective==="form-action")window.pageState.formBlocked=true;});document.querySelector("#native button").click()');
+        await inner().executeJavaScript('document.querySelector("#native").action='+JSON.stringify(denied)+';document.querySelector("#native").addEventListener("submit",event=>{window.nativeSubmitEvent=event;});window.addEventListener("submit",event=>{window.windowDelegatePrevented=event.defaultPrevented;});document.addEventListener("securitypolicyviolation",event=>{if(event.violatedDirective==="form-action")window.pageState.formBlocked=true;});document.querySelector("#native button").click()');
+        // Codex 4429797202 / Greptile 4429799871: page window delegation runs before the host fallback.
+        assert.equal(await inner().executeJavaScript('window.windowDelegatePrevented'),false);
         assert.equal(await inner().executeJavaScript('window.nativeSubmitEvent.defaultPrevented'),true);
         await inner().executeJavaScript('document.querySelector("#native").submit();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
         assert.ok(inner(),'default submission must not replace the App with a CSP error document');
