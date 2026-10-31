@@ -25,7 +25,7 @@
     },
     {
       "name": "show_page",
-      "description": "显示 AI 生成的完整 MCP Apps HTML 页面。写页面前先用 ghost_manual({ ghost_id: \"interactive-loader\", path: \"pages\" }) 读本插件的页面手册。",
+      "description": "显示 AI 生成的完整 MCP Apps HTML 页面。html 必须是以 <!doctype html> 开头的完整文档，直接 import '@modelcontextprotocol/ext-apps'，不写 importmap、不用 CDN。写页面前先用 ghost_manual({ ghost_id: \"interactive-loader\", path: \"pages\" }) 读页面手册，完整规则以手册为准。",
       "parameters": {
         "type": "object",
         "properties": {
