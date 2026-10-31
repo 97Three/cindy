@@ -17785,9 +17785,8 @@
       "name": "Seguimiento de sesiones asignadas (integrado)",
       "hint": "Da seguimiento a las sesiones asignadas cuando se estancan, te necesitan, fallan, alcanzan un límite de uso o terminan."
     },
-    "builtinTodoCheck": {
-      "name": "Revisión diaria de pendientes (integrada)",
-      "hint": "Busca nuevos pendientes en las fuentes conectadas de lunes a viernes a las 9:00 y permanece en silencio cuando no hay novedades. Se activa o desactiva desde la vista rápida; solo se puede pausar o reanudar."
+    "todoCheck": {
+      "name": "Revisión diaria de pendientes"
     },
     "builtinNightlyLearning": {
       "name": "Aprendizaje nocturno (integrado)",

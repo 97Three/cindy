@@ -17785,9 +17785,8 @@
       "name": "Acompanhar sessões atribuídas (integrado)",
       "hint": "Acompanhe as sessões atribuídas quando travarem, precisarem de você, falharem, atingirem um limite de uso ou terminarem."
     },
-    "builtinTodoCheck": {
-      "name": "Verificação diária de pendências (integrada)",
-      "hint": "Procura novas pendências nas fontes conectadas nos dias úteis às 9:00 e fica em silêncio quando não há novidades. Ativada ou desativada pela visão rápida; só pode ser pausada ou retomada."
+    "todoCheck": {
+      "name": "Verificação diária de pendências"
     },
     "builtinNightlyLearning": {
       "name": "Aprendizado noturno (integrado)",

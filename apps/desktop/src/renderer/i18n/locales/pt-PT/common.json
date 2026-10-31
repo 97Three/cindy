@@ -17785,9 +17785,8 @@
       "name": "Acompanhar sessões atribuídas (integrado)",
       "hint": "Acompanhe as sessões atribuídas quando ficarem bloqueadas, precisarem de si, falharem, atingirem um limite de utilização ou terminarem."
     },
-    "builtinTodoCheck": {
-      "name": "Verificação diária de afazeres (integrada)",
-      "hint": "Procura novos afazeres nas origens ligadas nos dias úteis às 9:00 e permanece em silêncio quando não há novidades. Ativada ou desativada na vista rápida; só pode ser pausada ou retomada."
+    "todoCheck": {
+      "name": "Verificação diária de afazeres"
     },
     "builtinNightlyLearning": {
       "name": "Aprendizagem noturna (integrada)",
