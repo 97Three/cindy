@@ -105,6 +105,10 @@ export interface CodexImportMessagesArgs {
     text: string;
     content: unknown;
     createdAt: number;
+    /** Rollout timestamp without the line-number ordering offset. */
+    sourceCreatedAt?: number;
+    phase?: 'commentary' | 'final_answer';
+    agentMessageId?: string;
   }>;
 }
 
@@ -723,6 +727,7 @@ export interface BotsReplaceCanonicalSessionArgs {
     id: string;
     title: string;
     workingDir: string | null;
+    projectDir?: string | null;
     workspaceKind: string;
     model: string;
     effort: string;
@@ -1388,6 +1393,7 @@ export type SkillUsageApplyMutationArgs =
   | { kind: 'promote'; analyzerVersion: string };
 
 export interface MediaSpendArgs {
+  providerName?: string;
   day: string;
   model: string;
   amount: number;
@@ -1498,7 +1504,7 @@ export type DbTxResultByName = {
     approximate: number;
   } | null;
   'authorization.readProjection': import('../../autoReviewProjection.js').StoredAutoReviewProjection;
-  'codex.importMessages': { changed: number };
+  'codex.importMessages': { changed: number; hiddenClientIds?: string[]; updatedLocalIds?: string[] };
   'claude.importMessages': { changed: number };
   'rewind.commit': undefined;
   'session.treeRehydrate': { messageCount: number; hiddenClientIds: string[] };
