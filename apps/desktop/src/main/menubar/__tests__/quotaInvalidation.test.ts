@@ -23,7 +23,7 @@ vi.mock('../../agent-island/service.js', () => ({ getAgentIslandService: () => (
   subscribeSessionActivity: () => () => {},
 }) }));
 vi.mock('../../appCapabilities.js', () => ({ getAppCapabilities: () => ({ canUseCindyAccountServices: true }) }));
-vi.mock('../../appSessionState.js', () => ({ getActiveAppSession: () => ({ dataOwnerId: 'owner', mode: 'cloud', generation: mocks.auth.ownerGeneration }), isAppSessionBoundaryPending: () => false }));
+vi.mock('../../appSessionState.js', () => ({ getActiveAppSession: () => ({ dataOwnerId: mocks.auth.dataOwnerId, mode: 'cloud', generation: mocks.auth.ownerGeneration }), isAppSessionBoundaryPending: () => false }));
 vi.mock('../../authManager.js', () => ({ getAuthState: () => mocks.auth, onAuthStateChange: () => () => {} }));
 vi.mock('../../billing/projection.js', () => ({}));
 vi.mock('../../clientEndpointsService.js', () => ({}));
@@ -243,4 +243,23 @@ it('answers a widget request with no panel running and stops collecting when the
   expect(mocks.collect).toHaveBeenCalledOnce();
   await vi.advanceTimersByTimeAsync(30 * 60_000);
   expect(getQuotaOverviewService().latest()).toBeNull();
+});
+
+// Regression: a build is the account's data; after a switch a phone must get nothing rather than it.
+it('never serves a build read for the previous account', async () => {
+  mocks.collect.mockResolvedValue(emptyMenubarInputs(Date.now(), 'Fixture'));
+  const pending = readUsageWidgetSnapshot();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(await pending).toMatchObject({ ok: true });
+  const old = getQuotaOverviewService().latest();
+  expect(old).not.toBeNull();
+  mocks.auth.dataOwnerId = 'other';
+  try {
+    expect(getQuotaOverviewService().latest()).toBeNull();
+    const next = getQuotaOverviewService().fresh(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await next).not.toBe(old);
+  } finally {
+    mocks.auth.dataOwnerId = 'owner';
+  }
 });

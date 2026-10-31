@@ -178,7 +178,7 @@ describe('model source second line', () => {
     );
     const percentage = screen.getByText(`${100 - used}%`);
     expect(percentage.className).toBe(
-      used >= 90 ? 'text-[var(--quota-bar-crit)]' : used > 70 ? 'text-[var(--quota-bar-warn)]' : '',
+      used >= 90 ? 'text-[var(--quota-bar-crit)]' : used >= 70 ? 'text-[var(--quota-bar-warn)]' : '',
     );
     expect(percentage.parentElement?.className).toBe('');
     expect(percentage.parentElement?.textContent).toBe(`2小时 ${100 - used}%`);

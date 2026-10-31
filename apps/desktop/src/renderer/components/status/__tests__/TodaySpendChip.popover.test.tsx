@@ -595,11 +595,11 @@ describe('TodaySpendChip Claude subscription popover', () => {
     expect(trigger.textContent).toContain('本任务价值 $7.82');
   });
 
-  it('受限但 chip 上没有达到条件的数字时整条变红兜底', () => {
+  it('服务端拒绝时整条变红兜底，即使 chip 上只有黄色窗口', () => {
     mocks.claudeSnapshot = {
       source: 'unified-headers',
       rateLimitStatus: 'rejected',
-      fiveHour: { utilization: 30 },
+      fiveHour: { utilization: 75 },
       sevenDay: { utilization: 20 },
     };
 

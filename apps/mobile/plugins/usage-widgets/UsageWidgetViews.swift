@@ -271,7 +271,9 @@ struct UsageWidgetView: View {
     let days = snapshot.usage.days
     let today = daily[daily.count - 1]
     let average = daily.reduce(0) { $0 + $1.totalTokens } / Double(daily.count)
-    let todayLabel = format.s("today")
+    // A snapshot that outlived its day shows its real date, never "today".
+    let isCurrent = format.isToday(days[days.count - 1])
+    let todayLabel = isCurrent ? format.s("today") : format.monthDay(days[days.count - 1])
     let accented = renderingMode == .accented
     let averageLabel = "\(format.s("dailyAverage")) \(format.tokens(average)) \(format.s("tokenUnit"))"
     let todayValue = "\(WidgetText.text("valueBasis", locale: format.locale)) \(format.money(today.total))"
@@ -281,12 +283,12 @@ struct UsageWidgetView: View {
         HStack {
           Text(todayLabel)
           Spacer(minLength: 4)
-          Text(format.monthDay(days[days.count - 1]))
+          if isCurrent { Text(format.monthDay(days[days.count - 1])) }
         }
         .font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3)
         TokenFigure(tokens: today.totalTokens, size: 38, format: format)
           .padding(.top, 4)
-        Text(today.totalTokens > 0 ? todayValue : WidgetText.text("todayNone", locale: format.locale))
+        Text(today.totalTokens > 0 || !isCurrent ? todayValue : WidgetText.text("todayNone", locale: format.locale))
           .font(.system(size: 11)).foregroundStyle(WidgetPalette.ink3).lineLimit(1)
         Spacer(minLength: 0)
         let week = Array(daily.suffix(7)), weekDays = Array(days.suffix(7))
@@ -309,7 +311,7 @@ struct UsageWidgetView: View {
       let lastDay = days[days.count - 1]
       VStack(alignment: .leading, spacing: 0) {
         HStack {
-          Text("\(todayLabel) · \(format.monthDay(lastDay)) \(format.weekday(lastDay))")
+          Text(isCurrent ? "\(todayLabel) · \(format.monthDay(lastDay)) \(format.weekday(lastDay))" : "\(todayLabel) \(format.weekday(lastDay))")
           Spacer(minLength: 4)
           Text(format.s(snapshot.usage.scope == "local" ? "scopeLocal" : "scopeAll"))
         }

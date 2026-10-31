@@ -67,4 +67,15 @@ describe('refreshUsageWidgetStore', () => {
       .mockResolvedValueOnce({ ok: false, reason: 'unavailable' });
     expect((await refreshUsageWidgetStore(null, [device('a'), device('b')], mixed as never)).autoDeviceId).toBeNull();
   });
+
+  it('keeps a downgraded computer\'s snapshot unless a widget is set to it', async () => {
+    const kept = { kind: 'snapshot' as const, receivedAtMs: 5, deviceName: 'a', snapshot: snapshot as never };
+    const previous = { version: 2 as const, autoDeviceId: 'a', computers: [], states: { a: kept } };
+    const answer = () => vi.fn().mockRejectedValueOnce(tooOld).mockResolvedValueOnce({ ok: false, reason: 'unavailable' });
+    const auto = await refreshUsageWidgetStore(previous, [device('a'), device('b')], answer() as never, [], () => 9);
+    expect(auto.autoDeviceId).toBe('a');
+    expect(auto.states.a).toBe(kept);
+    const pinned = await refreshUsageWidgetStore(previous, [device('a'), device('b')], answer() as never, ['a'], () => 9);
+    expect(pinned.states.a).toEqual({ kind: 'update-desktop', receivedAtMs: 9 });
+  });
 });

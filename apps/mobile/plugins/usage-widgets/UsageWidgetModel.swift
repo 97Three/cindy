@@ -243,6 +243,10 @@ struct WidgetFormat {
     return Calendar.current.date(from: components) ?? now
   }
 
+  func isToday(_ iso: String) -> Bool {
+    Calendar.current.isDate(date(iso), inSameDayAs: now)
+  }
+
   func monthDay(_ iso: String) -> String {
     let formatter = DateFormatter()
     formatter.locale = locale

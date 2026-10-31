@@ -1831,10 +1831,14 @@ export function TodaySpendChip({
   // chip 上没有任何一个上色的窗口 → 仍整条变红, 不丢受限信号。悬念期的告警窗口也算
   // 「chip 上有」: 它的旧数据已失真, 段上显示「重置中…」不染红, 也不借兜底把整条染红。
   const hasAlertingChipWindow = chipWindows.some((window) => window.level !== 'normal');
+  // 服务端明确拒绝 (rejected) 是红色信号, 不被只有黄色的窗口挡掉。
+  const claudeRejected =
+    isClaudeSubscription && claudeSubscriptionUsage?.rateLimitStatus?.trim().toLowerCase() === 'rejected';
   const chipAlertingFallback =
-    !hasAlertingChipWindow &&
-    ((isClaudeSubscription && isClaudeSubscriptionAlerting(claudeSubscriptionUsage, modelId)) ||
-      (usesXaiQuotaForm && isXaiSubscriptionAlerting(xaiSubscriptionUsage)));
+    claudeRejected ||
+    (!hasAlertingChipWindow &&
+      ((isClaudeSubscription && isClaudeSubscriptionAlerting(claudeSubscriptionUsage, modelId)) ||
+        (usesXaiQuotaForm && isXaiSubscriptionAlerting(xaiSubscriptionUsage))));
 
   // 与 ContextCapacityRing 视觉对齐 (h-5 = 20px) + reset button UA 默认 padding/border。
   // tabular-nums 让 "$306 / $1.2k" 这类数字段的字符宽度等宽, 段间数字落点对齐。

@@ -122,6 +122,8 @@ export interface QuotaOverviewBuild {
   /** Usage history was still being aggregated; a follow-up build is on its way. */
   stale: boolean;
   builtAtMs: number;
+  /** Data owner the build was read for; a build never outlives an account switch. */
+  ownerId: string | null;
 }
 
 type BuildListener = (build: QuotaOverviewBuild) => void;
@@ -190,7 +192,14 @@ export class QuotaOverviewService {
 
   /** The latest build, or null while nobody holds the overview or nothing is built yet. */
   latest(): QuotaOverviewBuild | null {
-    return this.lastBuild;
+    return this.currentBuild();
+  }
+
+  /** The last build, unless it belongs to a previous account or an account switch is under way. */
+  private currentBuild(): QuotaOverviewBuild | null {
+    const build = this.lastBuild;
+    if (!build || isAppSessionBoundaryPending() || build.ownerId !== getActiveAppSession().dataOwnerId) return null;
+    return build;
   }
 
   subscribe(listener: BuildListener): () => void {
@@ -240,7 +249,7 @@ export class QuotaOverviewService {
 
   /** A recent settled build, building one if needed; resolves with whatever exists after `timeoutMs`. */
   async fresh(timeoutMs: number): Promise<QuotaOverviewBuild | null> {
-    const build = this.lastBuild;
+    const build = this.currentBuild();
     if (build && !build.stale && Date.now() - build.builtAtMs < FRESH_BUILD_MS) return build;
     if (!this.started) return null;
     return await new Promise((resolve) => {
@@ -249,9 +258,9 @@ export class QuotaOverviewService {
         off();
         resolve(value);
       };
-      const timer = setTimeout(() => done(this.lastBuild), timeoutMs);
+      const timer = setTimeout(() => done(this.currentBuild()), timeoutMs);
       const off = this.subscribe((next) => {
-        if (!next.stale) done(next);
+        if (!next.stale && next.ownerId === getActiveAppSession().dataOwnerId) done(next);
       });
       this.scheduleRebuild(0);
     });
@@ -468,7 +477,7 @@ export class QuotaOverviewService {
       t: createMenubarTranslate(locale, raw),
       ...(gate ? { gate } : {}),
     };
-    const build: QuotaOverviewBuild = { view: buildMenubarView(input), input, usage: collected.usage, stale, builtAtMs: Date.now() };
+    const build: QuotaOverviewBuild = { view: buildMenubarView(input), input, usage: collected.usage, stale, builtAtMs: Date.now(), ownerId: getActiveAppSession().dataOwnerId };
     this.lastBuild = build;
     for (const listener of [...this.listeners]) {
       try {

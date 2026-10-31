@@ -17,6 +17,8 @@ export type UsageWidgetState =
  */
 export interface UsageWidgetStore {
   version: 2;
+  /** Account the store was read for; another account's store is never shown or reused. */
+  accountId?: string;
   autoDeviceId: string | null;
   /** Computers a widget can be set to, as listed in its edit sheet. */
   computers: { id: string; name: string }[];
@@ -116,10 +118,7 @@ export async function refreshUsageWidgetStore(
         outcome = 'answered';
       }
     } catch (error) {
-      if (isChannelNotAllowed(error)) {
-        states[device.deviceId] = { kind: 'update-desktop', receivedAtMs: nowMs() };
-        outcome = 'too-old';
-      }
+      if (isChannelNotAllowed(error)) outcome = 'too-old';
     }
     outcomes.set(device.deviceId, outcome);
     return outcome;
@@ -134,13 +133,19 @@ export async function refreshUsageWidgetStore(
       break;
     }
   }
-  // Only "every reachable computer is too old" may replace a kept snapshot with the update prompt.
-  if (!answered && candidates.length > 0 && candidates.every(device => outcomes.get(device.deviceId) === 'too-old')) {
-    autoDeviceId = candidates[0]!.deviceId;
-  }
   for (const id of pinned) {
     const device = candidates.find(candidate => candidate.deviceId === id);
     if (device && !outcomes.has(id)) await ask(device);
+  }
+  // A computer that is too old replaces its kept snapshot with the update prompt only when a widget
+  // is set to it, or when every reachable computer is too old (so "automatic" has nothing to show).
+  const allTooOld = !answered && candidates.length > 0
+    && candidates.every(device => outcomes.get(device.deviceId) === 'too-old');
+  if (allTooOld) autoDeviceId = candidates[0]!.deviceId;
+  for (const [id, outcome] of outcomes) {
+    if (outcome === 'too-old' && (allTooOld || pinned.includes(id))) {
+      states[id] = { kind: 'update-desktop', receivedAtMs: nowMs() };
+    }
   }
   return {
     version: 2,

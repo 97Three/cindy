@@ -20,18 +20,21 @@ const REFRESH_MS = 5 * 60_000;
  */
 export function UsageWidgetBridge() {
   const { invoke, readDeviceList, status } = useDeviceLink();
-  const { initialized, isAuthenticated, accountGeneration } = useAuth();
-  const latest = useRef({ invoke, readDeviceList, accountGeneration });
-  latest.current = { invoke, readDeviceList, accountGeneration };
+  const { initialized, isAuthenticated, accountGeneration, user } = useAuth();
+  const userId = user?.id ?? null;
+  const latest = useRef({ invoke, readDeviceList, accountGeneration, userId });
+  latest.current = { invoke, readDeviceList, accountGeneration, userId };
 
   // Another account (or none) must never see the previous account's quota on the home screen.
-  // A cold start of the same account keeps the snapshot, so an offline computer still shows it.
-  const seenGeneration = useRef(accountGeneration);
+  // The same account keeps its snapshot across restarts, so an offline computer still shows it.
   useEffect(() => {
     if (!usageWidgetsSupported || !initialized) return;
-    if (!isAuthenticated || seenGeneration.current !== accountGeneration) clearUsageWidgetState();
-    seenGeneration.current = accountGeneration;
-  }, [initialized, isAuthenticated, accountGeneration]);
+    if (!isAuthenticated) clearUsageWidgetState();
+    else if (userId) {
+      const stored = readUsageWidgetStore();
+      if (stored && stored.accountId !== userId) clearUsageWidgetState();
+    }
+  }, [initialized, isAuthenticated, userId]);
 
   useEffect(() => {
     if (Platform.OS !== 'ios' || !usageWidgetsSupported || !isAuthenticated || status !== 'online') return;
@@ -43,10 +46,13 @@ export function UsageWidgetBridge() {
       pending = true;
       try {
         const { devices } = await latest.current.readDeviceList();
+        const accountId = latest.current.userId;
+        if (!accountId) return;
+        const stored = readUsageWidgetStore();
         const store = await refreshUsageWidgetStore(
-          readUsageWidgetStore(), devices, latest.current.invoke, readPinnedUsageWidgetDevices(),
+          stored?.accountId === accountId ? stored : null, devices, latest.current.invoke, readPinnedUsageWidgetDevices(),
         );
-        if (latest.current.accountGeneration === generation) writeUsageWidgetStore(store);
+        if (latest.current.accountGeneration === generation) writeUsageWidgetStore({ ...store, accountId });
       } catch {
         // Keep the last snapshot; the widgets show how old it is.
       } finally {

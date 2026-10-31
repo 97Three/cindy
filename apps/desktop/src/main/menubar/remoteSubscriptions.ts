@@ -133,11 +133,15 @@ async function readDevice(
   const failed: string[] = [];
   const read = await Promise.all(
     accounts.map(async (provider) => {
+      const key = `remote:${device.id}:${provider.id}`;
       try {
-        return await readAccount(deps, device, provider);
+        const source = await readAccount(deps, device, provider);
+        // Still listed but no usable reading (empty or failed response): keep its last reading too.
+        if (!source) failed.push(key);
+        return source;
       } catch (error) {
-        deps.onError?.(`remote:${device.id}:${provider.id}`, error);
-        failed.push(`remote:${device.id}:${provider.id}`);
+        deps.onError?.(key, error);
+        failed.push(key);
         return null;
       }
     }),
