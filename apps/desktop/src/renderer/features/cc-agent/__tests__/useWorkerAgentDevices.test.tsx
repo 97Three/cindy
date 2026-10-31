@@ -34,6 +34,7 @@ vi.mock('@/features/provider-share/useProviderShareAgentDevices', () => ({
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   evictAllDeviceProviders();
   evictAllRemoteCapabilities();
   __resetAvailableAgentsCacheForTest();
@@ -44,6 +45,80 @@ afterEach(() => {
 });
 
 describe('useWorkerAgentDevices', () => {
+  // PR #8028 review r4429879562 / unit: a single failed push refresh must not
+  // leave B's source menu empty until an unrelated event. Existing cases only
+  // recover after another push. Use the mounted production route and fake time.
+  it('retries a transient refresh without another push or disturbing another host', async () => {
+    vi.useFakeTimers();
+    const listeners = new Set<(event: { deviceId: string; channel: string }) => void>();
+    const invoke = vi.fn(async (host: string) => ({ locations: [{ agentDeviceId: `${host}-source`, name: 'Source' }] }));
+    vi.stubGlobal('electronAPI', { deviceLink: { invoke, onRemotePush: (listener: (event: { deviceId: string; channel: string }) => void) => {
+      listeners.add(listener); return () => listeners.delete(listener);
+    } } });
+    const b = renderHook(() => useWorkerAgentDevices({ controlledDeviceId: 'host-b', leadAgentDeviceId: null }));
+    const d = renderHook(() => useWorkerAgentDevices({ controlledDeviceId: 'host-d', leadAgentDeviceId: null }));
+    await act(async () => {});
+    const healthy = d.result.current;
+    invoke.mockClear();
+    invoke.mockRejectedValueOnce(new Error('[DEVICE_LINK_TIMEOUT] timed out'));
+    await act(async () => {
+      for (const push of listeners) push({ deviceId: 'host-b', channel: 'maker:provider:changed' });
+    });
+    expect(b.result.current.devices).toEqual([]);
+    expect(invoke).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+    expect(b.result.current.devices).toEqual([{ deviceId: 'host-b-source', name: 'Source' }]);
+    expect(d.result.current).toBe(healthy);
+    expect(invoke.mock.calls.map(([host]) => host)).toEqual(['host-b', 'host-b']);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['unmount', 'host', 'owner', 'offline'] as const)('cancels a pending location retry on %s change', async change => {
+    vi.useFakeTimers();
+    let status!: (event: { status: string }) => void;
+    const invoke = vi.fn().mockRejectedValue(new Error('[DEVICE_LINK_TIMEOUT] timed out'));
+    vi.stubGlobal('electronAPI', { deviceLink: { invoke, onStatusChanged: (listener: typeof status) => { status = listener; return () => {}; } } });
+    const view = renderHook(({ host }) => useWorkerAgentDevices({ controlledDeviceId: host, leadAgentDeviceId: null }), {
+      initialProps: { host: 'host-b' },
+    });
+    await act(async () => {});
+    invoke.mockResolvedValue({ locations: [{ agentDeviceId: 'fresh', name: 'Fresh' }] });
+    if (change === 'unmount') view.unmount();
+    else if (change === 'host') view.rerender({ host: 'host-c' });
+    else if (change === 'owner') setDataOwnerGeneration('next-account');
+    else act(() => status({ status: 'connecting' }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(invoke.mock.calls.map(([host]) => host)).toEqual(change === 'host' ? ['host-b', 'host-c'] : ['host-b']);
+    if (change === 'host') expect(view.result.current.devices).toEqual([{ deviceId: 'fresh', name: 'Fresh' }]);
+  });
+
+  it('bounds failed discovery attempts and still recovers on a later focus', async () => {
+    vi.useFakeTimers();
+    const invoke = vi.fn().mockRejectedValue(new Error('[DEVICE_LINK_TIMEOUT] timed out'));
+    vi.stubGlobal('electronAPI', { deviceLink: { invoke } });
+    mocks.received = [{ deviceId: 'share:controller-only', name: 'Private' }];
+    const { result } = renderHook(() => useWorkerAgentDevices({ controlledDeviceId: 'host', leadAgentDeviceId: null }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(invoke).toHaveBeenCalledTimes(3);
+    expect(result.current.catalogHostDeviceId).toBe('host');
+    expect(result.current.devices).toEqual([]);
+    invoke.mockResolvedValue({ locations: [{ agentDeviceId: 'recovered', name: 'Recovered' }] });
+    await act(async () => { window.dispatchEvent(new Event('focus')); });
+    expect(result.current.devices).toEqual([{ deviceId: 'recovered', name: 'Recovered' }]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(invoke).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(['DEVICE_LINK_CHANNEL_NOT_ALLOWED', 'ACCESS_REVOKED', 'DEVICE_UNRESPONSIVE'])('does not retry %s location errors', async code => {
+    vi.useFakeTimers();
+    const invoke = vi.fn().mockRejectedValue(new Error(`[${code}] unavailable`));
+    vi.stubGlobal('electronAPI', { deviceLink: { invoke } });
+    renderHook(() => useWorkerAgentDevices({ controlledDeviceId: 'host', leadAgentDeviceId: null }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
   // #8010 / unit: mounted production route + provider/capability hooks, with only
   // the transport faked. Earlier cases did not exercise refresh of live consumers.
   // Review gap: local provider/agent events must invalidate A's catalog and runtime roster via B.

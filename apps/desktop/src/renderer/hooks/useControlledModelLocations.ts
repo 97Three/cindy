@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { isSharedTaskPeer } from '@cindy/device-link';
+import { withTransientRemoteRetry } from '@cindy/maker-shared/device-link-contract';
 import { CONTROLLED_MODEL_CATALOG_CHANNEL, CONTROLLED_MODEL_CATALOG_CHANGED, type ControlledModelLocation } from '../../shared/controlledModelCatalog';
 import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts/dataOwnerGeneration';
 import { extractIpcError } from '@/utils/ipcError';
@@ -43,7 +44,13 @@ export function useControlledModelLocations(deviceId: string | null | undefined,
       const request = ++revision;
       const current = () => active && request === revision && isDataOwnerGenerationCurrent(owner);
       try {
-        const raw = await link.invoke(deviceId, CONTROLLED_MODEL_CATALOG_CHANNEL, [{ op: 'locations' }]);
+        // A failed push refresh otherwise leaves this menu empty until another
+        // event. Use bounded read retries, not a per-hook polling/reconnect loop.
+        // Recheck the owner and revision before every attempt: a queued newer
+        // refresh, disconnect or unmount must retire the old read intent.
+        const raw = await withTransientRemoteRetry(() => current() && available
+          ? link.invoke(deviceId, CONTROLLED_MODEL_CATALOG_CHANNEL, [{ op: 'locations' }])
+          : Promise.resolve(undefined), { maxAttempts: 3 });
         if (!current()) return;
         const value = raw as { status?: unknown; locations?: unknown } | null;
         if (!value || !Array.isArray(value.locations)) throw new Error('Invalid model locations');
