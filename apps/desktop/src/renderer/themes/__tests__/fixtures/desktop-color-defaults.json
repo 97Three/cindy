@@ -1629,8 +1629,8 @@
     },
     {
       "id": "quota-bar-crit",
-      "light": "var(--card-status-error)",
-      "dark": "var(--card-status-error)"
+      "light": "var(--error-flat)",
+      "dark": "var(--error-flat)"
     },
     {
       "id": "quota-bar-track",

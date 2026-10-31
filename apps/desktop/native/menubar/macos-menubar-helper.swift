@@ -269,7 +269,7 @@ enum Palette {
   private static let remoteControlValue: UInt32 = 0xFF9F0A
   static let remoteControlHex = String(format: "#%06X", remoteControlValue)
   static let remoteControl = Color(nsColor: hex(remoteControlValue))
-  static let error = Color(nsColor: hex(0xD91F37))
+  static let error = Color(nsColor: hex(0xEF4444))
   static let focus = Color(nsColor: hex(0x417CDD))
   static let claude = Color(nsColor: hex(0xD97757))
   static let claude2 = Color(nsColor: hex(0xE8A184))

@@ -3103,8 +3103,8 @@
       "lightKind": "alias",
       "darkKind": "alias",
       "aliasOf": {
-        "light": "card-status-error",
-        "dark": "card-status-error"
+        "light": "error-flat",
+        "dark": "error-flat"
       },
       "modeledAsSemantic": false
     },

@@ -93,7 +93,7 @@ describe('QuotaBar', () => {
     const aliases = {
       'quota-bar-fill': 'text-secondary',
       'quota-bar-warn': 'warning-fg',
-      'quota-bar-crit': 'card-status-error',
+      'quota-bar-crit': 'error-flat',
       'quota-bar-track': 'surface-chip',
     } as const;
 

@@ -2572,10 +2572,10 @@
       "quota-bar-crit": {
         "light": {
           "$type": "color",
-          "$value": "{semantic.defaults.card-status-error.light}",
+          "$value": "{semantic.defaults.error-flat.light}",
           "$extensions": {
             "com.cindy.desktop": {
-              "cssAlias": "card-status-error",
+              "cssAlias": "error-flat",
               "wrapper": "var",
               "mode": "light"
             }
@@ -2583,10 +2583,10 @@
         },
         "dark": {
           "$type": "color",
-          "$value": "{semantic.defaults.card-status-error.dark}",
+          "$value": "{semantic.defaults.error-flat.dark}",
           "$extensions": {
             "com.cindy.desktop": {
-              "cssAlias": "card-status-error",
+              "cssAlias": "error-flat",
               "wrapper": "var",
               "mode": "dark"
             }

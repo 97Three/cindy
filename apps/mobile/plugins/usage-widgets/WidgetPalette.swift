@@ -41,7 +41,7 @@ enum WidgetPalette {
   /// plenty left is teal, 30% or less is yellow, 10% or less is red.
   static let plenty = dynamic(rgb(0x14B8A6), rgb(0x2DD4BF))
   static let quotaWarn = Color(rgb(0xF3A115))
-  static let error = Color(rgb(0xD91F37))
+  static let error = Color(rgb(0xEF4444))
   static let claude = Color(rgb(0xD97757))
   static let codex = Color(rgb(0x7A9DFF))
   static let pi = dynamic(rgb(0x14B8A6), rgb(0x2DD4BF))
