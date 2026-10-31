@@ -165,6 +165,7 @@ try {
       let config={id:'example',url:process.env.CINDY_MCP_APP_TEST_URL,transport:'http'};
       const pluginMode=process.env.CINDY_MCP_APP_TEST_PLUGIN==='1';let executePlugin;
       let authorVault; const loaderCalls=[], sdkDispatched=[]; let loaderResultOverride;
+      const loaderImageUri='cindy-media://blobs/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png', loaderImage=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAEElEQVR4nGP4z8AAQQxwFgBB0gX7h/C5SAAAAABJRU5ErkJggg==','base64');
       const authorLibraryRoot=process.env.CINDY_MCP_APP_TEST_DIR+'/author-library';
       if(pluginMode){
         const fixture=JSON.parse(readFileSync(process.env.CINDY_MCP_APP_TEST_DIR+'/plugin.json','utf8'));
@@ -187,14 +188,17 @@ try {
       }
       const tool=(await connection.tools()).find(tool=>tool.name===(authorMode==='loader'?'open_view':authorMode==='files'?'open_showcase':authorMode?'open_view':independent?'open_metrics':'draft_form'));
       if(process.env.CINDY_MCP_APP_TEST_HOST_SDK==='1' && process.env.CINDY_MCP_APP_TEST_REMOTE!=='1') tool._meta['cindy/attachments']=[{type:'resource_link',name:'fixture.txt',uri:'library:fixture.txt'}];
+      // A conversation image handed over with ghost_call.attachments; the generated page reads it from hostContext.
+      if(authorMode==='loader') tool._meta['cindy/attachments']=[{type:'resource_link',name:'fixture.png',uri:loaderImageUri,mimeType:'image/png'}];
       const args=authorMode==='loader'?{intent:'请打开一个可以查看和编辑记录的页面'}:independent?{threshold:75}:{title:'AI draft',body:'Review before creating'};
       const result=pluginMode?await executePlugin(tool.name,args):await client.callTool({name:tool.name,arguments:args});
       let record={version:1,serverId:'example',serverRevision:appServerRevision(config),resourceUri:tool._meta.ui.resourceUri,tool,arguments:args,result:authorMode==='loader'?pluginAppResult(result):result};
       if(authorMode==='loader'){assert.ok(result._meta.view.html.includes('<style>'));assert.deepEqual(Object.keys(pluginModelResult(result)),['content']);}
       let turns=0, receivedImages=[], pageApprovals=0, approvalGate, sdkApprovalSignal, sdkReleaseApproval;
       host=new McpAppsHost({downloadFile:pluginMode?input=>saveAppDownload({...input,showSaveDialog:async name=>process.env.CINDY_MCP_APP_TEST_DIR+'/saved-'+name}):undefined,pluginFiles:pluginMode?{
-        describe:async(_instance,uri)=>{if(authorVault&&uri.startsWith('library:')){const file=await authorVault.stat({path:uri.slice('library:'.length)});return file.ok&&file.kind==='file'?{mimeType:'text/plain',size:file.bytes}:null;}return uri==='library:fixture.txt'?{mimeType:'text/plain',size:14}:uri==='cindy-media://blobs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png'?{mimeType:'image/png',size:8}:null;},
+        describe:async(_instance,uri)=>{if(authorVault&&uri.startsWith('library:')){const file=await authorVault.stat({path:uri.slice('library:'.length)});return file.ok&&file.kind==='file'?{mimeType:'text/plain',size:file.bytes}:null;}if(uri===loaderImageUri)return {mimeType:'image/png',size:loaderImage.length};return uri==='library:fixture.txt'?{mimeType:'text/plain',size:14}:uri==='cindy-media://blobs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png'?{mimeType:'image/png',size:8}:null;},
         read:async(_instance,uri,request)=>{
+          if(uri===loaderImageUri)return new Response(loaderImage,{headers:{'Content-Type':'image/png','Content-Length':String(loaderImage.length)}});
           if(uri!=='library:fixture.txt')return new Response(null,{status:404});
           const file=await openFile(process.env.CINDY_MCP_APP_TEST_DIR+'/fixture.txt','r');
           return buildRangedFileResponse({file,totalSize:14,mimeType:'text/plain',rangeHeader:request.headers.get('range'),cacheControl:'no-store',signal:request.signal});
@@ -376,6 +380,10 @@ try {
         assert.equal(loaderCalls.length,1,'first page must not request the view twice');
         assert.equal(await inner().executeJavaScript("document.querySelector('#content h1').textContent"),'Overview');
         assert.equal(await inner().executeJavaScript("document.querySelector('#content p').textContent"),'已按总览打开。');
+        stage='loader conversation attachment after document replacement';
+        await wait(()=>inner().executeJavaScript("document.querySelector('#attachments img')?.complete===true"));
+        assert.deepEqual(await inner().executeJavaScript("(()=>{const i=document.querySelector('#attachments img');return [i.naturalWidth,i.naturalHeight,i.alt,i.src.includes('/__cindy/files/')];})()"),[3,2,'fixture.png',true]);
+        assert.equal(await inner().executeJavaScript("fetch(document.querySelector('#attachments img').src).then(r=>r.status+':'+r.headers.get('content-type'))"),'200:image/png');
         stage='loader local update preserves input';
         await inner().executeJavaScript("document.querySelector('input').value='保留输入';document.querySelector('#refresh').click()");
         await wait(()=>inner().executeJavaScript("document.querySelectorAll('#items li').length===3"));
@@ -422,7 +430,7 @@ try {
           if(process.env.CINDY_AUTHOR_SCREENSHOTS){mkdirSync(process.env.CINDY_AUTHOR_SCREENSHOTS,{recursive:true});writeFileSync(process.env.CINDY_AUTHOR_SCREENSHOTS+'/loader-'+theme+'.png',(await window.webContents.capturePage()).toPNG());}
         }
         assert.equal(turns,0);
-        console.log('AUTHOR_APP_VERDICT=passed (loader; first result, generated SDK, JSON preserves inputs, submit click/real Enter, native submit no-op, fragment, Light/Dark)');
+        console.log('AUTHOR_APP_VERDICT=passed (loader; first result, generated SDK, hostContext attachment image, JSON preserves inputs, submit click/real Enter, native submit no-op, fragment, Light/Dark)');
         return;
       }
       if(authorMode==='files'){

@@ -106,6 +106,14 @@ if (file?.url && file.mimeType?.startsWith('image/')) {
 }
 ```
 
+对话交来的媒体附件（`ghost_call.attachments`）由宿主放进 hostContext，每项同样是
+resource_link，按上面的方式读 `_meta['cindy/file'].url`，换页重连后仍可读取。表格类
+附件由插件暂存，再把批次号和预览写进首屏 HTML。
+
+```js
+const attachments = app.getHostContext()?.toolInfo?.tool?._meta?.['cindy/attachments'] ?? [];
+```
+
 | 入口 | 限制和选择建议 |
 | --- | --- |
 | pick into:media | 图片、音视频、glb；单件 50 MiB，插件寄存总额 1 GiB |

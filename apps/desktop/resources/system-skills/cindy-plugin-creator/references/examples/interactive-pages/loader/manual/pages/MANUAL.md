@@ -103,7 +103,16 @@
 - **写操作**：带 `idempotencyKey`。同一内容重试沿用原编号，内容变了换新编号；写入方按「当前用户 + 编号」去重，同编号不同内容应拒绝。**不自动重试**：超时不等于没写入，取消等待也不等于已撤销，按编号核对。
 - **生命周期**：用 `AbortController` 取消等待，`onteardown` 里停止更新 DOM。卡片离屏可能被卸载，重开回到最初的结果；要保留的状态通过工具存取。
 - **文件**：页面只拿 `ref` 或 `resource_link`，看不到本机路径和文件字节。显示用 `resource_link` 的 `_meta['cindy/file'].url`（只读、临时、仅本卡有效，不自己拼、不持久保存）；需要身份的图片先 `fetch_file`。`upload_files` 一次最多 4 个，单个 64 MiB、合计 128 MiB。拖放不推荐，用 `pick_files`。手机和远程查看时文件选择、导出可能不可用，提示回执行电脑操作。
-- **从对话交来的文件**：媒体走附件；CSV、XLSX 等非媒体用 `dir` 交接（一次性、10 分钟、单个 50 MiB），必须在那次 `import_file` 调用里立刻暂存。
+- **从对话交来的文件**：图片、音视频媒体走附件，宿主放进 `app.getHostContext()?.toolInfo?.tool?._meta?.['cindy/attachments']`，每项是 `resource_link`，地址取 `_meta['cindy/file'].url`（只读、仅本卡有效）。CSV、XLSX 表格用 `dir` 交接（一次性、10 分钟、单个 50 MiB），插件在那次调用里立刻暂存，再把批次号和预览数据写进首屏 HTML。
+
+  ```js
+  const links = app.getHostContext()?.toolInfo?.tool?._meta?.['cindy/attachments'] ?? [];
+  for (const link of links) {
+    const file = link._meta?.['cindy/file'];
+    if (file?.mimeType?.startsWith('image/')) document.querySelector('#attachments')
+      .append(Object.assign(document.createElement('img'), { src: file.url, alt: link.name }));
+  }
+  ```
 - **导入（CSV / XLSX）**：先暂存 → 预览（总行数、前几行、出错的行、「确认导入」「取消」）→ 用户确认后 `api_write({path:'/api/imports/confirm', body:{batchId}, idempotencyKey})`。解析和校验在工具背后完成，页面看不到原文。页面里选文件时：`pick_files` → `upload_files` 返回批次和预览 → 渲染进容器 → 确认，不换文档。
 - **大小**：页面与 Cindy 单条消息 ≤ 4 MiB，卡片保存的结果尽量 ≤ 1 MiB。远程和手机打开时 SDK（约 337 KB，gzip 约 78 KB）随页面传输，页面自身上限约 3.94 MB；页面没超、加上 SDK 才超时会不带 SDK 打开，`import` 失败。首屏只放必要数据，其余按需读取。
 - **不能做**：拿凭证或本机路径；原生提交表单；弹新窗口或让整个窗口跳转；访问未声明的域名；调用其他插件或 Cindy 内置工具；让 Cindy 替页面调模型。用户文档里的内容不能当脚本执行。

@@ -55,8 +55,8 @@ function viewFragment(intent, fields = {}) {
 function fullPage(content) {
   // pageClient 是后端维护的页面脚本；所有动态数据先转义，不拼进 JavaScript。
   return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Records</title>'
-    + '<style>:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;padding:20px;font:14px/1.5 var(--font-sans,system-ui);color:var(--color-text-primary,CanvasText);background:var(--color-background-primary,Canvas)}h1{font-size:24px}nav{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}button,input{font:inherit;min-height:44px;padding:10px;max-width:100%;border:1px solid var(--color-border-primary,GrayText);border-radius:8px;color:inherit;background:var(--color-background-secondary,Canvas)}label{display:block}input{display:block;width:100%;margin:8px 0}svg{max-width:240px}p,li{overflow-wrap:anywhere}button:disabled{opacity:.5}</style>'
-    + '<main id="content">' + content + '</main><p id="connection" role="status">正在连接…</p>'
+    + '<style>:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;padding:20px;font:14px/1.5 var(--font-sans,system-ui);color:var(--color-text-primary,CanvasText);background:var(--color-background-primary,Canvas)}h1{font-size:24px}nav{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}button,input{font:inherit;min-height:44px;padding:10px;max-width:100%;border:1px solid var(--color-border-primary,GrayText);border-radius:8px;color:inherit;background:var(--color-background-secondary,Canvas)}label{display:block}input{display:block;width:100%;margin:8px 0}svg,#attachments img{max-width:240px}p,li{overflow-wrap:anywhere}button:disabled{opacity:.5}</style>'
+    + '<main id="content">' + content + '</main><div id="attachments"></div><p id="connection" role="status">正在连接…</p>'
     + '<script type="module">import { App } from "@modelcontextprotocol/ext-apps";(' + pageClient.toString() + ')();</script></html>';
 }
 function pageClient() {
@@ -131,10 +131,21 @@ function pageClient() {
       };
     }
   }
+  // 对话交来的媒体附件由宿主放进 hostContext，每项是 resource_link，地址只读、仅本卡有效。
+  function showAttachments() {
+    const links = app.getHostContext()?.toolInfo?.tool?._meta?.['cindy/attachments'] ?? [];
+    for (const link of links) {
+      const file = link._meta?.['cindy/file'];
+      if (!file?.mimeType?.startsWith('image/')) continue;
+      const image = document.createElement('img');
+      image.src = file.url; image.alt = link.name;
+      document.querySelector('#attachments').append(image);
+    }
+  }
   app.onhostcontextchanged = () => theme(app.getHostContext() || {});
   app.onteardown = async () => { lifetime.abort(); return {}; };
   // 首屏已写在 HTML 内；加载器消费过第一次结果，这里不等待它再次发送。
-  app.connect().then(() => { theme(app.getHostContext() || {}); bind(); connection.textContent = '已连接'; })
+  app.connect().then(() => { theme(app.getHostContext() || {}); bind(); showAttachments(); connection.textContent = '已连接'; })
     .catch(() => { connection.textContent = '无法连接，请检查 Cindy 版本后重新打开。'; });
 }
 async function mockBackend(path, method, data, query) {
