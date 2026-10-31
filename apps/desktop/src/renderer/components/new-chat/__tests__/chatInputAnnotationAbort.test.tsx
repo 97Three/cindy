@@ -802,6 +802,8 @@ it('keeps a folder dragged from the remote task browser as a reference without u
 // Unit regression for #6551: the previous Send-only coverage missed queue edits.
 // Submit while A is packing, then drop B: both entry points must use the completed
 // attachment snapshot (including an otherwise empty edit) or preserve the draft.
+// #8084: a 120ms text autosave during A's completion must not restore an older
+// attachment list before React commits it. Fake time makes the CI ordering deterministic.
 it.each([
   { queueEdit: false, success: true, text: 'Read both folders' },
   { queueEdit: false, success: false, text: 'Read both folders' },
@@ -828,31 +830,40 @@ it.each([
   }
   render(<RemoteComposer />);
   await waitFor(() => expect(h.editor).not.toBeNull());
-  await act(async () => h.editor!.commands.setContent(`<p>${text}</p>`));
-  fireEvent.click(screen.getByRole('button', { name: 'Drop A' }));
-  await waitFor(() => expect(completions).toHaveLength(1));
-  const submit = screen.getByRole('button', {
-    name: queueEdit ? 'newChat.pendingQueue.editSaveAria' : 'newChat.sendButton.send',
-  });
-  expect((submit as HTMLButtonElement).disabled).toBe(false);
-  fireEvent.click(submit);
-  await waitFor(() => expect(h.editor!.isEditable).toBe(false));
-  fireEvent.click(screen.getByRole('button', { name: 'Drop B' }));
-  await waitFor(() => expect(completions).toHaveLength(2));
-  await act(async () => completions[0]({ ok: true, path: '/cache/a.bin', size: 100 }));
-  expect(onSend).not.toHaveBeenCalled();
-  await act(async () => completions[1](success
-    ? { ok: true, path: '/cache/b.bin', size: 100 }
-    : { ok: false, code: 'TRANSFER_FAILED' }));
-  if (success) {
-    await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
-    const sent = JSON.stringify(onSend.mock.calls[0]);
-    expect(sent).toContain('/cache/a.bin');
-    expect(sent).toContain('/cache/b.bin');
-    expect(sent).not.toContain('/controller/');
-  } else {
+  vi.useFakeTimers();
+  try {
+    await act(async () => h.editor!.commands.setContent(`<p>${text}</p>`));
+    fireEvent.click(screen.getByRole('button', { name: 'Drop A' }));
+    expect(completions).toHaveLength(1);
+    const submit = screen.getByRole('button', {
+      name: queueEdit ? 'newChat.pendingQueue.editSaveAria' : 'newChat.sendButton.send',
+    });
+    expect((submit as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(submit);
+    expect(h.editor!.isEditable).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Drop B' }));
+    expect(completions).toHaveLength(2);
+    await act(async () => {
+      completions[0]({ ok: true, path: '/cache/a.bin', size: 100 });
+      // Text autosave can run before React mirrors the newly prepared attachment.
+      await vi.advanceTimersByTimeAsync(120);
+    });
     expect(onSend).not.toHaveBeenCalled();
-    expect(h.editor!.getText()).toContain(text);
+    await act(async () => completions[1](success
+      ? { ok: true, path: '/cache/b.bin', size: 100 }
+      : { ok: false, code: 'TRANSFER_FAILED' }));
+    if (success) {
+      expect(onSend).toHaveBeenCalledOnce();
+      const sent = JSON.stringify(onSend.mock.calls[0]);
+      expect(sent).toContain('/cache/a.bin');
+      expect(sent).toContain('/cache/b.bin');
+      expect(sent).not.toContain('/controller/');
+    } else {
+      expect(onSend).not.toHaveBeenCalled();
+      expect(h.editor!.getText()).toContain(text);
+    }
+  } finally {
+    vi.useRealTimers();
   }
 });
 

@@ -37,7 +37,8 @@ import {
   getDraft as getComposerDraft,
   isDraftDiscardTokenCurrent,
   saveDraft as saveComposerDraft,
-  subscribeDraftContent as subscribeComposerDraft,
+  subscribeDraft as subscribeComposerDraft,
+  subscribeDraftContent,
   type ComposerDraftDiscardToken,
 } from '@/lib/composerDraftStore';
 import { cleanupStagedChatAttachmentFiles } from '@/lib/chatAttachmentStageCleanup';
@@ -371,14 +372,26 @@ export function useAttachments(sessionId?: string, draftKey?: string): UseAttach
   // attachment-only updates must not restore its potentially older saved text.
   useEffect(() => {
     if (storageKey === undefined || !isDataOwnerGenerationCurrent(dataOwner)) return;
-    return subscribeComposerDraft(storageKey, () => {
+    let observed = getComposerDraft(storageKey)?.attachments ?? [];
+    const refresh = (external: boolean) => {
       if (!isDataOwnerGenerationCurrent(dataOwner)) return;
       const draft = getComposerDraft(storageKey);
       const next = draft?.attachments ?? [];
+      // A text-only save can run before React mirrors a locally added file.
+      // Ignore its unchanged stored list instead of overwriting that new file.
+      const unchanged = next.length === observed.length
+        && next.every((file, index) => file === observed[index]);
+      observed = next;
+      if (!external && unchanged) return;
       if (next === attachmentsRef.current) return;
       attachmentsRef.current = next;
       setAttachments(next);
-    });
+    };
+    // Explicit rewind/discard writes must replace the tray even if the stored
+    // list was already empty while a local attachment was still being mirrored.
+    const unsubscribeExternal = subscribeComposerDraft(storageKey, () => refresh(true));
+    const unsubscribeContent = subscribeDraftContent(storageKey, () => refresh(false));
+    return () => { unsubscribeExternal(); unsubscribeContent(); };
   }, [dataOwner, storageKey]);
 
   // 附件变化实时(silent)镜像进 composerDraftStore,而非只在 unmount 快照。
