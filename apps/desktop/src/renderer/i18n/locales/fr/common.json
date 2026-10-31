@@ -17705,9 +17705,8 @@
       "name": "Suivre les sessions assignées (intégrée)",
       "hint": "Suit les sessions assignées lorsqu'elles stagnent, ont besoin de vous, échouent, atteignent une limite de consommation ou se terminent."
     },
-    "builtinTodoCheck": {
-      "name": "Vérification quotidienne des tâches à faire (intégrée)",
-      "hint": "Recherche de nouvelles tâches à faire dans les sources connectées les jours ouvrés à 9:00 et reste silencieuse s'il n'y a rien de nouveau. S'active ou se désactive depuis l'aperçu ; elle peut uniquement être mise en pause ou reprise."
+    "todoCheck": {
+      "name": "Vérification quotidienne des tâches à faire"
     },
     "builtinNightlyLearning": {
       "name": "Apprentissage nocturne (intégré)",

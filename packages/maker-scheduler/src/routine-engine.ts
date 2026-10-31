@@ -1,6 +1,7 @@
 import { RoutineEventAdmission, addRoutineReceipt, compactRoutineReceipts, receiptIsLive } from './routine-event-admission.js';
 import {
   BUILTIN_ROUTINE_ERROR,
+  LEGACY_TODO_CHECK_BUILTIN,
   matchesRoutineEvent,
   nextRoutineTriggerAt,
   parseRoutineEvent,
@@ -150,7 +151,15 @@ export class RoutineEngine {
       ) {
         throw new Error("Unsupported routine storage");
       }
-      saved.routines = saved.routines.map(routine => ({ ...routine, ...parseRoutineInput(routine) }));
+      saved.routines = saved.routines.map(routine => {
+        const loaded: Routine = { ...routine, ...parseRoutineInput(routine) };
+        // The startup save below persists the migration.
+        if ((routine.builtin as string | undefined) === LEGACY_TODO_CHECK_BUILTIN) {
+          delete loaded.builtin;
+          delete loaded.builtinVersion;
+        }
+        return loaded;
+      });
       this.state = saved;
     }
     this.state.receipts = compactRoutineReceipts(this.state.receipts, this.deps.now());

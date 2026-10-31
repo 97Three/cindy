@@ -35,10 +35,9 @@ import { currentFollowUpEvents } from '../bot-autonomy/hub.js';
 import {
   BUILTIN_FOLLOW_UP_ROUTINE_PREFIX,
   BUILTIN_NIGHTLY_LEARNING_ROUTINE_PREFIX,
-  BUILTIN_TODO_CHECK_ROUTINE_PREFIX,
   ROUTINE_TRIGGER_DATA_LEAD,
 } from '../../shared/botAutonomy.js';
-import { TODO_CHECK_PROMPT_VERSION, buildTodoCheckRoutineInput, builtinTodoCheckRoutineId } from '../bot-autonomy/todoCheckRoutine.js';
+import { buildTodoCheckRoutineInput, localizedLegacyTodoCheck, todoCheckRoutineId } from '../bot-autonomy/todoCheckRoutine.js';
 import {
   NIGHTLY_LEARNING_BUILTIN_VERSION,
   buildNightlyLearningRoutineInput,
@@ -463,6 +462,7 @@ export async function getRoutineEngine(): Promise<RoutineEngine> {
     timer.unref();
     current = { scope, engine, timer };
     notifyEngineLifecycle((listener) => listener.started(engine, scope));
+    void localizeLegacyTodoChecks(engine);
     void hostDeps?.recoverImports?.().catch(error => log.warn('Imported automation recovery remains pending', { code: error instanceof Error && /^[A-Z_]+$/.test(error.message) ? error.message : 'IMPORT_RECOVERY_FAILED' }));
     return engine;
   })();
@@ -578,6 +578,17 @@ export function registerRoutinesIpc(): void {
   });
 }
 
+/** 旧内置「每天查待办」里没人改过的中文默认名称与指令换成当前界面语言；伙伴暂停等失败留到下次启动。 */
+async function localizeLegacyTodoChecks(engine: RoutineEngine): Promise<void> {
+  for (const routine of engine.list()) {
+    const content = localizedLegacyTodoCheck(routine);
+    if (!content) continue;
+    const { triggers, silentWhenIdle, preRunHook, enabled } = routine;
+    await engine.put(routine.botId, { ...content, triggers, silentWhenIdle, preRunHook, enabled }, routine.id, routine.revision)
+      .catch((error) => log.warn('legacy todo check localization deferred', { error: String(error) }));
+  }
+}
+
 async function withBot<T>(
   botId: string,
   operation: (engine: RoutineEngine, scope: string) => T | Promise<T>,
@@ -653,23 +664,21 @@ export const routineTools = {
       return engine.history(id);
     }),
   sources: async () => (await getRoutineEngine()).listSources(),
-  /** 近况里「每天帮我查一次」：内置「每天查待办」是否存在且开着。 */
+  /** 近况里「每天帮我查一次」：「每天查待办」是否存在且开着。 */
   todoCheckEnabled: (botId: string) => withBot(botId, (engine) =>
-    engine.list(botId).some((routine) => routine.id === builtinTodoCheckRoutineId(botId) && routine.enabled)),
+    engine.list(botId).some((routine) => routine.id === todoCheckRoutineId(botId) && routine.enabled)),
   /**
-   * 打开时按模板落地（首次创建，或模板版本变化时重写）并恢复；关掉只暂停，保留同一条。
-   * 内置规则只能经 ensureBuiltin 写内容，这里的 put 只切换 enabled。
+   * 没有这条时，打开按默认内容新建；已有时只切换 enabled，保留主人或伙伴改过的名称、指令与时间。
    */
-  setTodoCheck: (botId: string, enabled: boolean) => withBot(botId, async (engine, scope) => {
-    const id = builtinTodoCheckRoutineId(botId);
-    let routine = engine.list(botId).find((row) => row.id === id) ?? null;
-    if (enabled) {
+  setTodoCheck: (botId: string, enabled: boolean) => withBot(botId, async (engine) => {
+    const id = todoCheckRoutineId(botId);
+    const routine = engine.list(botId).find((row) => row.id === id) ?? null;
+    if (!routine) {
+      if (!enabled) return false;
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-      routine = await engine.ensureBuiltin(botId, 'todo-check', buildTodoCheckRoutineInput(timezone), id, TODO_CHECK_PROMPT_VERSION);
-      assertScope(scope);
-      if (!routine) throw new Error('The teammate is paused');
+      return (await engine.createOnce(botId, buildTodoCheckRoutineInput(timezone), id)).enabled;
     }
-    if (!routine || routine.enabled === enabled) return enabled && !!routine;
+    if (routine.enabled === enabled) return enabled;
     const { name, prompt, triggers, silentWhenIdle, preRunHook } = routine;
     const saved = await engine.put(botId, { name, prompt, triggers, silentWhenIdle, preRunHook, enabled }, id, routine.revision);
     return saved.enabled;
@@ -777,7 +786,6 @@ export async function importCompanionRoutines(botId: string, routines: Companion
   const now = Date.now();
   for (const routine of routines) {
     if (builtinIds.has(routine.id) || routine.id.startsWith(BUILTIN_FOLLOW_UP_ROUTINE_PREFIX)
-      || routine.id.startsWith(BUILTIN_TODO_CHECK_ROUTINE_PREFIX)
       || routine.id.startsWith(BUILTIN_NIGHTLY_LEARNING_ROUTINE_PREFIX)) continue;
     const foreignHook = !!routine.input.preRunHook?.command?.trim() && routine.originDeviceId !== selfDeviceId;
     const passed = routine.input.triggers.some((trigger) => trigger.kind === 'once' && trigger.at <= now);
