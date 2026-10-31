@@ -5,10 +5,20 @@
  * - 资源同步 import (零网络/零 IO)，i18n.init 同步完成 → React 首屏不闪。
  * - 默认 namespace 为 'common'；体积较小、边界清晰的功能文案可独立拆分。
  * - fallbackLng：缺 key 时不显示 key 本身,直接回退英文。
- * - 不接 LanguageDetector backend，用户偏好全部在 useLocale 里走 localStorage。
+ * - 不接 LanguageDetector backend，初始化与 useLocale 共用现有语言偏好。
  *   'system' 的实际语言由 main 侧读取 OS 首选语言后传入 renderer。
  */
 
+import esCommon from './locales/es/common.json';
+import esAiRename from './locales/es/aiRename.json';
+import frCommon from './locales/fr/common.json';
+import frAiRename from './locales/fr/aiRename.json';
+import deCommon from './locales/de/common.json';
+import deAiRename from './locales/de/aiRename.json';
+import ptPTCommon from './locales/pt-PT/common.json';
+import ptPTAiRename from './locales/pt-PT/aiRename.json';
+import ptBRCommon from './locales/pt-BR/common.json';
+import ptBRAiRename from './locales/pt-BR/aiRename.json';
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import { BRAND_NAME } from '@cindy/maker-shared/branding';
@@ -25,6 +35,7 @@ import koCommon from './locales/ko/common.json';
 import koAiRename from './locales/ko/aiRename.json';
 import { GHOST_OFFICIAL_ID_PREFIX } from '../../shared/ghost';
 import { DEFAULT_LOCALE } from '../../shared/locale';
+import { getEffectiveLocale } from '../lib/localePreference';
 
 export {
   DEFAULT_LOCALE,
@@ -34,9 +45,14 @@ export {
 } from '../../shared/locale';
 export type { LocalePreference, SupportedLocale } from '../../shared/locale';
 
-// 凭证写入逃生口必须在五语里共用同一条安全命令；集中覆盖防止某个 locale 又退回
+// 凭证写入逃生口必须在全部语言里共用同一条安全命令；集中覆盖防止某个 locale 又退回
 // “手动设置环境变量”的危险指引。对应跨 locale 契约由 devOAuthWritePolicy.test 锁住。
 const resources = {
+  'es': { common: esCommon, aiRename: esAiRename },
+  'fr': { common: frCommon, aiRename: frAiRename },
+  'de': { common: deCommon, aiRename: deAiRename },
+  'pt-PT': { common: ptPTCommon, aiRename: ptPTAiRename },
+  'pt-BR': { common: ptBRCommon, aiRename: ptBRAiRename },
   en: {
     common: {
       ...enCommon,
@@ -93,7 +109,8 @@ const resources = {
 // 不 await 也安全：所有 t() 调用之前 init 已经完成 (本文件 import 即 init)。
 void i18n.use(initReactI18next).init({
   resources,
-  lng: DEFAULT_LOCALE,
+  // 翻译资源热更新会重新执行本模块，不能把用户已选语言重置为默认英文。
+  lng: getEffectiveLocale(),
   // 缺 key 回退英文。
   fallbackLng: { default: [DEFAULT_LOCALE] },
   defaultNS: 'common',

@@ -235,7 +235,7 @@ describe('model source second line', () => {
     expect(screen.getByText(quotaText('1小时 39%'))).toBeTruthy();
     expect(screen.getByText('claude · Pro')).toBeTruthy();
     expect(screen.getAllByText('account-a · Plus')).toHaveLength(2);
-    expect(reads.remoteCodex).toHaveBeenCalledWith('device-1', 'account-a');
+    expect(reads.remoteCodex).toHaveBeenCalledWith('device-1', 'account-a', { live: true, web: true });
     expect(reads.codex.mock.calls.some(([enabled]) => enabled)).toBe(false);
     expect(reads.web.mock.calls.some(([, vendor]) => vendor === 'codex')).toBe(false);
     expect(reads.claude.mock.calls.some(([enabled]) => enabled)).toBe(false);
@@ -433,4 +433,18 @@ describe('model source second line', () => {
     expect(screen.getByText(quotaText('2小时 100%'))).toBeTruthy();
     expect(screen.queryByText(reads.pendingLabel)).toBeNull();
   });
+});
+
+// Unit/jsdom: real Kimi hook -> model row, with official API-key identity rather
+// than the chosen execution engine. The other subscription mocks cannot cover it.
+it('shows Kimi remaining quota on its own model source without borrowing Codex usage', async () => {
+  const kimi = { ...provider('kimi-custom'), auth: { method: 'apiKey' }, routing: { pi: { upstream: 'https://api.kimi.com/coding/v1' } } } as ProviderView;
+  const fetchUsage = vi.fn().mockResolvedValue({ status: 'ready', stale: false, snapshot: { kind: 'kimi-coding-quota', fetchedAt: now, windows: [{ id: 'limit_5h', usedPercent: 23, resetsAt: now + 7200000 }] } });
+  Object.assign(window, { electronAPI: { maker: { fetchProviderAccountUsage: fetchUsage, onProvidersChanged: () => () => {} } } });
+  const view = render(<ModelSourceUsageProvider providers={[kimi]} scope={local}>{details('kimi-custom', 'kimi-code')}</ModelSourceUsageProvider>);
+  await act(async () => {});
+  expect(screen.getByText(quotaText('2小时 77%'))).toBeTruthy();
+  expect(view.container.textContent).not.toContain('Pro');
+  expect(fetchUsage).toHaveBeenCalledTimes(1);
+  expect(reads.codex.mock.calls.some(([enabled]) => enabled)).toBe(false);
 });

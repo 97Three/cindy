@@ -1,3 +1,4 @@
+import { isKimiCodingProviderView, kimiUsageWindowMinutes } from '../../../shared/kimiCodingUsage';
 import { useCodexRateLimitReset } from '@/hooks/useCodexRateLimitReset';
 import { CodexResetCredits } from './CodexResetCredits';
 import {
@@ -5,7 +6,8 @@ import {
   formatCompactTimeUntilReset,
   WEEKLY_WINDOW_MINUTES,
 } from '@/lib/compactQuotaCountdown';
-import { isCodexGatewayWireModel, isOpenAiSubscriptionProvider } from '@cindy/model-providers';
+import { isCodexGatewayWireModel, isOpenAiSubscriptionProvider, type AgentKind } from '@cindy/model-providers';
+import { providerDisplayNameById } from '@/lib/providerDisplayName';
 import { useDeviceProviders } from '@/hooks/useDeviceProviders';
 import { useProviders } from '@/hooks/useProviders';
 /**
@@ -48,6 +50,8 @@ import { useClaudeOAuthConnected } from '@/hooks/useClaudeOAuthConnected';
 import { useClaudeSessionRoute } from '@/hooks/useClaudeSessionRoute';
 import { useSessionUsageMoney, type SessionUsageMoney } from '@/hooks/useSessionUsageMoney';
 import { useSessionTokens } from '@/hooks/useSessionTokens';
+import { useUsageCostDetails } from '@/hooks/useUsageCostDetails';
+import { UsageCostDetails } from './UsageCostDetails';
 import { useChatDisplaySnapshot } from '@/components/chat/ChatDisplaySnapshotContext';
 import {
   requestCodexAccountRefresh,
@@ -127,9 +131,19 @@ import { quotaFullCelebrations } from './quotaFullCelebrations';
 import {
   buildClaudeUsageCard,
   buildCodexUsageCard,
+  buildDeepSeekUsageCard,
   buildXaiUsageCard,
+  buildZhipuUsageCard,
+  buildKimiUsageCard,
   type UsageCardAccount,
 } from './usageCardModel';
+import { useProviderAccountUsage } from '@/hooks/useProviderAccountUsage';
+import {
+  getProviderAccountUsageDashboardUrlView,
+  hasDeepSeekOfficialRouteView,
+  isZhipuCodingPlanProviderView,
+} from '@/lib/providerAccountUsageView';
+import { type ProviderAccountUsageSnapshot, type ZhipuCodingPlanQuotaSnapshot } from '../../../shared/providerAccountUsage';
 
 // XD 网关 / 托管账号之前会跳到内部用量看板(内部域名)—— 开源前移除该硬编码。
 // 登录随凭据只下发 { endpoint, apiKey }(见 main/model-access/credentialsSync.ts),不含
@@ -507,6 +521,44 @@ function getClaudeChipWindows(
   }));
 }
 
+/** 智谱 GLM Coding Plan chip 窗口段（与 Claude 形态同构：5 小时 + 每周）。 */
+function getZhipuChipWindows(
+  snapshot: ZhipuCodingPlanQuotaSnapshot | null,
+  t: TFunction,
+  nowMs: number,
+): ChipWindowSegment[] {
+  if (!snapshot) return [];
+  const windows: ChipWindowSegment[] = [];
+  const push = (
+    key: string,
+    window: { usedPercent: number; resetsAt: number | null } | null,
+    fallbackLabel: string,
+    windowMinutes: number,
+  ) => {
+    if (!window || !Number.isFinite(window.usedPercent)) return;
+    const resetsAtMs =
+      typeof window.resetsAt === 'number' && window.resetsAt > 0 ? window.resetsAt : null;
+    const countdown = formatCompactTimeUntilReset(
+      resetsAtMs != null ? resetsAtMs / 1000 : null,
+      nowMs,
+      t,
+      windowMinutes,
+    );
+    const remainingPercent = 100 - clampPercent(window.usedPercent);
+    windows.push({
+      key,
+      label: countdown ?? fallbackLabel,
+      remainingPercent,
+      resetsAtMs,
+      resetPending: isResetPending(resetsAtMs, nowMs),
+      alerting: remainingPercent <= 20,
+    });
+  };
+  push('zhipu-5h', snapshot.fiveHour, '5h', FIVE_HOUR_WINDOW_MINUTES);
+  push('zhipu-weekly', snapshot.weekly, t('quotaCard.weeklyLabel'), WEEKLY_WINDOW_MINUTES);
+  return windows;
+}
+
 // 告警判定 (chip 变红的口径 + allowed_warning 为何不染红、为何不用 representativeClaim
 // 的取舍) 已收进 shared/claudeSubscriptionUsage.ts 的
 // isClaudeSubscriptionAlerting (纯数据判定, 有直接单测)。
@@ -722,6 +774,29 @@ function interpolateRemaining(text: string, remaining: React.ReactNode): React.R
   );
 }
 
+/** DeepSeek chip 主指标：首币种总余额（如「余额 ¥194.06」）；无快照 → null。 */
+function formatDeepSeekBalanceSegment(
+  snapshot: ProviderAccountUsageSnapshot | null,
+  t: TFunction,
+  locale?: string,
+): string | null {
+  if (!snapshot || snapshot.kind !== 'deepseek-balance') return null;
+  const line = snapshot.balances[0];
+  if (!line) return null;
+  let balance = `${line.totalBalance} ${line.currency}`;
+  try {
+    const formatter = new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency: line.currency,
+      maximumFractionDigits: 2,
+    });
+    balance = (formatter.format as unknown as (input: string) => string)(line.totalBalance);
+  } catch {
+    // 非法货币码等：退回原始数字 + 货币码。
+  }
+  return t('providerAccountUsage.deepSeek.chipBalance', { balance });
+}
+
 function renderSegmentedLabel(segments: React.ReactNode[]): React.ReactNode {
   return segments.map((seg, i) => (
     <React.Fragment key={i}>
@@ -927,6 +1002,31 @@ export function TodaySpendChip({
   // 远程会话不读本机账户快照 —— 额度事实在远端:SSH 用 remoteHostId 判,device-link 与
   // 远程 Agent 用 isDeviceLinkRemote 判(任一成立即远程,turn 消耗的是远端账号的额度)。
   const isAnyRemoteSession = Boolean(remoteHostId) || isDeviceLinkRemote;
+  // API Key 计费供应商（DeepSeek 余额 / 智谱 Coding Plan 额度）：只认本机会话且显式选中
+  // 该供应商的形态；额度事实在本机账户，远程会话不借用（口径同订阅形态）。
+  const usesDeepSeekAccountForm =
+    !isAnyRemoteSession && Boolean(hasDeepSeekOfficialRouteView(selectedQuotaProvider));
+  const usesZhipuCodingPlanForm =
+    !isAnyRemoteSession && Boolean(isZhipuCodingPlanProviderView(selectedQuotaProvider));
+  const usesKimiCodingForm = !remoteHostId && !accountUnreadable && isKimiCodingProviderView(selectedQuotaProvider);
+  const usesProviderAccountUsageForm = usesDeepSeekAccountForm || usesZhipuCodingPlanForm || usesKimiCodingForm;
+  // 会话所在引擎 → 查询用 runtime：同一供应商各引擎可用不同账户的独立密钥，
+  // 余额/配额必须对准当前会话实际路由的账户（vendorKey 缺省 = 默认路由，不传）。
+  const providerAccountAgent: AgentKind | undefined =
+    vendorKey === 'cc'
+      ? 'claude-code'
+      : vendorKey === 'codex'
+        ? 'codex'
+        : vendorKey === 'pi'
+          ? 'pi'
+          : undefined;
+  const providerAccountUsage = useProviderAccountUsage(
+    usesProviderAccountUsageForm && providerAccountAgent ? selectedQuotaProvider : undefined,
+    providerAccountAgent,
+    usesKimiCodingForm ? accountDeviceId : null,
+  );
+  const providerAccountSnapshot =
+    providerAccountUsage.result?.status === 'ready' ? providerAccountUsage.result.snapshot : null;
   // Model Access 配额只属于实际走 XD/Cindy AI Gateway 的本地会话。显式自定义供应商即使
   // 复用了 env-key / oauth-bearer host，也不能据 host 的启动凭证把 /v2/user/info 串进来。
   const isClaudeGateway =
@@ -1063,6 +1163,7 @@ export function TodaySpendChip({
   const quotaCardSessionUsage = toQuotaHoverCardSessionUsage(sessionUsage, sessionTokens);
   const quotaCardTurnUsage = toQuotaHoverCardTurnUsage(latestTurnUsage, t);
   const [quotaPopoverOpen, setQuotaPopoverOpen] = React.useState(false);
+  const costDetails = useUsageCostDetails(sessionId, quotaPopoverOpen);
   // 浮层宿主：紧跟触发器之后（见 popover.tsx 的 portalContainer 注释）。portal 到 body
   // 末尾时，键盘焦点一旦进卡就再也 Tab 不回底栏（用户实测）。
   const [quotaPopoverPortalHost, setQuotaPopoverPortalHost] = React.useState<HTMLDivElement | null>(
@@ -1290,7 +1391,11 @@ export function TodaySpendChip({
         ? CODEX_USAGE_DASHBOARD_URL
         : isClaudeSubscription
           ? CLAUDE_USAGE_DASHBOARD_URL
-          : null;
+          : usesProviderAccountUsageForm
+            ? providerAccountUsage.result?.dashboardUrl
+              ?? getProviderAccountUsageDashboardUrlView(selectedQuotaProvider, providerAccountAgent)
+              ?? null
+            : null;
   // 看板链接行文案:与 usageDashboardUrl 一一对应;网关账号无看板 → null
   // (tooltip 不显示"打开看板"行,chip 也不可点)。
   const usageDashboardLabel: string | null = isDeviceLinkRemote
@@ -1301,22 +1406,48 @@ export function TodaySpendChip({
         ? t('todaySpend.openCodexUsage')
         : isClaudeSubscription
           ? t('todaySpend.openClaudeUsage')
-          : null;
+          : usesKimiCodingForm
+            ? t('providerAccountUsage.kimi.usage')
+            : usesDeepSeekAccountForm
+            ? t('providerAccountUsage.openDashboard')
+            : usesZhipuCodingPlanForm
+              ? t('providerAccountUsage.zhipuCodingPlan.usage')
+              : null;
   const [windowLabelNowMs, setWindowLabelNowMs] = React.useState(() => Date.now());
   const codexResetSummary = React.useMemo(
     () => summarizeCodexRateLimitReset(codexRateLimits, windowLabelNowMs),
     [codexRateLimits, windowLabelNowMs],
   );
 
-  // 当前形态下 chip 展示的限额窗口段 (Codex 订阅 / Claude 订阅共用结构);
+  // 当前形态下 chip 展示的限额窗口段 (Codex 订阅 / Claude 订阅 / 智谱 Coding Plan 共用结构);
   // 其它形态为空数组, 两个 rollup slot 空转。
-  const chipWindows: ChipWindowSegment[] = usesCodexQuotaForm
+  const chipWindows: ChipWindowSegment[] = usesKimiCodingForm
+    ? (providerAccountSnapshot?.kind === 'kimi-coding-quota' && providerAccountUsage.result?.status === 'ready' && !providerAccountUsage.result.stale
+      ? providerAccountSnapshot.windows.slice(0, 2).map(w => ({
+        key: w.id,
+        label: w.id === 'limit_month_total' || w.id === 'limit_month_code'
+          ? t(`providerAccountUsage.kimi.${w.id}`)
+          : formatCompactTimeUntilReset(w.resetsAt === null ? null : w.resetsAt / 1000, windowLabelNowMs, t, kimiUsageWindowMinutes(w.id)) ?? t(`providerAccountUsage.kimi.${w.id}`),
+        remainingPercent: 100 - w.usedPercent,
+        resetsAtMs: w.resetsAt,
+        resetPending: isResetPending(w.resetsAt, windowLabelNowMs),
+        alerting: w.usedPercent >= 80,
+      })) : [])
+    : usesCodexQuotaForm
     ? getCodexChipWindows(accountUsage, t, windowLabelNowMs)
     : usesXaiQuotaForm
       ? getXaiChipWindows(xaiSubscriptionUsage, t, windowLabelNowMs)
       : isClaudeSubscription
         ? getClaudeChipWindows(claudeSubscriptionUsage, modelId, t, windowLabelNowMs)
-        : [];
+        : usesZhipuCodingPlanForm
+          ? getZhipuChipWindows(
+              providerAccountSnapshot?.kind === 'zhipu-coding-plan-quota'
+                ? providerAccountSnapshot
+                : null,
+              t,
+              windowLabelNowMs,
+            )
+          : [];
   // chip 最多两个窗口段, 固定两个 slot 无条件调 hook(Rules of Hooks)。
   // 重置滚动: 快照刷新中同窗口剩余百分比大幅回升(典型: 窗口到点重置 0% → 100%)
   // 时, 显示值从 0% 快速滚动到新值。
@@ -1410,11 +1541,19 @@ export function TodaySpendChip({
   );
 
   React.useEffect(() => {
-    // 订阅形态 (codex-oauth / cc+chatgpt bridge / claude 订阅) 的 reset 倒计时文案
-    // 需要随时间走动: 常态分钟级 tick 足够; 任一窗口进入最后一分钟切秒级 tick,
-    // 让「59秒 → 1秒」逐秒跳动。setTimeout 链每次 tick 后按最新窗口重估下一次延迟。
-    if (!usesCodexQuotaForm && !usesXaiQuotaForm && !isClaudeSubscription && !quotaPopoverOpen)
+    // 订阅形态 (codex-oauth / cc+chatgpt bridge / claude 订阅 / 智谱 Coding Plan) 的
+    // reset 倒计时文案需要随时间走动: 常态分钟级 tick 足够; 任一窗口进入最后一分钟切秒级
+    // tick, 让「59秒 → 1秒」逐秒跳动。setTimeout 链每次 tick 后按最新窗口重估下一次延迟。
+    if (
+      !usesCodexQuotaForm
+      && !usesXaiQuotaForm
+      && !isClaudeSubscription
+      && !usesZhipuCodingPlanForm
+      && !usesKimiCodingForm
+      && !quotaPopoverOpen
+    ) {
       return undefined;
+    }
     const delay = computeCountdownTickDelayMs(chipResetsAtMsList, Date.now());
     const timer = window.setTimeout(() => {
       setWindowLabelNowMs(Date.now());
@@ -1424,6 +1563,8 @@ export function TodaySpendChip({
     usesCodexQuotaForm,
     usesXaiQuotaForm,
     isClaudeSubscription,
+    usesZhipuCodingPlanForm,
+    usesKimiCodingForm,
     quotaPopoverOpen,
     windowLabelNowMs,
     chipResetsAtMsList,
@@ -1479,7 +1620,6 @@ export function TodaySpendChip({
     windowLabelNowMs,
   ]);
 
-  const isDashboardClickable = usageDashboardUrl !== null;
   const handleClick = () => {
     if (!usageDashboardUrl) return; // 网关账号暂无看板:点击无反应
     void window.electronAPI.openExternal(usageDashboardUrl);
@@ -1504,8 +1644,15 @@ export function TodaySpendChip({
       ) : (
         <span className="tabular-nums opacity-60">{DEFAULT_MONEY_SYMBOL}</span>
       );
-  } else if (usesCodexQuotaForm || usesXaiQuotaForm || isClaudeSubscription) {
-    const chipSegments = [...windowSegments];
+  } else if (usesCodexQuotaForm || usesXaiQuotaForm || isClaudeSubscription || usesProviderAccountUsageForm) {
+    // DeepSeek 余额形态无窗口段：chip 主指标直接显示余额（与 GPT credits 同层）。
+    const deepSeekBalanceSegment = usesDeepSeekAccountForm
+      ? formatDeepSeekBalanceSegment(providerAccountSnapshot, t, formatterLocale)
+      : null;
+    const chipSegments = [
+      ...(usesDeepSeekAccountForm && deepSeekBalanceSegment ? [deepSeekBalanceSegment] : []),
+      ...windowSegments,
+    ];
     if (sessionSegment) chipSegments.push(sessionSegment);
     labelNode =
       chipSegments.length > 0 ? (
@@ -1516,7 +1663,9 @@ export function TodaySpendChip({
     // SSH 远程(remoteHostId)没有账号快照镜像,只显示价值估算;device-link 远程的
     // accountUsage / xai / claude 快照均已在上方切到被控端镜像,与本机同一套卡片渲染。
     if (!remoteHostId) {
-      account = usesCodexQuotaForm
+      account = usesKimiCodingForm
+        ? buildKimiUsageCard(providerAccountSnapshot?.kind === 'kimi-coding-quota' ? providerAccountSnapshot : null, t)
+        : usesCodexQuotaForm
         ? buildCodexUsageCard(
             accountUsage,
             !isAnyRemoteSession && codexRateLimits?.rateLimitResetCredits ? null : codexResetSummary,
@@ -1526,16 +1675,38 @@ export function TodaySpendChip({
           )
         : usesXaiQuotaForm
           ? buildXaiUsageCard(xaiSubscriptionUsage, xaiRateLimit, t, windowLabelNowMs)
-          : buildClaudeUsageCard(claudeSubscriptionUsage, t);
-      // Identity and quota must come from the same provider on the same execution device.
-      const identityProvider = quotaProviders.find(
-        (provider) =>
-          provider.id ===
-          (providerId ?? (usesCodexQuotaForm ? 'openai' : usesXaiQuotaForm ? 'xai' : 'anthropic')),
-      );
-      account.identity = usesCodexQuotaForm
-        ? identityProvider?.openAiAccount?.identity
-        : identityProvider?.subscriptionAccount?.identity;
+          : usesDeepSeekAccountForm
+            ? buildDeepSeekUsageCard(
+                providerAccountSnapshot?.kind === 'deepseek-balance' ? providerAccountSnapshot : null,
+                t,
+                formatterLocale,
+              )
+            : usesZhipuCodingPlanForm
+              ? buildZhipuUsageCard(
+                  providerAccountSnapshot?.kind === 'zhipu-coding-plan-quota'
+                    ? providerAccountSnapshot
+                    : null,
+                  t,
+                )
+              : buildClaudeUsageCard(claudeSubscriptionUsage, t);
+      if (usesKimiCodingForm && providerAccountUsage.result?.status === 'ready' && providerAccountUsage.result.stale) account.notices = [{ text: t('providerAccountUsage.kimi.stale'), tone: 'warn' }];
+      if (usesProviderAccountUsageForm && providerAccountUsage.result?.status === 'unavailable') {
+        account.emptyText = t(`providerAccountUsage.${usesKimiCodingForm ? 'kimi.' : ''}error.${providerAccountUsage.result.error}`);
+      }
+      if (
+        !usesProviderAccountUsageForm &&
+        (usesCodexQuotaForm || usesXaiQuotaForm || isClaudeSubscription)
+      ) {
+        // Identity and quota must come from the same provider on the same execution device.
+        const identityProvider = quotaProviders.find(
+          (provider) =>
+            provider.id ===
+            (providerId ?? (usesCodexQuotaForm ? 'openai' : usesXaiQuotaForm ? 'xai' : 'anthropic')),
+        );
+        account.identity = usesCodexQuotaForm
+          ? identityProvider?.openAiAccount?.identity
+          : identityProvider?.subscriptionAccount?.identity;
+      }
     }
   } else {
     const slots = computeMetricSlots(claudeQuota, creditTotals, sessionSegment, t);
@@ -1556,7 +1727,7 @@ export function TodaySpendChip({
     // Account quota is separate from lifetime task cost. API and SSH-remote routes never borrow it;
     // device-link 网关形态用被控端 LiteLLM 配额镜像(claudeQuota 已切换),credit 三池不镜像。
     if (usesGatewayQuota || isDeviceLinkRemoteGateway) {
-      account.title = t('quotaCard.gatewayTitle');
+      account.title = providerDisplayNameById('xd', quotaProviders, t);
       if (creditTotals) {
         // Keep the retained balance's observation time; a render/refresh is not new data.
         const observedAt = Date.parse(creditUsage?.observedAt ?? '');
@@ -1685,10 +1856,8 @@ export function TodaySpendChip({
             ref={setQuotaPopoverFocusTarget}
             type="button"
             onClick={(event) => {
-              // 阻止 Radix 把 dashboard 点击解释成开关，chip 原动作保持不变。
               event.preventDefault();
-              if (isDashboardClickable) handleClick();
-              else openQuotaPopoverImmediately();
+              openQuotaPopoverImmediately();
             }}
             onMouseEnter={handleQuotaPopoverTriggerMouseEnter}
             onMouseLeave={handleQuotaPopoverMouseLeave}
@@ -1707,7 +1876,8 @@ export function TodaySpendChip({
               closeQuotaPopoverImmediately();
             }}
             className={buttonClass}
-            aria-label={usageDashboardLabel ?? t('quotaCard.usageTitle')}
+            aria-label={t('quotaCard.usageTitle')}
+            data-testid="task-usage-trigger"
           >
             {labelNode}
           </button>
@@ -1789,7 +1959,9 @@ export function TodaySpendChip({
                 {manualReset.canRetry ? t('codexResets.retryReset') : t('codexResets.available', { count: codexRateLimits?.rateLimitResetCredits?.availableCount ?? 0 })}
               </Button>
             ) : null}
-          />
+          >
+            {sessionId ? <div className="px-4 py-3"><UsageCostDetails rows={costDetails} /></div> : null}
+          </QuotaHoverCard>
         </PopoverContent>
       </Popover>
       <Dialog.Root open={resetListOpen && usesCodexQuotaForm && !isAnyRemoteSession} onOpenChange={setResetListOpen}>

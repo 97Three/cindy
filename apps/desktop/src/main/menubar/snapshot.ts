@@ -31,10 +31,10 @@ import {
 } from '../../shared/menubarQuota.js';
 
 export type MenubarHarness = 'claude-code' | 'codex' | 'pi';
-export type MenubarFamily = 'claude' | 'codex' | 'grok';
+export type MenubarFamily = 'claude' | 'codex' | 'grok' | 'kimi';
 
 export interface MenubarWindowInput {
-  kind: 'session' | 'week' | 'scoped';
+  kind: 'session' | 'week' | 'scoped' | 'period';
   /** Model name for scoped windows ("Fable"). */
   label?: string | null;
   /** 0...100 used. */
@@ -201,11 +201,12 @@ const MIN_PACE_ELAPSED = 0.03;
 const ROOMY_CELL_LIMIT = 4;
 /** Settings' soft daily limit for a period quota: period total / 30 × 4.5 (a display hint, not a cap). */
 const DAILY_SOFT_LIMIT_FACTOR = 4.5;
-const FAMILY_ORDER: Record<MenubarFamily, number> = { claude: 0, codex: 1, grok: 2 };
+const FAMILY_ORDER: Record<MenubarFamily, number> = { claude: 0, codex: 1, grok: 2, kimi: 3 };
 const FAMILY_COLORS: Record<MenubarFamily, MenubarColor[]> = {
   claude: ['claude', 'claude2', 'claude3'],
   codex: ['codex'],
   grok: ['fill'],
+  kimi: ['fill'],
 };
 const HARNESS_ORDER: MenubarHarness[] = ['claude-code', 'codex', 'pi'];
 
@@ -223,9 +224,11 @@ interface WindowState {
 
 interface SubscriptionState {
   windows: WindowState[];
-  /** The tightest window that limits the whole account (scoped windows excluded). */
+  /** The window the tube and headline read: the weekly one, else the tightest (scoped windows excluded). */
   limit: WindowState | null;
   remaining: number | null;
+  /** The tightest window that actually limits the account; the detail page reports on it. */
+  tightest: WindowState | null;
 }
 
 function windowState(window: MenubarWindowInput, nowMs: number): WindowState {
@@ -243,7 +246,7 @@ function windowState(window: MenubarWindowInput, nowMs: number): WindowState {
     pace: null,
     etaMs: null,
   };
-  if (elapsed >= MIN_PACE_ELAPSED && remaining > 0) {
+  if (window.windowMinutes > 0 && elapsed >= MIN_PACE_ELAPSED && remaining > 0) {
     state.pace = used - state.expected;
     if (used > 0) {
       const etaMs = remaining / (used / (elapsed * span));
@@ -253,14 +256,23 @@ function windowState(window: MenubarWindowInput, nowMs: number): WindowState {
   return state;
 }
 
+/**
+ * Every account reads on its weekly window, so the tubes compare like with like and a short
+ * window that has not started (no reset time yet) never blanks the countdown. Accounts without
+ * a weekly window fall back to their tightest one.
+ */
 function subscriptionState(source: MenubarSubscriptionInput, nowMs: number): SubscriptionState {
   const windows = source.windows.map((window) => windowState(window, nowMs));
   const limits = windows.filter((state) => state.window.kind !== 'scoped');
-  const limit = limits.reduce<WindowState | null>(
-    (tightest, state) => (!tightest || state.remaining < tightest.remaining ? state : tightest),
-    null,
-  );
-  return { windows, limit, remaining: limit ? limit.remaining : null };
+  const weekly = limits.filter((state) => state.window.kind === 'week');
+  const tightestOf = (candidates: WindowState[]) =>
+    candidates.reduce<WindowState | null>(
+      (tightest, state) => (!tightest || state.remaining < tightest.remaining ? state : tightest),
+      null,
+    );
+  const tightest = tightestOf(limits);
+  const limit = tightestOf(weekly.length > 0 ? weekly : limits);
+  return { windows, limit, remaining: limit ? limit.remaining : null, tightest };
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -422,6 +434,7 @@ class Builder {
   }
 
   private windowLabel(window: MenubarWindowInput): string {
+    if (window.kind === 'period') return this.t(window.label === 'limit_month_code' ? 'window.kimiMonthCode' : 'window.kimiMonthTotal');
     if (window.kind === 'session') return this.t('window.session', { hours: Math.round(window.windowMinutes / 60) });
     if (window.kind === 'scoped') return this.t('window.scoped', { model: window.label ?? '' });
     return this.t('window.week');
@@ -813,7 +826,8 @@ class Builder {
 
   private subscriptionDetail(source: MenubarSubscriptionInput): MenubarDetail {
     const state = this.state(source);
-    const limit = state.limit;
+    // The detail page is about what actually limits the account, not the tube's weekly view.
+    const limit = state.tightest;
     const handle = this.handle(source);
     const resets = source.resetCredits?.count ?? 0;
     // An account on another computer runs there; this computer cannot start a task on it directly.
@@ -823,7 +837,7 @@ class Builder {
     let action: MenubarDetailAction = source.device
       ? { kind: 'open-app' }
       : { kind: 'new-task', providerId: source.providerId };
-    if (!limit || state.remaining === null) {
+    if (!limit) {
       return {
         id: source.id,
         logoSvg: source.logoSvg,
@@ -843,7 +857,7 @@ class Builder {
         action,
       };
     }
-    const remaining = state.remaining;
+    const remaining = limit.remaining;
     const level = levelOf(remaining);
     const colors = FAMILY_COLORS[source.family];
     const multi = state.windows.length > 1;

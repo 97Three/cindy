@@ -1,4 +1,5 @@
 import { readChatReplyQuote } from '@cindy/maker-shared/chat-reply-quote';
+import { useChatOutboxDelivery } from '@/chat/useChatOutboxDelivery';
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Alert, AppState } from "react-native";
 import { useAuth } from "@/auth/AuthContext";
@@ -51,6 +52,7 @@ import { validateOutboxResourceBinding } from './outboxResourceBinding';
 import { findRemoteHistoryView } from "./remoteHistoryViews";
 import type { DurableOutboxRecord } from "./durableOutbox";
 import {
+  canConnectOutboxPeer,
   createOutboxMessageLeases,
   createOutboxSessionAccess,
   outboxNeedsReconciliation,
@@ -75,6 +77,7 @@ export function MobileOutboxBridge() {
   const runnerRef = useRef<ReturnType<
     typeof createDurableOutboxDelivery
   > | null>(null);
+  useChatOutboxDelivery(accountId);
   useEffect(() => {
     try {
       initializeComposerAttachmentStage();
@@ -101,8 +104,7 @@ export function MobileOutboxBridge() {
       invoke: (deviceId, channel, args, options) => latest.current.link.invoke(deviceId, channel, args, options),
       readSession: (record) => maker(record).getSession(record.item.sessionId),
       isForeground: () => AppState.currentState !== "background" && AppState.currentState !== "inactive",
-      canConnect: (deviceId) => latest.current.link.status === "online"
-        && latest.current.link.getPresenceAvailability(deviceId) !== false,
+      canConnect: (deviceId) => canConnectOutboxPeer(latest.current.link, deviceId),
       isCreationHeld: isDurableOutboxCreationHeld,
       hasCreationTask: (sessionId) => getNewSessionCreationTask(sessionId) !== null,
       needsReconciliation,
@@ -122,26 +124,20 @@ export function MobileOutboxBridge() {
       });
     // Learned from this host's own projection / enqueue replies. A first send in
     // a task whose boundary is known needs no projection round trip.
-    const durableHosts = new Set<string>();
-    const knownClearBoundaries = new Map<string, number | null>();
+    const durableHosts = new Map<string, number>();
+    const knownClearBoundaries = new Map<string, { epoch: number; value: number | null }>();
     // What a host answered belongs to the connection it answered on: a host that
     // restarted or was replaced by an older build must be asked again.
-    let learnedEpoch = latest.current.link.connectionEpoch;
-    const forgetStaleLearning = () => {
-      const epoch = latest.current.link.connectionEpoch;
-      if (epoch === learnedEpoch) return;
-      learnedEpoch = epoch;
-      durableHosts.clear();
-      knownClearBoundaries.clear();
-    };
+    const connectionEpochFor = (deviceId: string) =>
+      latest.current.link.getConnectionState?.(deviceId).connectionEpoch ?? latest.current.link.connectionEpoch;
     const learnProjection = (r: DurableOutboxRecord, projection: unknown) => {
-      forgetStaleLearning();
       if (!projection || typeof projection !== 'object') return;
+      const epoch = connectionEpochFor(r.deviceId);
       const value = projection as { inputDeliveryVersion?: unknown; clearBoundaryMs?: unknown };
-      if (value.inputDeliveryVersion === 1) durableHosts.add(r.deviceId);
+      if (value.inputDeliveryVersion === 1) durableHosts.set(r.deviceId, epoch);
       if (value.clearBoundaryMs === null
         || (typeof value.clearBoundaryMs === 'number' && Number.isFinite(value.clearBoundaryMs))) {
-        knownClearBoundaries.set(leaseKey(r), value.clearBoundaryMs);
+        knownClearBoundaries.set(leaseKey(r), { epoch, value: value.clearBoundaryMs });
       }
     };
     const epochs = new Map<string, { authority: number; remote: number }>();
@@ -184,9 +180,9 @@ export function MobileOutboxBridge() {
         );
       },
       knownProjection: (r) => {
-        forgetStaleLearning();
-        const clearBoundaryMs = knownClearBoundaries.get(leaseKey(r));
-        if (!durableHosts.has(r.deviceId) || clearBoundaryMs === undefined) return undefined;
+        const epoch = connectionEpochFor(r.deviceId);
+        const boundary = knownClearBoundaries.get(leaseKey(r));
+        if (durableHosts.get(r.deviceId) !== epoch || boundary?.epoch !== epoch) return undefined;
         // The enqueue reply is applied with the epoch captured here, exactly as
         // it would be after a fetched projection.
         captureProjectionEpoch(r);
@@ -194,7 +190,7 @@ export function MobileOutboxBridge() {
           ...EMPTY_INPUT_PROJECTION,
           sessionId: r.item.sessionId,
           inputDeliveryVersion: 1,
-          clearBoundaryMs,
+          clearBoundaryMs: boundary.value,
         };
       },
       staleClearBoundary: (error) =>
@@ -398,6 +394,6 @@ export function MobileOutboxBridge() {
   useEffect(() => {
     runnerRef.current?.wake();
     void runnerRef.current?.run().catch(() => undefined);
-  }, [link.status, link.connectionEpoch]);
+  }, [link.status, link.connectionEpoch, link.getConnectionState]);
   return null;
 }

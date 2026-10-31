@@ -309,6 +309,9 @@ export const MAKER_INVOKE = {
    * (远程改被控端全局设置越权)。
    */
   MODEL_CONTEXT_LIMIT_GET: 'maker:model-context-limit:get',
+  MODEL_IMAGE_INPUT_GET: 'maker:model-image-input:get',
+  MODEL_IMAGE_INPUT_SET: 'maker:model-image-input:set',
+  MODEL_COMPACTION_SET: 'maker:model-compaction:set',
   MODEL_CONTEXT_LIMIT_SET: 'maker:model-context-limit:set',
   MODEL_CONTEXT_LIMIT_RESET: 'maker:model-context-limit:reset',
   // 附加只读引用目录 — 走 closure 推送; DB 持久化由 renderer 同步调
@@ -592,6 +595,7 @@ export const MAKER_INVOKE = {
   LLAMACPP_STOP: 'maker:llamacpp:stop',
   LLAMACPP_CANCEL: 'maker:llamacpp:cancel',
   PROVIDER_IMPORT_PREVIEW: 'maker:provider:import:preview',
+  PROVIDER_IMPORT_FILE: 'maker:provider:import:file',
   PROVIDER_IMPORT_CONFIRM: 'maker:provider:import:confirm',
   PROVIDER_IMPORT_CANCEL: 'maker:provider:import:cancel',
   /**
@@ -621,6 +625,14 @@ export const MAKER_INVOKE = {
    * renderer 需要 code 渲染分类文案与修复引导）。
    */
   PROVIDER_TEST_CONNECTION: 'maker:provider:test-connection',
+  /**
+   * 供应商账户余额查询（API Key 计费连接的余额卡,见 maker-host/provider-account-usage）。
+   * 入参 ProviderAccountUsageRequest（{providerId, forceRefresh?}）,端点在 main 硬编码
+   * 官方清单里,renderer 不传 URL;返回查询型结构化结果 ProviderAccountUsageResult（规则 13
+   * 例外条款:renderer 需要 error 渲染分类文案与重试入口）。快照不含密钥材料;虽只读,
+   * 但会把该供应商已存 key 发往其官方端点,不进 device-link 白名单（口径同 test-connection）。
+   */
+  PROVIDER_ACCOUNT_USAGE: 'maker:provider:account-usage',
   /**
    * 供应商「获取模型列表」—— 用表单值（baseUrl / modelsUrl / key / headers 内存透传）GET
    * 该供应商的列模型端点（见 maker-host/provider-model-fetch）。返回查询型结构化结果
@@ -831,6 +843,8 @@ export const MAKER_INVOKE = {
   BOT_DIRECT_MESSAGE_THREAD_GET: 'maker:bot-direct-message-thread:get',
   /** 伙伴群聊：列表、详情、创建、修改、成员、删除、发言、继续讨论与停止。 */
   CHAT_SERVER_MANAGE: 'maker:chat-server:manage',
+  CHAT_SERVER_MASK: 'maker:chat-server:mask',
+  CHAT_SERVER_MENTIONS: 'maker:chat-server:mentions',
   CHAT_SERVER_OWNEDBOTS: 'maker:chat-server:ownedBots',
   CHAT_SERVER_REFRESHPROFILE: 'maker:chat-server:refreshProfile',
   CHAT_SERVER_STATUS: 'maker:chat-server:status',
@@ -851,6 +865,8 @@ export const MAKER_INVOKE = {
   BOT_GROUP_SET_MEMBERS: 'maker:bot-group:set-members',
   BOT_GROUP_DELETE: 'maker:bot-group:delete',
   BOT_GROUP_SEND: 'maker:bot-group:send',
+  CHAT_DISPLAY_CACHE: 'maker:chat:display-cache',
+  BOT_GROUP_OUTBOX: 'maker:bot-group:outbox',
   BOT_GROUP_CONTINUE: 'maker:bot-group:continue',
   BOT_GROUP_STOP: 'maker:bot-group:stop',
   BOT_GROUP_PLAN_START: 'maker:bot-group:plan-start',

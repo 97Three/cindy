@@ -38,7 +38,15 @@ const r = await cindy.fetch({
 //   识别失败的真实 UTF-8 文本继续回落文本形态,未知二进制拒绝。
 //   媒体模式下 2xx 的文本响应(如轮询"生成中"JSON)自动
 //   回落文本形态给你看;非 2xx 同样回落文本,方便诊断。
-// 失败:{ ok:false, message: '原因' }(白名单外 / 凭证未配置 / 超时 / 网络错误…)
+// 失败:{ ok:false, message: '原因', errorCode? }(白名单外 / 凭证未配置 / 超时 / 网络错误…)
+//   请求已发出后的网络层失败带 errorCode,message 形如「请求失败:<原因>(<底层码>)」:
+//   NETWORK_TIMEOUT(超时,含主机到点中断「请求失败:请求超时(30000ms)」)/
+//   TLS_ERROR(证书过期、域名不匹配等,多为服务端问题)/ DNS_FAILED / CONNECTION_REFUSED /
+//   CONNECTION_RESET(连接中途断开)/ NETWORK_UNREACHABLE / NETWORK_ERROR(其余网络错误)。
+//   主机守门类失败(白名单外、凭证未配置等)不带 errorCode,message 自带处理指引。
+//   旧版主机不带 errorCode:以 errorCode 优先,缺省时按 message 处理。
+//   非幂等请求(POST 等)遇到 NETWORK_TIMEOUT / CONNECTION_RESET 时,服务端可能已执行,
+//   不要自动重放,提示用户先确认结果。
 ```
 
 **凭证语义(必读)**:你在详单里只声明"需要一条叫什么的凭证、注入到哪个请求头";
@@ -220,6 +228,9 @@ identity.displayTemplate 时,`/oauth` 回查与连接结果里 account.label 给
   经 broker exchange 透传服务端),不吃 PKCE 的服务商显式 `"pkce": false`;
   设置页的 `/oauth/<key>/client` 自填通道返回 405(settingsHtml 不要再画
   client 输入区)。
+  `"tokenBroker": "feishu"` 的企业应用由服务端按企业配置:主机每次连接开始时向服务端
+  取企业当前的 App ID 与一次性授权事务,不用清单里的 `clientId`(可省略;旧版主机
+  仍按清单 `clientId` 连接)。
 - `brokerBounce`:双地址弹跳回调(随 tokenBroker,资格与 tokenBroker 相同)。部分
   服务商后台只收 https redirect、不收 http loopback——声明后报给服务商的
   redirect_uri 是「broker 服务的 https 弹跳路由」(主机用 broker 基地址 + `path`
@@ -357,3 +368,33 @@ maxConnections 收紧到 1–8);token ≤4096 字符。新连接添加成功时�
 处理一单(忙时返回结构化"正忙",稍后重试即可);重定向最多 3 跳且逐跳重验
 白名单;不支持流式/WebSocket。长任务用"提交 + 轮询"两个工具拆开做;在一次
 tool-call 内轮询时记得定期发 tool-progress 心跳续命(见 §4"长任务续命")。
+
+### Library 下载与上传（交互页面能力版本起）
+
+```js
+const downloaded = await cindy.fetch({
+  url: 'https://api.example.com/report', as: 'library', path: 'downloads/report.pdf',
+  callId: msg.callId,
+});
+// {ok:true,status,headers,library:{path,bytes,sha256,ref:'library:downloads/report.pdf',...}}
+const uploaded = await cindy.fetch({
+  url: 'https://api.example.com/upload', method: 'POST',
+  upload: { library: ['exports/result.pdf'], field: 'file', fields: { size: '{bytes}' } },
+  callId: msg.callId,
+});
+```
+
+两者都需 `library:true`，域名、凭证注入和 401 处理**完全沿用现有 fetch**。
+`as:'library'` 边接收边写 Library 的暂存文件，成功后原子提交；失败不发布半个文件。
+长度未知也可流式接收，单件上限沿用 Library 的 8 GiB，并保留磁盘水位检查。
+`upload.library` 与 `upload.hashes` 二选一，最多 4 个文件，字段及 multipart 规则相同。
+
+**一期上传到后端的单件上限为 64 MiB，总量 128 MiB**，媒体和 Library 均如此。
+超限返回 `{ok:false,errorCode:'TOO_LARGE',limitBytes,...}`；更大文件需要流式上传，
+本期未提供。`uploadDir` 保持原限额。上传体仍由宿主在受限内存内组装，没有改动原
+HTTP 请求的 401 重试或重放行为；不要在工具层自行重复有副作用的调用。
+
+绑定 `callId` 时自动报告读取/组包的实际字节进度；网络发送阶段只报告“正在上传”，
+没有 total，不把已读取当成已上传。下载进度是实际接收字节。终态由工具结果给出，
+成功和错误都应收起进度条。新响应模式在旧宿主上返回 `{ok:false,...}`，请检查并
+提示升级；最低版本同页面能力的打包下限。
