@@ -1,10 +1,10 @@
 {
  "gate": "interaction",
  "pass": true,
- "total": 224,
- "passed": 224,
+ "total": 240,
+ "passed": 240,
  "failures": 0,
- "generatedAt": "2026-10-31T02:03:03.569Z",
+ "generatedAt": "2026-10-31T03:36:14.074Z",
  "results": [
   {
    "id": "overlay:desk",
@@ -377,6 +377,26 @@
    "detail": "我知道了↔气泡底=11.0(期望 10.0)"
   },
   {
+   "id": "locale-layout:desk:light:zh-Hans-x-lzh:pending",
+   "pass": true,
+   "detail": "title=\"名籍待删\" copy=35字 noClip=true centerWrap=true"
+  },
+  {
+   "id": "locale-layout:desk:light:zh-Hans-x-lzh:processing",
+   "pass": true,
+   "detail": "title=\"名籍方删\" copy=21字 noClip=true centerWrap=true"
+  },
+  {
+   "id": "locale-layout:desk:light:zh-Hans-x-lzh:completed",
+   "pass": true,
+   "detail": "title=\"名籍已删\" copy=14字 noClip=true centerWrap=true"
+  },
+  {
+   "id": "locale-bottom-gap:desk:light:zh-Hans-x-lzh:completed",
+   "pass": true,
+   "detail": "我知道了↔气泡底=11.0(期望 10.0)"
+  },
+  {
    "id": "locale-layout:desk:dark:zh-CN:pending",
    "pass": true,
    "detail": "title=\"账号正在等待注销\" copy=36字 noClip=true centerWrap=true"
@@ -593,6 +613,26 @@
   },
   {
    "id": "locale-bottom-gap:desk:dark:zh-Hant-x-lzh:completed",
+   "pass": true,
+   "detail": "我知道了↔气泡底=11.0(期望 10.0)"
+  },
+  {
+   "id": "locale-layout:desk:dark:zh-Hans-x-lzh:pending",
+   "pass": true,
+   "detail": "title=\"名籍待删\" copy=35字 noClip=true centerWrap=true"
+  },
+  {
+   "id": "locale-layout:desk:dark:zh-Hans-x-lzh:processing",
+   "pass": true,
+   "detail": "title=\"名籍方删\" copy=21字 noClip=true centerWrap=true"
+  },
+  {
+   "id": "locale-layout:desk:dark:zh-Hans-x-lzh:completed",
+   "pass": true,
+   "detail": "title=\"名籍已删\" copy=14字 noClip=true centerWrap=true"
+  },
+  {
+   "id": "locale-bottom-gap:desk:dark:zh-Hans-x-lzh:completed",
    "pass": true,
    "detail": "我知道了↔气泡底=11.0(期望 10.0)"
   },
@@ -817,6 +857,26 @@
    "detail": "我知道了↔气泡底=11.4(期望 10.4)"
   },
   {
+   "id": "locale-layout:phone:light:zh-Hans-x-lzh:pending",
+   "pass": true,
+   "detail": "title=\"名籍待删\" copy=37字 noClip=true centerWrap=true"
+  },
+  {
+   "id": "locale-layout:phone:light:zh-Hans-x-lzh:processing",
+   "pass": true,
+   "detail": "title=\"名籍删除中\" copy=23字 noClip=true centerWrap=true"
+  },
+  {
+   "id": "locale-layout:phone:light:zh-Hans-x-lzh:completed",
+   "pass": true,
+   "detail": "title=\"名籍已删\" copy=13字 noClip=true centerWrap=true"
+  },
+  {
+   "id": "locale-bottom-gap:phone:light:zh-Hans-x-lzh:completed",
+   "pass": true,
+   "detail": "我知道了↔气泡底=11.4(期望 10.4)"
+  },
+  {
    "id": "locale-layout:phone:dark:zh-CN:pending",
    "pass": true,
    "detail": "title=\"账号正在等待注销\" copy=33字 noClip=true centerWrap=true"
@@ -1033,6 +1093,26 @@
   },
   {
    "id": "locale-bottom-gap:phone:dark:zh-Hant-x-lzh:completed",
+   "pass": true,
+   "detail": "我知道了↔气泡底=11.4(期望 10.4)"
+  },
+  {
+   "id": "locale-layout:phone:dark:zh-Hans-x-lzh:pending",
+   "pass": true,
+   "detail": "title=\"名籍待删\" copy=37字 noClip=true centerWrap=true"
+  },
+  {
+   "id": "locale-layout:phone:dark:zh-Hans-x-lzh:processing",
+   "pass": true,
+   "detail": "title=\"名籍删除中\" copy=23字 noClip=true centerWrap=true"
+  },
+  {
+   "id": "locale-layout:phone:dark:zh-Hans-x-lzh:completed",
+   "pass": true,
+   "detail": "title=\"名籍已删\" copy=13字 noClip=true centerWrap=true"
+  },
+  {
+   "id": "locale-bottom-gap:phone:dark:zh-Hans-x-lzh:completed",
    "pass": true,
    "detail": "我知道了↔气泡底=11.4(期望 10.4)"
   },

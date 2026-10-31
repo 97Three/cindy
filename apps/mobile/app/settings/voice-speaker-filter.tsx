@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Re
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
+import { isClassicalLocale, modernLocaleOf } from '@/i18n/locale';
 import { Check } from 'lucide-react-native';
 import {
   SPEAKER_ENROLLMENT_CLIP_COUNT,
@@ -91,9 +92,9 @@ export function VoiceSpeakerFilterScreen({ services = liveServices }: { services
   const { t, i18n } = useTranslation();
   const language = i18n.resolvedLanguage || i18n.language;
   // The model covers Chinese and English; other UI locales use English passages.
-  // Classical Chinese UI still reads modern Traditional (zh-TW) passages.
-  const passageLanguage =
-    language === 'zh-Hant-x-lzh' ? 'zh-TW' : language === 'zh-CN' || language === 'zh-TW' ? language : 'en';
+  // Classical editions read their modern passages aloud.
+  const modernLanguage = isClassicalLocale(language) ? modernLocaleOf(language) : language;
+  const passageLanguage = modernLanguage === 'zh-CN' || modernLanguage === 'zh-TW' ? modernLanguage : 'en';
   const rowStyles = useSettingsRowStyles();
   const styles = useThemedStyles(makeStyles);
   const state = useSyncExternalStore(subscribeMobileSpeakerFilter, getMobileSpeakerFilterSnapshot);

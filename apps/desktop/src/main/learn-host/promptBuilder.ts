@@ -58,6 +58,7 @@ const REPLY_LANGUAGE_BY_LOCALE: Record<string, string> = {
   "pt-PT": "European Portuguese (Português (Portugal))",
   "pt-BR": "Brazilian Portuguese (Português (Brasil))",
   "zh-Hant-x-lzh": "Traditional Chinese (繁體中文)",
+  "zh-Hans-x-lzh": "Simplified Chinese (简体中文)",
 };
 
 export interface BuildLearnPromptArgs {

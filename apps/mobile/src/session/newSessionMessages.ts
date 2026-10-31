@@ -18,6 +18,10 @@ const messages = {
     showHiddenDirectories: "顯隱匿之卷匣",
     emptyDirectory: "無子目錄可示。",
   },
+  "zh-Hans-x-lzh": {
+    showHiddenDirectories: "显隐匿之卷匣",
+    emptyDirectory: "无子目录可示。",
+  },
   en: {
     showHiddenDirectories: "Show Hidden Folders",
     emptyDirectory: "No folders to show.",

@@ -14,6 +14,7 @@ export const TITLE_LANGUAGE_BY_LOCALE: Record<SupportedLocale, string> = {
   "pt-PT": "European Portuguese",
   "pt-BR": "Brazilian Portuguese",
   "zh-Hant-x-lzh": "Classical Chinese (文言, Traditional characters)",
+  "zh-Hans-x-lzh": "Classical Chinese (文言, Simplified characters)",
 };
 
 function escapeReferenceData(value: string): string {

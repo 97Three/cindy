@@ -67,6 +67,7 @@ const COPY = {
   "pt-PT": "Conversas de grupo",
   "pt-BR": "Conversas em grupo",
   "zh-Hant-x-lzh": "群議",
+  "zh-Hans-x-lzh": "群议",
 },
   planning: {
     en: '{name} is splitting the work…',
@@ -81,6 +82,7 @@ const COPY = {
   "pt-PT": "{name} está a dividir o trabalho…",
   "pt-BR": "{name} está dividindo o trabalho…",
   "zh-Hant-x-lzh": "{name}方籌劃…",
+  "zh-Hans-x-lzh": "{name}方筹划…",
 },
   proposed: {
     en: '{name}: plan ready, waiting for you',
@@ -95,6 +97,7 @@ const COPY = {
   "pt-PT": "{name}: plano pronto, à sua espera",
   "pt-BR": "{name}: plano pronto, esperando por você",
   "zh-Hant-x-lzh": "{name}：籌劃已定，待君啟之",
+  "zh-Hans-x-lzh": "{name}：筹划已定，待君启之",
 },
   running: {
     en: 'Step {step}/{total} · {name} is working',
@@ -109,6 +112,7 @@ const COPY = {
   "pt-PT": "Passo {step}/{total} · {name} está a trabalhar",
   "pt-BR": "Etapa {step}/{total} · {name} está trabalhando",
   "zh-Hant-x-lzh": "分工 {step}/{total} · {name}方行",
+  "zh-Hans-x-lzh": "分工 {step}/{total} · {name}方行",
 },
   stepDone: {
     en: '{name} is done — continue when ready',
@@ -123,6 +127,7 @@ const COPY = {
   "pt-PT": "{name} terminou — continue quando quiser",
   "pt-BR": "{name} terminou — continue quando quiser",
   "zh-Hant-x-lzh": "{name}已畢，待君續之",
+  "zh-Hans-x-lzh": "{name}已毕，待君续之",
 },
   stepFailed: {
     en: "{name} didn't finish",
@@ -137,6 +142,7 @@ const COPY = {
   "pt-PT": "{name} não terminou",
   "pt-BR": "{name} não terminou",
   "zh-Hant-x-lzh": "{name}未竟",
+  "zh-Hans-x-lzh": "{name}未竟",
 },
   lastMessage: {
     en: '{name}: {text}',
@@ -151,6 +157,7 @@ const COPY = {
   "pt-PT": "{name}: {text}",
   "pt-BR": "{name}: {text}",
   "zh-Hant-x-lzh": "{name}：{text}",
+  "zh-Hans-x-lzh": "{name}：{text}",
 },
   memberJoined: {
     en: '{name} joined the group',
@@ -165,6 +172,7 @@ const COPY = {
   "pt-PT": "{name} juntou-se ao grupo",
   "pt-BR": "{name} se juntou ao grupo",
   "zh-Hant-x-lzh": "{name}入群議",
+  "zh-Hans-x-lzh": "{name}入群议",
 },
   sharedReplyYou: {
     en: 'You shared a thread reply',
@@ -179,6 +187,7 @@ const COPY = {
   "pt-PT": "Partilhou uma resposta a um tópico",
   "pt-BR": "Você compartilhou uma resposta a um tópico",
   "zh-Hant-x-lzh": "君貼回一則話題之覆",
+  "zh-Hans-x-lzh": "君贴回一则话题之覆",
 },
   sharedReply: {
     en: '{name} shared a thread reply',
@@ -193,6 +202,7 @@ const COPY = {
   "pt-PT": "{name} partilhou uma resposta a um tópico",
   "pt-BR": "{name} compartilhou uma resposta a um tópico",
   "zh-Hant-x-lzh": "{name} 貼回一則話題之覆",
+  "zh-Hans-x-lzh": "{name} 贴回一则话题之覆",
 },
 } satisfies Record<string, Copy>;
 

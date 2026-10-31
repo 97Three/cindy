@@ -639,6 +639,8 @@ export function queryTodoItems(items: TeammateTodo[], q: TodoListQuery = {}, now
 export function todoActionText(title: string, step: string, locale = 'en'): string {
   const prefix = locale === 'zh-Hant-x-lzh'
     ? '續'
+    : locale === 'zh-Hans-x-lzh'
+    ? '续'
     : locale.startsWith('zh-TW')
     ? '繼續'
     : locale.startsWith('zh')

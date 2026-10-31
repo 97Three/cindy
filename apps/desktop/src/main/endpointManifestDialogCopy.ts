@@ -253,6 +253,23 @@ export const ENDPOINT_MANIFEST_DIALOG_COPY: Record<
     offlineButton: '用上回之設',
     quitButton: '退 Cindy',
   },
+  'zh-Hans-x-lzh': {
+    networkTitle: 'Cindy 暂不能连接',
+    configTitle: 'Cindy 暂不能启',
+    networkBody:
+      '启动之际，未能连上 Cindy 服务。请察设备已连网否，而后再启之。若方用 Proxy 或公司网络，可换网再试。',
+    configBody: 'Cindy 暂不能启动竟。请稍后再试；若此患不止，请联系技术支持。',
+    errorLine: '谬误：{{error}}',
+    diagnosticsHint: '若需援手，可录诊断信息，贴于求援之讯中。',
+    copyDiagnosticsButton: '录诊断信息',
+    copiedHint: '诊断信息已录。请贴于求援之讯中。',
+    copyFailedHint: '诊断信息未能录之，请再试。',
+    noSavedConfigurationHint: '此设备无可用之旧设，须复连接，方能续启。',
+    offlineHint: '亦可用上回所得之设离线而启（所得之时：{{savedAt}}），需网络之功能将不可用。',
+    retryButton: '再启 Cindy',
+    offlineButton: '用上回之设',
+    quitButton: '退 Cindy',
+  },
 };
 
 export interface EndpointManifestDialogInput {

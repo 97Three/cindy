@@ -153,6 +153,7 @@ import {
 } from './interactions.js';
 import { collectOutboundAttachments, buildHookPromptNote, hasOutboundRefs } from './outbound.js';
 import { getResolvedMainLocale, t } from '../i18n.js';
+import { modernLocaleOf } from '../../shared/locale.js';
 import { buildUiLanguageErrorNote } from '../maker-ipc/uiLanguageErrorNote.js';
 
 type MainOwnedImChannel = Extract<TurnPermissionOrigin, { kind: 'im' }>['channel'];
@@ -569,7 +570,8 @@ function turnTextsFor(observer: HookTurnObserver): HookTurnTexts {
 /** 附件未发出提示跟随界面语言, 并点名没发出的附件。 */
 function formatHookIncompleteNotice(skippedNames: string[]): string {
   const locale = getResolvedMainLocale();
-  const separator = locale === 'zh-CN' || locale === 'zh-TW' || locale === 'zh-Hant-x-lzh' || locale === 'ja' ? '、' : ', ';
+  const modern = modernLocaleOf(locale);
+  const separator = modern === 'zh-CN' || modern === 'zh-TW' || modern === 'ja' ? '、' : ', ';
   const names = skippedNames.map((name) => name || t('imBot.unnamedAttachment', locale));
   return t('imBot.outboundAttachmentsIncomplete', locale)
     .replace('{{count}}', String(skippedNames.length))

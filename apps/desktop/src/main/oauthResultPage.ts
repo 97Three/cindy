@@ -40,6 +40,7 @@ export function getRemoteOAuthCallbackCopy(lang: OAuthResultPageLang): { title: 
     "body": "Volte para Cindy para verificar o resultado da autorização no dispositivo remoto."
   },
     'zh-Hant-x-lzh': { title: '授權回呼已至', body: '請歸 Cindy，察遠端裝置之授權結果。' },
+    'zh-Hans-x-lzh': { title: '授权回调已至', body: '请归 Cindy，察远程设备之授权结果。' },
 }[lang];
 }
 export type OAuthResultPageVariant = 'success' | 'warning' | 'error';
@@ -100,6 +101,7 @@ export const OAUTH_RESULT_HTML_LANG: Record<OAuthResultPageLang, string> = {
   "pt-PT": "pt-PT",
   "pt-BR": "pt-BR",
   'zh-Hant-x-lzh': 'zh-Hant-x-lzh',
+  'zh-Hans-x-lzh': 'zh-Hans-x-lzh',
 };
 
 /** Selects the first supported language in browser preference order. */
@@ -107,7 +109,8 @@ export function pickOAuthResultPageLang(acceptLanguage: string | undefined): OAu
   if (typeof acceptLanguage !== 'string' || acceptLanguage.length === 0) return 'en';
   for (const part of acceptLanguage.split(',')) {
     const primary = part.trim().split(';')[0]?.trim().toLowerCase() ?? '';
-    // 文言(Classical Chinese)须先于 zh-Hant → zh-TW 的判定命中。
+    // 文言(Classical Chinese)须先于 zh-Hans / zh-Hant 的判定命中。
+    if (primary === 'zh-hans-x-lzh') return 'zh-Hans-x-lzh';
     if (primary === 'zh-hant-x-lzh' || primary === 'lzh' || primary.startsWith('lzh-')) {
       return 'zh-Hant-x-lzh';
     }
@@ -146,6 +149,8 @@ function returnLabel(lang: OAuthResultPageLang, brandName: string): string {
       return `返回 ${brandName}`;
     case 'zh-Hant-x-lzh':
       return `歸 ${brandName}`;
+    case 'zh-Hans-x-lzh':
+      return `归 ${brandName}`;
     case 'en':
       return `Return to ${brandName}`;
     case 'ja':
@@ -254,6 +259,15 @@ export function getProviderOAuthResultCopy(
         missingCodeBody: `未得 ${providerName} 之授權碼，請歸 ${brandName} 再試。`,
         invalidStateBody: `授權驗證未成，請歸 ${brandName} 重新連線。`,
         exchangeFailedBody: `連線 ${providerName} 時生謬誤，請歸 ${brandName} 再試。`,
+      };
+    case 'zh-Hans-x-lzh':
+      return {
+        successTitle: '授权已成',
+        successBody: `${providerName} 已连于 ${brandName}。君可归应用程序续之。`,
+        errorTitle: '授权未竟',
+        missingCodeBody: `未得 ${providerName} 之授权码，请归 ${brandName} 再试。`,
+        invalidStateBody: `授权验证未成，请归 ${brandName} 重新连接。`,
+        exchangeFailedBody: `连接 ${providerName} 时生谬误，请归 ${brandName} 再试。`,
       };
     case 'ja':
       return {
@@ -418,6 +432,16 @@ const GHOST_OAUTH_PAGE_STRINGS: Record<OAuthResultPageLang, GhostOAuthResultCopy
       internal: '處理回呼時生謬誤，請歸 {brand} 再試。',
     },
   },
+  'zh-Hans-x-lzh': {
+    successTitle: '授权已成',
+    successBody: '君可阖此页，归 {brand} 续之。',
+    errorTitle: '授权未成',
+    errors: {
+      'provider-error': '授权服务器传回谬误：{detail}',
+      'invalid-callback': '回调参数不全或验证未成，请归 {brand} 再试。',
+      internal: '处理回调时生谬误，请归 {brand} 再试。',
+    },
+  },
 };
 
 /** Ghost OAuth 回调页文案(占位符原样返回,替换责任在调用方)。 */
@@ -465,6 +489,11 @@ export function getOAuthNeutralResultCopy(
       return {
         title: '尚須續行',
         body: `請歸 ${brandName}，畢目前工作區之安裝，而後續之。`,
+      };
+    case 'zh-Hans-x-lzh':
+      return {
+        title: '尚须续行',
+        body: `请归 ${brandName}，毕目前工作区之安装，而后续之。`,
       };
     case 'ja':
       return {

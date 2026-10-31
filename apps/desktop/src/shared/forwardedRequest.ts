@@ -10,6 +10,7 @@ import zhTW from '../renderer/i18n/locales/zh-TW/common.json';
 import ja from '../renderer/i18n/locales/ja/common.json';
 import ko from '../renderer/i18n/locales/ko/common.json';
 import zhHantLzh from '../renderer/i18n/locales/zh-Hant-x-lzh/common.json';
+import zhHansLzh from '../renderer/i18n/locales/zh-Hans-x-lzh/common.json';
 export { verifiedOwnerRequestText } from '@cindy/maker-shared/auto-review-intent';
 
 // Keep every historical dialect readable: persisted receipts are verified byte-for-byte.
@@ -25,6 +26,7 @@ const FORWARDED_REQUEST_COPY = {
   ja: ja.forwardedRequest,
   ko: ko.forwardedRequest,
   'zh-Hant-x-lzh': zhHantLzh.forwardedRequest,
+  'zh-Hans-x-lzh': zhHansLzh.forwardedRequest,
 } satisfies Record<SupportedLocale, typeof en.forwardedRequest>;
 
 /** Host-owned source evidence. It describes authorship, never execution permission. */

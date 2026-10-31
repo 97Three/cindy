@@ -72,6 +72,15 @@ const RETRY_COPY = {
     archive_unavailable: '更新檔案已不存或不可讀，請再檢查更新',
     spawn_failed: '未能啟動更新重試，請闔此視窗，再檢查更新',
   },
+  'zh-Hans-x-lzh': {
+    retry: '再试',
+    processes_running: '请先关闭 Cindy 及自安装目录运行之他进程，而后再试',
+    updater_busy: '另有更新方行，请阖此窗口，再检查更新',
+    in_progress: '更新之重试已在进行',
+    unavailable: '此番更新未成，不可重试',
+    archive_unavailable: '更新文件已不存或不可读，请再检查更新',
+    spawn_failed: '未能启动更新重试，请阖此窗口，再检查更新',
+  },
   en: {
     retry: 'Retry',
     processes_running:
@@ -112,6 +121,7 @@ const RETRY_COPY = {
 globalThis.retryCopy = function retryCopy(language = 'en') {
   const locale = language.toLowerCase();
   if (/^zh-hant-x-lzh$/.test(locale)) return RETRY_COPY['zh-Hant-x-lzh'];
+  if (/^zh-hans-x-lzh$/.test(locale)) return RETRY_COPY['zh-Hans-x-lzh'];
   if (/^zh-(tw|hk|mo|hant)(-|$)/.test(locale)) return RETRY_COPY['zh-TW'];
   if (locale === 'zh' || locale.startsWith('zh-')) return RETRY_COPY['zh-CN'];
   if (locale.split('-')[0] === 'pt') {

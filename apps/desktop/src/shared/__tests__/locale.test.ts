@@ -14,6 +14,7 @@ describe('desktop locale resolution', () => {
 
   it('keeps the explicitly chosen Classical Chinese locale while OS Traditional tags stay zh-TW', () => {
     expect(resolveSystemLocale('zh-Hant-x-lzh')).toBe('zh-Hant-x-lzh');
+    expect(resolveSystemLocale('zh-Hans-x-lzh')).toBe('zh-Hans-x-lzh');
     expect(resolveSystemLocale('zh-Hant')).toBe('zh-TW');
     expect(resolvePreferredSystemLocale(['zh-Hant-TW', 'zh-Hant-HK'])).toBe('zh-TW');
   });

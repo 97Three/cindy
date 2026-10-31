@@ -274,6 +274,7 @@ describe('bot group remote resources', () => {
       es: 'Taylor se unió al grupo', fr: 'Taylor a rejoint le groupe', de: 'Taylor ist der Gruppe beigetreten',
       'pt-PT': 'Taylor juntou-se ao grupo', 'pt-BR': 'Taylor se juntou ao grupo',
       'zh-Hant-x-lzh': 'Taylor入群議',
+      'zh-Hans-x-lzh': 'Taylor入群议',
     } });
   });
 
