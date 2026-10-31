@@ -15,6 +15,16 @@ export async function authorFixture(mode, temporary, transform = fixture => fixt
   const main = await readFile(path.join(source, 'main.js'), 'utf8');
   const html = await readFile(path.join(source, 'ui/page.html'), 'utf8');
   const assets = mode === 'files' ? Object.fromEntries(await Promise.all(['settings.html', 'settings.js'].map(async name => [name, await readFile(path.join(source, name), 'utf8')]))) : {};
+  // Manual units ship with the package; each is a single MANUAL.md in these examples.
+  for (const item of manifest.manual?.items ?? []) {
+    const relative = path.posix.join(item.dir, 'MANUAL.md');
+    assets[relative] = await readFile(path.join(source, relative), 'utf8');
+  }
+  // Single source: the loader page manual must stay byte-identical to PAGE-GENERATION.md.
+  if (mode === 'loader') {
+    assert.equal(assets['manual/pages/MANUAL.md'], await readFile(path.join(examples, 'PAGE-GENERATION.md'), 'utf8'),
+      'loader/manual/pages/MANUAL.md must match PAGE-GENERATION.md');
+  }
   const fixture = transform({ manifest, main, html, assets });
   if (mode === 'loader') await verifyLoaderMain(fixture.main);
   await packAuthorFixture(fixture, temporary);
@@ -88,7 +98,10 @@ export async function packAuthorFixture({ manifest, main, html, assets = {} }, t
   await mkdir(path.join(dir, 'ui'), { recursive: true });
   await writeFile(path.join(dir, 'ghost.json'), JSON.stringify(manifest));
   await writeFile(path.join(dir, 'main.js'), main);
-  for (const [name, content] of Object.entries(assets)) await writeFile(path.join(dir, name), content);
+  for (const [name, content] of Object.entries(assets)) {
+    await mkdir(path.dirname(path.join(dir, name)), { recursive: true });
+    await writeFile(path.join(dir, name), content);
+  }
   const htmlPath = path.join(dir, manifest.mcpApps.ui.resources[0].file);
   await mkdir(path.dirname(htmlPath), { recursive: true });
   await writeFile(htmlPath, html);

@@ -9,8 +9,7 @@
 [按需参考](examples/interactive-pages/REFERENCE.md)。
 
 **版本提示**：本章标准 SDK 导入和加载器整页替换要求 Cindy **0.1.122-beta 或更新版本**，
-插件声明 `minCindyVersion: "0.1.122-beta"`。执行插件的电脑、手机或远程查看端
-都需要升级到支持该能力的版本。
+插件声明 `minCindyVersion: "0.1.122-beta"`，执行端、手机和远程查看端都需升级。
 
 ### 1. 先选界面，再选首屏来源
 
@@ -99,7 +98,7 @@ cindy.send({ type: 'tool-result', callId: msg.callId, ok: true, result: {
 } });
 ```
 
-`ok: true` 只表示代发完成，HTTP 401、400、500 仍可能在里面，必须检查 `status`。
+`ok: true` 只表示代发完成，HTTP 4xx/5xx 仍可能在里面，必须检查 `status`。
 错误用 `{isError:true, content:[{type:'text',text:'可采取行动的提示'}]}` 返回。不要把
 堆栈、响应头、令牌或未经控制的服务错误正文转给页面和 AI。
 
@@ -107,8 +106,10 @@ cindy.send({ type: 'tool-result', callId: msg.callId, ok: true, result: {
 上下文；`structuredContent` 适合 JSON 数据，但它也对 AI 可见。HTML 内不要放
 凭证，也不要把不必要的大数据塞进结果。
 
-由 AI 写首屏时使用 show_page({title,html})，返回结构相同。告诉 AI 可用工具、
-参数及本章规则；页面不能创造插件未提供的能力。
+由 AI 写首屏时使用 show_page({title,html})，返回结构相同。生成页面的 LLM（后端里的
+模型或 Cindy 对话中的 AI）读[页面生成手册](examples/interactive-pages/PAGE-GENERATION.md)；
+loader 用 `manual.items` 挂上同一份，show_page 说明指向 `ghost_manual`。页面不能
+创造插件未提供的能力。
 
 ### 5. 加载器显示首屏，生成的页面自己连接
 
@@ -130,12 +131,11 @@ app.ontoolresult = async result => {
 await app.connect();
 ```
 
-生成的页面使用同一个标准 import，创建自己的 App 并 connect。Cindy 为所有
-页面始终提供 SDK，无需从 CDN 下载，也不用随 HTML 复制。页面不写死 SDK 文件地址。
-宿主升级时它会跟随更新；自己打包 SDK 的页面仍可使用自己的副本。
+生成的页面用同一个标准 import，创建自己的 App 并 connect。Cindy 为所有页面始终
+提供 SDK 并随宿主升级，无需 CDN，也不写死 SDK 文件地址；自带 SDK 的页面仍可用自己的副本。
 
-生成的页面不应等待初始 `ontoolresult` 再渲染：加载器已经接收了它，重新连接不会
-重复发送最初的输入和结果。把首屏数据写进 HTML，或在确实需要新数据时主动调用
+生成的页面不要等初始 `ontoolresult` 再渲染：加载器已接收它，重新连接不会
+重发最初的输入和结果。把首屏数据写进 HTML，或在确实需要新数据时主动调用
 只读工具。卡片卸载再打开会从最初的工具结果恢复，不保证保留未提交的输入。
 
 ### 6. 页面读 JSON，只更新需要的部分
@@ -160,7 +160,7 @@ for (const item of result.structuredContent.items) {
 
 数据用 `textContent`、`value` 或创建 DOM 元素展示。不要把接口返回的名称、用户
 输入或文件内容当 HTML 拼进去。按钮等待期间禁用，成功后显示结果，失败时显示
-可读错误。进度是可选信息，不代表完成。不要用一直旋转的按钮代替错误处理。
+可读错误。进度可选，不代表完成；不要用一直旋转的按钮代替错误处理。
 
 ### 7. 表单和写操作
 
@@ -255,8 +255,8 @@ innerHTML 只接转义过动态值的可信模板，不接普通数据。片段�
 
 打包后实际打开页面：检查首屏只请求一次；查询不清掉表单输入；按 Enter 和点击
 都只保存一次；HTTP 401/500 显示错误；取消后按钮恢复；重复编号不会新增记录；
-浅色、深色和窄屏没有溢出。最后关闭再打开卡片，确认用户能理解恢复的是哪一屏。
-只通过清单校验不能证明页面脚本、网络和交互都正常。
+浅色、深色和窄屏没有溢出。最后关闭再打开卡片，确认恢复的是哪一屏。
+清单校验通过不代表页面脚本、网络和交互正常。
 
 ### 按场景找完整代码
 

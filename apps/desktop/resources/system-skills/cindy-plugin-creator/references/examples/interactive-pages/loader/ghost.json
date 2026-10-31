@@ -10,7 +10,7 @@
   "tools": [
     {
       "name": "open_view",
-      "description": "按意图打开页面。intent 是用户意图的简短描述；示例后端只识别 items、form、chart、overview，其余按总览处理。生成的页面直接写 import { App } from '@modelcontextprotocol/ext-apps'；不要写 importmap，不要从 CDN 或其他地址加载 SDK，SDK 由 Cindy 提供。",
+      "description": "按意图打开页面。intent 是用户意图的简短描述；示例后端只识别 items、form、chart、overview，其余按总览处理。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -25,7 +25,7 @@
     },
     {
       "name": "show_page",
-      "description": "显示 AI 生成的完整 MCP Apps HTML 页面。生成的页面直接写 import { App } from '@modelcontextprotocol/ext-apps'；不要写 importmap，不要从 CDN 或其他地址加载 SDK，SDK 由 Cindy 提供。",
+      "description": "显示 AI 生成的完整 MCP Apps HTML 页面。写页面前先用 ghost_manual({ ghost_id: \"interactive-loader\", path: \"pages\" }) 读本插件的页面手册。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -181,6 +181,15 @@
       }
     }
   ],
+  "manual": {
+    "items": [
+      {
+        "dir": "manual/pages",
+        "name": "pages",
+        "description": "写交互页面前先读：页面写法、SDK 方法、标准工具与规则"
+      }
+    ]
+  },
   "mcpApps": {
     "ui": {
       "resources": [
