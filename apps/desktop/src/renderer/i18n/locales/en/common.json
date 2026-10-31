@@ -2413,7 +2413,12 @@
         "zh-TW": "Traditional Chinese",
         "en": "English",
         "ja": "日本語",
-        "ko": "한국어"
+        "ko": "한국어",
+        "es": "Español",
+        "fr": "Français",
+        "de": "Deutsch",
+        "pt-PT": "Português (Portugal)",
+        "pt-BR": "Português (Brasil)"
       }
     },
     "userProfile": {
@@ -10525,8 +10530,10 @@
       },
       "mention": {
         "all": "Everyone",
-        "allHint": "Everyone replies",
-        "label": "Mention a teammate"
+        "allHint": "People only",
+        "label": "Mention a teammate",
+        "allBots": "All teammates",
+        "allBotsHint": "Teammates only"
       },
       "composer": {
         "label": "Group chat message",
@@ -10637,7 +10644,7 @@
         "speakingMode": "Speaking order",
         "speakingModeAuto": "Automatic",
         "speakingModeSequential": "One at a time",
-        "speakingModeAutoNote": "No mentions or @Everyone: think simultaneously on the first pass, then reply one by one. Mentioned teammates reply in mention order.",
+        "speakingModeAutoNote": "No mentions or @All teammates: think simultaneously on the first pass, then reply one by one. Mentioned teammates reply in mention order.",
         "speakingModeSequentialNote": "One teammate speaks at a time, and each one sees the replies before it.",
         "speakingModeSaveFailed": "Couldn't save the speaking order. Try again.",
         "setOrganizer": "Make Organizer",
@@ -10651,7 +10658,9 @@
         "projectDirClear": "Clear Folder",
         "projectDirNote": "Teammates work here when they split the work. You can leave it empty and they’ll use this group chat’s own folder. If you choose a git project, each work split gets a new worktree and branch, so your own code stays untouched.",
         "autoContinueSaveFailed": "Couldn’t save step handoffs. Try again.",
-        "projectDirSaveFailed": "Couldn’t save the project folder. Make sure the folder still exists, then try again."
+        "projectDirSaveFailed": "Couldn’t save the project folder. Make sure the folder still exists, then try again.",
+        "allowMentionAllBots": "Allow @all teammates",
+        "allowMentionAllBotsHint": "Only the group owner can change this. Teammates may all reply; use with care in large groups. AI replies on your behalf are independent."
       },
       "errors": {
         "memberLimit": "A group chat needs 2–6 teammates",
@@ -10675,7 +10684,8 @@
         "quoteUnavailable": "The quoted message was deleted or is no longer visible. The quote was removed. Send again.",
         "lifecycleUnavailable": "The current server or computer does not support this action yet.",
         "groupDissolved": "This group has been dissolved. You can still read the available history.",
-        "lastOwner": "Transfer ownership or dissolve this group before leaving."
+        "lastOwner": "Transfer ownership or dissolve this group before leaving.",
+        "allBotsMentionDisabled": "The group owner has not enabled @all teammates."
       },
       "organizer": "Organizer",
       "plan": {

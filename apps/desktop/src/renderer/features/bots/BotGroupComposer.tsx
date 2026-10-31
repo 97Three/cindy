@@ -116,7 +116,7 @@ import { useBotGroupMentionPicker } from './useBotGroupMentionPicker';
 const THREAD_ALL_ALIASES = ['所有人', 'all', 'everyone'] as const;
 
 const sameBotGroupMentions = (a: BotGroupMention, b: BotGroupMention) =>
-  a.all === b.all && a.botIds.length === b.botIds.length && a.botIds.every((botId, index) => botId === b.botIds[index]);
+  (a.allBots === true) === (b.allBots === true) && a.all === b.all && a.botIds.length === b.botIds.length && a.botIds.every((botId, index) => botId === b.botIds[index]);
 
 function isComposingKey(event: KeyboardEvent): boolean {
   return event.nativeEvent.isComposing || event.keyCode === 229;
@@ -181,6 +181,7 @@ export function BotGroupComposer({
   disabled = false,
   planState = null,
   divisionSteps = false,
+  allowMentionAllBots = false,
   attachments: attachmentState = NO_ATTACHMENTS,
   attachmentScope = '',
   dragOver = false,
@@ -207,6 +208,7 @@ export function BotGroupComposer({
   planState?: BotGroupComposerPlanState | null;
   /** Server groups: a 分工 that writes out who does what starts as written; otherwise the organizer arranges it (§7.0). */
   divisionSteps?: boolean;
+  allowMentionAllBots?: boolean;
   attachments?: BotGroupComposerAttachments;
   /** Scope for writing annotated images before send (see botGroupAttachmentScope). */
   attachmentScope?: string;
@@ -258,6 +260,7 @@ export function BotGroupComposer({
     members,
     textareaRef,
     allLabels: thread ? threadAllLabels : undefined,
+    allowMentionAllBots,
   });
   const textRef = useRef(text);
   textRef.current = text;

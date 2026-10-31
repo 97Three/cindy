@@ -415,6 +415,30 @@ describe('direct Chat Server client', () => {
     });
     expect(request.mock.calls[0]).toEqual(request.mock.calls[1]);
   });
+  // Unit: broadcasts must override an implicit quoted companion and retain their wire audience.
+  it.each([true, false])('keeps human broadcasts directed with server capability=%s', async supported => {
+    const original = { ...message(20), authorId: id(12), author: { kind: 'bot', name: 'Companion' } };
+    const member = { ...snapshot().members[0], id: id(12), kind: 'bot', state: 'joined' };
+    const request = vi.fn(async (path: string, method?: string) => {
+      if (path === '/me') return { actor: { id: id(11), kind: 'human' }, capabilities: supported ? { groupMentionAudiences: 1 } : {} };
+      if (method === 'POST') return { id: id(21) };
+      return path.endsWith('/members') ? [member] : original;
+    });
+    const client = createChatServerClient(request as any);
+    const input = { clientId: 'broadcast', text: '@Everyone', mentions: { all: true, botIds: [] }, quote: { messageId: id(20) } };
+    await client.send(id(1), input);
+    const posted = request.mock.calls.at(-1) as unknown as [string, string, Record<string, unknown>];
+    expect(posted[2].mentions).toEqual(supported ? [] : [id(11)]);
+    expect(posted[2].mentionAudience).toBe(supported ? 'humans' : undefined);
+    const bots = { ...input, clientId: 'bots', mentions: { all: false, allBots: true, botIds: [] } };
+    if (supported) {
+      await client.send(id(1), bots);
+      expect((request.mock.calls.at(-1) as unknown as [string, string, Record<string, unknown>])[2]).toMatchObject({ mentionAudience: 'bots', mentions: [] });
+    } else {
+      await expect(client.send(id(1), bots)).rejects.toThrow('ALL_BOTS_MENTION_DISABLED');
+      expect(request.mock.calls.filter(([, method]) => method === 'POST')).toHaveLength(1);
+    }
+  });
   // Product rule: quoting a present companion addresses that companion; a deleted
   // original must not send a stale quote or silently lose the user's reply.
   it('sends a fresh quote with the companion recipient and rejects a deleted original', async () => {

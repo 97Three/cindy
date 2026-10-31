@@ -2383,7 +2383,12 @@
         "zh-TW": "繁体中文",
         "en": "English",
         "ja": "日本語",
-        "ko": "한국어"
+        "ko": "한국어",
+        "es": "Español",
+        "fr": "Français",
+        "de": "Deutsch",
+        "pt-PT": "Português (Portugal)",
+        "pt-BR": "Português (Brasil)"
       }
     },
     "userProfile": {
@@ -10490,8 +10495,10 @@
       },
       "mention": {
         "all": "所有人",
-        "allHint": "大家都回答",
-        "label": "点名伙伴"
+        "allHint": "仅真人",
+        "label": "点名伙伴",
+        "allBots": "所有伙伴",
+        "allBotsHint": "仅伙伴"
       },
       "composer": {
         "label": "群聊消息",
@@ -10602,7 +10609,7 @@
         "speakingMode": "发言方式",
         "speakingModeAuto": "自动",
         "speakingModeSequential": "始终轮流",
-        "speakingModeAutoNote": "未 @ 人或 @所有人时，首轮同时思考，之后轮流；@ 伙伴按提及顺序轮流。",
+        "speakingModeAutoNote": "未 @ 人或 @所有伙伴时，首轮同时思考，之后轮流；@ 伙伴按提及顺序轮流。",
         "speakingModeSequentialNote": "每次只有一位伙伴发言，后说的能看到前面的回答。",
         "speakingModeSaveFailed": "发言方式没能保存，请再试一次",
         "setOrganizer": "设为负责人",
@@ -10616,7 +10623,9 @@
         "projectDirClear": "清除",
         "projectDirNote": "分工做事时，伙伴们在这里干活。不选也行，会用这个群自己的文件夹；选了 git 项目，每次分工会新开一个 worktree 和分支，不动你手上的代码。",
         "autoContinueSaveFailed": "分工交接没能保存，请再试一次",
-        "projectDirSaveFailed": "项目文件夹没能保存，确认文件夹还在后再试"
+        "projectDirSaveFailed": "项目文件夹没能保存，确认文件夹还在后再试",
+        "allowMentionAllBots": "允许 @所有伙伴",
+        "allowMentionAllBotsHint": "仅群主可更改。伙伴可能都会回复，大群请谨慎开启。此开关不影响 AI 代答。"
       },
       "errors": {
         "memberLimit": "一个群需要 2–6 位伙伴",
@@ -10640,7 +10649,8 @@
         "quoteUnavailable": "引用的消息已删除或不可见，已取消引用，请再发送一次",
         "lifecycleUnavailable": "当前服务器或电脑暂不支持此操作。",
         "groupDissolved": "群聊已解散，仍可查看有权访问的历史消息。",
-        "lastOwner": "请先转让群主或解散群聊，再退出。"
+        "lastOwner": "请先转让群主或解散群聊，再退出。",
+        "allBotsMentionDisabled": "群主尚未开启 @所有伙伴。"
       },
       "organizer": "负责人",
       "plan": {
