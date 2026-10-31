@@ -397,7 +397,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/en/common.json",
             "locator": "newChat.createAgent.quickStarts.explore",
-            "hash": "d68c0e920caab3e49795e9a11f7b2963dea06e5be32957f0efce84164d8ffa71"
+            "hash": "8b15bad4b06d5b8ad926e2d028ed6e248e2774972d17813f45f1abd99080282d"
           }
         },
         "ja": {
@@ -405,7 +405,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/ja/common.json",
             "locator": "newChat.createAgent.quickStarts.explore",
-            "hash": "4379780e838f156f636e31c7c4cb49669998b131f2b0446b3ec76e986b1a1352"
+            "hash": "62d0f07e9a0c948323a9e83f923702f065986df2214e4241ddefd872aeffde4b"
           }
         },
         "ko": {
@@ -413,7 +413,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/ko/common.json",
             "locator": "newChat.createAgent.quickStarts.explore",
-            "hash": "2cd6f0a3f8293229490bd35aa139c10d6decebd508ba0bf66e1abf22960203ef"
+            "hash": "2d15e19ea88409f3930aaf1d0d65d21f58f789d958ef2aac9c96424996e1c89a"
           }
         },
         "zh-CN": {
@@ -421,7 +421,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-CN/common.json",
             "locator": "newChat.createAgent.quickStarts.explore",
-            "hash": "834fd77b9c850e49a842753a07a4845fabf6c9d25e43c5328830789dc6e1682f"
+            "hash": "4db39ff69a6e95c55721ec8054b8d404050d67ece0e3c08a9c19462b43e4c2ee"
           }
         },
         "zh-TW": {
@@ -429,7 +429,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-TW/common.json",
             "locator": "newChat.createAgent.quickStarts.explore",
-            "hash": "4eb740aded8e529d7548d4d06eb95fb744380fe207d0a91eb1560e4190c1acc2"
+            "hash": "150078a168dd44c33887a3a50f8f538b146fd5af2c3dcae73e54bb1d25615333"
           }
         },
         "es": {
@@ -437,7 +437,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/es/common.json",
             "locator": "newChat.createAgent.quickStarts.explore",
-            "hash": "acea95fde879383d43e9d6e1d31079bb9b8229e3e65f8a555d8141751994f7ef"
+            "hash": "0f68754a3effbb4f0fee0101f9b9b780a7d1d2193836b4a0eeaaf2932706df49"
           }
         },
         "fr": {
@@ -445,7 +445,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/fr/common.json",
             "locator": "newChat.createAgent.quickStarts.explore",
-            "hash": "9ddb6da8fce9bcd753fbdda390b352c741b862c9a81f601945dda7004504bf74"
+            "hash": "e87c04ffdd4c59a49e9b0f0b2d454b40b0bf8afc2e469ee2d9f311c51bff38ad"
           }
         },
         "de": {
@@ -453,7 +453,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/de/common.json",
             "locator": "newChat.createAgent.quickStarts.explore",
-            "hash": "21f110bbf61435d3b8ea267a3e8ad555864f26b571e6c36a666bba850228e221"
+            "hash": "afe6ed7ca646618874d6a9c57006d66b2c5295afb8dff2c8fb79b223996f0094"
           }
         },
         "pt-PT": {
@@ -461,7 +461,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-PT/common.json",
             "locator": "newChat.createAgent.quickStarts.explore",
-            "hash": "41546c5ece96249887f9e1a05837a6d415ea8869b154c9fd901b78414a184a9b"
+            "hash": "ff2601ef7c0a5c564617c71aa0627516456b8b736ed4dc92e89161e5fb63c336"
           }
         },
         "pt-BR": {
@@ -469,7 +469,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-BR/common.json",
             "locator": "newChat.createAgent.quickStarts.explore",
-            "hash": "03a13b562ba520c54ae7e078950c25ba10705dfe789753a60913472df1f46680"
+            "hash": "f8d285531bb9c402e94754d5affb1a10bd38dfc115298ac782eab382bcd77808"
           }
         },
         "zh-Hant-x-lzh": {
@@ -477,7 +477,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json",
             "locator": "newChat.createAgent.quickStarts.explore",
-            "hash": "3002c0cbd304d39e2efd02b04efc75e81307aad419a4f902cd4e33f76cf73db0"
+            "hash": "7b937ce63f3026b384dbb9f8e9316fca3639a891c379e51b31d353d1e0b0ffbf"
           }
         },
         "zh-Hans-x-lzh": {
@@ -485,7 +485,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json",
             "locator": "newChat.createAgent.quickStarts.explore",
-            "hash": "a42f829a82e584808a2cdb006e69f30de8135cb2a5610ffa4471f9d3eb7b0726"
+            "hash": "80ac523f1f14b66091ef266c9082f9c5fcfa46c19a83d4395dcf50019dd2637f"
           }
         }
       }
@@ -513,7 +513,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/en/common.json",
             "locator": "newChat.createAgent.quickStarts.build",
-            "hash": "d68c0e920caab3e49795e9a11f7b2963dea06e5be32957f0efce84164d8ffa71"
+            "hash": "8b15bad4b06d5b8ad926e2d028ed6e248e2774972d17813f45f1abd99080282d"
           }
         },
         "ja": {
@@ -521,7 +521,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/ja/common.json",
             "locator": "newChat.createAgent.quickStarts.build",
-            "hash": "4379780e838f156f636e31c7c4cb49669998b131f2b0446b3ec76e986b1a1352"
+            "hash": "62d0f07e9a0c948323a9e83f923702f065986df2214e4241ddefd872aeffde4b"
           }
         },
         "ko": {
@@ -529,7 +529,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/ko/common.json",
             "locator": "newChat.createAgent.quickStarts.build",
-            "hash": "2cd6f0a3f8293229490bd35aa139c10d6decebd508ba0bf66e1abf22960203ef"
+            "hash": "2d15e19ea88409f3930aaf1d0d65d21f58f789d958ef2aac9c96424996e1c89a"
           }
         },
         "zh-CN": {
@@ -537,7 +537,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-CN/common.json",
             "locator": "newChat.createAgent.quickStarts.build",
-            "hash": "834fd77b9c850e49a842753a07a4845fabf6c9d25e43c5328830789dc6e1682f"
+            "hash": "4db39ff69a6e95c55721ec8054b8d404050d67ece0e3c08a9c19462b43e4c2ee"
           }
         },
         "zh-TW": {
@@ -545,7 +545,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-TW/common.json",
             "locator": "newChat.createAgent.quickStarts.build",
-            "hash": "4eb740aded8e529d7548d4d06eb95fb744380fe207d0a91eb1560e4190c1acc2"
+            "hash": "150078a168dd44c33887a3a50f8f538b146fd5af2c3dcae73e54bb1d25615333"
           }
         },
         "es": {
@@ -553,7 +553,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/es/common.json",
             "locator": "newChat.createAgent.quickStarts.build",
-            "hash": "acea95fde879383d43e9d6e1d31079bb9b8229e3e65f8a555d8141751994f7ef"
+            "hash": "0f68754a3effbb4f0fee0101f9b9b780a7d1d2193836b4a0eeaaf2932706df49"
           }
         },
         "fr": {
@@ -561,7 +561,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/fr/common.json",
             "locator": "newChat.createAgent.quickStarts.build",
-            "hash": "9ddb6da8fce9bcd753fbdda390b352c741b862c9a81f601945dda7004504bf74"
+            "hash": "e87c04ffdd4c59a49e9b0f0b2d454b40b0bf8afc2e469ee2d9f311c51bff38ad"
           }
         },
         "de": {
@@ -569,7 +569,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/de/common.json",
             "locator": "newChat.createAgent.quickStarts.build",
-            "hash": "21f110bbf61435d3b8ea267a3e8ad555864f26b571e6c36a666bba850228e221"
+            "hash": "afe6ed7ca646618874d6a9c57006d66b2c5295afb8dff2c8fb79b223996f0094"
           }
         },
         "pt-PT": {
@@ -577,7 +577,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-PT/common.json",
             "locator": "newChat.createAgent.quickStarts.build",
-            "hash": "41546c5ece96249887f9e1a05837a6d415ea8869b154c9fd901b78414a184a9b"
+            "hash": "ff2601ef7c0a5c564617c71aa0627516456b8b736ed4dc92e89161e5fb63c336"
           }
         },
         "pt-BR": {
@@ -585,7 +585,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-BR/common.json",
             "locator": "newChat.createAgent.quickStarts.build",
-            "hash": "03a13b562ba520c54ae7e078950c25ba10705dfe789753a60913472df1f46680"
+            "hash": "f8d285531bb9c402e94754d5affb1a10bd38dfc115298ac782eab382bcd77808"
           }
         },
         "zh-Hant-x-lzh": {
@@ -593,7 +593,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json",
             "locator": "newChat.createAgent.quickStarts.build",
-            "hash": "3002c0cbd304d39e2efd02b04efc75e81307aad419a4f902cd4e33f76cf73db0"
+            "hash": "7b937ce63f3026b384dbb9f8e9316fca3639a891c379e51b31d353d1e0b0ffbf"
           }
         },
         "zh-Hans-x-lzh": {
@@ -601,7 +601,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json",
             "locator": "newChat.createAgent.quickStarts.build",
-            "hash": "a42f829a82e584808a2cdb006e69f30de8135cb2a5610ffa4471f9d3eb7b0726"
+            "hash": "80ac523f1f14b66091ef266c9082f9c5fcfa46c19a83d4395dcf50019dd2637f"
           }
         }
       }
@@ -629,7 +629,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/en/common.json",
             "locator": "newChat.createAgent.quickStarts.review",
-            "hash": "d68c0e920caab3e49795e9a11f7b2963dea06e5be32957f0efce84164d8ffa71"
+            "hash": "8b15bad4b06d5b8ad926e2d028ed6e248e2774972d17813f45f1abd99080282d"
           }
         },
         "ja": {
@@ -637,7 +637,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/ja/common.json",
             "locator": "newChat.createAgent.quickStarts.review",
-            "hash": "4379780e838f156f636e31c7c4cb49669998b131f2b0446b3ec76e986b1a1352"
+            "hash": "62d0f07e9a0c948323a9e83f923702f065986df2214e4241ddefd872aeffde4b"
           }
         },
         "ko": {
@@ -645,7 +645,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/ko/common.json",
             "locator": "newChat.createAgent.quickStarts.review",
-            "hash": "2cd6f0a3f8293229490bd35aa139c10d6decebd508ba0bf66e1abf22960203ef"
+            "hash": "2d15e19ea88409f3930aaf1d0d65d21f58f789d958ef2aac9c96424996e1c89a"
           }
         },
         "zh-CN": {
@@ -653,7 +653,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-CN/common.json",
             "locator": "newChat.createAgent.quickStarts.review",
-            "hash": "834fd77b9c850e49a842753a07a4845fabf6c9d25e43c5328830789dc6e1682f"
+            "hash": "4db39ff69a6e95c55721ec8054b8d404050d67ece0e3c08a9c19462b43e4c2ee"
           }
         },
         "zh-TW": {
@@ -661,7 +661,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-TW/common.json",
             "locator": "newChat.createAgent.quickStarts.review",
-            "hash": "4eb740aded8e529d7548d4d06eb95fb744380fe207d0a91eb1560e4190c1acc2"
+            "hash": "150078a168dd44c33887a3a50f8f538b146fd5af2c3dcae73e54bb1d25615333"
           }
         },
         "es": {
@@ -669,7 +669,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/es/common.json",
             "locator": "newChat.createAgent.quickStarts.review",
-            "hash": "acea95fde879383d43e9d6e1d31079bb9b8229e3e65f8a555d8141751994f7ef"
+            "hash": "0f68754a3effbb4f0fee0101f9b9b780a7d1d2193836b4a0eeaaf2932706df49"
           }
         },
         "fr": {
@@ -677,7 +677,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/fr/common.json",
             "locator": "newChat.createAgent.quickStarts.review",
-            "hash": "9ddb6da8fce9bcd753fbdda390b352c741b862c9a81f601945dda7004504bf74"
+            "hash": "e87c04ffdd4c59a49e9b0f0b2d454b40b0bf8afc2e469ee2d9f311c51bff38ad"
           }
         },
         "de": {
@@ -685,7 +685,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/de/common.json",
             "locator": "newChat.createAgent.quickStarts.review",
-            "hash": "21f110bbf61435d3b8ea267a3e8ad555864f26b571e6c36a666bba850228e221"
+            "hash": "afe6ed7ca646618874d6a9c57006d66b2c5295afb8dff2c8fb79b223996f0094"
           }
         },
         "pt-PT": {
@@ -693,7 +693,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-PT/common.json",
             "locator": "newChat.createAgent.quickStarts.review",
-            "hash": "41546c5ece96249887f9e1a05837a6d415ea8869b154c9fd901b78414a184a9b"
+            "hash": "ff2601ef7c0a5c564617c71aa0627516456b8b736ed4dc92e89161e5fb63c336"
           }
         },
         "pt-BR": {
@@ -701,7 +701,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-BR/common.json",
             "locator": "newChat.createAgent.quickStarts.review",
-            "hash": "03a13b562ba520c54ae7e078950c25ba10705dfe789753a60913472df1f46680"
+            "hash": "f8d285531bb9c402e94754d5affb1a10bd38dfc115298ac782eab382bcd77808"
           }
         },
         "zh-Hant-x-lzh": {
@@ -709,7 +709,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json",
             "locator": "newChat.createAgent.quickStarts.review",
-            "hash": "3002c0cbd304d39e2efd02b04efc75e81307aad419a4f902cd4e33f76cf73db0"
+            "hash": "7b937ce63f3026b384dbb9f8e9316fca3639a891c379e51b31d353d1e0b0ffbf"
           }
         },
         "zh-Hans-x-lzh": {
@@ -717,7 +717,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json",
             "locator": "newChat.createAgent.quickStarts.review",
-            "hash": "a42f829a82e584808a2cdb006e69f30de8135cb2a5610ffa4471f9d3eb7b0726"
+            "hash": "80ac523f1f14b66091ef266c9082f9c5fcfa46c19a83d4395dcf50019dd2637f"
           }
         }
       }
@@ -745,7 +745,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/en/common.json",
             "locator": "newChat.createAgent.quickStarts.fix",
-            "hash": "d68c0e920caab3e49795e9a11f7b2963dea06e5be32957f0efce84164d8ffa71"
+            "hash": "8b15bad4b06d5b8ad926e2d028ed6e248e2774972d17813f45f1abd99080282d"
           }
         },
         "ja": {
@@ -753,7 +753,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/ja/common.json",
             "locator": "newChat.createAgent.quickStarts.fix",
-            "hash": "4379780e838f156f636e31c7c4cb49669998b131f2b0446b3ec76e986b1a1352"
+            "hash": "62d0f07e9a0c948323a9e83f923702f065986df2214e4241ddefd872aeffde4b"
           }
         },
         "ko": {
@@ -761,7 +761,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/ko/common.json",
             "locator": "newChat.createAgent.quickStarts.fix",
-            "hash": "2cd6f0a3f8293229490bd35aa139c10d6decebd508ba0bf66e1abf22960203ef"
+            "hash": "2d15e19ea88409f3930aaf1d0d65d21f58f789d958ef2aac9c96424996e1c89a"
           }
         },
         "zh-CN": {
@@ -769,7 +769,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-CN/common.json",
             "locator": "newChat.createAgent.quickStarts.fix",
-            "hash": "834fd77b9c850e49a842753a07a4845fabf6c9d25e43c5328830789dc6e1682f"
+            "hash": "4db39ff69a6e95c55721ec8054b8d404050d67ece0e3c08a9c19462b43e4c2ee"
           }
         },
         "zh-TW": {
@@ -777,7 +777,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-TW/common.json",
             "locator": "newChat.createAgent.quickStarts.fix",
-            "hash": "4eb740aded8e529d7548d4d06eb95fb744380fe207d0a91eb1560e4190c1acc2"
+            "hash": "150078a168dd44c33887a3a50f8f538b146fd5af2c3dcae73e54bb1d25615333"
           }
         },
         "es": {
@@ -785,7 +785,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/es/common.json",
             "locator": "newChat.createAgent.quickStarts.fix",
-            "hash": "acea95fde879383d43e9d6e1d31079bb9b8229e3e65f8a555d8141751994f7ef"
+            "hash": "0f68754a3effbb4f0fee0101f9b9b780a7d1d2193836b4a0eeaaf2932706df49"
           }
         },
         "fr": {
@@ -793,7 +793,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/fr/common.json",
             "locator": "newChat.createAgent.quickStarts.fix",
-            "hash": "9ddb6da8fce9bcd753fbdda390b352c741b862c9a81f601945dda7004504bf74"
+            "hash": "e87c04ffdd4c59a49e9b0f0b2d454b40b0bf8afc2e469ee2d9f311c51bff38ad"
           }
         },
         "de": {
@@ -801,7 +801,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/de/common.json",
             "locator": "newChat.createAgent.quickStarts.fix",
-            "hash": "21f110bbf61435d3b8ea267a3e8ad555864f26b571e6c36a666bba850228e221"
+            "hash": "afe6ed7ca646618874d6a9c57006d66b2c5295afb8dff2c8fb79b223996f0094"
           }
         },
         "pt-PT": {
@@ -809,7 +809,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-PT/common.json",
             "locator": "newChat.createAgent.quickStarts.fix",
-            "hash": "41546c5ece96249887f9e1a05837a6d415ea8869b154c9fd901b78414a184a9b"
+            "hash": "ff2601ef7c0a5c564617c71aa0627516456b8b736ed4dc92e89161e5fb63c336"
           }
         },
         "pt-BR": {
@@ -817,7 +817,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-BR/common.json",
             "locator": "newChat.createAgent.quickStarts.fix",
-            "hash": "03a13b562ba520c54ae7e078950c25ba10705dfe789753a60913472df1f46680"
+            "hash": "f8d285531bb9c402e94754d5affb1a10bd38dfc115298ac782eab382bcd77808"
           }
         },
         "zh-Hant-x-lzh": {
@@ -825,7 +825,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json",
             "locator": "newChat.createAgent.quickStarts.fix",
-            "hash": "3002c0cbd304d39e2efd02b04efc75e81307aad419a4f902cd4e33f76cf73db0"
+            "hash": "7b937ce63f3026b384dbb9f8e9316fca3639a891c379e51b31d353d1e0b0ffbf"
           }
         },
         "zh-Hans-x-lzh": {
@@ -833,7 +833,7 @@
           "provenance": {
             "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json",
             "locator": "newChat.createAgent.quickStarts.fix",
-            "hash": "a42f829a82e584808a2cdb006e69f30de8135cb2a5610ffa4471f9d3eb7b0726"
+            "hash": "80ac523f1f14b66091ef266c9082f9c5fcfa46c19a83d4395dcf50019dd2637f"
           }
         }
       }
@@ -1062,7 +1062,7 @@
         "provenance": {
           "source": "../../../apps/desktop/src/renderer/i18n/locales/en/common.json",
           "locator": "newChat.createAgent.quickStart",
-          "hash": "d68c0e920caab3e49795e9a11f7b2963dea06e5be32957f0efce84164d8ffa71"
+          "hash": "8b15bad4b06d5b8ad926e2d028ed6e248e2774972d17813f45f1abd99080282d"
         }
       },
       "ja": {
@@ -1070,7 +1070,7 @@
         "provenance": {
           "source": "../../../apps/desktop/src/renderer/i18n/locales/ja/common.json",
           "locator": "newChat.createAgent.quickStart",
-          "hash": "4379780e838f156f636e31c7c4cb49669998b131f2b0446b3ec76e986b1a1352"
+          "hash": "62d0f07e9a0c948323a9e83f923702f065986df2214e4241ddefd872aeffde4b"
         }
       },
       "ko": {
@@ -1078,7 +1078,7 @@
         "provenance": {
           "source": "../../../apps/desktop/src/renderer/i18n/locales/ko/common.json",
           "locator": "newChat.createAgent.quickStart",
-          "hash": "2cd6f0a3f8293229490bd35aa139c10d6decebd508ba0bf66e1abf22960203ef"
+          "hash": "2d15e19ea88409f3930aaf1d0d65d21f58f789d958ef2aac9c96424996e1c89a"
         }
       },
       "zh-CN": {
@@ -1086,7 +1086,7 @@
         "provenance": {
           "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-CN/common.json",
           "locator": "newChat.createAgent.quickStart",
-          "hash": "834fd77b9c850e49a842753a07a4845fabf6c9d25e43c5328830789dc6e1682f"
+          "hash": "4db39ff69a6e95c55721ec8054b8d404050d67ece0e3c08a9c19462b43e4c2ee"
         }
       },
       "zh-TW": {
@@ -1094,7 +1094,7 @@
         "provenance": {
           "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-TW/common.json",
           "locator": "newChat.createAgent.quickStart",
-          "hash": "4eb740aded8e529d7548d4d06eb95fb744380fe207d0a91eb1560e4190c1acc2"
+          "hash": "150078a168dd44c33887a3a50f8f538b146fd5af2c3dcae73e54bb1d25615333"
         }
       },
       "es": {
@@ -1102,7 +1102,7 @@
         "provenance": {
           "source": "../../../apps/desktop/src/renderer/i18n/locales/es/common.json",
           "locator": "newChat.createAgent.quickStart",
-          "hash": "acea95fde879383d43e9d6e1d31079bb9b8229e3e65f8a555d8141751994f7ef"
+          "hash": "0f68754a3effbb4f0fee0101f9b9b780a7d1d2193836b4a0eeaaf2932706df49"
         }
       },
       "fr": {
@@ -1110,7 +1110,7 @@
         "provenance": {
           "source": "../../../apps/desktop/src/renderer/i18n/locales/fr/common.json",
           "locator": "newChat.createAgent.quickStart",
-          "hash": "9ddb6da8fce9bcd753fbdda390b352c741b862c9a81f601945dda7004504bf74"
+          "hash": "e87c04ffdd4c59a49e9b0f0b2d454b40b0bf8afc2e469ee2d9f311c51bff38ad"
         }
       },
       "de": {
@@ -1118,7 +1118,7 @@
         "provenance": {
           "source": "../../../apps/desktop/src/renderer/i18n/locales/de/common.json",
           "locator": "newChat.createAgent.quickStart",
-          "hash": "21f110bbf61435d3b8ea267a3e8ad555864f26b571e6c36a666bba850228e221"
+          "hash": "afe6ed7ca646618874d6a9c57006d66b2c5295afb8dff2c8fb79b223996f0094"
         }
       },
       "pt-PT": {
@@ -1126,7 +1126,7 @@
         "provenance": {
           "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-PT/common.json",
           "locator": "newChat.createAgent.quickStart",
-          "hash": "41546c5ece96249887f9e1a05837a6d415ea8869b154c9fd901b78414a184a9b"
+          "hash": "ff2601ef7c0a5c564617c71aa0627516456b8b736ed4dc92e89161e5fb63c336"
         }
       },
       "pt-BR": {
@@ -1134,7 +1134,7 @@
         "provenance": {
           "source": "../../../apps/desktop/src/renderer/i18n/locales/pt-BR/common.json",
           "locator": "newChat.createAgent.quickStart",
-          "hash": "03a13b562ba520c54ae7e078950c25ba10705dfe789753a60913472df1f46680"
+          "hash": "f8d285531bb9c402e94754d5affb1a10bd38dfc115298ac782eab382bcd77808"
         }
       },
       "zh-Hant-x-lzh": {
@@ -1142,7 +1142,7 @@
         "provenance": {
           "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json",
           "locator": "newChat.createAgent.quickStart",
-          "hash": "3002c0cbd304d39e2efd02b04efc75e81307aad419a4f902cd4e33f76cf73db0"
+          "hash": "7b937ce63f3026b384dbb9f8e9316fca3639a891c379e51b31d353d1e0b0ffbf"
         }
       },
       "zh-Hans-x-lzh": {
@@ -1150,7 +1150,7 @@
         "provenance": {
           "source": "../../../apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json",
           "locator": "newChat.createAgent.quickStart",
-          "hash": "a42f829a82e584808a2cdb006e69f30de8135cb2a5610ffa4471f9d3eb7b0726"
+          "hash": "80ac523f1f14b66091ef266c9082f9c5fcfa46c19a83d4395dcf50019dd2637f"
         }
       }
     }

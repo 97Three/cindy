@@ -3155,47 +3155,87 @@
     "sessionImport": {
       "title": "此机差事导入",
       "description": "唯读扫描此机 Claude Code 与 Codex 之历史。唯录中勾选之差事方纳入；已略过之内部 Agent 会话不显示，亦不纳入。",
-      "scan": "察之",
+      "rescan": "再察",
+      "allSources": "诸源",
+      "search": "寻差事或卷匣",
+      "projectFilter": "唯览 {{name}}",
+      "clearProjectFilter": "示诸案",
+      "hiddenCount_other": "已藏 {{count}}",
+      "hidden": {
+        "head": "此等未列",
+        "hint": "所勾者将列于表中",
+        "cindy": "Cindy 自行之差事",
+        "temp": "暂存卷匣中之差事",
+        "internal": "器内之差事（自动审查、子 Agent）",
+        "imported": "已纳之差事",
+        "sourceError": "{{name}} 之记录读之未成"
+      },
+      "missingDir": "原卷匣已不存",
+      "groupTasks_other": "差事 {{count}}",
+      "dialogue": "言谈",
+      "archived": "已封存",
+      "unsupported": "其式暂不支持",
+      "untitled": "无名差事",
+      "selectAll": "全选今筛选所得（{{count}} 件）",
+      "selectGroup": "择全组",
+      "expand": "展分组",
+      "collapse": "收分组",
+      "selectedSummary_other": "已择差事 {{count}} · {{size}}",
+      "pickHint": "勾选欲接入 Cindy 之差事",
+      "importCount_other": "纳差事 {{count}}",
+      "import": "纳",
       "scanning": "方扫描",
+      "scanFailed": "扫描未竟，请再试",
       "emptyTitle": "先扫此机旧迹",
       "emptyDescription": "扫描不写数据库，亦不易侧边栏。",
-      "noCandidates": "今筛选之下，无可纳之差事。",
-      "collapse": "收分组",
-      "expand": "展分组",
-      "selectGroup": "择全组",
-      "sessions": "件差事",
-      "selected": "已择 {{count}} 件",
-      "importSelected": "纳所择",
-      "importing": "方纳",
-      "archived": "已封存",
-      "untitled": "无名差事",
-      "noWorkingDir": "无工作目录",
-      "summary": {
-        "total": "录中",
-        "totalHint": "可勾选而纳",
-        "projects": "案中差事",
-        "projectsHint": "纳后入案分组之差事",
-        "dialogue": "言谈",
-        "dialogueHint": "Codex 标为不属案之差事",
-        "filtered": "已略",
-        "filteredHint": "内部 Agent 会话或已在应用中"
+      "noMatch": "无合式之差事",
+      "allHidden": "此处差事皆已藏之，可于右上「已藏」中令其显示。",
+      "confirm": {
+        "title_other": "纳差事 {{count}} 乎？",
+        "body": "约需 {{minutes}} 分钟，至多占磁盘 {{size}}。纳事于背景行之，可随时止；已纳者存焉。",
+        "cancel": "罢"
       },
-      "filters": {
-        "source": "源",
-        "placement": "所在",
-        "all": "全",
-        "codex": "Codex",
-        "claude": "Claude",
-        "project": "已有之案",
-        "dialogue": "言谈"
+      "progress": {
+        "title_other": "方纳差事 {{count}}",
+        "background": "可离此页，纳事于背景续行。",
+        "stop": "止",
+        "queued": "待次",
+        "copy": "方录原始记录",
+        "messages_other": "方写讯 {{count}} 则",
+        "verify": "方验能否续行"
       },
-      "toast": {
-        "scanFailed": "扫描未成",
-        "importFailed": "导入未成",
-        "imported": "导入已毕：添加 {{inserted}} 件，更新 {{updated}} 件"
+      "result": {
+        "title_other": "已纳差事 {{count}}",
+        "stoppedTitle": "纳事已止",
+        "ready_other": "{{count}} 可续",
+        "action_other": "{{count}} 待君处置",
+        "failed_other": "{{count}} 纳之未成",
+        "readyGroup": "可续（{{count}}）",
+        "readyNative": "可续，以 {{harness}} 原样接续",
+        "readyHandoff": "可续，由 {{harness}} 接续，可随时更易",
+        "missingDir": "原卷匣已不存，择一卷匣即可续",
+        "chooseFolder": "择卷匣",
+        "relocateFailed": "未能移至此卷匣，请再试",
+        "cancelled": "已止，未纳",
+        "retry": "再试",
+        "open": "启",
+        "done": "毕"
       },
-      "selectAll": "全选今筛选所得（{{count}} 件）",
-      "selectedOutsideFilter": "（其中 {{count}} 件在今筛选之外）"
+      "failure": {
+        "read-failed": "纳之未成：原始记录档读之不出",
+        "unsupported-version": "纳之未成：此版记录之式暂不支持",
+        "empty": "纳之未成：原始记录中无讯",
+        "not-found": "纳之未成：原始记录已不存",
+        "disk-full": "纳之未成：磁盘空间不足",
+        "native-unloadable": "纳之未成：原始记录无法加载"
+      },
+      "marker": {
+        "from": "自 {{source}} 纳入 · {{date}}",
+        "folder": "原卷匣 {{path}}",
+        "end": "以上为自 {{source}} 纳入之记录",
+        "endHandoff": "以上为自 {{source}} 纳入之记录，此后由 {{harness}} 接续"
+      },
+      "projectMenu": "纳此案于他器中之差事…"
     },
     "connections": {
       "codex": {
@@ -14412,11 +14452,6 @@
         "openInExplorer": "于卷管中启",
         "newInDirectory": "于此目录新开差事",
         "copyDeepLink": "录案之链接",
-        "syncCodex": "同步此案之 Codex 差事",
-        "syncCodexDone": "Codex 同步已毕：链接 {{inserted}} 条，更新 {{updated}} 条",
-        "syncCodexAlreadyLinked": "此案之 Codex 差事早已链接，毋庸再劳",
-        "syncCodexNone": "未寻得此案之 Codex 差事",
-        "syncCodexFailed": "Codex 同步未成：{{error}}",
         "search": "于案内寻差事"
       },
       "deepLink": {
