@@ -5,7 +5,9 @@
 //
 // 打包/发布拆分(2026-07):本脚本产出可分发的本地产物 + build-info.json,
 // 全程不写 OSS/CDN;发布(上传、update manifest、canary/stable)由后续的
-// publish 侧脚本读 build-info.json 接手。
+// publish 侧脚本读 build-info.json 接手。publish 侧在上传安装包之后、发布 canary
+// update manifest 之前,还需按同一区域调用 scripts/publish-page-manual.mjs
+// --build-info=<本目录 build-info.json> --region=<region> 发布页面生成手册。
 //
 // 用法:
 //   node scripts/package-desktop.mjs [options]
