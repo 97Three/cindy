@@ -240,6 +240,7 @@
     "estimateTooManyFiles": "项目文件超过 {{limit, number}} 个，无法复制。请改为复制文件更少的项目。"
   },
   "sharedTask": {
+    "officialRelayNote": "你正在使用自己的中转，共享任务的内容仍经 Cindy 官方中转。",
     "selfJoin": "这是你发起的共享任务，无需加入。请从“我发起的”打开",
     "manageSharing": "共享管理",
     "manageMembers": "管理成员…",
@@ -341,6 +342,7 @@
     "closeAllDescription": "所有访客将无法继续访问，任务记录保留。"
   },
   "providerShare": {
+    "officialRelayNote": "你正在使用自己的中转，供应商分享的内容仍经 Cindy 官方中转。",
     "owned": {
       "title": "我分享的供应商"
     },
@@ -5721,7 +5723,7 @@
         "current": "当前使用",
         "ownerName": "这台电脑",
         "unavailable": "登录 Cindy 账号，并且系统钥匙串可用时，才能使用自己的中转。",
-        "limits": "使用自己的中转时，手机系统推送、供应商分享和共享任务暂不可用。",
+        "limits": "使用自己的中转时，手机系统推送暂不可用；供应商分享和共享任务仍经 Cindy 官方中转。",
         "actions": {
           "join": "加入别的中转",
           "useOfficial": "切回官方中转",
@@ -5937,7 +5939,7 @@
           "switchFromHost": "这台电脑上的中转会停用，已加入它的设备会断开。",
           "switchFromMember": "这台电脑会退出「{{name}}」，之后要再加入，需要对方重新生成加入链接。",
           "switchConfirm": "切换",
-          "switchFromOfficial": "设备之间的远程控制会改经「{{name}}」转发。使用自己的中转时，手机系统推送、供应商分享和共享任务暂不可用。"
+          "switchFromOfficial": "设备之间的远程控制会改经「{{name}}」转发。使用自己的中转时，手机系统推送暂不可用；供应商分享和共享任务仍经 Cindy 官方中转。"
         },
         "dialog": {
           "steps": {
