@@ -413,6 +413,7 @@ export async function getRoutineEngine(): Promise<RoutineEngine> {
     }
     const engine = new RoutineEngine({
       load: async () => saved,
+      legacyTodoCheckContent: localizedLegacyTodoCheck,
       save: async (state) => {
         assertScope(scope);
         if (epoch !== generation) throw new Error('Routine service was reset');
@@ -462,7 +463,6 @@ export async function getRoutineEngine(): Promise<RoutineEngine> {
     timer.unref();
     current = { scope, engine, timer };
     notifyEngineLifecycle((listener) => listener.started(engine, scope));
-    void localizeLegacyTodoChecks(engine);
     void hostDeps?.recoverImports?.().catch(error => log.warn('Imported automation recovery remains pending', { code: error instanceof Error && /^[A-Z_]+$/.test(error.message) ? error.message : 'IMPORT_RECOVERY_FAILED' }));
     return engine;
   })();
@@ -576,17 +576,6 @@ export function registerRoutinesIpc(): void {
       throwIpcError('INTERNAL', 'Routine sources are unavailable');
     }
   });
-}
-
-/** 旧内置「每天查待办」里没人改过的中文默认名称与指令换成当前界面语言；伙伴暂停等失败留到下次启动。 */
-async function localizeLegacyTodoChecks(engine: RoutineEngine): Promise<void> {
-  for (const routine of engine.list()) {
-    const content = localizedLegacyTodoCheck(routine);
-    if (!content) continue;
-    const { triggers, silentWhenIdle, preRunHook, enabled } = routine;
-    await engine.put(routine.botId, { ...content, triggers, silentWhenIdle, preRunHook, enabled }, routine.id, routine.revision)
-      .catch((error) => log.warn('legacy todo check localization deferred', { error: String(error) }));
-  }
 }
 
 async function withBot<T>(

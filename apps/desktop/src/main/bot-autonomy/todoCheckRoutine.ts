@@ -5,7 +5,8 @@
  * - 每个伙伴最多一条，id 固定为 todoCheckRoutineId(botId)，近况开关按 id 找到它；关掉只是暂停，删掉后再打开按默认内容重建。
  * - 什么算待办、去哪查由伙伴自己的记忆与技能决定（teammate-guide）；默认指令与「帮我查查」同一句。
  * - silentWhenIdle：没查到新待办不打扰主人。
- * - 早期版本把它存成宿主内置规则：调度器读到旧数据时去掉内置标记，localizedLegacyTodoCheck 再把没人改过的中文默认内容换成当前语言。
+ * - 早期版本把它存成宿主内置规则：调度器加载旧数据去掉内置标记的同时调用 localizedLegacyTodoCheck，把内置默认内容换成当前语言；
+ *   只在这次迁移时做，之后主人保存的名称与指令不再被识别或改写。
  * - id 沿用 `builtin-` 前缀，运行仍按宿主发起（autonomous）判定身份，见 BUILTIN_ROUTINE_SCHEDULE_PREFIX。
  */
 import { createHash } from 'node:crypto';
@@ -43,9 +44,8 @@ export function buildTodoCheckRoutineInput(timezone: string): RoutineInput {
   };
 }
 
-/** 旧规则里仍是内置默认值的名称、指令换成当前语言的默认内容；没有要换的返回 null。 */
+/** 正在迁移的旧内置规则：仍是内置默认值的名称、指令换成当前语言的默认内容；没有要换的返回 null。 */
 export function localizedLegacyTodoCheck(routine: Routine): Pick<RoutineInput, 'name' | 'prompt'> | null {
-  if (!routine.id.startsWith(TODO_CHECK_ROUTINE_PREFIX) || routine.builtin) return null;
   const next = defaultContent();
   const name = routine.name === LEGACY_NAME ? next.name : routine.name;
   const prompt = routine.prompt === LEGACY_PROMPT ? next.prompt : routine.prompt;

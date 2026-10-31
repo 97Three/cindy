@@ -256,12 +256,18 @@ it('turns a legacy built-in todo check into an editable routine, keeping its cho
   mock.profiles = [{ id: 'bot', status: 'active' }];
   await vi.waitFor(async () => expect((await routineTools.list('bot'))[0]?.name).toBe('Daily todo check'));
   const [migrated] = await routineTools.list('bot');
-  expect(migrated).toMatchObject({ id: routine.id, enabled: true, modelOverride, prompt: expect.stringContaining('connected sources') });
+  // 迁移不是编辑：revision 不变，升级前排队的批次仍然有效。
+  expect(migrated).toMatchObject({ id: routine.id, enabled: true, modelOverride, revision: saved.routines[0]!.revision,
+    prompt: expect.stringContaining('connected sources') });
   expect(migrated!.builtin).toBeUndefined();
   expect(migrated!.builtinVersion).toBeUndefined();
   expect(await routineTools.history('bot', routine.id)).toHaveLength(1);
-  await routineTools.save('bot', { ...migrated!, prompt: 'Edited after upgrade' }, routine.id);
-  expect((await routineTools.list('bot'))[0]?.prompt).toBe('Edited after upgrade');
+  // 迁移只做一次：之后主人保存的名称即使与旧默认值相同，重启也不再改写。
+  await routineTools.save('bot', { ...migrated!, name: '每天查待办', prompt: 'Edited after upgrade' }, routine.id);
+  const edited = structuredClone(mock.save.mock.calls.at(-1)![0]) as RoutineState;
+  await stopRoutines();
+  mock.load.mockResolvedValue(edited);
+  expect((await routineTools.list('bot'))[0]).toMatchObject({ name: '每天查待办', prompt: 'Edited after upgrade' });
 });
 
 it('skips a demoted teammate\'s routine while its home is another computer, keeping the rule', async () => {

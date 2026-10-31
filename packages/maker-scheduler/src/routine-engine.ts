@@ -90,6 +90,11 @@ export function rewriteRoutinePluginSource(
 
 export interface RoutineEngineDeps {
   load(): Promise<RoutineState | null>;
+  /**
+   * Replacement name/prompt for a legacy built-in daily todo check, applied once while it is migrated on
+   * load and before queued runs resume, so the revision and any pending batch stay valid.
+   */
+  legacyTodoCheckContent?(routine: Routine): Partial<Pick<RoutineInput, "name" | "prompt">> | null;
   save(state: RoutineState): Promise<void>;
   execute(
     routine: Routine,
@@ -153,10 +158,11 @@ export class RoutineEngine {
       }
       saved.routines = saved.routines.map(routine => {
         const loaded: Routine = { ...routine, ...parseRoutineInput(routine) };
-        // The startup save below persists the migration.
+        // The startup save below persists the migration; later loads see an ordinary routine.
         if ((routine.builtin as string | undefined) === LEGACY_TODO_CHECK_BUILTIN) {
           delete loaded.builtin;
           delete loaded.builtinVersion;
+          Object.assign(loaded, this.deps.legacyTodoCheckContent?.(loaded) ?? {});
         }
         return loaded;
       });
