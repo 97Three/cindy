@@ -11,7 +11,7 @@
 | `loader/` | 后端或 Cindy AI 生成完整页面；页面脚本查询 JSON、保存记录、切换内容 |
 | `static/` | 包内静态表单，打开后编辑并保存 |
 | `files/` | 按需裁剪的文件、进度、导出、消息及显示能力示例 |
-| `PAGE-GENERATION.md` | 给生成页面的 LLM 的页面手册；loader 的 `manual/pages/MANUAL.md` 与它逐字节一致 |
+| `PAGE-GENERATION.md` | 《Cindy MCP Apps 页面生成手册》，交给生成页面的 LLM；loader 的 `manual/pages/MANUAL.md` 与它逐字节一致 |
 
 每个目录的 ghost.json、main.js、ui/page.html 构成独立插件。files 另有 settings.html
 和 settings.js，用来配置自己的后端凭证；其中网络和文件操作不是默认自动执行的。

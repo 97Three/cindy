@@ -106,8 +106,8 @@ cindy.send({ type: 'tool-result', callId: msg.callId, ok: true, result: {
 上下文；`structuredContent` 适合 JSON 数据，但它也对 AI 可见。HTML 内不要放
 凭证，也不要把不必要的大数据塞进结果。
 
-由 AI 写首屏时使用 show_page({title,html})，返回结构相同。生成页面的 LLM（后端里的
-模型或 Cindy 对话中的 AI）读[页面生成手册](examples/interactive-pages/PAGE-GENERATION.md)；
+由 AI 写首屏时使用 show_page({title,html})，返回结构相同。生成页面的 LLM（后端模型或
+对话 AI）读[MCP Apps 页面生成手册](examples/interactive-pages/PAGE-GENERATION.md)；
 loader 用 `manual.items` 挂上同一份，show_page 说明指向 `ghost_manual`。页面不能
 创造插件未提供的能力。
 
