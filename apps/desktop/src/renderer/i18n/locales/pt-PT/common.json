@@ -10620,6 +10620,7 @@
       "header": {
         "stepRunning": "{{name}} está no passo {{step}}",
         "speaking": "{{name}} está a responder…",
+        "queued": "{{name}} em espera",
         "planning": "{{name}} está a dividir o trabalho…"
       },
       "memberCount_one": "{{count}} membro",

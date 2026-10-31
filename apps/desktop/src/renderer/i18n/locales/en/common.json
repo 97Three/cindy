@@ -10537,6 +10537,7 @@
       "header": {
         "stepRunning": "{{name}} is on step {{step}}",
         "speaking": "{{name}} is replying…",
+        "queued": "{{name}} is queued",
         "planning": "{{name}} is splitting the work…"
       },
       "memberCount_one": "{{count}} member",

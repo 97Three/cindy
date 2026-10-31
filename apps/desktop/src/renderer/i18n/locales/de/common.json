@@ -10537,6 +10537,7 @@
       "header": {
         "stepRunning": "{{name}} ist bei Schritt {{step}}",
         "speaking": "{{name}} antwortet…",
+        "queued": "{{name}} wartet",
         "planning": "{{name}} teilt die Arbeit auf…"
       },
       "memberCount_one": "{{count}} Mitglied",
