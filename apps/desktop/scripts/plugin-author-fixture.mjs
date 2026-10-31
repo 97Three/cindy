@@ -42,7 +42,8 @@ async function verifyLoaderMain(main) {
     } });
     return async (tool, args = {}) => { await handler({ type: 'tool-call', tool, args, callId: 'fixture' }); return reply; };
   }
-  const call = runtime(main);
+  const libraryWrites = [];
+  const call = runtime(main, { library: async request => { libraryWrites.push(request); return { ok: true, op: request.op, path: request.path }; } });
   assert.ok((await call('open_view', { intent: 'items' }))._meta.view.html.includes('type="module"'));
   const fragment = await call('load_view', { intent: 'form', fields: { title: '<img onerror=bad>' } });
   assert.ok(fragment._meta.view.html.includes('&lt;img onerror=bad&gt;'));
@@ -66,6 +67,19 @@ async function verifyLoaderMain(main) {
   const imported = await call('import_file');
   assert.ok(imported._meta.view.html.includes('confirm-import'));
   assert.equal((await call('api_write', { path: '/api/imports/confirm', body: { batchId: 'demo-batch' }, idempotencyKey: 'two' })).structuredContent.status, 'confirmed');
+  // Regression for gaps found by the page-manual e2e run (offline mode): the preview must say it
+  // is sample data and show totals, error rows and cancel; /api/records must answer; fetch_file
+  // must yield a library resource_link. Minimal inputs: one import, one saved record, one export.
+  const previewHtml = imported._meta.view.html;
+  assert.ok(previewHtml.includes('离线示例：未读取真实文件'));
+  assert.ok(previewHtml.includes('共 3 行，出错 1 行') && previewHtml.includes('第 4 行：缺少标题'));
+  assert.ok(previewHtml.includes('<button data-view="overview">取消</button>'));
+  assert.equal(JSON.stringify((await call('api_read', { path: '/api/records' })).structuredContent.items), '[{"id":"R-1","title":"record"}]');
+  const exported = await call('fetch_file', { path: '/api/files/records', name: 'records.csv' });
+  assert.notEqual(exported.isError, true);
+  assert.equal(exported.content.find(item => item.type === 'resource_link').uri, 'library:downloads/records.csv');
+  assert.equal(libraryWrites.at(-1).path, 'downloads/records.csv');
+  assert.ok(libraryWrites.at(-1).content.includes('"R-1","record"'));
   const network = []; let response = { ok: true, status: 200, body: '{"items":[]}' };
   const live = runtime(main.replace('const USE_MOCK = true;', 'const USE_MOCK = false;'), {
     fetch: async request => { network.push(request); return response; },
@@ -90,8 +104,9 @@ async function verifyLoaderMain(main) {
   assert.equal(network.at(-1).uploadDir.fileField, 'file');
   assert.equal(network.at(-1).callId, 'fixture');
   assert.ok(preview._meta.view.html.includes('&lt;b&gt;data&lt;/b&gt;'));
+  assert.ok(!preview._meta.view.html.includes('离线示例'), 'a real staged batch is not labelled as sample data');
   assert.ok(!JSON.stringify(preview).includes('test-handoff'));
-  console.log('AUTHOR_MAIN_VERDICT=passed (loader routing, private HTML, HTTP errors, no retry, deduplication, handoff)');
+  console.log('AUTHOR_MAIN_VERDICT=passed (loader routing, private HTML, HTTP errors, no retry, deduplication, handoff, offline preview/records/export)');
 }
 export async function packAuthorFixture({ manifest, main, html, assets = {} }, temporary) {
   const dir = path.join(temporary, manifest.id);

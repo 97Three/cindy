@@ -123,7 +123,7 @@
     },
     {
       "name": "upload_files",
-      "description": "将本次选择的文件上传到暂存接口",
+      "description": "将本次选择的文件上传到暂存接口；离线示例不上传",
       "parameters": {
         "type": "object",
         "properties": {
@@ -153,7 +153,7 @@
     },
     {
       "name": "fetch_file",
-      "description": "下载后端文件到插件 Library",
+      "description": "下载后端文件到插件 Library；离线示例把当前记录写成 CSV",
       "parameters": {
         "type": "object",
         "properties": {
@@ -172,7 +172,7 @@
     },
     {
       "name": "import_file",
-      "description": "接收 ghost_call.dir 交接的单文件，立即上传暂存并打开预览",
+      "description": "接收 ghost_call.dir 交接的单文件，立即上传暂存并打开预览；离线示例不读取真实文件，预览会标明",
       "parameters": {
         "type": "object",
         "properties": {},

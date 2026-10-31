@@ -5,7 +5,7 @@
 ## 1. 你要输出什么
 
 - 一个**完整 HTML 文档**（`<!doctype html>` 开头），作为标准 MCP Apps 页面显示在对话卡片里。
-- 用官方 SDK：`import { App } from '@modelcontextprotocol/ext-apps'`。Cindy 为所有页面提供 SDK。**不写 importmap，不从 CDN 或其他地址加载 SDK。**（页面自带映射时以页面为准，不推荐。）
+- 用官方 SDK：`import { App } from '@modelcontextprotocol/ext-apps'`。Cindy 为所有页面提供 SDK。**不写 importmap，不从 CDN 或其他地址加载 SDK。**（加载器换出的页面再写映射会被浏览器忽略。）
 - 每个页面只建一个 `App`，先 `connect()` 再调其他方法。
 - **首屏数据直接写进 HTML**，不要等 `ontoolresult`。
 - 动态值一律转义；接口数据用 `textContent` / `value` / 创建元素显示，不拼进 `innerHTML`、`<script>` 或 `onclick`。
@@ -69,7 +69,7 @@
 | `callServerTool({name, arguments}, {timeout, maxTotalTimeout, signal})` | 调插件工具。两个超时都设 `30 * 60 * 1000`（默认只等 60 秒，审批可能更久）。`isError` 为业务失败；拒绝、超时、取消会抛异常，两种都要处理 |
 | `sendMessage({role:'user', content})` | 以用户身份发消息回对话，AI 接着处理。只在用户明确点击时调用；可带本卡已有图片的 `resource_link` |
 | `updateModelContext({content} 或 {structuredContent})` | 更新给 AI 的上下文，只放精简信息 |
-| `openLink({url})` | 用户确认后用浏览器打开 |
+| `openLink({url})` | 用浏览器打开链接。只在响应用户点击时调用；是否另外提示由宿主决定 |
 | `downloadFile({contents})` | 弹「另存为」。只在执行电脑可用，先查 `getHostCapabilities()?.downloadFile` |
 | `requestDisplayMode({mode:'fullscreen'})` | 请求全屏，以返回的实际模式为准；目前只有桌面端支持 |
 | `getHostContext()` / `onhostcontextchanged` | 读 `theme`、`styles.variables`，跟随深浅色 |
@@ -87,7 +87,7 @@
 | `load_view` | 页面 | `{intent, fields?}` → `_meta.view.html` **容器片段**，无 html/head/body 和脚本 | 换页面里的一块内容 |
 | `api_read` | 页面 | `{path, query?}` → `structuredContent` | 读数据 |
 | `api_write` | 页面 | `{path, body, idempotencyKey}` → `structuredContent` | 写数据，单独审批 |
-| `pick_files` | 页面 | `{accept?, multiple?}` → `structuredContent.files` `[{name, ref, size}]` | 系统文件选择框 |
+| `pick_files` | 页面 | `{accept?, multiple?}`（如 `accept:['.csv']`）→ `structuredContent.files` `[{name, ref, size}]`；取消或失败为 `isError` | 系统文件选择框 |
 | `upload_files` | 页面 | `{files:[ref], path, fields?}` → `structuredContent` | 把选中的文件交给插件保存或上传 |
 | `fetch_file` | 页面 | `{path, name}` → `content` 里的 `resource_link` | 取回文件用于显示或导出 |
 
@@ -102,7 +102,7 @@
 - **表单**：用 `<form>`，在 `submit` 里先 `preventDefault()` 再调工具；点按钮和回车都会触发 submit。原生 `action` 提交不可用；宿主会兜底拦下没处理的提交和 `form.submit()`，但仍必须写 `preventDefault()`。等待时禁用按钮，失败保留输入。
 - **写操作**：带 `idempotencyKey`。同一内容重试沿用原编号，内容变了换新编号；写入方按「当前用户 + 编号」去重，同编号不同内容应拒绝。**不自动重试**：超时不等于没写入，取消等待也不等于已撤销，按编号核对。
 - **生命周期**：用 `AbortController` 取消等待，`onteardown` 里停止更新 DOM。卡片离屏可能被卸载，重开回到最初的结果；要保留的状态通过工具存取。
-- **文件**：页面只拿 `ref` 或 `resource_link`，看不到本机路径和文件字节。显示用 `resource_link` 的 `_meta['cindy/file'].url`（只读、临时、仅本卡有效，不自己拼、不持久保存）；需要身份的图片先 `fetch_file`。`upload_files` 一次最多 4 个，单个 64 MiB、合计 128 MiB。拖放不推荐，用 `pick_files`。手机和远程查看时文件选择、导出可能不可用，提示回执行电脑操作。
+- **文件**：页面拿不到本机路径，只能读取本卡已授权文件的只读地址。显示用 `resource_link` 的 `_meta['cindy/file'].url`（只读、临时、仅本卡有效，不自己拼、不持久保存）；需要身份的图片先 `fetch_file`。`upload_files` 一次最多 4 个，单个 64 MiB、合计 128 MiB。拖放不推荐，用 `pick_files`。手机和远程查看时文件选择、导出可能不可用，提示回执行电脑操作。
 - **从对话交来的文件**：图片、音视频媒体走附件，宿主放进 `app.getHostContext()?.toolInfo?.tool?._meta?.['cindy/attachments']`，每项是 `resource_link`，地址取 `_meta['cindy/file'].url`（只读、仅本卡有效）。CSV、XLSX 表格用 `dir` 交接（一次性、10 分钟、单个 50 MiB），插件在那次调用里立刻暂存，再把批次号和预览数据写进首屏 HTML。
 
   ```js
@@ -113,8 +113,8 @@
       .append(Object.assign(document.createElement('img'), { src: file.url, alt: link.name }));
   }
   ```
-- **导入（CSV / XLSX）**：先暂存 → 预览（总行数、前几行、出错的行、「确认导入」「取消」）→ 用户确认后 `api_write({path:'/api/imports/confirm', body:{batchId}, idempotencyKey})`。解析和校验在工具背后完成，页面看不到原文。页面里选文件时：`pick_files` → `upload_files` 返回批次和预览 → 渲染进容器 → 确认，不换文档。
-- **大小**：页面与 Cindy 单条消息 ≤ 4 MiB，卡片保存的结果尽量 ≤ 1 MiB。远程和手机打开时 SDK（约 337 KB，gzip 约 78 KB）随页面传输，页面自身上限约 3.94 MB；页面没超、加上 SDK 才超时会不带 SDK 打开，`import` 失败。首屏只放必要数据，其余按需读取。
+- **导入（CSV / XLSX）**：先暂存 → 预览（总行数、前几行、出错的行、「确认导入」「取消」）→ 用户确认后 `api_write({path:'/api/imports/confirm', body:{batchId}, idempotencyKey})`。解析和校验放在工具背后，预览和导入用同一套规则。页面里选文件时：`pick_files` → `upload_files` 返回批次和预览 → 渲染进容器 → 确认，不换文档。
+- **大小**：页面与 Cindy 单条消息 ≤ 4 MiB，卡片保存的结果尽量 ≤ 1 MiB。远程和手机打开时 SDK（约 337 KB，gzip 约 78 KB）随页面传输，页面自身上限约 3.94 MB；页面没超、加上 SDK 才超时会不带 SDK 打开，`import` 失败。插件可能对 `html` 长度另有限制（如示例 `show_page` 限 200,000 字符）。首屏只放必要数据，其余按需读取。
 - **不能做**：拿凭证或本机路径；原生提交表单；弹新窗口或让整个窗口跳转；访问未声明的域名；调用其他插件或 Cindy 内置工具；让 Cindy 替页面调模型。用户文档里的内容不能当脚本执行。
 
 ## 6. 常见错误

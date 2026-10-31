@@ -6,6 +6,7 @@ const selectedFiles = new Set();
 const requests = new Map();
 const batches = new Map();
 let recordCount = 0;
+const records = [];
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
 })[char]);
@@ -153,6 +154,7 @@ async function mockBackend(path, method, data, query) {
     const html = viewFragment(data.intent, data.fields);
     return { html: data.fragment ? html : fullPage(html) };
   }
+  if (method === 'GET' && path === '/api/records') return { items: records.filter(record => record.title.includes(String(query.keyword || ''))) };
   if (method === 'GET' && path === '/api/items') return { items: ['Item A', 'Item B', 'Item C'].filter(name => name.includes(String(query.keyword || ''))).map((name, index) => ({ id: String(index + 1), name })) };
   if (method === 'POST' && ['/api/records', '/api/imports/confirm'].includes(path)) {
     if (!data.idempotencyKey) throw new InputError('缺少请求编号。');
@@ -164,13 +166,19 @@ async function mockBackend(path, method, data, query) {
     }
     if (path.endsWith('/confirm') && !batches.has(data.body?.batchId)) throw new InputError('文件批次不存在。');
     const result = path.endsWith('/confirm') ? { batchId: data.body.batchId, status: 'confirmed' } : { id: 'R-' + (++recordCount), title: String(data.body?.title || '') };
+    if (!path.endsWith('/confirm')) records.push(result);
     requests.set(data.idempotencyKey, { fingerprint, result }); return result;
   }
   throw new InputError('模拟后端未实现此接口。');
 }
+// 预览字段：batchId、total、rows（前几行）、errors（[{line,message}]）。取消回到总览，不提交。
 function importPreview(batch) {
   const rows = (batch.rows || []).map(row => '<li>' + escapeHtml(JSON.stringify(row)) + '</li>').join('');
-  return fullPage('<h1>文件预览</h1><ul>' + rows + '</ul><button id="confirm-import" data-batch="' + escapeHtml(batch.batchId) + '">确认导入</button><p id="result" role="status"></p>');
+  const errors = (batch.errors || []).map(error => '<li>第 ' + escapeHtml(error.line) + ' 行：' + escapeHtml(error.message) + '</li>').join('');
+  return fullPage((batch.offline ? '<p role="note">离线示例：未读取真实文件，接入后端后解析真实内容。</p>' : '')
+    + '<h1>文件预览</h1><p>共 ' + escapeHtml(batch.total ?? (batch.rows || []).length) + ' 行，出错 ' + escapeHtml((batch.errors || []).length) + ' 行。</p>'
+    + '<ul>' + rows + '</ul>' + (errors ? '<ul id="import-errors">' + errors + '</ul>' : '')
+    + '<button id="confirm-import" data-batch="' + escapeHtml(batch.batchId) + '">确认导入</button><button data-view="overview">取消</button><p id="result" role="status"></p>');
 }
 cindy.onHostMessage(async msg => {
   if (msg.type !== 'tool-call') return;
@@ -204,15 +212,24 @@ cindy.onHostMessage(async msg => {
       else result = dataResult(JSON.parse(checked(await cindy.fetch({ url, method: 'POST', upload: { library: a.files.map(ref => ref.slice(8)), field: 'file', fields: a.fields }, callId: msg.callId })).body));
     } else if (msg.tool === 'fetch_file') {
       const url = endpoint(a.path, ['/api/files']);
-      if (USE_MOCK) throw new InputError('下载需先接入自己的后端。');
       if (typeof a.name !== 'string' || !/^[a-zA-Z0-9_-][a-zA-Z0-9_.-]{0,99}$/.test(a.name)) throw new InputError('请使用简单文件名。');
-      const response = checked(await cindy.fetch({ url, as: 'library', path: 'downloads/' + a.name, callId: msg.callId }));
-      if (!response.library) throw new InputError('后端未返回文件。');
-      result = { content: [text('文件已下载。'), { type: 'resource_link', uri: response.library.ref, name: a.name }] };
+      if (USE_MOCK) {
+        // 离线示例：把当前记录写成 CSV 放进 Library，页面可显示或用 downloadFile 另存。
+        const cell = value => '"' + String(value).replace(/^[=+\-@]/, "'$&").replace(/"/g, '""') + '"';
+        const csv = 'id,title\r\n' + records.map(record => cell(record.id) + ',' + cell(record.title) + '\r\n').join('');
+        const written = await cindy.library({ op: 'write', path: 'downloads/' + a.name, content: csv });
+        if (!written?.ok) throw new InputError('示例文件写入失败。');
+        result = { content: [text('离线示例：已生成记录 CSV。'), { type: 'resource_link', uri: 'library:downloads/' + a.name, name: a.name, mimeType: 'text/csv' }] };
+      } else {
+        const response = checked(await cindy.fetch({ url, as: 'library', path: 'downloads/' + a.name, callId: msg.callId }));
+        if (!response.library) throw new InputError('后端未返回文件。');
+        result = { content: [text('文件已下载。'), { type: 'resource_link', uri: response.library.ref, name: a.name }] };
+      }
     } else if (msg.tool === 'import_file') {
       let batch;
       if (USE_MOCK) {
-        batch = { batchId: 'demo-batch', rows: [{ value: 'Record A' }, { value: 'Record B' }] };
+        // 离线模式读不到交接的文件（dir 票据只能交给 uploadDir），页面会明确标出这是示例数据。
+        batch = { batchId: 'demo-batch', offline: true, total: 3, rows: [{ value: 'Record A' }, { value: 'Record B' }], errors: [{ line: 4, message: '缺少标题' }] };
         batches.set(batch.batchId, batch);
       } else {
         if (!a.dir_deposit?.token) throw new InputError('请通过 ghost_call.dir 交接单文件后重试。');

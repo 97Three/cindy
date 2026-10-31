@@ -23,8 +23,9 @@ CSP 各 origin 必须符合 network.hosts。只经工具调用后端时，connec
 resourceDomains 都可为空。标准 SDK 由宿主提供，不必给 CDN 增加白名单。
 mcpApps 是 Cindy 的清单写法；标准页面使用 App SDK，不使用 window.openai。
 
-Cindy 为所有页面始终提供 SDK，不检测页面是否 import。页面自带 importmap 时作者映射
-优先，Cindy 不覆盖，用 null 禁止导入的映射同样保留。新页面直接裸 import，不写 importmap。
+Cindy 为所有页面始终提供 SDK，不检测页面是否 import。包内页面首个文档自带 importmap 时
+作者映射优先，用 null 禁止导入的映射同样保留；加载器换出的页面再写映射会被浏览器忽略。
+新页面直接裸 import，不写 importmap。
 
 ## 等待、取消与页面生命周期
 
@@ -69,7 +70,7 @@ sendMessage 消息仍会继续发送；不要因旧页面未收到回执而重�
 | getHostCapabilities | 调可选能力前检查，尤其 downloadFile |
 | sendMessage | 向对话发送用户可见内容；只由明确点击触发，不用来隐藏执行写操作 |
 | updateModelContext | 提交需要 AI 了解的精简上下文，不触发完整页面重新生成 |
-| openLink | 打开外部链接，不把链接当宿主鉴权接口 |
+| openLink | 打开外部链接，只在响应用户点击时调用；是否另外提示由宿主决定；不当宿主鉴权接口 |
 | requestDisplayMode | 请求 inline / fullscreen，使用返回的实际模式 |
 | downloadFile | 保存本卡文件或嵌入资源；先检查能力，用户取消即停止 |
 | createSamplingMessage | 当前不支持，返回 Method not found；不要用它代替 Cindy 的模型能力 |

@@ -46,9 +46,9 @@ intent 是用户意图的简短自然语言描述。模拟后端只识别 items�
 | api_read | GET /api/items 或 /api/records，query 编码为查询串 | JSON，示例 `{items:[{id,name}]}` |
 | api_write | POST /api/records 或 /api/imports/confirm | JSON，示例 `{id,title}` 或 `{batchId,status}` |
 | pick_files | cindy.pick，into:library | `{files:[{name,ref,size}]}` |
-| upload_files | POST /api/imports/stage，upload.library | `{batchId,rows}` |
-| fetch_file | GET /api/files/...，as:library | resource_link |
-| import_file | POST /api/imports/stage，uploadDir | 完整预览页 |
+| upload_files | POST /api/imports/stage，upload.library；离线不上传 | `{batchId,total,rows,errors}` |
+| fetch_file | GET /api/files/...，as:library；离线把当前记录写成 CSV | resource_link |
+| import_file | POST /api/imports/stage，uploadDir；离线不读取文件 | 完整预览页（总行数、出错的行、确认 / 取消） |
 
 api_write 的 JSON 请求体是 `{body,idempotencyKey}`，后端应验证 body 的字段。按
 “当前用户 + 请求编号”建立唯一键，重复请求返回第一次的结果；同编号不同内容应拒绝。
@@ -84,14 +84,14 @@ const response = await cindy.fetch({
 });
 ```
 
-检查 ok、status 和 truncated 后解析 `{batchId,rows}`，将 rows 转义后生成预览。
+检查 ok、status 和 truncated 后解析 `{batchId,total,rows,errors}`，转义后生成预览：总行数、前几行、出错的行和确认 / 取消。
 页面只拿批次号，用户点击“确认导入”，通过 api_write 提交 `/api/imports/confirm`。
 后端按当前用户核对批次归属、状态和有效期，再执行一次。CSV 可以返回前几行；
 XLSX 等格式由后端解析，不能直接当 HTML 预览。
 
 交接有效期 10 分钟、只能使用一次；单文件上限 50 MiB。失败后不要复用旧交接信息，
 需要重新交接。不要把 token 放进页面，或留到下一次工具调用才上传。工作目录外的
-文件可能需要用户确认。离线模式只返回模拟预览，真实文件上传必须接入后端后验证。
+文件可能需要用户确认。离线模式只返回标明「离线示例」的模拟预览，真实文件上传必须接入后端后验证。
 
 ### 从页面选择文件
 
