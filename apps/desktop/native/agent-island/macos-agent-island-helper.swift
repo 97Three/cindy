@@ -4761,6 +4761,10 @@ final class TrackingView: NSView {
       agentIslandFrameResizeCursor(edge: .right).set()
       return
     }
+    // Transparent carrier areas pass clicks to the window below; leave its cursor alone.
+    guard visualRect().contains(point) else {
+      return
+    }
     super.cursorUpdate(with: event)
   }
 
@@ -5137,10 +5141,12 @@ final class AgentIslandController {
       hardwareNotchLayoutEnabled: hardwareNotchLayoutEnabled,
       preferredContentWidth: preferredContentWidth
     )
+    // The main process sends one carrier size for both modes so expanding never
+    // resizes the window (Mission Control animates every resize).
     let cocoaFrame = convertToCocoaFrame(
       frame,
       screen: screen,
-      carrierHeight: ceil(layout.height + layout.carrierInset)
+      carrierHeight: max(CGFloat(frame.height), ceil(layout.height + layout.carrierInset))
     )
     emitFrameDebug(
       event: "apply-frame",
@@ -5714,6 +5720,9 @@ final class AgentIslandController {
       interaction: interaction
     )
     cancelPendingCarrierFrame()
+    if panel.frame != interaction.startFrame {
+      applyInteractiveFrame(interaction.startFrame)
+    }
     pushDragCursor(for: interaction)
     refreshInteractionPoller()
     lastDragDebugTime = 0
@@ -5816,7 +5825,13 @@ final class AgentIslandController {
     guard model.state.visible, panel.isVisible else {
       return nil
     }
-    let frame = panel.frame
+    // Drag math sizes the carrier around the island itself; the main process sends
+    // the shared carrier size again once the drag ends.
+    let frame = centeredFrameForResize(
+      contentWidth: lastLayout.width,
+      inset: lastLayout.carrierInset,
+      startFrame: panel.frame
+    )
     let resolvedHit = hit ?? hitTestInteraction(screenPoint: screenPoint)
     if let resizeMode = resolvedHit.resizeMode {
       let contentWidth = constrainedContentWidth(lastLayout.width, expanded: lastLayout.expanded)
