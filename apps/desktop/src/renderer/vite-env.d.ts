@@ -4622,6 +4622,7 @@ interface ElectronAPI {
     watch: (workdir: string) => Promise<void>;
     unwatch: (workdir: string) => Promise<void>;
     listPrRefs: (sessionId: string) => Promise<import('@/lib/gitContext.types').SessionPrRef[]>;
+    managePrRefs: (input: { sessionId: string } & (import('@cindy/maker-shared').SessionPrRefAction | { action: 'list' })) => Promise<import('@/lib/gitContext.types').SessionPrRef[]>;
     /** null = main 侧 db 尚未就绪(登录前/启动期),调用方应稍后重试。 */
     listAllPrRefs: () => Promise<import('@/lib/gitContext.types').SessionPrRef[] | null>;
     getPrStatuses: (
@@ -5347,7 +5348,8 @@ interface ElectronAPI {
         sessionId: string,
         opts?: { limit?: number; before?: string; beforeTs?: number },
       ) => Promise<import('@/lib/ccAgent.types').Message[]>;
-      estimatedSessionValue: (sessionId: string) => Promise<{
+      estimatedSessionValue: (sessionId: string, options?: { includeBreakdown?: boolean; clientId?: string }) => Promise<{
+        costBreakdown?: import('@cindy/maker-shared/usage-cost-details').UsageCostRow[];
         totalValueMoney?: import('../shared/regionalMoney').RegionalMoney | null;
         totalValueUsd?: number;
         entries: Array<{

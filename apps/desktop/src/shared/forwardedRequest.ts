@@ -1,3 +1,8 @@
+import es from '../renderer/i18n/locales/es/common.json';
+import fr from '../renderer/i18n/locales/fr/common.json';
+import de from '../renderer/i18n/locales/de/common.json';
+import ptPT from '../renderer/i18n/locales/pt-PT/common.json';
+import ptBR from '../renderer/i18n/locales/pt-BR/common.json';
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES, type SupportedLocale } from './locale.js';
 import en from '../renderer/i18n/locales/en/common.json';
 import zhCN from '../renderer/i18n/locales/zh-CN/common.json';
@@ -8,6 +13,11 @@ export { verifiedOwnerRequestText } from '@cindy/maker-shared/auto-review-intent
 
 // The same locale resources serve persisted text and host task context.
 const FORWARDED_REQUEST_COPY = {
+  'es': es.forwardedRequest,
+  'fr': fr.forwardedRequest,
+  'de': de.forwardedRequest,
+  'pt-PT': ptPT.forwardedRequest,
+  'pt-BR': ptBR.forwardedRequest,
   en: en.forwardedRequest,
   'zh-CN': zhCN.forwardedRequest,
   'zh-TW': zhTW.forwardedRequest,
