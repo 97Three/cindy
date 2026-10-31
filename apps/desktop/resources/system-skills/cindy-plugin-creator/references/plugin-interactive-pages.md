@@ -128,8 +128,8 @@ app.ontoolresult = async result => {
 await app.connect();
 ```
 
-生成的页面使用同一个标准 import，创建自己的 App 并 connect。SDK 由 Cindy
-提供，无需从 CDN 下载，也不用随每次 HTML 复制 SDK。页面不写死 SDK 文件地址。
+生成的页面使用同一个标准 import，创建自己的 App 并 connect。Cindy 为所有
+页面始终提供 SDK，无需从 CDN 下载，也不用随 HTML 复制。页面不写死 SDK 文件地址。
 宿主升级时它会跟随更新；自己打包 SDK 的页面仍可使用自己的副本。
 
 生成的页面不应等待初始 `ontoolresult` 再渲染：加载器已经接收了它，重新连接不会

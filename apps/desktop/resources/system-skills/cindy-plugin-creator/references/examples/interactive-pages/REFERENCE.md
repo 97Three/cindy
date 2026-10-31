@@ -21,8 +21,8 @@ CSP 各 origin 必须符合 network.hosts。只经工具调用后端时，connec
 resourceDomains 都可为空。标准 SDK 由宿主提供，不必给 CDN 增加白名单。
 mcpApps 是 Cindy 的清单写法；标准页面使用 App SDK，不使用 window.openai。
 
-已有页面自带 SDK 的 importmap 时，Cindy 保留映射，不覆盖它，也不额外提供 SDK；
-用 null 禁止导入的映射同样保留。新页面直接使用裸 import，不写 importmap。
+Cindy 为所有页面始终提供 SDK，不检测页面是否 import。页面自带 importmap 时作者映射
+优先，Cindy 不覆盖，用 null 禁止导入的映射同样保留。新页面直接裸 import，不写 importmap。
 
 ## 等待、取消与页面生命周期
 
@@ -130,9 +130,9 @@ resource_link，不能让页面直接请求接口或把令牌拼进图片 URL。
 
 | 现象 | 先检查 |
 | --- | --- |
-| 标准 import 无法解析 | 执行端及查看端版本是否支持宿主 SDK；不要改用任意 CDN 绕过 |
+| 标准 import 无法解析 | 执行端及查看端是否为 0.1.122-beta 或更新；远程打开时页面加 SDK 是否超出体积限制；不要改用任意 CDN 绕过 |
 | 页面自带 importmap 或从 CDN 加载 SDK，被拦截或加载失败 | 删掉自带映射和外部 SDK 加载，直接写 `import { App } from '@modelcontextprotocol/ext-apps'`，SDK 由 Cindy 提供 |
-| 远程打开报 MCP_APP_RESOURCE_TOO_LARGE | HTML、依赖的宿主 SDK 和元数据一起计入体积限制；缩小 HTML，通过工具按需读数据，不要改用 CDN |
+| 远程打开报 MCP_APP_RESOURCE_TOO_LARGE | 页面本身超出体积限制；页面合格但加上 SDK 才超时会不带 SDK 打开，裸 import 失败。缩小 HTML，通过工具按需读数据，不要改用 CDN |
 | 页面一直等初始结果 | 是否在加载器之后再次等待 ontoolresult；数据应已在首屏 HTML 中 |
 | MCP_APP_TOOL_NOT_VISIBLE | 工具是否在清单中对 app 可见，名字是否一致 |
 | fetch ok:true 但业务失败 | 检查 HTTP status，非 2xx 不当成功 |
