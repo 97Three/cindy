@@ -159,7 +159,7 @@ function RemoteFileBrowserContent() {
   const fileWindow = useAdaptiveWindow();
   const screenWidth = fileWindow.width - fileWindow.insets.left - fileWindow.insets.right;
   const auth = useAuth();
-  const { connectionIssue, openLink, status, subscribe, unsubscribe } = useDeviceLink();
+  const { connectionIssue, openLink, status, subscribe, unsubscribe } = useDeviceLink(deviceId);
   const maker = useMobileMakerTransport(deviceId);
   const sessions = useRemoteSessions();
   const knownSession = useMemo(

@@ -56,6 +56,7 @@ const transport = vi.hoisted(() => {
     connectNow = vi.fn();
     notifyNetworkChanged = vi.fn();
     getStatus = () => 'online';
+    connectionFor() { return this; }
     hasServerCapability = () => false;
     isOutboundExplicitlyClosed = () => false;
     hasPendingRequestsTo = () => false;
@@ -67,6 +68,7 @@ const transport = vi.hoisted(() => {
     onFrame(listener: Client['frame']) { this.frame = listener; return () => {}; }
     onReliableFrameBeforeLink = () => () => {};
     onSeparateCrossAccountStatus = () => () => {};
+    onSeparateCrossAccountIssue = () => () => {};
     crossAccountConnection() { return this; }
     connectAllNow(...args: unknown[]) { (this.connectNow as (...input: unknown[]) => void)(...args); }
   }

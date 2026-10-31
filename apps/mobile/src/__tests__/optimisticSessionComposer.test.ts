@@ -137,7 +137,7 @@ describe('mobile optimistic composer while session is not ready', () => {
     expect(bridge).toContain('readSession: (record) => maker(record).getSession(record.item.sessionId)');
     expect(bridge).toContain('const session = await readSessionOnce(r)');
     expect(bridge).toContain('if (!session?.workingDir)');
-    expect(bridge).toContain('}, [link.status, link.connectionEpoch])');
+    expect(bridge).toContain('}, [link.status, link.connectionEpoch, link.getConnectionState])');
   });
 
   it('latches every connection recovery edge until authoritative sync succeeds', () => {

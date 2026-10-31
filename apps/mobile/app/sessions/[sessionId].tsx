@@ -1163,7 +1163,7 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
     status,
     subscribe,
     unsubscribe,
-  } = useDeviceLink();
+  } = useDeviceLink(deviceId);
   const revokedDevices = useRevokedDevices();
   const unresponsiveDevices = useUnresponsiveDevices();
   const maker = useMobileMakerTransport(deviceId);
