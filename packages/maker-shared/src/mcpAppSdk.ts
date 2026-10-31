@@ -45,7 +45,9 @@ function environmentPlan(html: string) {
 // navigates to a CSP error document; page handlers still run before this fallback.
 const runtime = `<script data-cindy-runtime>
 (()=>{
- const prevent=event=>{if(!event.defaultPrevented)event.preventDefault();};
+ // method=dialog only closes its dialog: no navigation, so no CSP error document.
+ const dialog=event=>(event.submitter?.hasAttribute('formmethod')?event.submitter.formMethod:event.target.method)==='dialog';
+ const prevent=event=>{if(!event.defaultPrevented&&!dialog(event))event.preventDefault();};
  // Arm during window capture: the fallback is then appended after the page's own
  // window submit listeners, yet still runs before the browser's default action.
  const arm=()=>{window.removeEventListener('submit',prevent);window.addEventListener('submit',prevent,{once:true});};
@@ -65,7 +67,8 @@ const runtime = `<script data-cindy-runtime>
   };
  }
  // Direct submit() skips the event; requestSubmit() still runs page handlers.
- HTMLFormElement.prototype.submit=function(){};
+ const submit=HTMLFormElement.prototype.submit;
+ HTMLFormElement.prototype.submit=function(){if(this.method==='dialog')Reflect.apply(submit,this,[]);};
  install();
 })();
 </script>`;

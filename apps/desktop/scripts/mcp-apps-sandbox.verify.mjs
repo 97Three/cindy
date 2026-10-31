@@ -339,12 +339,14 @@ try {
         assert.equal(await inner().executeJavaScript('window.windowDelegatePrevented'),false);
         assert.equal(await inner().executeJavaScript('window.nativeSubmitEvent.defaultPrevented'),true);
         await inner().executeJavaScript('document.querySelector("#native").submit();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        // Codex 4430107408: method=dialog closes its dialog without navigation, by button or submit().
+        assert.equal(await inner().executeJavaScript('(async()=>{const dialog=document.createElement("dialog"),form=document.createElement("form"),button=document.createElement("button");form.method="dialog";button.value="ok";form.append(button);dialog.append(form);document.body.append(dialog);const frame=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));dialog.showModal();button.click();await frame();const clicked=!dialog.open&&dialog.returnValue==="ok";dialog.showModal();form.submit();await frame();return clicked&&!dialog.open;})()'),true);
         assert.ok(inner(),'default submission must not replace the App with a CSP error document');
         assert.equal(await inner().executeJavaScript('window.pageState.formBlocked===true'),false);
         assert.equal(inner().url,formUrl,'default submission must not navigate');
         assert.equal(requests,formRequests,'default submission must not send a network request');
         assert.equal((await inner().executeJavaScript('window.sdkApp.callServerTool({name:"echo",arguments:{text:"after-form"}})')).content[0].text,'after-form');
-        console.log('HOST_SDK_FORMS_VERDICT=passed (click, Enter, default submit()/button no-op before CSP, card still usable)');
+        console.log('HOST_SDK_FORMS_VERDICT=passed (click, Enter, window delegation first, default submit()/button no-op before CSP, method=dialog closes, card still usable)');
         stage='host SDK theme update';
         await window.webContents.executeJavaScript('window.testController.context({theme:"light"})');
         await wait(()=>inner().executeJavaScript('window.pageState.theme==="light"'));
