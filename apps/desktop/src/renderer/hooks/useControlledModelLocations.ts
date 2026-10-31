@@ -5,6 +5,8 @@ import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts
 import { extractIpcError } from '@/utils/ipcError';
 import { evictControlledDeviceProviders, refreshControlledDeviceProviders } from './useDeviceProviders';
 import { evictControlledDeviceCapabilities, refreshControlledDeviceCapabilities } from './useAgentCapabilities';
+import { refreshControlledAvailableAgents } from './useAvailableAgents';
+import { isProviderShareAgentDeviceId } from '../../shared/providerShare';
 
 const EMPTY_LOCATIONS: ControlledModelLocation[] = [];
 
@@ -24,12 +26,14 @@ export function useControlledModelLocations(deviceId: string | null | undefined,
     let queued = false;
     let available = true;
     let supported = false;
+    let completeLocations: ControlledModelLocation[] = [];
     let sourceIds = new Set<string>();
     const presenceStates = new Map<string, string>();
     const invalidate = () => {
       revision++;
       evictControlledDeviceProviders(deviceId);
       evictControlledDeviceCapabilities(deviceId);
+      refreshControlledAvailableAgents(deviceId);
       setSnapshot(current => current?.deviceId === deviceId && current.owner === owner
         ? { ...current, locations: [] } : null);
     };
@@ -41,12 +45,24 @@ export function useControlledModelLocations(deviceId: string | null | undefined,
       try {
         const raw = await link.invoke(deviceId, CONTROLLED_MODEL_CATALOG_CHANNEL, [{ op: 'locations' }]);
         if (!current()) return;
-        const value = raw as { locations?: unknown } | null;
+        const value = raw as { status?: unknown; locations?: unknown } | null;
         if (!value || !Array.isArray(value.locations)) throw new Error('Invalid model locations');
-        const locations = value.locations.filter((entry): entry is ControlledModelLocation =>
+        let locations = value.locations.filter((entry): entry is ControlledModelLocation =>
           !!entry && typeof entry === 'object'
           && typeof entry.agentDeviceId === 'string' && entry.agentDeviceId.length > 0
           && typeof entry.name === 'string');
+        if (value.status === 'degraded') {
+          // Only device discovery failed. Shares in this response remain authoritative.
+          // Retain display names, never cached authorization or models; host reads still
+          // require a current location before and after forwarding the request.
+          locations = [
+            ...completeLocations.filter(location => !isProviderShareAgentDeviceId(location.agentDeviceId)
+              && !locations.some(current => current.agentDeviceId === location.agentDeviceId)),
+            ...locations,
+          ];
+        } else {
+          completeLocations = locations;
+        }
         supported = true;
         sourceIds = new Set(locations.map(location => location.agentDeviceId));
         setSnapshot({ deviceId, owner, locations });

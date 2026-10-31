@@ -164,6 +164,13 @@ function notifyRosterChanged(deviceId?: string): void {
   for (const listener of rosterListeners.get(key) ?? []) listener();
 }
 
+/** Refresh only rosters routed through this task host, including locally owned sources. */
+export function refreshControlledAvailableAgents(taskDeviceId: string): void {
+  for (const key of remoteRosterKeys()) {
+    if (parseModelCatalogKey(key)?.taskDeviceId === taskDeviceId) notifyRosterChanged(key);
+  }
+}
+
 function ensureRosterSource(key: string): void {
   if (key === '') {
     if (localRosterSourceInstalled) return;

@@ -11,6 +11,7 @@ import { setDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 import { evictAllDeviceProviders, useDeviceProviders } from '@/hooks/useDeviceProviders';
 import { evictAllRemoteCapabilities, useAgentCapabilities } from '@/hooks/useAgentCapabilities';
 import { modelCatalogKey } from '../../../../shared/controlledModelCatalog';
+import { __resetAvailableAgentsCacheForTest, useAvailableAgents } from '@/hooks/useAvailableAgents';
 
 const mocks = vi.hoisted(() => ({
   selfDeviceId: 'self-pc' as string | null,
@@ -35,6 +36,7 @@ afterEach(() => {
   cleanup();
   evictAllDeviceProviders();
   evictAllRemoteCapabilities();
+  __resetAvailableAgentsCacheForTest();
   vi.unstubAllGlobals();
   mocks.devices = [];
   mocks.received = [];
@@ -44,7 +46,7 @@ afterEach(() => {
 describe('useWorkerAgentDevices', () => {
   // #8010 / unit: mounted production route + provider/capability hooks, with only
   // the transport faked. Earlier cases did not exercise refresh of live consumers.
-  // Review gap: local provider/agent events must invalidate A's catalog via B.
+  // Review gap: local provider/agent events must invalidate A's catalog and runtime roster via B.
   // Minimum input: B using A, an unrelated host/source, plus B's home catalog.
   it.each(['peer reset', 'local providers', 'local agents'])('refreshes B source catalogs after %s without evicting B home or an unrelated task host', async trigger => {
     const resetListeners = new Set<(event: { deviceId: string }) => void>();
@@ -61,6 +63,7 @@ describe('useWorkerAgentDevices', () => {
         availableModels: [{ id: 'model', displayName: `${host}:${revision}`, contextWindow: 1000, efforts: [], defaultEffort: null }],
         hasFastMode: false, effortLevels: [], permissionModes: [],
       };
+      if (channel === 'maker:list-available-agents') return revision === 1 ? ['claude-code', 'pi'] : ['claude-code'];
       if (channel === 'maker:provider:list') return { providers: [{
         id: 'provider', name: `${host}:${revision}`, source: 'user', agents: ['claude-code'],
         auth: { method: 'none' }, routing: { 'claude-code': { upstream: 'https://example.invalid', authStrategy: 'none' } },
@@ -80,7 +83,7 @@ describe('useWorkerAgentDevices', () => {
       const source = host === 'host-d' ? 'other-pc' : 'self-pc';
       const route = useWorkerAgentDevices({ controlledDeviceId: host, leadAgentDeviceId: source });
       const key = modelCatalogKey(source, route.catalogHostDeviceId);
-      return { providers: useDeviceProviders(key), caps: useAgentCapabilities('claude-code', key) };
+      return { providers: useDeviceProviders(key), caps: useAgentCapabilities('claude-code', key), roster: useAvailableAgents(key) };
     };
     const b = renderHook(() => useSource('host-b'));
     const d = renderHook(() => useSource('host-d'));
@@ -88,6 +91,7 @@ describe('useWorkerAgentDevices', () => {
     await act(async () => {});
     expect(b.result.current.providers.providers[0].name).toBe('host-b:1');
     expect(b.result.current.caps.capabilities?.availableModels[0].displayName).toBe('host-b:1');
+    expect(b.result.current.roster.availableVendors.has('pi')).toBe(true);
     const dSnapshot = d.result.current;
     const homeSnapshot = home.result.current;
     invoke.mockClear();
@@ -98,12 +102,46 @@ describe('useWorkerAgentDevices', () => {
     });
     expect(b.result.current.providers.providers[0].name).toBe('host-b:2');
     expect(b.result.current.caps.capabilities?.availableModels[0].displayName).toBe('host-b:2');
+    expect(b.result.current.roster.loaded).toBe(true);
+    expect(b.result.current.roster.availableVendors.has('pi')).toBe(false);
     expect(d.result.current).toBe(dSnapshot);
     expect(home.result.current).toBe(homeSnapshot);
     expect(invoke.mock.calls.every(([host, channel]) => host === 'host-b' && channel === 'maker:model-catalog:read')).toBe(true);
     b.unmount(); d.unmount(); home.unmount();
     expect(providerListeners.size).toBe(0);
     expect(agentListeners.size).toBe(0);
+  });
+
+  // #8010 review / unit: a degraded directory confirms shares, not missing PCs.
+  // Retain prior PC names but apply actual share removals, then complete revocation.
+  it.each(['complete', 'host switch'])('retains known computers during degradation, then applies %s without stale sources', async next => {
+    let push!: (event: { deviceId: string; channel: string }) => void;
+    const invoke = vi.fn().mockResolvedValue({ status: 'complete', locations: [
+      { agentDeviceId: 'source-pc', name: 'Source PC' },
+      { agentDeviceId: 'share:revoked', name: 'Old share' },
+    ] });
+    vi.stubGlobal('electronAPI', { deviceLink: { invoke, onRemotePush: (listener: typeof push) => { push = listener; return () => {}; } } });
+    const { result, rerender } = renderHook(({ host }) => useWorkerAgentDevices({ controlledDeviceId: host, leadAgentDeviceId: null }), {
+      initialProps: { host: 'host-b' },
+    });
+    await act(async () => {});
+    invoke.mockResolvedValue({ status: 'degraded', locations: [{ agentDeviceId: 'share:new', name: 'New share' }] });
+    await act(async () => { push({ deviceId: 'host-b', channel: 'maker:model-catalog:changed' }); });
+    expect(result.current.devices).toEqual([
+      { deviceId: 'source-pc', name: 'Source PC' }, { deviceId: 'share:new', name: 'New share' },
+    ]);
+    if (next === 'host switch') {
+      rerender({ host: 'host-c' });
+      await act(async () => {});
+      expect(result.current.devices).toEqual([{ deviceId: 'share:new', name: 'New share' }]);
+    } else {
+      invoke.mockResolvedValue({ status: 'complete', locations: [] });
+      await act(async () => { push({ deviceId: 'host-b', channel: 'maker:model-catalog:changed' }); });
+      expect(result.current.devices).toEqual([]);
+      invoke.mockResolvedValue({ status: 'degraded', locations: [] });
+      await act(async () => { push({ deviceId: 'host-b', channel: 'maker:model-catalog:changed' }); });
+      expect(result.current.devices).toEqual([]);
+    }
   });
 
   it('coalesces pushes during discovery, drops the stale response and removes subscriptions on unmount', async () => {
